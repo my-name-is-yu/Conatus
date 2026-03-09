@@ -10,7 +10,7 @@
 │                                                         │
 │  ┌──────────┐    Hook Events     ┌───────────────────┐ │
 │  │ Claude    │ ──────────────────>│ Hook Dispatcher   │ │
-│  │ Code      │ <──────────────── │ (Python CLI)      │ │
+│  │ Code      │ <──────────────── │ (Node.js CLI)     │ │
 │  │ Runtime   │  Modified input/  │                   │ │
 │  │           │  block/approve    └────────┬──────────┘ │
 │  └──────────┘                             │            │
@@ -18,7 +18,7 @@
                                             │ stdin/stdout (JSON)
                                             ▼
 ┌───────────────────────────────────────────────────────────┐
-│                 Motive Layer Core (Python)                 │
+│               Motive Layer Core (TypeScript)               │
 │                                                           │
 │  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐ │
 │  │ State Manager │  │ Gap Analysis │  │ Priority       │ │
@@ -170,35 +170,38 @@ Stop / SessionEnd
 
 ### 2.4 動機スコア計算式
 
-```python
-# 締切駆動スコア
-def deadline_score(deadline, now, created_at, progress):
-    if deadline is None:
-        return 0.0
-    remaining_ratio = (deadline - now) / (deadline - created_at)
-    gap = 1.0 - progress
-    urgency = (1.0 - remaining_ratio) ** 2  # 指数的に急上昇
-    return urgency * gap
+```typescript
+// 締切駆動スコア
+function deadlineScore(deadline: Date | null, now: Date, createdAt: Date, progress: number): number {
+  if (deadline === null) return 0.0;
+  const remainingRatio = (deadline.getTime() - now.getTime()) / (deadline.getTime() - createdAt.getTime());
+  const gap = 1.0 - progress;
+  const urgency = Math.pow(1.0 - remainingRatio, 2); // 指数的に急上昇
+  return urgency * gap;
+}
 
-# 不満駆動スコア
-def dissatisfaction_score(gaps, last_action_time, now):
-    max_gap = max(g.magnitude * g.confidence for g in gaps)
-    staleness = min(1.0, (now - last_action_time).hours / 24.0)
-    decay = 1.0 - (staleness * 0.3)  # 最大30%減衰（慣れ）
-    return max_gap * decay
+// 不満駆動スコア
+function dissatisfactionScore(gaps: Gap[], lastActionTime: Date, now: Date): number {
+  const maxGap = Math.max(...gaps.map(g => g.magnitude * g.confidence));
+  const stalenessHours = (now.getTime() - lastActionTime.getTime()) / 3_600_000;
+  const staleness = Math.min(1.0, stalenessHours / 24.0);
+  const decay = 1.0 - staleness * 0.3; // 最大30%減衰（慣れ）
+  return maxGap * decay;
+}
 
-# 機会駆動スコア
-def opportunity_score(opportunity_events, now):
-    if not opportunity_events:
-        return 0.0
-    freshest = max(opportunity_events, key=lambda e: e.detected_at)
-    age_hours = (now - freshest.detected_at).hours
-    freshness = max(0.0, 1.0 - age_hours / 12.0)  # 12時間で消滅
-    return freshest.value * freshness
+// 機会駆動スコア
+function opportunityScore(opportunityEvents: OpportunityEvent[], now: Date): number {
+  if (opportunityEvents.length === 0) return 0.0;
+  const freshest = opportunityEvents.reduce((a, b) => a.detectedAt > b.detectedAt ? a : b);
+  const ageHours = (now.getTime() - freshest.detectedAt.getTime()) / 3_600_000;
+  const freshness = Math.max(0.0, 1.0 - ageHours / 12.0); // 12時間で消滅
+  return freshest.value * freshness;
+}
 
-# 総合スコア: 最も高い動機が支配的
-def motivation_score(goal):
-    return max(deadline_score(...), dissatisfaction_score(...), opportunity_score(...))
+// 総合スコア: 最も高い動機が支配的
+function motivationScore(goal: Goal): number {
+  return Math.max(deadlineScore(/* ... */), dissatisfactionScore(/* ... */), opportunityScore(/* ... */));
+}
 ```
 
 ### 2.5 信頼残高
@@ -219,26 +222,28 @@ def motivation_score(goal):
 {
   "hooks": {
     "SessionStart": [
-      {"type": "command", "command": "python -m motive_layer.hooks.session_start"}
+      {"type": "command", "command": "node /path/to/motive-layer/dist/hooks/session-start.js"}
     ],
     "UserPromptSubmit": [
-      {"type": "command", "command": "python -m motive_layer.hooks.user_prompt"}
+      {"type": "command", "command": "node /path/to/motive-layer/dist/hooks/user-prompt.js"}
     ],
     "PreToolUse": [
-      {"type": "command", "command": "python -m motive_layer.hooks.pre_tool_use"}
+      {"type": "command", "command": "node /path/to/motive-layer/dist/hooks/pre-tool-use.js"}
     ],
     "PostToolUse": [
-      {"type": "command", "command": "python -m motive_layer.hooks.post_tool_use"}
+      {"type": "command", "command": "node /path/to/motive-layer/dist/hooks/post-tool-use.js"}
     ],
     "PostToolUseFailure": [
-      {"type": "command", "command": "python -m motive_layer.hooks.post_tool_failure"}
+      {"type": "command", "command": "node /path/to/motive-layer/dist/hooks/post-tool-failure.js"}
     ],
     "Stop": [
-      {"type": "command", "command": "python -m motive_layer.hooks.stop"}
+      {"type": "command", "command": "node /path/to/motive-layer/dist/hooks/stop.js"}
     ]
   }
 }
 ```
+
+開発時は `node dist/hooks/*.js` の代わりに `npx tsx src/hooks/*.ts` を使用可能。
 
 ### 3.2 各Hook仕様
 
@@ -278,7 +283,7 @@ def motivation_score(goal):
 ### 3.3 Hook間協調
 
 - 全Hookは `.motive/state.json` をファイルI/Oで共有
-- 各Hookは独立Pythonプロセス（Claude Codeの仕様）
+- 各Hookは独立Node.jsプロセス（Claude Codeの仕様）
 - 原子的書き込み: temp file → rename パターン
 - ローカルHTTPサーバー不要（オーバーキル）
 
@@ -288,87 +293,99 @@ def motivation_score(goal):
 
 ### 4.1 Gap Analysis Engine
 
-```python
-class GapAnalysisEngine:
-    def compute_gaps(self, goal: Goal) -> list[Gap]:
-        gaps = []
-        for dim, threshold in goal.achievement_thresholds.items():
-            sv = goal.state_vector[dim]
-            if dim == "open_issues":  # 逆方向（低いほど良い）
-                magnitude = max(0, (sv.value - threshold)) / max(sv.value, 1)
-            else:  # 正方向（高いほど良い）
-                magnitude = max(0, (threshold - sv.value)) / threshold
-            gaps.append(Gap(
-                dimension=dim, current=sv.value, target=threshold,
-                magnitude=magnitude, confidence=sv.confidence
-            ))
-        return sorted(gaps, key=lambda g: g.magnitude * g.confidence, reverse=True)
+```typescript
+class GapAnalysisEngine {
+  computeGaps(goal: Goal): Gap[] {
+    const gaps: Gap[] = [];
+    for (const [dim, threshold] of Object.entries(goal.achievementThresholds)) {
+      const sv = goal.stateVector[dim];
+      let magnitude: number;
+      if (dim === "open_issues") { // 逆方向（低いほど良い）
+        magnitude = Math.max(0, (sv.value - threshold)) / Math.max(sv.value, 1);
+      } else { // 正方向（高いほど良い）
+        magnitude = Math.max(0, (threshold - sv.value)) / threshold;
+      }
+      gaps.push({ dimension: dim, current: sv.value, target: threshold, magnitude, confidence: sv.confidence });
+    }
+    return gaps.sort((a, b) => b.magnitude * b.confidence - a.magnitude * a.confidence);
+  }
+}
 ```
 
 ### 4.2 Task Generation Engine
 
-```python
-class TaskGenerationEngine:
-    def generate_tasks(self, gaps: list[Gap], goal: Goal, constraints: Constraints) -> list[Task]:
-        tasks = []
-        for gap in gaps:
-            if gap.magnitude < 0.05:
-                continue
-            task = Task(
-                goal_id=goal.id,
-                target_dimension=gap.dimension,
-                description=self._describe_task(gap, goal),
-                priority=gap.magnitude * gap.confidence,
-                generation_depth=0
-            )
-            if task.generation_depth >= constraints.max_generation_depth:
-                continue
-            if len(tasks) >= constraints.max_subtasks:
-                break
-            tasks.append(task)
-        return sorted(tasks, key=lambda t: t.priority, reverse=True)
+```typescript
+class TaskGenerationEngine {
+  generateTasks(gaps: Gap[], goal: Goal, constraints: Constraints): Task[] {
+    const tasks: Task[] = [];
+    for (const gap of gaps) {
+      if (gap.magnitude < 0.05) continue;
+      const task: Task = {
+        goalId: goal.id,
+        targetDimension: gap.dimension,
+        description: this.describeTask(gap, goal),
+        priority: gap.magnitude * gap.confidence,
+        generationDepth: 0,
+      };
+      if (task.generationDepth >= constraints.maxGenerationDepth) continue;
+      if (tasks.length >= constraints.maxSubtasks) break;
+      tasks.push(task);
+    }
+    return tasks.sort((a, b) => b.priority - a.priority);
+  }
+}
 ```
 
 ### 4.3 Stall Detection Engine
 
-```python
-class StallDetectionEngine:
-    CONSECUTIVE_FAILURE_THRESHOLD = 3
-    TIME_OVERRUN_FACTOR = 2.0
+```typescript
+class StallDetectionEngine {
+  static readonly CONSECUTIVE_FAILURE_THRESHOLD = 3;
+  static readonly TIME_OVERRUN_FACTOR = 2.0;
 
-    def on_failure(self, tool_name: str) -> StallResult | None:
-        self.consecutive_failures[tool_name] += 1
-        if self.consecutive_failures[tool_name] >= self.CONSECUTIVE_FAILURE_THRESHOLD:
-            return self._classify_and_recover(tool_name)
-        return None
+  private consecutiveFailures: Record<string, number> = {};
 
-    def on_success(self, tool_name: str):
-        self.consecutive_failures[tool_name] = 0
+  onFailure(toolName: string): StallResult | null {
+    this.consecutiveFailures[toolName] = (this.consecutiveFailures[toolName] ?? 0) + 1;
+    if (this.consecutiveFailures[toolName] >= StallDetectionEngine.CONSECUTIVE_FAILURE_THRESHOLD) {
+      return this.classifyAndRecover(toolName);
+    }
+    return null;
+  }
 
-    def _classify_and_recover(self, tool_name: str) -> StallResult:
-        # 原因分類: information_deficit / permission_deficit / capability_deficit / external_dependency
-        # 回復戦略:
-        #   information_deficit → 調査タスク生成
-        #   permission_deficit → 人間にエスカレーション
-        #   capability_deficit → ゴール再定義を要請
-        #   external_dependency → 別タスクに切り替え
-        ...
+  onSuccess(toolName: string): void {
+    this.consecutiveFailures[toolName] = 0;
+  }
+
+  private classifyAndRecover(toolName: string): StallResult {
+    // 原因分類: information_deficit / permission_deficit / capability_deficit / external_dependency
+    // 回復戦略:
+    //   information_deficit → 調査タスク生成
+    //   permission_deficit → 人間にエスカレーション
+    //   capability_deficit → ゴール再定義を要請
+    //   external_dependency → 別タスクに切り替え
+    throw new Error("not implemented");
+  }
+}
 ```
 
 ### 4.4 Satisficing Engine
 
-```python
-class SatisficingEngine:
-    def judge_completion(self, goal: Goal) -> CompletionJudgment:
-        all_below = all(g.magnitude <= 0.05 for g in goal.gaps)
-        avg_confidence = mean(g.confidence for g in goal.gaps)
+```typescript
+class SatisficingEngine {
+  judgeCompletion(goal: Goal): CompletionJudgment {
+    const allBelow = goal.gaps.every(g => g.magnitude <= 0.05);
+    const avgConfidence = goal.gaps.reduce((sum, g) => sum + g.confidence, 0) / goal.gaps.length;
 
-        if all_below and avg_confidence >= 0.7:
-            return CompletionJudgment("completed", "mark_done")
-        elif all_below and avg_confidence < 0.7:
-            return CompletionJudgment("needs_verification", "generate_verification_tasks")
-        else:
-            return CompletionJudgment("in_progress", "continue")
+    if (allBelow && avgConfidence >= 0.7) {
+      return { status: "completed", action: "mark_done" };
+    } else if (allBelow && avgConfidence < 0.7) {
+      return { status: "needs_verification", action: "generate_verification_tasks" };
+    } else {
+      return { status: "in_progress", action: "continue" };
+    }
+  }
+}
 ```
 
 ### 4.5 Priority Scoring Engine
@@ -378,20 +395,25 @@ class SatisficingEngine:
 
 ### 4.6 Curiosity Engine
 
-```python
-class CuriosityEngine:
-    def check_activation(self, state: MotiveState) -> list[Goal]:
-        new_goals = []
-        # 条件1: タスクキュー空 → パターンから探索
-        if not self._get_active_tasks(state):
-            new_goals.extend(self._explore_from_patterns(state))
-        # 条件2: 想定外の結果 → 調査ゴール生成
-        for anomaly in self._detect_anomalies(state.log):
-            if anomaly.deviation > state.meta_motivation.anomaly_threshold:
-                new_goals.append(self._create_investigation_goal(anomaly))
-        # 条件3: 過去の失敗領域の再試行
-        new_goals.extend(self._find_retryable_failures(state))
-        return new_goals[:state.meta_motivation.exploration_budget]
+```typescript
+class CuriosityEngine {
+  checkActivation(state: MotiveState): Goal[] {
+    const newGoals: Goal[] = [];
+    // 条件1: タスクキュー空 → パターンから探索
+    if (this.getActiveTasks(state).length === 0) {
+      newGoals.push(...this.exploreFromPatterns(state));
+    }
+    // 条件2: 想定外の結果 → 調査ゴール生成
+    for (const anomaly of this.detectAnomalies(state.log)) {
+      if (anomaly.deviation > state.metaMotivation.anomalyThreshold) {
+        newGoals.push(this.createInvestigationGoal(anomaly));
+      }
+    }
+    // 条件3: 過去の失敗領域の再試行
+    newGoals.push(...this.findRetryableFailures(state));
+    return newGoals.slice(0, state.metaMotivation.explorationBudget);
+  }
+}
 ```
 
 ---
@@ -411,13 +433,17 @@ class CuriosityEngine:
 
 ### 5.2 不可逆アクション検出パターン
 
-```python
-IRREVERSIBLE_PATTERNS = [
-    r"git push", r"rm -rf",
-    r"curl -X (POST|PUT|DELETE|PATCH)",
-    r"docker (push|rm)", r"npm publish",
-    r"deploy", r"DROP TABLE", r"DELETE FROM",
-]
+```typescript
+const IRREVERSIBLE_PATTERNS: RegExp[] = [
+  /git push/,
+  /rm -rf/,
+  /curl -X (POST|PUT|DELETE|PATCH)/,
+  /docker (push|rm)/,
+  /npm publish/,
+  /deploy/,
+  /DROP TABLE/,
+  /DELETE FROM/,
+];
 ```
 
 ---
@@ -432,7 +458,7 @@ IRREVERSIBLE_PATTERNS = [
   "session_id": "...",
   "goal_id": "goal-001",
   "state_before": {"progress": 0.3, "quality_score": 0.5},
-  "action": {"tool": "Write", "target": "src/auth/jwt.py"},
+  "action": {"tool": "Write", "target": "src/auth/jwt.ts"},
   "state_after": {"progress": 0.35, "quality_score": 0.5},
   "state_delta": {"progress": 0.05},
   "outcome": "success"
@@ -480,49 +506,44 @@ Stopフック時に log.jsonl を分析して更新。好奇心エンジンが�
 
 ```
 motive-layer/
-├── pyproject.toml
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
 ├── src/
-│   └── motive_layer/
-│       ├── __init__.py
-│       ├── cli.py                    # CLI (motive init/status/add-goal/gc)
-│       ├── hooks/
-│       │   ├── __init__.py
-│       │   ├── session_start.py
-│       │   ├── user_prompt.py
-│       │   ├── pre_tool_use.py
-│       │   ├── post_tool_use.py
-│       │   ├── post_tool_failure.py
-│       │   └── stop.py
-│       ├── engines/
-│       │   ├── __init__.py
-│       │   ├── gap_analysis.py
-│       │   ├── task_generation.py
-│       │   ├── stall_detection.py
-│       │   ├── satisficing.py
-│       │   ├── priority_scoring.py
-│       │   └── curiosity.py
-│       ├── state/
-│       │   ├── __init__.py
-│       │   ├── manager.py            # StateManager (原子的永続化)
-│       │   ├── models.py             # Pydantic models
-│       │   └── migration.py          # スキーママイグレーション
-│       ├── collaboration/
-│       │   ├── __init__.py
-│       │   ├── trust.py
-│       │   ├── behavior.py
-│       │   └── irreversible.py
-│       ├── context/
-│       │   ├── __init__.py
-│       │   └── injector.py           # motive.md 生成
-│       └── learning/
-│           ├── __init__.py
-│           ├── logger.py
-│           └── pattern_analyzer.py
+│   ├── index.ts
+│   ├── cli.ts                    # CLI (commander: motive init/status/add-goal/gc)
+│   ├── hooks/
+│   │   ├── session-start.ts
+│   │   ├── user-prompt.ts
+│   │   ├── pre-tool-use.ts
+│   │   ├── post-tool-use.ts
+│   │   ├── post-tool-failure.ts
+│   │   └── stop.ts
+│   ├── engines/
+│   │   ├── gap-analysis.ts
+│   │   ├── task-generation.ts
+│   │   ├── stall-detection.ts
+│   │   ├── satisficing.ts
+│   │   ├── priority-scoring.ts
+│   │   └── curiosity.ts
+│   ├── state/
+│   │   ├── models.ts             # Zod schemas
+│   │   ├── manager.ts            # StateManager (atomic persistence)
+│   │   └── migration.ts
+│   ├── collaboration/
+│   │   ├── trust.ts
+│   │   ├── behavior.ts
+│   │   └── irreversible.ts
+│   ├── context/
+│   │   └── injector.ts           # motive.md generation
+│   └── learning/
+│       ├── logger.ts
+│       └── pattern-analyzer.ts
 └── tests/
-    ├── test_engines/
-    ├── test_hooks/
-    ├── test_state/
-    └── test_collaboration/
+    ├── engines/
+    ├── hooks/
+    ├── state/
+    └── collaboration/
 ```
 
 ### 7.3 設定ファイル (`.motive/config.yaml`)
@@ -574,24 +595,33 @@ logging:
 
 ## 8. 技術スタック
 
-### 言語: Python 3.11+
+### 言語: TypeScript (Node.js 18+)
 
 ### 依存ライブラリ（最小構成）
 
-```toml
-[project]
-name = "motive-layer"
-requires-python = ">=3.11"
-dependencies = [
-    "pydantic>=2.0",
-    "pyyaml>=6.0",
-    "click>=8.0",
-]
+```json
+{
+  "name": "motive-layer",
+  "dependencies": {
+    "zod": "^3.0.0",
+    "commander": "^12.0.0",
+    "yaml": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0",
+    "eslint": "^9.0.0",
+    "@types/node": "^18.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
 ```
 
 LLM SDKは不要（Claude Codeから呼び出される側）。
 
-### CLIコマンド
+### CLIコマンド（commander使用）
 
 ```
 motive init          # .motive/ と .claude/settings.json を初期化
@@ -609,9 +639,9 @@ motive reset         # 状態のリセット
 
 ### Phase 1: 基盤（並行可能）
 
-1. **状態モデル** — `state/models.py`, `state/manager.py`（Pydantic, JSON読み書き, 原子的永続化）
-2. **Gap Analysis Engine** — `engines/gap_analysis.py`
-3. **CLI基盤** — `cli.py`（`motive init`, `motive status`）
+1. **状態モデル** — `state/models.ts`, `state/manager.ts`（Zod schemas, JSON読み書き, 原子的永続化）
+2. **Gap Analysis Engine** — `engines/gap-analysis.ts`
+3. **CLI基盤** — `cli.ts`（`motive init`, `motive status`）
 
 ### Phase 2: コアエンジン群（Phase 1に依存）
 
@@ -643,7 +673,7 @@ motive reset         # 状態のリセット
 
 ## 10. リスクと未決事項
 
-1. **Hook起動パフォーマンス**: Pythonプロセス毎回起動がPostToolUseの頻度に耐えられるか → Phase 5で計測、問題あれば常駐デーモン化
+1. **Hook起動パフォーマンス**: Node.jsプロセス毎回起動がPostToolUseの頻度に耐えられるか → Phase 5で計測、問題あれば常駐デーモン化
 2. **State Vector更新の精度**: ツール出力からの更新はヒューリスティック依存 → 初期はルールベース、将来LLM判定追加可能
 3. **UserPromptSubmitの関連度判定**: LLMなしで十分か → 初期はキーワード+TF-IDF、不十分なら`prompt`ハンドラ型に切替
 4. **motive.mdのサイズ**: コンテキスト圧迫防止 → 500トークン以下に制限

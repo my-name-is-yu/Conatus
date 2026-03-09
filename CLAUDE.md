@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Motive Layer — Python framework that gives AI agents "motivation" via Claude Code Hooks. Intercepts lifecycle events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop) as Python CLI subprocesses, maintaining goal/gap/constraint state to drive autonomous task selection and completion judgment.
+Motive Layer — TypeScript framework that gives AI agents "motivation" via Claude Code Hooks. Intercepts lifecycle events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop) as Node.js CLI subprocesses, maintaining goal/gap/constraint state to drive autonomous task selection and completion judgment.
 
 ## Status
 
@@ -12,34 +12,36 @@ PoC phase on `poc/motive-layer` branch. `main` branch preserves the pre-implemen
 
 ## Tech Stack
 
-- Python 3.11+, pydantic>=2.0, pyyaml>=6.0, click>=8.0
+- Node.js 18+, TypeScript 5.3+, zod>=3.22, yaml>=2.3, commander>=12.0
 - No LLM SDK — this package is called BY Claude Code, not the caller
 - State persistence: file-based JSON (no HTTP daemon)
 
 ## Build & Test
 
 ```bash
-pip install -e ".[dev]"        # editable install (once pyproject.toml exists)
-pytest tests/                   # run all tests
-pytest tests/test_engines/      # run engine tests only
-python -m motive_layer.hooks.session_start  # test individual hook via stdin JSON
+npm install                     # install dependencies
+npm run build                   # compile TypeScript → dist/
+npx vitest run                  # run all tests
+npx vitest run tests/engines/   # run engine tests only
+node dist/hooks/session-start.js  # test individual hook via stdin JSON
 ```
 
 ## Architecture
 
-### Integration: Claude Code Hooks → `python -m motive_layer.hooks.*`
+### Integration: Claude Code Hooks → `node dist/hooks/*.js`
 Each hook reads/writes `.motive/state.json` (atomic temp-file-rename). Hook config goes in the **host project's** `.claude/settings.json`.
 
 ### Package Layout
 ```
-src/motive_layer/
-├── cli.py                 # motive init|status|add-goal|goals|log|gc|reset
-├── hooks/                 # 6 modules (session_start, user_prompt, pre_tool_use, post_tool_use, post_tool_failure, stop)
-├── engines/               # gap_analysis, task_generation, stall_detection, satisficing, priority_scoring, curiosity
-├── state/                 # manager (atomic persistence), models (Pydantic), migration
-├── collaboration/         # trust balance, behavior matrix, irreversible action detection
+src/
+├── cli.ts                 # motive init|status|add-goal|goals|log|gc|reset
+├── index.ts               # package entry point
+├── hooks/                 # 6 modules (session-start, user-prompt, pre-tool-use, post-tool-use, post-tool-failure, stop)
+├── engines/               # gap-analysis, task-generation, stall-detection, satisficing, priority-scoring, curiosity
+├── state/                 # manager (atomic persistence), models (Zod schemas)
+├── collaboration/         # trust, behavior, irreversible action detection
 ├── context/               # injector — generates .claude/rules/motive.md (≤500 tokens)
-└── learning/              # action logger (log.jsonl), pattern_analyzer
+└── learning/              # logger (log.jsonl), pattern-analyzer
 ```
 
 ### State Files (in host project)
@@ -53,7 +55,7 @@ Phase 1 (state models + gap analysis + CLI) → Phase 2 (engines) → Phase 3 (h
 
 ## Key Constraints
 
-- Each hook must complete in <300ms (SessionStart <200ms) — Python process spawn overhead is a known risk
+- Each hook must complete in <300ms (SessionStart <200ms) — Node.js process spawn overhead is a known risk
 - Irreversible actions (git push, rm -rf, deploy, DROP TABLE) always require human approval regardless of trust/confidence
 - `.motive/` should be in `.gitignore` of host projects
 - `motive.md` context injection must stay ≤500 tokens

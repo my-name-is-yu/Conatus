@@ -9,7 +9,7 @@
     "motive": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"const{mkdirSync,copyFileSync}=require('fs');const{join}=require('path');mkdirSync('dist/templates',{recursive:true});copyFileSync('src/templates/motiva-usage.md','dist/templates/motiva-usage.md');\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/",
