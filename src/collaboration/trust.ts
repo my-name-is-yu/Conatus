@@ -1,4 +1,5 @@
 import { TrustBalance } from '../state/models.js';
+import { debug } from '../debug.js';
 
 export class TrustManager {
   private clamp(value: number): number {
@@ -14,6 +15,7 @@ export class TrustManager {
     if (goalId !== undefined && goalId in updated.per_goal) {
       updated.per_goal[goalId] = this.clamp(updated.per_goal[goalId] + delta);
     }
+    debug('trust-manager', 'trust balance changes', { event: 'success', delta, before: trustBalance.global, after: updated.global, goal_id: goalId ?? null });
     return updated;
   }
 
@@ -26,6 +28,7 @@ export class TrustManager {
     if (goalId !== undefined && goalId in updated.per_goal) {
       updated.per_goal[goalId] = this.clamp(updated.per_goal[goalId] - delta);
     }
+    debug('trust-manager', 'trust balance changes', { event: 'failure', delta, before: trustBalance.global, after: updated.global, goal_id: goalId ?? null });
     return updated;
   }
 
@@ -38,6 +41,7 @@ export class TrustManager {
     if (goalId !== undefined && goalId in updated.per_goal) {
       updated.per_goal[goalId] = this.clamp(updated.per_goal[goalId] + delta);
     }
+    debug('trust-manager', 'approval decisions', { event: 'irreversible_success', delta, before: trustBalance.global, after: updated.global, goal_id: goalId ?? null });
     return updated;
   }
 
@@ -50,6 +54,7 @@ export class TrustManager {
     if (goalId !== undefined && goalId in updated.per_goal) {
       updated.per_goal[goalId] = this.clamp(updated.per_goal[goalId] - delta);
     }
+    debug('trust-manager', 'approval decisions', { event: 'irreversible_failure', delta, before: trustBalance.global, after: updated.global, goal_id: goalId ?? null });
     return updated;
   }
 }

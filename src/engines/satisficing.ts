@@ -1,4 +1,5 @@
 import type { Gap } from '../state/models.js';
+import { debug } from '../debug.js';
 
 export type CompletionAction = 'mark_done' | 'generate_verification_tasks' | 'continue';
 export type CompletionStatus = 'completed' | 'needs_verification' | 'in_progress';
@@ -27,38 +28,47 @@ export class SatisficingEngine {
    */
   judgeCompletion(gaps: Gap[]): CompletionJudgment {
     if (gaps.length === 0) {
-      return {
-        status: 'completed',
-        action: 'mark_done',
+      const result = {
+        status: 'completed' as CompletionStatus,
+        action: 'mark_done' as CompletionAction,
         reason: 'No dimensions to evaluate — goal is trivially complete.',
       };
+      debug('satisficing', 'threshold check', { gaps_count: 0, status: result.status });
+      return result;
     }
 
     const allBelowThreshold = gaps.every(g => g.magnitude <= this.gapThreshold);
     const avgConfidence = gaps.reduce((sum, g) => sum + g.confidence, 0) / gaps.length;
+    debug('satisficing', 'threshold check', { gaps_count: gaps.length, all_below_threshold: allBelowThreshold, avg_confidence: avgConfidence });
 
     if (allBelowThreshold && avgConfidence >= this.confidenceThreshold) {
-      return {
-        status: 'completed',
-        action: 'mark_done',
+      const result = {
+        status: 'completed' as CompletionStatus,
+        action: 'mark_done' as CompletionAction,
         reason: `All gaps ≤ ${this.gapThreshold} with avg confidence ${avgConfidence.toFixed(2)}.`,
       };
+      debug('satisficing', 'satisfied', { status: result.status, reason: result.reason });
+      return result;
     }
 
     if (allBelowThreshold && avgConfidence < this.confidenceThreshold) {
-      return {
-        status: 'needs_verification',
-        action: 'generate_verification_tasks',
+      const result = {
+        status: 'needs_verification' as CompletionStatus,
+        action: 'generate_verification_tasks' as CompletionAction,
         reason: `All gaps ≤ ${this.gapThreshold} but avg confidence ${avgConfidence.toFixed(2)} < ${this.confidenceThreshold}. Verification needed.`,
       };
+      debug('satisficing', 'not satisfied: low confidence', { status: result.status });
+      return result;
     }
 
     const maxGap = Math.max(...gaps.map(g => g.magnitude));
-    return {
-      status: 'in_progress',
-      action: 'continue',
+    const result = {
+      status: 'in_progress' as CompletionStatus,
+      action: 'continue' as CompletionAction,
       reason: `Largest gap: ${maxGap.toFixed(2)}. Work remains.`,
     };
+    debug('satisficing', 'not satisfied: gaps remain', { status: result.status, max_gap: maxGap });
+    return result;
   }
 
   /**

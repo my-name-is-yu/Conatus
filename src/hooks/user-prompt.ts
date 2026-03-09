@@ -16,6 +16,7 @@ import { StateManager } from '../state/manager.js';
 import { TaskGenerationEngine } from '../engines/task-generation.js';
 import { GapAnalysisEngine } from '../engines/gap-analysis.js';
 import type { Goal } from '../state/models.js';
+import { debug } from '../debug.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -114,14 +115,22 @@ export function run(
   input: { prompt: string },
   projectRoot: string,
 ): { output: { prompt: string }; exitCode: 0 | 2; stderrMessage?: string } {
+  const truncatedPrompt = input.prompt.slice(0, 120) + (input.prompt.length > 120 ? '...' : '');
+  debug('user-prompt', 'entry', { prompt_preview: truncatedPrompt });
+
   const manager = new StateManager(projectRoot);
   const config = loadConfig(manager.configPath);
   const goals = manager.loadActiveGoals().filter(g => g.status === 'active');
+  debug('user-prompt', 'active goals loaded', { count: goals.length, strict_mode: config.strict_goal_alignment ?? false });
 
   const relatedGoal = findRelatedGoal(input.prompt, goals);
+  debug('user-prompt', 'priority scoring result', { related_goal: relatedGoal?.id ?? null, related_goal_title: relatedGoal?.title ?? null });
 
   if (relatedGoal) {
     const context = buildInjectedContext(relatedGoal);
+    const task = new TaskGenerationEngine().getTopTask(new GapAnalysisEngine().computeGaps(relatedGoal), relatedGoal);
+    debug('user-prompt', 'task generated', { goal_id: relatedGoal.id, top_task: task?.description ?? null });
+    debug('user-prompt', 'exit', { action: 'pass_with_context', exit_code: 0 });
     return {
       output: { prompt: input.prompt + context },
       exitCode: 0,
@@ -131,6 +140,7 @@ export function run(
   // No related goal found
   if (config.strict_goal_alignment) {
     const goalList = goals.map(g => `"${g.title}"`).join(', ');
+    debug('user-prompt', 'exit', { action: 'block_strict_mode', exit_code: 2, active_goals: goalList });
     return {
       output: { prompt: input.prompt },
       exitCode: 2,
@@ -143,6 +153,7 @@ export function run(
 
   // Pass through with gentle reminder
   const reminder = buildReminderContext(goals);
+  debug('user-prompt', 'exit', { action: 'pass_with_reminder', exit_code: 0 });
   return {
     output: { prompt: input.prompt + reminder },
     exitCode: 0,

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Goal, MotiveState } from '../state/models.js';
+import { debug } from '../debug.js';
 
 export interface CuriosityResult {
   activated: boolean;
@@ -50,6 +51,7 @@ export class CuriosityEngine {
 
     const activeGoals = goals.filter(g => g.status === 'active');
     const isIdle = activeGoals.length === 0;
+    debug('curiosity', 'curiosity score', { active_goals: activeGoals.length, is_idle: isIdle, budget });
 
     const suggestedGoals: ExplorationGoal[] = [];
     let reason: CuriosityResult['reason'] = null;
@@ -84,6 +86,7 @@ export class CuriosityEngine {
     }
 
     const limited = suggestedGoals.slice(0, budget);
+    debug('curiosity', 'exploration suggestion', { activated: limited.length > 0, reason, suggestions_count: limited.length });
 
     return {
       activated: limited.length > 0,

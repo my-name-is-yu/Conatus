@@ -1,6 +1,7 @@
 import { StateManager } from '../state/manager.js';
 import { GapAnalysisEngine } from '../engines/gap-analysis.js';
 import { SatisficingEngine } from '../engines/satisficing.js';
+import { debug } from '../debug.js';
 
 export interface StopInput {
   session_id?: string;
@@ -26,6 +27,7 @@ export async function processStop(
   projectRoot?: string
 ): Promise<StopResult> {
   const root = projectRoot ?? process.cwd();
+  debug('stop', 'entry', { session_id: input.session_id, stop_reason: input.stop_reason });
 
   const manager = new StateManager(root);
   const state = manager.loadState();
@@ -34,6 +36,8 @@ export async function processStop(
   const satisficingEngine = new SatisficingEngine();
 
   const goals = manager.loadActiveGoals();
+  debug('stop', 'session summary', { goals_count: goals.length, trust_balance: state.trust_balance.global, stall_count: state.stall_state.stall_count });
+
   const summaries: GoalSummary[] = [];
   let goalsCompleted = 0;
 
@@ -60,6 +64,8 @@ export async function processStop(
     });
   }
 
+  debug('stop', 'goals completed', { completed: goalsCompleted, total: goals.length, completed_ids: summaries.filter(s => s.status === 'completed').map(s => s.id) });
+
   // Remove completed goals from active list
   const completedIds = summaries
     .filter(s => s.status === 'completed')
@@ -81,6 +87,8 @@ export async function processStop(
     goals_completed: goalsCompleted,
     summaries,
   });
+
+  debug('stop', 'exit', { goals_processed: goals.length, goals_completed: goalsCompleted });
 
   return {
     goalsProcessed: goals.length,

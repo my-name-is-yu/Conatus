@@ -1,10 +1,13 @@
 import { Goal, Gap } from '../state/models.js';
+import { debug } from '../debug.js';
 
 const INVERSE_DIMENSIONS = new Set(['open_issues']);
 
 export class GapAnalysisEngine {
   computeGaps(goal: Goal): Gap[] {
     const gaps: Gap[] = [];
+    const thresholdCount = Object.keys(goal.achievement_thresholds).length;
+    debug('gap-analysis', 'computing gaps', { goal_id: goal.id, threshold_dimensions: thresholdCount });
 
     for (const [dim, threshold] of Object.entries(goal.achievement_thresholds)) {
       const sv = goal.state_vector[dim];
@@ -32,7 +35,9 @@ export class GapAnalysisEngine {
       });
     }
 
-    return gaps.sort((a, b) => (b.magnitude * b.confidence) - (a.magnitude * a.confidence));
+    const sorted = gaps.sort((a, b) => (b.magnitude * b.confidence) - (a.magnitude * a.confidence));
+    debug('gap-analysis', 'gaps found', { goal_id: goal.id, gaps_count: sorted.length, max_gap: sorted[0]?.magnitude ?? 0 });
+    return sorted;
   }
 
   maxGapScore(goal: Goal): number {

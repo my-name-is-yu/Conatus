@@ -3,6 +3,7 @@ import { GapAnalysisEngine } from '../engines/gap-analysis.js';
 import { SatisficingEngine } from '../engines/satisficing.js';
 import { StallDetectionEngine } from '../engines/stall-detection.js';
 import type { Goal, StateVectorElement } from '../state/models.js';
+import { debug } from '../debug.js';
 
 export interface PostToolUseInput {
   tool_name: string;
@@ -143,6 +144,8 @@ export async function processPostToolUse(
   projectRoot?: string,
 ): Promise<PostToolUseResult> {
   const root = projectRoot ?? process.cwd();
+  debug('post-tool-use', 'entry', { tool_name: input.tool_name, has_output: Boolean(input.tool_output) });
+
   const manager = new StateManager(root);
   const state = manager.loadState();
 
@@ -159,6 +162,7 @@ export async function processPostToolUse(
 
   const stateUpdates = deriveStateUpdates(input);
   const hasError = hasErrorOutput(input.tool_output ?? '');
+  debug('post-tool-use', 'tool result', { tool_name: input.tool_name, has_error: hasError, state_updates: Object.keys(stateUpdates) });
 
   const goals = manager.loadActiveGoals();
   const goalsCompleted: string[] = [];
@@ -176,6 +180,7 @@ export async function processPostToolUse(
     if (judgment.status === 'completed') {
       goal.status = 'completed';
       goalsCompleted.push(goal.id);
+      debug('post-tool-use', 'gap updates: goal completed', { goal_id: goal.id, judgment: judgment.reason });
 
       // Remove from active list
       state.active_goal_ids = state.active_goal_ids.filter(id => id !== goal.id);
@@ -189,6 +194,7 @@ export async function processPostToolUse(
     stallEngine.onSuccess(input.tool_name);
     state.stall_state.consecutive_failures[input.tool_name] = 0;
     stallResetsApplied.push(input.tool_name);
+    debug('post-tool-use', 'stall reset applied', { tool_name: input.tool_name });
   }
 
   // Persist updated stall state
@@ -205,6 +211,8 @@ export async function processPostToolUse(
     stall_resets: stallResetsApplied,
     timestamp: new Date().toISOString(),
   });
+
+  debug('post-tool-use', 'exit', { goals_updated: goals.length, goals_completed: goalsCompleted.length, stall_resets: stallResetsApplied });
 
   return {
     goalsUpdated: goals.length,

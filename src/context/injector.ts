@@ -4,6 +4,7 @@ import { StateManager } from '../state/manager.js';
 import { GapAnalysisEngine } from '../engines/gap-analysis.js';
 import { TaskGenerationEngine } from '../engines/task-generation.js';
 import type { MotiveState, Goal } from '../state/models.js';
+import { debug } from '../debug.js';
 
 export class ContextInjector {
   private static readonly MAX_CHARS = 2000; // ~500 tokens
@@ -100,6 +101,8 @@ export class ContextInjector {
     if (content.length > ContextInjector.MAX_CHARS) {
       content = content.slice(0, ContextInjector.MAX_CHARS) + '\n...(truncated)\n';
     }
+
+    debug('context-injector', 'context generated', { goals_count: resolvedGoals.length, content_length: content.length, token_estimate: Math.ceil(content.length / 4) });
     return content;
   }
 
@@ -121,6 +124,7 @@ export class ContextInjector {
     const content = this.generate();
     mkdirSync(dirname(this.outputPath), { recursive: true });
     writeFileSync(this.outputPath, content);
+    debug('context-injector', 'token count', { output_path: this.outputPath, content_length: content.length });
     return this.outputPath;
   }
 }

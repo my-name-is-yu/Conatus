@@ -11,6 +11,7 @@ import {
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MotiveState, Goal } from './models.js';
+import { debug } from '../debug.js';
 
 export class StateManager {
   readonly projectRoot: string;
@@ -40,6 +41,7 @@ export class StateManager {
   }
 
   loadState(): MotiveState {
+    debug('state-manager', 'state load path', { path: this.statePath, exists: existsSync(this.statePath) });
     if (!existsSync(this.statePath)) {
       return MotiveState.parse({});
     }
@@ -49,7 +51,9 @@ export class StateManager {
 
   saveState(state: MotiveState): void {
     state.last_updated = new Date().toISOString();
-    this.atomicWrite(this.statePath, JSON.stringify(state, null, 2));
+    const content = JSON.stringify(state, null, 2);
+    debug('state-manager', 'state save path', { path: this.statePath, size_bytes: content.length });
+    this.atomicWrite(this.statePath, content);
   }
 
   loadGoal(goalId: string): Goal | null {

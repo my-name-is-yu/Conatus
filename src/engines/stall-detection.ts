@@ -1,3 +1,5 @@
+import { debug } from '../debug.js';
+
 export type StallCause = 'information_deficit' | 'permission_deficit' | 'capability_deficit' | 'external_dependency';
 
 export type RecoveryStrategy =
@@ -27,9 +29,12 @@ export class StallDetectionEngine {
   onFailure(toolName: string, errorMessage?: string): StallResult | null {
     const count = (this.consecutiveFailures.get(toolName) ?? 0) + 1;
     this.consecutiveFailures.set(toolName, count);
+    debug('stall-detection', 'stall counter', { tool_name: toolName, failure_count: count, threshold: this.failureThreshold });
 
     if (count >= this.failureThreshold) {
-      return this.classifyAndRecover(toolName, count, errorMessage);
+      const result = this.classifyAndRecover(toolName, count, errorMessage);
+      debug('stall-detection', 'detection result: stall triggered', { tool_name: toolName, cause: result.cause, recovery_type: result.recovery.type });
+      return result;
     }
     return null;
   }

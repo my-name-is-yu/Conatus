@@ -10,6 +10,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { debug } from '../debug.js';
 
 // ---------------------------------------------------------------------------
 // Irreversible action patterns
@@ -71,12 +72,16 @@ export interface PreToolUseResult {
 
 export function run(input: PreToolUseInput): PreToolUseResult {
   const { tool_name, tool_input } = input;
+  debug('pre-tool-use', 'entry', { tool_name });
 
   // Build the text corpus to scan: all string values in tool_input
   const corpus = flattenValues(tool_input);
 
   const matched = detectIrreversible(corpus);
+  debug('pre-tool-use', 'irreversible check result', { tool_name, matched: matched ?? 'none', is_irreversible: matched !== null });
+
   if (matched) {
+    debug('pre-tool-use', 'block decision: irreversible action', { tool_name, pattern: matched });
     return {
       exitCode: 2,
       stderrMessage:
@@ -94,7 +99,10 @@ export function run(input: PreToolUseInput): PreToolUseResult {
       (tool_input.file_path as string | undefined) ??
       (tool_input.notebook_path as string | undefined);
 
+    debug('pre-tool-use', 'trust check result', { tool_name, file_path: filePath ?? null });
+
     if (filePath && filePath.startsWith('/') && filePath.includes('..')) {
+      debug('pre-tool-use', 'block decision: path traversal', { tool_name, file_path: filePath });
       return {
         exitCode: 2,
         stderrMessage:
@@ -104,6 +112,7 @@ export function run(input: PreToolUseInput): PreToolUseResult {
     }
   }
 
+  debug('pre-tool-use', 'allow decision', { tool_name });
   return { exitCode: 0 };
 }
 

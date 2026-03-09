@@ -1,6 +1,7 @@
 import { StateManager } from '../state/manager.js';
 import { StallDetectionEngine } from '../engines/stall-detection.js';
 import type { StallResult } from '../engines/stall-detection.js';
+import { debug } from '../debug.js';
 
 export interface PostToolFailureInput {
   tool_name: string;
@@ -27,6 +28,8 @@ export async function processPostToolFailure(
   projectRoot?: string,
 ): Promise<PostToolFailureResult> {
   const root = projectRoot ?? process.cwd();
+  debug('post-tool-failure', 'entry', { tool_name: input.tool_name, error_preview: (input.error ?? '').slice(0, 100) });
+
   const manager = new StateManager(root);
   const state = manager.loadState();
 
@@ -45,10 +48,12 @@ export async function processPostToolFailure(
   // Persist updated failure counter
   const newCount = stallEngine.getFailureCount(input.tool_name);
   state.stall_state.consecutive_failures[input.tool_name] = newCount;
+  debug('post-tool-failure', 'stall detection result', { tool_name: input.tool_name, failure_count: newCount, stall_detected: stallResult !== null });
 
   if (stallResult) {
     state.stall_state.last_stall_at = new Date().toISOString();
     state.stall_state.stall_count = (state.stall_state.stall_count ?? 0) + 1;
+    debug('post-tool-failure', 'recovery suggestion', { cause: stallResult.cause, recovery_type: stallResult.recovery.type, description: stallResult.recovery.description });
   }
 
   manager.saveState(state);
@@ -64,6 +69,8 @@ export async function processPostToolFailure(
   });
 
   const recoveryMessage = stallResult ? buildRecoveryMessage(stallResult) : null;
+
+  debug('post-tool-failure', 'exit', { stall_detected: stallResult !== null, failure_count: newCount });
 
   return {
     stallDetected: stallResult !== null,

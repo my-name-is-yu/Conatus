@@ -1,4 +1,5 @@
 import type { Goal, Gap } from '../state/models.js';
+import { debug } from '../debug.js';
 
 export interface Task {
   id: string;
@@ -39,7 +40,11 @@ export class TaskGenerationEngine {
       });
     }
 
-    return tasks.sort((a, b) => b.priority - a.priority);
+    const sorted = tasks.sort((a, b) => b.priority - a.priority);
+    if (sorted.length > 0) {
+      debug('task-generation', 'task generated', { goal_id: goal.id, top_task: sorted[0].description, priority: sorted[0].priority, reason: `gap dimension: ${sorted[0].target_dimension}` });
+    }
+    return sorted;
   }
 
   /**

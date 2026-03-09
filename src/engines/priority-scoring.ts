@@ -1,4 +1,5 @@
 import type { Goal, Gap } from '../state/models.js';
+import { debug } from '../debug.js';
 
 export interface OpportunityEvent {
   detected_at: string; // ISO date
@@ -86,7 +87,9 @@ export class PriorityScoringEngine {
     if (options.isLastActiveGoal) {
       score += 0.1; // hysteresis to prevent oscillation
     }
-    return Math.min(1.0, score); // clamp to [0, 1]
+    const final = Math.min(1.0, score); // clamp to [0, 1]
+    debug('priority-scoring', 'scoring factors', { goal_id: goal.id, deadline: dl, dissatisfaction: ds, opportunity: op, final_score: final });
+    return final;
   }
 
   /**
