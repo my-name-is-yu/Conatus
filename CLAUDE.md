@@ -4,43 +4,73 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Motiva — AI agent orchestrator that gives existing agents "motivation." Instead of being a plugin inside an agent, Motiva sits above agents and drives them: selecting goals, spawning agent sessions, observing results, and judging completion. Motiva doesn't think — it makes agents think.
+Motiva — AI agent orchestrator that gives existing agents "motivation." Motiva sits above agents and drives them: selecting goals, spawning agent sessions, observing results, and judging completion. Motiva doesn't think — it makes agents think.
 
 ## Status
 
-Architecture pivot complete. Redesign phase — no implementation code yet. Previous PoC (Hooks-based plugin) archived in `archive/`.
+Implementation Phase — Stage 1 complete, Stage 2 next.
+
+### Stage 1 (complete)
+- Type definitions: 11 Zod schema files in `src/types/`
+- `src/state-manager.ts` — file-based JSON persistence (~/.motiva/, atomic writes)
+- `src/gap-calculator.ts` — 5-threshold-type pipeline (raw→normalized→weighted)
+- 79 tests passing (tests/state-manager.test.ts, tests/gap-calculator.test.ts)
+
+### Stage 2 (next)
+- Layer 1: DriveSystem, TrustManager
+- Layer 2: ObservationEngine, DriveScorer, SatisficingJudge, StallDetector
 
 ## Core Concept
 
 - 4-element model: Goal (with thresholds) → Current State (observation + confidence) → Gap → Constraints
-- Orchestrator loop: goal → spawn agent session → observe results → update state → next task (NEVER STOP)
+- Orchestrator loop: observe → gap → score → task → execute → verify (NEVER STOP)
 - Adapter pattern: agent-agnostic (Claude Code CLI, Claude API, custom adapters)
 - Motiva calls LLMs (for goal decomposition, observation) — it is the caller, not the callee
+- Execution boundary: Motiva always delegates. Direct actions are LLM calls (for thinking) and state read/write only
 
 ## Tech Stack
 
 - Node.js 18+, TypeScript 5.3+
-- Will need LLM SDK (Anthropic SDK etc.) — TBD during implementation
-- State persistence: file-based JSON
+- Anthropic SDK (for LLM calls)
+- Zod (schema validation)
+- State persistence: file-based JSON (~/.motiva/)
+- Test: vitest
 
 ## Build & Test
 
-No implementation code yet. When available:
 ```bash
 npm install
 npm run build
 npx vitest run
 ```
 
-## Key Documents
+## Architecture
 
-- `vision.md` — why Motiva exists, what world it creates
-- `concept.md` — core mechanisms (4-element model, orchestration, scoring, satisficing, stall detection, trust)
-- `memory/impl-research-*.md` — integration/delivery/adoption research
+See `memory/impl-roadmap-research.md` for module dependency graph and implementation order.
+
+### Implementation Layers (bottom-up)
+
+- Layer 0: StateManager, AdapterLayer (no dependencies)
+- Layer 1: GapCalculator, DriveSystem, TrustManager
+- Layer 2: ObservationEngine, DriveScorer, SatisficingJudge, StallDetector
+- Layer 3: SessionManager, GoalNegotiator, StrategyManager
+- Layer 4: TaskLifecycle
+- Layer 5: CoreLoop, ReportingEngine
+- Layer 6: CLIRunner
+
+## Design Documents
+
+- `docs/vision.md` — why Motiva exists
+- `docs/mechanism.md` — core loop and orchestration
+- `docs/runtime.md` — process model and execution
+- `docs/design/` — detailed design for each subsystem (14 files)
+
+Design docs are the source of truth for implementation. When in doubt, read the relevant design doc.
 
 ## Key Constraints
 
 - Evidence-based progress observation (never count tool calls as progress)
 - Irreversible actions always require human approval regardless of trust/confidence
-- Trust balance: asymmetric (failure penalty > success reward)
+- Trust balance: asymmetric (failure penalty > success reward), [-100,+100], Δs=+3, Δf=-10
 - Satisficing: stop when "good enough," don't pursue perfection
+- Confidence adjustment applies ONLY in gap-calculation §3 (no triple-application)

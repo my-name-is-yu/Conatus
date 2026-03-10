@@ -1,0 +1,56 @@
+import { z } from "zod";
+import { StrategyStateEnum, DurationSchema } from "./core.js";
+
+// --- Expected Effect ---
+
+export const ExpectedEffectSchema = z.object({
+  dimension: z.string(),
+  direction: z.enum(["increase", "decrease"]),
+  magnitude: z.enum(["small", "medium", "large"]),
+});
+export type ExpectedEffect = z.infer<typeof ExpectedEffectSchema>;
+
+// --- Resource Estimate ---
+
+export const ResourceEstimateSchema = z.object({
+  sessions: z.number(),
+  duration: DurationSchema,
+  llm_calls: z.number().nullable().default(null),
+});
+export type ResourceEstimate = z.infer<typeof ResourceEstimateSchema>;
+
+// --- Strategy ---
+
+export const StrategySchema = z.object({
+  id: z.string(),
+  goal_id: z.string(),
+  target_dimensions: z.array(z.string()),
+  primary_dimension: z.string(),
+
+  hypothesis: z.string(),
+  expected_effect: z.array(ExpectedEffectSchema),
+  resource_estimate: ResourceEstimateSchema,
+
+  state: StrategyStateEnum.default("candidate"),
+  allocation: z.number().min(0).max(1).default(0),
+
+  created_at: z.string(),
+  started_at: z.string().nullable().default(null),
+  completed_at: z.string().nullable().default(null),
+
+  gap_snapshot_at_start: z.number().nullable().default(null),
+  tasks_generated: z.array(z.string()).default([]),
+  effectiveness_score: z.number().nullable().default(null),
+  consecutive_stall_count: z.number().default(0),
+});
+export type Strategy = z.infer<typeof StrategySchema>;
+
+// --- Portfolio ---
+
+export const PortfolioSchema = z.object({
+  goal_id: z.string(),
+  strategies: z.array(StrategySchema),
+  rebalance_interval: DurationSchema,
+  last_rebalanced_at: z.string(),
+});
+export type Portfolio = z.infer<typeof PortfolioSchema>;
