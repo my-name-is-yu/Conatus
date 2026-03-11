@@ -573,6 +573,13 @@ export class CLIRunner {
       return this.cmdReport(goalId);
     }
 
+    if (subcommand === "tui") {
+      // Dynamically import to avoid bundling Ink into the CLI when not needed
+      const { startTUI } = await import("./tui/entry.js");
+      await startTUI();
+      return 0;
+    }
+
     if (subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
       printUsage();
       return 0;
@@ -596,6 +603,7 @@ Usage:
   motiva goal list                    List all registered goals
   motiva status --goal <id>           Show current status and progress
   motiva report --goal <id>           Show latest report
+  motiva tui                          Launch the interactive TUI
 
 Options (motiva run):
   --goal <id>                         Goal ID to run (required)
