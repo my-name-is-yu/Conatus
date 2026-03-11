@@ -459,7 +459,7 @@ export class CLIRunner {
       }
 
       const goalId = values.goal;
-      if (!goalId) {
+      if (!goalId || typeof goalId !== "string") {
         console.error("Error: --goal <id> is required for `motiva run`.");
         return 1;
       }
@@ -537,7 +537,7 @@ export class CLIRunner {
       }
 
       const goalId = values.goal;
-      if (!goalId) {
+      if (!goalId || typeof goalId !== "string") {
         console.error("Error: --goal <id> is required for `motiva status`.");
         return 1;
       }
@@ -560,7 +560,7 @@ export class CLIRunner {
       }
 
       const goalId = values.goal;
-      if (!goalId) {
+      if (!goalId || typeof goalId !== "string") {
         console.error("Error: --goal <id> is required for `motiva report`.");
         return 1;
       }
