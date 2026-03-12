@@ -772,6 +772,437 @@ describe("detectStrategyGap", () => {
   });
 });
 
+// ─── Phase 2 methods ───
+
+describe("Phase 2 methods", () => {
+  describe("activateMultiple", () => {
+    it("activates single strategy with allocation 1.0", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+
+      const activated = manager.activateMultiple("goal-1", [candidate!.id]);
+
+      expect(activated).toHaveLength(1);
+      expect(activated[0]!.state).toBe("active");
+      expect(activated[0]!.allocation).toBe(1.0);
+    });
+
+    it("activates multiple strategies with equal split", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+      const manager = new StrategyManager(stateManager, mock);
+      const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+        currentGap: 0.5,
+        pastStrategies: [],
+      });
+
+      const activated = manager.activateMultiple("goal-1", candidates.map((c) => c.id));
+
+      expect(activated).toHaveLength(2);
+      expect(activated[0]!.allocation).toBeCloseTo(0.5, 5);
+      expect(activated[1]!.allocation).toBeCloseTo(0.5, 5);
+    });
+
+    it("respects min 0.1 and max 0.7 constraints", async () => {
+      // With 2 candidates, 1/2 = 0.5 which is within [0.1, 0.7], so no clamping needed
+      // Test min: can't test easily without 10+ candidates; test max with single candidate (1.0, no max clamp for single)
+      // Test that equal split for 2 does NOT exceed 0.7
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+      const manager = new StrategyManager(stateManager, mock);
+      const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+        currentGap: 0.5,
+        pastStrategies: [],
+      });
+
+      const activated = manager.activateMultiple("goal-1", candidates.map((c) => c.id));
+
+      for (const s of activated) {
+        expect(s.allocation).toBeGreaterThanOrEqual(0.1);
+        expect(s.allocation).toBeLessThanOrEqual(0.7);
+      }
+    });
+
+    it("throws when strategyIds is empty", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+
+      expect(() => manager.activateMultiple("goal-1", [])).toThrow();
+    });
+
+    it("throws when a strategy is not in candidate state", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+
+      // First activation succeeds
+      manager.activateMultiple("goal-1", [candidate!.id]);
+
+      // Second attempt on already-active strategy throws
+      expect(() => manager.activateMultiple("goal-1", [candidate!.id])).toThrow(
+        "not in candidate state"
+      );
+    });
+  });
+
+  describe("terminateStrategy", () => {
+    it("sets state to terminated", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+      manager.updateState(candidate!.id, "active");
+
+      const terminated = manager.terminateStrategy("goal-1", candidate!.id, "test reason");
+
+      expect(terminated.state).toBe("terminated");
+    });
+
+    it("redistributes allocation to remaining active strategies", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+      const manager = new StrategyManager(stateManager, mock);
+      const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+        currentGap: 0.5,
+        pastStrategies: [],
+      });
+
+      // Activate both with equal split (0.5 each)
+      manager.activateMultiple("goal-1", candidates.map((c) => c.id));
+
+      // Terminate first; second should get all its allocation
+      manager.terminateStrategy("goal-1", candidates[0]!.id, "test reason");
+
+      const portfolio = manager.getPortfolio("goal-1");
+      const remaining = portfolio!.strategies.find((s) => s.id === candidates[1]!.id);
+      expect(remaining!.allocation).toBeGreaterThan(0.5);
+    });
+
+    it("handles last strategy termination (no redistribution)", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+      manager.activateMultiple("goal-1", [candidate!.id]);
+
+      // Should not throw even with no remaining strategies
+      expect(() =>
+        manager.terminateStrategy("goal-1", candidate!.id, "last strategy")
+      ).not.toThrow();
+
+      const terminated = manager.terminateStrategy === undefined ? null : manager.getPortfolio("goal-1");
+      const history = manager.getStrategyHistory("goal-1");
+      expect(history.some((s) => s.state === "terminated")).toBe(true);
+    });
+
+    it("archives terminated strategy to history", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+      manager.updateState(candidate!.id, "active");
+
+      manager.terminateStrategy("goal-1", candidate!.id, "test reason");
+
+      const history = manager.getStrategyHistory("goal-1");
+      expect(history.some((s) => s.id === candidate!.id && s.state === "terminated")).toBe(true);
+    });
+  });
+
+  describe("createWaitStrategy", () => {
+    it("creates strategy with wait fields", () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+
+      const result = manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external data",
+        wait_reason: "Awaiting market data",
+        wait_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        measurement_plan: "Check market data API",
+        fallback_strategy_id: null,
+        target_dimensions: ["word_count"],
+        primary_dimension: "word_count",
+      });
+
+      expect(result).toBeDefined();
+      expect(result.hypothesis).toBe("Wait for external data");
+    });
+
+    it("sets state to candidate", () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+
+      const result = manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external data",
+        wait_reason: "Awaiting market data",
+        wait_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        measurement_plan: "Check market data API",
+        fallback_strategy_id: null,
+        target_dimensions: ["word_count"],
+        primary_dimension: "word_count",
+      });
+
+      expect(result.state).toBe("candidate");
+    });
+
+    it("stores in portfolio", () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+
+      const result = manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external data",
+        wait_reason: "Awaiting market data",
+        wait_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        measurement_plan: "Check market data API",
+        fallback_strategy_id: null,
+        target_dimensions: ["word_count"],
+        primary_dimension: "word_count",
+      });
+
+      const portfolio = manager.getPortfolio("goal-1");
+      expect(portfolio).not.toBeNull();
+      expect(portfolio!.strategies.some((s) => s.id === result.id)).toBe(true);
+    });
+
+    it("assigns unique ID", () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const params = {
+        hypothesis: "Wait",
+        wait_reason: "reason",
+        wait_until: new Date(Date.now() + 86400000).toISOString(),
+        measurement_plan: "plan",
+        fallback_strategy_id: null,
+        target_dimensions: ["dim1"],
+        primary_dimension: "dim1",
+      };
+
+      const s1 = manager.createWaitStrategy("goal-1", params);
+      const s2 = manager.createWaitStrategy("goal-1", params);
+
+      expect(s1.id).not.toBe(s2.id);
+    });
+  });
+
+  describe("suspendStrategy", () => {
+    it("sets state to suspended", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+      manager.updateState(candidate!.id, "active");
+
+      const suspended = manager.suspendStrategy("goal-1", candidate!.id);
+
+      expect(suspended.state).toBe("suspended");
+    });
+
+    it("redistributes allocation to remaining active strategies", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+      const manager = new StrategyManager(stateManager, mock);
+      const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+        currentGap: 0.5,
+        pastStrategies: [],
+      });
+
+      manager.activateMultiple("goal-1", candidates.map((c) => c.id));
+      manager.suspendStrategy("goal-1", candidates[0]!.id);
+
+      const portfolio = manager.getPortfolio("goal-1");
+      const remaining = portfolio!.strategies.find((s) => s.id === candidates[1]!.id);
+      expect(remaining!.allocation).toBeGreaterThan(0.5);
+    });
+
+    it("throws when strategy not found", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+
+      expect(() => manager.suspendStrategy("goal-1", "nonexistent-id")).toThrow("not found");
+    });
+
+    it("throws when strategy is not active or evaluating", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+
+      // candidate state is not active — should throw
+      expect(() => manager.suspendStrategy("goal-1", candidate!.id)).toThrow();
+    });
+  });
+
+  describe("resumeStrategy", () => {
+    it("restores to active state", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+      const manager = new StrategyManager(stateManager, mock);
+      const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+        currentGap: 0.5,
+        pastStrategies: [],
+      });
+
+      manager.activateMultiple("goal-1", candidates.map((c) => c.id));
+      manager.suspendStrategy("goal-1", candidates[0]!.id);
+
+      const resumed = manager.resumeStrategy("goal-1", candidates[0]!.id, 0.4);
+
+      expect(resumed.state).toBe("active");
+      expect(resumed.allocation).toBe(0.4);
+    });
+
+    it("adjusts other allocations to maintain sum close to 1.0", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+      const manager = new StrategyManager(stateManager, mock);
+      const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+        currentGap: 0.5,
+        pastStrategies: [],
+      });
+
+      manager.activateMultiple("goal-1", candidates.map((c) => c.id));
+      manager.suspendStrategy("goal-1", candidates[0]!.id);
+      manager.resumeStrategy("goal-1", candidates[0]!.id, 0.4);
+
+      const portfolio = manager.getPortfolio("goal-1");
+      const active = portfolio!.strategies.filter(
+        (s) => s.state === "active" || s.state === "evaluating"
+      );
+      const totalAlloc = active.reduce((sum, s) => sum + s.allocation, 0);
+      expect(totalAlloc).toBeCloseTo(1.0, 5);
+    });
+
+    it("throws when strategy is not suspended", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+      manager.updateState(candidate!.id, "active");
+
+      expect(() => manager.resumeStrategy("goal-1", candidate!.id, 0.5)).toThrow(
+        "must be suspended"
+      );
+    });
+  });
+
+  describe("getAllActiveStrategies", () => {
+    it("returns active and evaluating strategies", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+      const manager = new StrategyManager(stateManager, mock);
+      const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+        currentGap: 0.5,
+        pastStrategies: [],
+      });
+
+      manager.activateMultiple("goal-1", candidates.map((c) => c.id));
+      // Move first to evaluating
+      manager.updateState(candidates[0]!.id, "evaluating");
+
+      const active = manager.getAllActiveStrategies("goal-1");
+
+      expect(active).toHaveLength(2);
+      const states = active.map((s) => s.state);
+      expect(states).toContain("evaluating");
+      expect(states).toContain("active");
+    });
+
+    it("excludes suspended/terminated/candidate strategies", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+      const manager = new StrategyManager(stateManager, mock);
+      const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+        currentGap: 0.5,
+        pastStrategies: [],
+      });
+
+      // Activate both, then suspend one
+      manager.activateMultiple("goal-1", candidates.map((c) => c.id));
+      manager.suspendStrategy("goal-1", candidates[0]!.id);
+
+      const active = manager.getAllActiveStrategies("goal-1");
+
+      // Only the non-suspended one should appear
+      expect(active).toHaveLength(1);
+      expect(active[0]!.id).toBe(candidates[1]!.id);
+    });
+
+    it("returns empty array when no active strategies exist", () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+
+      expect(manager.getAllActiveStrategies("goal-1")).toEqual([]);
+    });
+  });
+
+  describe("updateAllocation", () => {
+    it("updates allocation for specific strategy", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+      manager.updateState(candidate!.id, "active");
+
+      manager.updateAllocation("goal-1", candidate!.id, 0.6);
+
+      const portfolio = manager.getPortfolio("goal-1");
+      const updated = portfolio!.strategies.find((s) => s.id === candidate!.id);
+      expect(updated!.allocation).toBe(0.6);
+    });
+
+    it("throws when allocation is out of [0, 1] range", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+
+      expect(() =>
+        manager.updateAllocation("goal-1", candidate!.id, 1.5)
+      ).toThrow("allocation must be in [0, 1]");
+    });
+
+    it("throws when strategy not found", () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+
+      expect(() =>
+        manager.updateAllocation("goal-1", "nonexistent-id", 0.5)
+      ).toThrow("not found");
+    });
+
+    it("persists updated allocation across manager instances", async () => {
+      const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+      const manager1 = new StrategyManager(stateManager, mock);
+      const [candidate] = await manager1.generateCandidates("goal-1", "word_count", ["word_count"], {
+        currentGap: 0.7,
+        pastStrategies: [],
+      });
+      manager1.updateState(candidate!.id, "active");
+      manager1.updateAllocation("goal-1", candidate!.id, 0.55);
+
+      const manager2 = new StrategyManager(stateManager, createMockLLMClient([]));
+      const portfolio = manager2.getPortfolio("goal-1");
+      const strategy = portfolio!.strategies.find((s) => s.id === candidate!.id);
+      expect(strategy!.allocation).toBe(0.55);
+    });
+  });
+});
+
 // ─── getStrategyHistory ───
 
 describe("getStrategyHistory", () => {

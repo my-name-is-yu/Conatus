@@ -45,6 +45,16 @@ export const StrategySchema = z.object({
 });
 export type Strategy = z.infer<typeof StrategySchema>;
 
+// --- WaitStrategy ---
+
+export const WaitStrategySchema = StrategySchema.extend({
+  wait_reason: z.string(),
+  wait_until: z.string(),
+  measurement_plan: z.string(),
+  fallback_strategy_id: z.string().nullable(),
+});
+export type WaitStrategy = z.infer<typeof WaitStrategySchema>;
+
 // --- Portfolio ---
 
 export const PortfolioSchema = z.object({

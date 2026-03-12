@@ -8,7 +8,7 @@ Motiva — AI agent orchestrator that gives existing agents "motivation." Motiva
 
 ## Status
 
-Implementation Phase — Stage 1-8 complete.
+Implementation Phase — Stage 1-9 complete.
 
 ### Stage 1 (complete)
 - Type definitions: 14 Zod schema files in `src/types/`
@@ -43,6 +43,14 @@ Implementation Phase — Stage 1-8 complete.
 - `src/types/knowledge.ts`, `src/types/capability.ts` — 2 new Zod schema files (total: 16)
 - Integration: ObservationEngine + StrategyManager emit knowledge gap signals, SessionManager injects knowledge context, TaskLifecycle wires EthicsGate.checkMeans() + CapabilityDetector
 - 1191 tests passing across 23 test files
+
+### Stage 9 (complete)
+- `src/portfolio-manager.ts` — portfolio-level orchestration: deterministic task selection (wait-time/allocation ratio), effectiveness measurement (dimension-target matching), auto-rebalancing (score-ratio threshold), termination conditions (3 criteria)
+- `src/types/portfolio.ts` — EffectivenessRecord, RebalanceResult, TaskSelectionResult, PortfolioConfig, AllocationAdjustment (total: 17 Zod schema files)
+- StrategyManager extensions: activateMultiple, terminateStrategy, createWaitStrategy, suspendStrategy, resumeStrategy, getAllActiveStrategies, updateAllocation
+- WaitStrategy support: intentional inaction with measurement plan, expiry handling, fallback activation
+- Integration: CoreLoop + TaskLifecycle wire PortfolioManager (backward compatible, optional dependency)
+- 1266 tests passing across 24 test files
 
 ## Core Concept
 

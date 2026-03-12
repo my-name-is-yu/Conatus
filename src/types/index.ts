@@ -14,3 +14,4 @@ export * from "./ethics.js";
 export * from "./negotiation.js";
 export * from "./knowledge.js";
 export * from "./capability.js";
+export * from "./portfolio.js";

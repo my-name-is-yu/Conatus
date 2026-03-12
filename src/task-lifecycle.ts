@@ -89,6 +89,7 @@ export class TaskLifecycle {
   private readonly approvalFn: (task: Task) => Promise<boolean>;
   private readonly ethicsGate?: EthicsGate;
   private readonly capabilityDetector?: CapabilityDetector;
+  private onTaskComplete?: (strategyId: string) => void;
 
   constructor(
     stateManager: StateManager,
@@ -112,6 +113,16 @@ export class TaskLifecycle {
     this.approvalFn = options?.approvalFn ?? ((_task: Task) => Promise.resolve(false));
     this.ethicsGate = options?.ethicsGate;
     this.capabilityDetector = options?.capabilityDetector;
+  }
+
+  // ─── setOnTaskComplete ───
+
+  /**
+   * Register a callback to be invoked when a task completes successfully.
+   * Used by PortfolioManager to track task completion times per strategy.
+   */
+  setOnTaskComplete(callback: (strategyId: string) => void): void {
+    this.onTaskComplete = callback;
   }
 
   // ─── selectTargetDimension ───
@@ -522,6 +533,11 @@ export class TaskLifecycle {
 
         // Update task history
         this.appendTaskHistory(task.goal_id, completedTask);
+
+        // Notify portfolio manager of task completion
+        if (this.onTaskComplete && completedTask.strategy_id) {
+          this.onTaskComplete(completedTask.strategy_id);
+        }
 
         return { action: "completed", task: completedTask };
       }

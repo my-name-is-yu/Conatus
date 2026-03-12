@@ -1923,4 +1923,202 @@ describe("CoreLoop", () => {
       expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
     });
   });
+
+  // ─── PortfolioManager integration ───
+
+  describe("PortfolioManager integration", () => {
+    function createMockPortfolioManager() {
+      return {
+        selectNextStrategyForTask: vi.fn().mockReturnValue(null),
+        recordTaskCompletion: vi.fn(),
+        shouldRebalance: vi.fn().mockReturnValue(null),
+        rebalance: vi.fn().mockReturnValue({ triggered_by: "periodic", adjustments: [], new_generation_needed: false, timestamp: new Date().toISOString() }),
+        isWaitStrategy: vi.fn().mockReturnValue(false),
+        handleWaitStrategyExpiry: vi.fn().mockReturnValue(null),
+        getRebalanceHistory: vi.fn().mockReturnValue([]),
+      };
+    }
+
+    it("works without portfolioManager (backward compat)", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      // deps has no portfolioManager
+      const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.error).toBeNull();
+      expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
+    });
+
+    it("calls selectNextStrategyForTask when portfolioManager provided", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      const portfolioManager = createMockPortfolioManager();
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(portfolioManager.selectNextStrategyForTask).toHaveBeenCalledWith("goal-1");
+    });
+
+    it("calls setOnTaskComplete when selectNextStrategyForTask returns a result", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      const selectionResult = { strategy_id: "strategy-1", allocation: 0.6 };
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.selectNextStrategyForTask.mockReturnValue(selectionResult);
+
+      // Add setOnTaskComplete to taskLifecycle mock
+      mocks.taskLifecycle.setOnTaskComplete = vi.fn();
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(mocks.taskLifecycle.setOnTaskComplete).toHaveBeenCalledWith(expect.any(Function));
+    });
+
+    it("calls recordTaskCompletion after task completion when strategy_id present", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      // Task result has a strategy_id
+      const taskResultWithStrategy = makeTaskCycleResult({
+        action: "completed",
+        task: {
+          ...makeTaskCycleResult().task,
+          strategy_id: "strategy-abc",
+        },
+      });
+      mocks.taskLifecycle.runTaskCycle.mockResolvedValue(taskResultWithStrategy);
+
+      const portfolioManager = createMockPortfolioManager();
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(portfolioManager.recordTaskCompletion).toHaveBeenCalledWith("strategy-abc");
+    });
+
+    it("does not call recordTaskCompletion when task action is not completed", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      const taskResultKeep = makeTaskCycleResult({
+        action: "keep",
+        task: {
+          ...makeTaskCycleResult().task,
+          strategy_id: "strategy-abc",
+        },
+      });
+      mocks.taskLifecycle.runTaskCycle.mockResolvedValue(taskResultKeep);
+
+      const portfolioManager = createMockPortfolioManager();
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(portfolioManager.recordTaskCompletion).not.toHaveBeenCalled();
+    });
+
+    it("checks shouldRebalance after stall detection", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+      mocks.stallDetector.checkDimensionStall.mockReturnValue(makeStallReport());
+
+      const portfolioManager = createMockPortfolioManager();
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(portfolioManager.shouldRebalance).toHaveBeenCalledWith("goal-1");
+    });
+
+    it("calls rebalance when shouldRebalance returns a trigger", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      const trigger = { type: "periodic" as const, details: "interval elapsed" };
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.shouldRebalance.mockReturnValue(trigger);
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(portfolioManager.rebalance).toHaveBeenCalledWith("goal-1", trigger);
+    });
+
+    it("calls onStallDetected when rebalance requires new generation", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      const trigger = { type: "periodic" as const, details: "interval elapsed" };
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.shouldRebalance.mockReturnValue(trigger);
+      portfolioManager.rebalance.mockReturnValue({
+        triggered_by: "periodic",
+        adjustments: [],
+        new_generation_needed: true,
+        timestamp: new Date().toISOString(),
+      });
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(mocks.strategyManager.onStallDetected).toHaveBeenCalledWith("goal-1", 3);
+    });
+
+    it("handles WaitStrategy expiry check — calls rebalance when handleWaitStrategyExpiry returns a trigger", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      const waitStrategy = {
+        id: "wait-strategy-1",
+        state: "active",
+        goal_id: "goal-1",
+      };
+      // Return a portfolio with a wait strategy
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+
+      const waitTrigger = { type: "wait_expired" as const, details: "wait period elapsed" };
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.isWaitStrategy.mockReturnValue(true);
+      portfolioManager.handleWaitStrategyExpiry.mockReturnValue(waitTrigger);
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(portfolioManager.handleWaitStrategyExpiry).toHaveBeenCalledWith("goal-1", waitStrategy.id);
+      expect(portfolioManager.rebalance).toHaveBeenCalledWith("goal-1", waitTrigger);
+    });
+
+    it("portfolio rebalance errors are non-fatal", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.shouldRebalance.mockImplementation(() => {
+        throw new Error("rebalance check failed");
+      });
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      // Should still reach task cycle
+      expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
+      expect(result.error).toBeNull();
+    });
+  });
 });

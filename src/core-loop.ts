@@ -8,6 +8,7 @@ import type { DriveSystem } from "./drive-system.js";
 import type { AdapterRegistry, IAdapter } from "./adapter-layer.js";
 import type { KnowledgeManager } from "./knowledge-manager.js";
 import type { CapabilityDetector } from "./capability-detector.js";
+import type { PortfolioManager } from "./portfolio-manager.js";
 import type { Goal } from "./types/goal.js";
 import type { GapVector } from "./types/gap.js";
 import type { DriveContext, DriveScore } from "./types/drive.js";
@@ -115,6 +116,7 @@ export interface CoreLoopDeps {
   adapterRegistry: AdapterRegistry;
   knowledgeManager?: KnowledgeManager;
   capabilityDetector?: CapabilityDetector;
+  portfolioManager?: PortfolioManager;
 }
 
 // ─── Helpers ───
@@ -566,6 +568,42 @@ export class CoreLoop {
           }
         }
       }
+
+      // Portfolio: check rebalance after stall detection
+      if (this.deps.portfolioManager) {
+        try {
+          const rebalanceTrigger = this.deps.portfolioManager.shouldRebalance(goalId);
+          if (rebalanceTrigger) {
+            const rebalanceResult = this.deps.portfolioManager.rebalance(goalId, rebalanceTrigger);
+            if (rebalanceResult.new_generation_needed) {
+              // All strategies terminated — regenerate via strategyManager
+              await this.deps.strategyManager.onStallDetected(goalId, 3);
+            }
+          }
+        } catch {
+          // Portfolio rebalance errors are non-fatal
+        }
+
+        // Portfolio: handle WaitStrategy expiry
+        try {
+          const portfolio = this.deps.strategyManager.getPortfolio(goalId);
+          if (portfolio) {
+            for (const strategy of portfolio.strategies) {
+              if (this.deps.portfolioManager.isWaitStrategy(strategy)) {
+                const waitTrigger = this.deps.portfolioManager.handleWaitStrategyExpiry(
+                  goalId,
+                  strategy.id
+                );
+                if (waitTrigger) {
+                  this.deps.portfolioManager.rebalance(goalId, waitTrigger);
+                }
+              }
+            }
+          }
+        } catch {
+          // WaitStrategy expiry errors are non-fatal
+        }
+      }
     } catch (err) {
       // Stall detection errors are non-fatal — log and continue
       // (we still want to run the task cycle)
@@ -575,6 +613,22 @@ export class CoreLoop {
     try {
       const driveContext = buildDriveContext(goal);
       const adapter = this.deps.adapterRegistry.getAdapter(this.config.adapterType);
+
+      // Portfolio: select strategy for next task before generation
+      if (this.deps.portfolioManager) {
+        try {
+          const selectionResult = this.deps.portfolioManager.selectNextStrategyForTask(goalId);
+          if (selectionResult) {
+            // Wire selected strategy as the active strategy for this task cycle
+            // by setting it via the onTaskComplete callback hook on taskLifecycle
+            this.deps.taskLifecycle.setOnTaskComplete((strategyId: string) => {
+              this.deps.portfolioManager!.recordTaskCompletion(strategyId);
+            });
+          }
+        } catch {
+          // Portfolio strategy selection is non-fatal
+        }
+      }
 
       // ─── 7a. Collect relevant knowledge context ───
       let knowledgeContext: string | undefined;
@@ -610,6 +664,15 @@ export class CoreLoop {
         knowledgeContext
       );
       result.taskResult = taskResult;
+
+      // Portfolio: record task completion for the strategy that generated this task
+      if (this.deps.portfolioManager && taskResult.action === "completed" && taskResult.task.strategy_id) {
+        try {
+          this.deps.portfolioManager.recordTaskCompletion(taskResult.task.strategy_id);
+        } catch {
+          // Non-fatal
+        }
+      }
 
       // Re-check completion after task execution
       const updatedGoal = this.deps.stateManager.loadGoal(goalId);
