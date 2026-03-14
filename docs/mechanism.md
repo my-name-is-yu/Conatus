@@ -359,6 +359,8 @@ analyze_experience_log(goal, log_entries):
 
 分析トリガーの拡張とフィードバック先の拡大により、学習パイプラインはもはや「ゴール完了後の振り返り」に留まらない。知識の調達と活用がコアループ内に織り込まれ、ループを回すほど発見精度が上がる構造になっている。
 
+> **Stage 12（2026-03-15完了）**: 意味的埋め込み基盤を追加。`EmbeddingClient`（OpenAI/Ollama抽象化）、`VectorIndex`（cosine similarity検索）、`KnowledgeGraph`（概念ノード・関係エッジ管理）、`GoalDependencyGraph`（DAG依存関係・LLM自動検出）。KnowledgeManager・CuriosityEngine・MemoryLifecycleManager のセマンティック検索を支える横断インフラ。
+
 ---
 
 ## 5. 既存システムとの統合
