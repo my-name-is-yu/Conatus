@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { StateManager } from "./state-manager.js";
 import { ReportSchema } from "./types/report.js";
 import type { Report } from "./types/report.js";
+import type { INotificationDispatcher } from "./notification-dispatcher.js";
 
 // ─── Types ───
 
@@ -35,9 +36,14 @@ export type NotificationContext = {
 
 export class ReportingEngine {
   private readonly stateManager: StateManager;
+  private notificationDispatcher: INotificationDispatcher | null;
 
-  constructor(stateManager: StateManager) {
+  constructor(
+    stateManager: StateManager,
+    notificationDispatcher?: INotificationDispatcher
+  ) {
     this.stateManager = stateManager;
+    this.notificationDispatcher = notificationDispatcher ?? null;
   }
 
   // ─── generateExecutionSummary ───
@@ -443,6 +449,31 @@ export class ReportingEngine {
       read: false,
     });
 
+    this.saveReport(report);
+
+    // Push notification (non-blocking)
+    this.deliverReport(report).catch(() => {});
+
     return report;
+  }
+
+  // ─── deliverReport ───
+
+  /** Deliver a report through push channels (if dispatcher configured) */
+  async deliverReport(report: Report): Promise<void> {
+    if (!this.notificationDispatcher) return;
+
+    try {
+      const results = await this.notificationDispatcher.dispatch(report);
+      const succeeded = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success && !r.suppressed).length;
+
+      // Results are available for callers that want to inspect them;
+      // we intentionally do not throw on failure here.
+      void succeeded;
+      void failed;
+    } catch {
+      // Don't let notification failures crash the loop
+    }
   }
 }

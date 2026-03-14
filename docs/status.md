@@ -1,6 +1,6 @@
 # Implementation Status
 
-Implementation Phase — Stage 1-9 complete (1266 tests, 24 test files).
+Implementation Phase — Stage 1-10 complete (1439 tests, 30 test files).
 
 ## Stage 1 (complete)
 - Type definitions: 14 Zod schema files in `src/types/`
@@ -43,3 +43,13 @@ Implementation Phase — Stage 1-9 complete (1266 tests, 24 test files).
 - WaitStrategy support: intentional inaction with measurement plan, expiry handling, fallback activation
 - Integration: CoreLoop + TaskLifecycle wire PortfolioManager (backward compatible, optional dependency)
 - 1266 tests passing across 24 test files
+
+## Stage 10 (complete)
+- 10.1 Daemon Mode: `src/daemon-runner.ts` (CoreLoop wrapper, PID management, crash recovery, graceful shutdown), `src/pid-manager.ts` (atomic PID file, process detection), `src/logger.ts` (rotating file logger)
+- 10.2 Event-Driven System: `src/event-server.ts` (localhost HTTP endpoint on 127.0.0.1:41700), `src/drive-system.ts` extensions (writeEvent, file watcher, in-memory queue)
+- 10.3 Push Reporting: `src/notification-dispatcher.ts` (Slack webhook, Email stub, generic Webhook, DND, cooldown), `src/reporting-engine.ts` extensions (optional push dispatch)
+- 10.4 CI/CD: `.github/workflows/ci.yml` (Node 18/20/22 matrix, npm publish on tag)
+- 10.5 Memory Lifecycle MVP: `src/memory-lifecycle.ts` (3-tier memory model, Short→Long LLM compression, tag-based Working Memory selection, retention policy, goal close archival, garbage collection)
+- `src/types/daemon.ts`, `src/types/notification.ts`, `src/types/memory-lifecycle.ts` — 3 new Zod schema files (total: 20)
+- CLI: 3 new subcommands (start, stop, cron) added to `src/cli-runner.ts`
+- 1439 tests passing across 30 test files

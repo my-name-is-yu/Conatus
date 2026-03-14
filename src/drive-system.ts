@@ -19,10 +19,16 @@ import type { StateManager } from "./state-manager.js";
 export class DriveSystem {
   private readonly baseDir: string;
   private readonly stateManager: StateManager;
+  private watcher: fs.FSWatcher | null = null;
+  private inMemoryQueue: MotivaEvent[] = [];
+  private onEventCallback: ((event: MotivaEvent) => void) | null = null;
 
   constructor(stateManager: StateManager, options?: { baseDir?: string }) {
     this.stateManager = stateManager;
     this.baseDir = options?.baseDir ?? stateManager.getBaseDir();
+    this.watcher = null;
+    this.inMemoryQueue = [];
+    this.onEventCallback = null;
     this.ensureDirectories();
   }
 
@@ -284,5 +290,71 @@ export class DriveSystem {
     withScore.sort((a, b) => b.score - a.score);
 
     return [...withScore.map((g) => g.id), ...withoutScore];
+  }
+
+  // ─── Event Writing & Real-Time Watching ───
+
+  /**
+   * Write an event file to the events directory.
+   * Public method used by EventServer to enqueue events via HTTP.
+   */
+  writeEvent(event: MotivaEvent): void {
+    const eventsDir = path.join(this.baseDir, "events");
+    fs.mkdirSync(eventsDir, { recursive: true });
+    const filename = `event_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`;
+    const filePath = path.join(eventsDir, filename);
+    const tmpPath = filePath + ".tmp";
+    fs.writeFileSync(tmpPath, JSON.stringify(event, null, 2), "utf-8");
+    fs.renameSync(tmpPath, filePath);
+  }
+
+  /**
+   * Start watching the events directory for new event files.
+   * When a new .json file appears, parse it and push it to the in-memory queue.
+   * Optionally calls onEvent callback immediately on each new event.
+   */
+  startWatcher(onEvent?: (event: MotivaEvent) => void): void {
+    this.onEventCallback = onEvent ?? null;
+    const eventsDir = path.join(this.baseDir, "events");
+    fs.mkdirSync(eventsDir, { recursive: true });
+
+    this.watcher = fs.watch(eventsDir, (eventType, filename) => {
+      if (eventType !== "rename" || !filename?.endsWith(".json")) return;
+      if (filename.endsWith(".tmp")) return;
+
+      const filePath = path.join(eventsDir, filename);
+      try {
+        if (!fs.existsSync(filePath)) return;
+        const content = fs.readFileSync(filePath, "utf-8");
+        const event = MotivaEventSchema.parse(JSON.parse(content) as unknown);
+        this.inMemoryQueue.push(event);
+        if (this.onEventCallback) {
+          this.onEventCallback(event);
+        }
+      } catch {
+        // Ignore invalid event files
+      }
+    });
+  }
+
+  /**
+   * Stop watching the events directory and clear the callback.
+   */
+  stopWatcher(): void {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+    this.onEventCallback = null;
+  }
+
+  /**
+   * Return all events accumulated in the in-memory queue since the last drain,
+   * and clear the queue.
+   */
+  drainInMemoryQueue(): MotivaEvent[] {
+    const events = [...this.inMemoryQueue];
+    this.inMemoryQueue = [];
+    return events;
   }
 }
