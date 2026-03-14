@@ -57,7 +57,7 @@ function makeGoal(overrides: Partial<Goal> = {}): Goal {
 function makeReport() {
   return {
     id: "report-1",
-    report_type: "daily" as const,
+    report_type: "daily_summary" as const,
     goal_id: "goal-1",
     title: "Daily Summary",
     content: "## Daily Summary\n\nAll good.",

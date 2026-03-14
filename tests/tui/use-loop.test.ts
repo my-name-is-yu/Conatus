@@ -73,7 +73,7 @@ function makeMockTrustManager(balance = 0): TrustManager {
     getActionQuadrant: vi.fn(),
     setOverride: vi.fn(),
     addPermanentGate: vi.fn(),
-    isPermanentlyGated: vi.fn().mockReturnValue(false),
+    hasPermanentGate: vi.fn().mockReturnValue(false),
   } as unknown as TrustManager;
 }
 

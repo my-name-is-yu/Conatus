@@ -7,6 +7,7 @@ import { KnowledgeManager } from "../src/knowledge-manager.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm-client.js";
 import type { KnowledgeEntry } from "../src/types/knowledge.js";
 import type { ZodSchema } from "zod";
+import { createMockLLMClient } from "./helpers/mock-llm.js";
 
 // ─── Helpers ───
 
@@ -17,43 +18,6 @@ function makeTempDir(): string {
   );
   fs.mkdirSync(dir, { recursive: true });
   return dir;
-}
-
-/**
- * Create a MockLLMClient that returns the provided responses in order.
- * Uses the same parseJSON logic as the real client (handles markdown code blocks).
- */
-function makeMockLLMClient(responses: string[]): ILLMClient {
-  let callIndex = 0;
-
-  return {
-    async sendMessage(
-      _messages: LLMMessage[],
-      _options?: LLMRequestOptions
-    ): Promise<LLMResponse> {
-      const index = callIndex++;
-      if (index >= responses.length) {
-        throw new Error(
-          `MockLLMClient: no response at index ${index} (${responses.length} responses configured)`
-        );
-      }
-      return {
-        content: responses[index]!,
-        usage: { input_tokens: 10, output_tokens: 50 },
-        stop_reason: "end_turn",
-      };
-    },
-    parseJSON<T>(content: string, schema: ZodSchema<T>): T {
-      const jsonBlock = content.match(/```json\s*([\s\S]*?)```/);
-      const genericBlock = content.match(/```\s*([\s\S]*?)```/);
-      const jsonText = jsonBlock
-        ? jsonBlock[1]!.trim()
-        : genericBlock
-          ? genericBlock[1]!.trim()
-          : content.trim();
-      return schema.parse(JSON.parse(jsonText));
-    },
-  };
 }
 
 function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeEntry {
@@ -93,7 +57,7 @@ afterEach(() => {
 
 describe("detectKnowledgeGap", () => {
   it("returns interpretation_difficulty signal when confidence < 0.3", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const signal = await manager.detectKnowledgeGap({
       observations: [{ value: 28 }],
       strategies: [{ name: "strategy_a" }],
@@ -105,7 +69,7 @@ describe("detectKnowledgeGap", () => {
   });
 
   it("returns interpretation_difficulty when confidence is exactly 0.29", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const signal = await manager.detectKnowledgeGap({
       observations: [],
       strategies: [{ name: "s" }],
@@ -117,7 +81,7 @@ describe("detectKnowledgeGap", () => {
 
   it("does NOT trigger fast-path for confidence exactly 0.3", async () => {
     // confidence === 0.3 is not < 0.3, but strategies is empty → strategy_deadlock fast-path
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const signal = await manager.detectKnowledgeGap({
       observations: [],
       strategies: [],
@@ -128,7 +92,7 @@ describe("detectKnowledgeGap", () => {
   });
 
   it("returns strategy_deadlock signal when strategies array is empty", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const signal = await manager.detectKnowledgeGap({
       observations: [{ value: 50 }],
       strategies: [],
@@ -140,7 +104,7 @@ describe("detectKnowledgeGap", () => {
   });
 
   it("returns strategy_deadlock signal with useful missing_knowledge text", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const signal = await manager.detectKnowledgeGap({
       observations: [],
       strategies: [],
@@ -154,7 +118,7 @@ describe("detectKnowledgeGap", () => {
     const llmResponse = JSON.stringify({ has_gap: false });
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([llmResponse])
+      createMockLLMClient([llmResponse])
     );
     const signal = await manager.detectKnowledgeGap({
       observations: [{ value: 50 }],
@@ -174,7 +138,7 @@ describe("detectKnowledgeGap", () => {
     });
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([llmResponse])
+      createMockLLMClient([llmResponse])
     );
     const signal = await manager.detectKnowledgeGap({
       observations: [{ value: 0.5 }],
@@ -189,7 +153,7 @@ describe("detectKnowledgeGap", () => {
   it("returns null when LLM response is unparseable", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient(["not valid json at all"])
+      createMockLLMClient(["not valid json at all"])
     );
     const signal = await manager.detectKnowledgeGap({
       observations: [{ v: 1 }],
@@ -200,7 +164,7 @@ describe("detectKnowledgeGap", () => {
   });
 
   it("includes related_dimension in fast-path signals (null by default)", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const signal = await manager.detectKnowledgeGap({
       observations: [],
       strategies: [],
@@ -236,7 +200,7 @@ describe("generateAcquisitionTask", () => {
   it("generates a task with task_category: knowledge_acquisition", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.task_category).toBe("knowledge_acquisition");
@@ -245,7 +209,7 @@ describe("generateAcquisitionTask", () => {
   it("generates a task with 3 research questions when LLM returns 3", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse(["Q1", "Q2", "Q3"])])
+      createMockLLMClient([makeLLMFieldsResponse(["Q1", "Q2", "Q3"])])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.approach).toContain("Q1");
@@ -256,7 +220,7 @@ describe("generateAcquisitionTask", () => {
   it("generates a task with 5 research questions when LLM returns 5", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse(["Q1", "Q2", "Q3", "Q4", "Q5"])])
+      createMockLLMClient([makeLLMFieldsResponse(["Q1", "Q2", "Q3", "Q4", "Q5"])])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.approach).toContain("Q5");
@@ -265,7 +229,7 @@ describe("generateAcquisitionTask", () => {
   it("clamps to 5 questions when LLM returns 6", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([
+      createMockLLMClient([
         makeLLMFieldsResponse(["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]),
       ])
     );
@@ -278,7 +242,7 @@ describe("generateAcquisitionTask", () => {
   it("sets reversibility to reversible", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.reversibility).toBe("reversible");
@@ -287,7 +251,7 @@ describe("generateAcquisitionTask", () => {
   it("sets estimated_duration to 4 hours (stall-detection default for research)", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.estimated_duration).toEqual({ value: 4, unit: "hours" });
@@ -296,7 +260,7 @@ describe("generateAcquisitionTask", () => {
   it("sets goal_id correctly", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-42");
     expect(task.goal_id).toBe("goal-42");
@@ -305,7 +269,7 @@ describe("generateAcquisitionTask", () => {
   it("sets primary_dimension from signal related_dimension", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.primary_dimension).toBe("churn_rate");
@@ -320,7 +284,7 @@ describe("generateAcquisitionTask", () => {
     };
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(signal, "goal-1");
     expect(task.primary_dimension).toBe("knowledge");
@@ -329,7 +293,7 @@ describe("generateAcquisitionTask", () => {
   it("includes scope limits in constraints", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.constraints.some((c) => c.includes("scope") || c.includes("Scope"))).toBe(true);
@@ -339,7 +303,7 @@ describe("generateAcquisitionTask", () => {
   it("has out_of_scope containing system modifications", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.scope_boundary.out_of_scope).toContain("System modifications");
@@ -348,7 +312,7 @@ describe("generateAcquisitionTask", () => {
   it("persists the generated task to state", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     const persisted = stateManager.readRaw(`tasks/goal-1/${task.id}.json`);
@@ -358,7 +322,7 @@ describe("generateAcquisitionTask", () => {
   it("has a non-empty work_description", async () => {
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([makeLLMFieldsResponse()])
+      createMockLLMClient([makeLLMFieldsResponse()])
     );
     const task = await manager.generateAcquisitionTask(makeSignal(), "goal-1");
     expect(task.work_description.length).toBeGreaterThan(0);
@@ -371,7 +335,7 @@ describe("generateAcquisitionTask", () => {
 
 describe("saveKnowledge / loadKnowledge", () => {
   it("saves an entry and loads it back", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const entry = makeKnowledgeEntry();
     await manager.saveKnowledge("goal-1", entry);
     const loaded = await manager.loadKnowledge("goal-1");
@@ -380,7 +344,7 @@ describe("saveKnowledge / loadKnowledge", () => {
   });
 
   it("saves multiple entries and loads all", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["a"] });
     const e2 = makeKnowledgeEntry({ entry_id: "e2", tags: ["b"] });
     await manager.saveKnowledge("goal-1", e1);
@@ -390,13 +354,13 @@ describe("saveKnowledge / loadKnowledge", () => {
   });
 
   it("returns empty array for goal with no knowledge", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const loaded = await manager.loadKnowledge("nonexistent-goal");
     expect(loaded).toEqual([]);
   });
 
   it("filters by tags — single tag match", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["breathing_rate", "dog"] });
     const e2 = makeKnowledgeEntry({ entry_id: "e2", tags: ["churn_rate", "saas"] });
     await manager.saveKnowledge("goal-1", e1);
@@ -407,7 +371,7 @@ describe("saveKnowledge / loadKnowledge", () => {
   });
 
   it("filters by tags — multiple tags (AND logic)", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["breathing_rate", "dog", "french_bulldog"] });
     const e2 = makeKnowledgeEntry({ entry_id: "e2", tags: ["breathing_rate", "dog"] });
     await manager.saveKnowledge("goal-1", e1);
@@ -418,7 +382,7 @@ describe("saveKnowledge / loadKnowledge", () => {
   });
 
   it("returns empty array when no entries match tags", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ tags: ["dog"] });
     await manager.saveKnowledge("goal-1", e1);
     const loaded = await manager.loadKnowledge("goal-1", ["cat"]);
@@ -426,7 +390,7 @@ describe("saveKnowledge / loadKnowledge", () => {
   });
 
   it("returns all entries when tags array is empty", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["a"] });
     const e2 = makeKnowledgeEntry({ entry_id: "e2", tags: ["b"] });
     await manager.saveKnowledge("goal-1", e1);
@@ -436,7 +400,7 @@ describe("saveKnowledge / loadKnowledge", () => {
   });
 
   it("persists entry fields accurately (answer, confidence, sources)", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const entry = makeKnowledgeEntry({
       answer: "Specific answer here",
       confidence: 0.85,
@@ -450,7 +414,7 @@ describe("saveKnowledge / loadKnowledge", () => {
   });
 
   it("entries from different goals do not interfere", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["x"] });
     const e2 = makeKnowledgeEntry({ entry_id: "e2", tags: ["y"] });
     await manager.saveKnowledge("goal-A", e1);
@@ -467,14 +431,14 @@ describe("saveKnowledge / loadKnowledge", () => {
 
 describe("checkContradiction", () => {
   it("returns no contradiction when no existing entries share tags", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const entry = makeKnowledgeEntry({ tags: ["unique_tag_xyz"] });
     const result = await manager.checkContradiction("goal-1", entry);
     expect(result.has_contradiction).toBe(false);
   });
 
   it("returns no contradiction when knowledge store is empty", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const entry = makeKnowledgeEntry();
     const result = await manager.checkContradiction("goal-1", entry);
     expect(result.has_contradiction).toBe(false);
@@ -490,7 +454,7 @@ describe("checkContradiction", () => {
     });
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([
+      createMockLLMClient([
         JSON.stringify({
           has_contradiction: true,
           conflicting_entry_id: existingId,
@@ -519,7 +483,7 @@ describe("checkContradiction", () => {
     });
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient([
+      createMockLLMClient([
         JSON.stringify({
           has_contradiction: false,
           conflicting_entry_id: null,
@@ -545,7 +509,7 @@ describe("checkContradiction", () => {
       tags: ["breathing_rate"],
     });
     // No LLM call should be needed (no candidates)
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     await manager.saveKnowledge("goal-1", entry);
     const result = await manager.checkContradiction("goal-1", entry);
     expect(result.has_contradiction).toBe(false);
@@ -558,7 +522,7 @@ describe("checkContradiction", () => {
       superseded_by: "newer-entry-id",
     });
     // No LLM needed since superseded entry is excluded
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     await manager.saveKnowledge("goal-1", superseded);
 
     const newEntry = makeKnowledgeEntry({
@@ -576,7 +540,7 @@ describe("checkContradiction", () => {
     });
     const manager = new KnowledgeManager(
       stateManager,
-      makeMockLLMClient(["not valid json"])
+      createMockLLMClient(["not valid json"])
     );
     await manager.saveKnowledge("goal-1", existing);
 
@@ -595,7 +559,7 @@ describe("checkContradiction", () => {
 
 describe("getRelevantKnowledge", () => {
   it("returns entries whose tags include the dimension name", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["churn_rate", "saas"] });
     const e2 = makeKnowledgeEntry({ entry_id: "e2", tags: ["breathing_rate", "dog"] });
     await manager.saveKnowledge("goal-1", e1);
@@ -607,7 +571,7 @@ describe("getRelevantKnowledge", () => {
   });
 
   it("returns empty array when no entries match the dimension name", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ tags: ["dog"] });
     await manager.saveKnowledge("goal-1", e1);
 
@@ -616,7 +580,7 @@ describe("getRelevantKnowledge", () => {
   });
 
   it("returns multiple entries when multiple match", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["churn_rate", "monthly"] });
     const e2 = makeKnowledgeEntry({ entry_id: "e2", tags: ["churn_rate", "annual"] });
     const e3 = makeKnowledgeEntry({ entry_id: "e3", tags: ["nps", "saas"] });
@@ -632,13 +596,13 @@ describe("getRelevantKnowledge", () => {
   });
 
   it("returns empty array for goal with no knowledge at all", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const result = await manager.getRelevantKnowledge("nonexistent-goal", "dim_x");
     expect(result).toEqual([]);
   });
 
   it("uses exact tag match — dimension name must be a tag, not a substring", async () => {
-    const manager = new KnowledgeManager(stateManager, makeMockLLMClient([]));
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     // Tag "churn" should NOT match dimension "churn_rate"
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["churn"] });
     await manager.saveKnowledge("goal-1", e1);

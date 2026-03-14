@@ -394,6 +394,11 @@ function createMockDeps(tmpDir: string): {
 // ─── Tests ───
 
 describe("CoreLoop", () => {
+  // NOTE: All collaborators are mocked. These tests verify orchestration contract
+  // (correct methods called in correct order, correct exit conditions) but cannot
+  // detect bugs in actual data flow between modules.
+  // For cross-module integration coverage, see core-loop-integration.test.ts
+
   let tmpDir: string;
 
   beforeEach(() => {

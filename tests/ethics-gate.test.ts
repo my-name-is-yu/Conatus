@@ -6,29 +6,7 @@ import { z } from "zod";
 import { StateManager } from "../src/state-manager.js";
 import { EthicsGate } from "../src/ethics-gate.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm-client.js";
-
-// ─── Mock LLM Client ───
-
-function createMockLLMClient(responses: string[]): ILLMClient {
-  let callIndex = 0;
-  return {
-    async sendMessage(
-      _messages: LLMMessage[],
-      _options?: LLMRequestOptions
-    ): Promise<LLMResponse> {
-      const content = responses[callIndex++] ?? "";
-      return {
-        content,
-        usage: { input_tokens: 0, output_tokens: 0 },
-        stop_reason: "end_turn",
-      };
-    },
-    parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
-      const match = content.match(/```json\n?([\s\S]*?)\n?```/) || [null, content];
-      return schema.parse(JSON.parse(match[1] ?? content));
-    },
-  };
-}
+import { createMockLLMClient } from "./helpers/mock-llm.js";
 
 // ─── Fixtures ───
 

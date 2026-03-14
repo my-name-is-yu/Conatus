@@ -7,28 +7,7 @@ import { StateManager } from "../src/state-manager.js";
 import { StrategyManager } from "../src/strategy-manager.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm-client.js";
 import type { Strategy } from "../src/types/strategy.js";
-
-// ─── Mock LLM Client ───
-
-function createMockLLMClient(responses: string[]): ILLMClient {
-  let callIndex = 0;
-  return {
-    async sendMessage(
-      _messages: LLMMessage[],
-      _options?: LLMRequestOptions
-    ): Promise<LLMResponse> {
-      return {
-        content: responses[callIndex++] ?? "",
-        usage: { input_tokens: 0, output_tokens: 0 },
-        stop_reason: "end_turn",
-      };
-    },
-    parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
-      const match = content.match(/```json\n?([\s\S]*?)\n?```/) || [null, content];
-      return schema.parse(JSON.parse(match[1] ?? content));
-    },
-  };
-}
+import { createMockLLMClient } from "./helpers/mock-llm.js";
 
 // ─── Fixtures ───
 

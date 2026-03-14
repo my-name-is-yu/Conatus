@@ -350,6 +350,7 @@ export class TaskLifecycle {
     // ─── Contradiction resolution ───
     let verdict: "pass" | "partial" | "fail";
     let confidence: number;
+    let l2Retry: Awaited<ReturnType<typeof this.runLLMReview>> | undefined;
 
     if (l1Result.applicable) {
       if (l1Result.passed && l2Result.passed) {
@@ -361,7 +362,7 @@ export class TaskLifecycle {
         confidence = 0.7;
       } else if (l1Result.passed && !l2Result.passed && !l2Result.partial) {
         // L1 pass + L2 fail → re-review
-        const l2Retry = await this.runLLMReview(task, executionResult);
+        l2Retry = await this.runLLMReview(task, executionResult);
         if (l2Retry.passed) {
           verdict = "pass";
           confidence = 0.75;
@@ -400,6 +401,9 @@ export class TaskLifecycle {
       verdict = "partial";
     }
 
+    // Use retry result for evidence when a retry occurred, to keep audit trail accurate
+    const effectiveL2 = l2Retry ?? l2Result;
+
     const now = new Date().toISOString();
     const evidence = [
       ...(l1Result.applicable
@@ -413,8 +417,8 @@ export class TaskLifecycle {
         : []),
       {
         layer: "independent_review" as const,
-        description: l2Result.description,
-        confidence: l2Result.confidence,
+        description: effectiveL2.description,
+        confidence: effectiveL2.confidence,
       },
       {
         layer: "self_report" as const,

@@ -534,6 +534,36 @@ describe("edge cases", () => {
     expect(result.normalized_gap).toBeCloseTo(0.5);
   });
 
+  // ─── NaN / Infinity edge cases ───
+  //
+  // JavaScript's IEEE-754 arithmetic produces NaN and ±Infinity in many
+  // realistic scenarios (e.g. sensor dropout, division by zero in upstream
+  // calculations). The tests below document the *current* behaviour of
+  // computeRawGap so that any future change is intentional.
+
+  it("NaN current_value with min threshold: raw gap is NaN (does not silently zero out)", () => {
+    // NaN propagates through numeric subtraction. Callers must sanitise inputs
+    // before passing them to GapCalculator; this test pins the observable behaviour.
+    const result = computeRawGap(NaN, { type: "min", value: 200 });
+    // NaN is not equal to itself — use Number.isNaN to assert propagation.
+    expect(Number.isNaN(result)).toBe(true);
+  });
+
+  it("Infinity current_value with min threshold: gap is 0 (threshold already exceeded)", () => {
+    // Infinity >= any finite threshold, so the gap should be 0 (no deficit).
+    const result = computeRawGap(Infinity, { type: "min", value: 200 });
+    expect(result).toBe(0);
+  });
+
+  it("-Infinity current_value with max threshold: gap is 0 (floor at zero via Math.max)", () => {
+    // -Infinity is below the max threshold, but computeRawGap uses
+    // Math.max(0, current - threshold), so the result is clamped to 0.
+    // This means -Infinity is treated as "no exceedance" — callers should
+    // treat -Infinity as invalid/unobserved data rather than relying on this.
+    const result = computeRawGap(-Infinity, { type: "max", value: 0.05 });
+    expect(result).toBe(0);
+  });
+
   it("doc example: full pipeline verification", () => {
     // From gap-calculation.md examples table:
     // Revenue: min(200), current=120 -> raw=80, norm=0.40

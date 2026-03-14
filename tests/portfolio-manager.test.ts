@@ -158,6 +158,62 @@ describe("PortfolioManager", () => {
       expect(pm.selectNextStrategyForTask("goal-1")).toBeNull();
     });
 
+    it("active strategy allocations sum ≤ 1.0 after rebalancing", () => {
+      // Invariant: the sum of allocations for all active strategies must never
+      // exceed 1.0. Verify this after a rebalance that adjusts allocations.
+      const s1 = makeStrategy({
+        id: "s1",
+        state: "active",
+        allocation: 0.5,
+        tasks_generated: ["t1", "t2", "t3"],
+        target_dimensions: ["quality"],
+        gap_snapshot_at_start: 0.8,
+      });
+      const s2 = makeStrategy({
+        id: "s2",
+        state: "active",
+        allocation: 0.5,
+        tasks_generated: ["t4", "t5", "t6"],
+        target_dimensions: ["speed"],
+        gap_snapshot_at_start: 0.3,
+      });
+      const portfolio = makePortfolio([s1, s2]);
+      (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+      // Scores differ enough to trigger rebalancing (ratio ≥ 2.0)
+      (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockReturnValue({
+        quality: 0.2,
+        speed: 0.2,
+      });
+
+      const trigger = { type: "periodic" as const, strategy_id: null, details: "test" };
+      const result = pm.rebalance("goal-1", trigger);
+
+      // Build final allocations: start with original, apply adjustments
+      const finalAllocations = new Map<string, number>([
+        ["s1", s1.allocation],
+        ["s2", s2.allocation],
+      ]);
+      for (const adj of result.adjustments) {
+        finalAllocations.set(adj.strategy_id, adj.new_allocation);
+      }
+
+      const sum = Array.from(finalAllocations.values()).reduce((a, b) => a + b, 0);
+      // Allow a small floating-point tolerance
+      expect(sum).toBeLessThanOrEqual(1.0 + 1e-9);
+    });
+
+    it("returns null when all strategies are completed", () => {
+      // When every strategy in the portfolio is in a terminal state (completed),
+      // there are no eligible strategies to assign a task to.
+      const portfolio = makePortfolio([
+        makeStrategy({ id: "s1", state: "completed" }),
+        makeStrategy({ id: "s2", state: "completed" }),
+      ]);
+      (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+
+      expect(pm.selectNextStrategyForTask("goal-1")).toBeNull();
+    });
+
     it("uses creation time when no task completions exist", () => {
       // Strategy with null started_at should fallback to portfolio last_rebalanced_at
       const s1 = makeStrategy({

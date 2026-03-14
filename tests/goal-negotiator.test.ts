@@ -10,38 +10,7 @@ import { GoalNegotiator, EthicsRejectedError } from "../src/goal-negotiator.js";
 import { GoalSchema } from "../src/types/goal.js";
 import type { Goal } from "../src/types/goal.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm-client.js";
-
-// ─── Mock LLM Client ───
-
-function createMockLLMClient(responses: string[]): ILLMClient & { callCount: number } {
-  let callIndex = 0;
-  return {
-    get callCount() {
-      return callIndex;
-    },
-    async sendMessage(
-      _messages: LLMMessage[],
-      _options?: LLMRequestOptions
-    ): Promise<LLMResponse> {
-      const content = responses[callIndex++] ?? "";
-      return {
-        content,
-        usage: { input_tokens: 10, output_tokens: content.length },
-        stop_reason: "end_turn",
-      };
-    },
-    parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
-      const jsonBlock = content.match(/```json\s*([\s\S]*?)```/);
-      const genericBlock = content.match(/```\s*([\s\S]*?)```/);
-      const jsonText = jsonBlock
-        ? jsonBlock[1]!.trim()
-        : genericBlock
-          ? genericBlock[1]!.trim()
-          : content.trim();
-      return schema.parse(JSON.parse(jsonText));
-    },
-  };
-}
+import { createMockLLMClient } from "./helpers/mock-llm.js";
 
 // ─── Fixtures ───
 

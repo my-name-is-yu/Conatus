@@ -5,43 +5,12 @@ import * as os from "node:os";
 import { MemoryLifecycleManager } from "../src/memory-lifecycle.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm-client.js";
 import type { ZodSchema } from "zod";
+import { createMockLLMClient } from "./helpers/mock-llm.js";
 
 // ─── Helpers ───
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-memory-test-"));
-}
-
-function makeMockLLMClient(responses: string[]): ILLMClient {
-  let callIndex = 0;
-  return {
-    async sendMessage(
-      _messages: LLMMessage[],
-      _options?: LLMRequestOptions
-    ): Promise<LLMResponse> {
-      const index = callIndex++;
-      if (index >= responses.length) {
-        throw new Error(
-          `MockLLMClient: no response at index ${index} (${responses.length} responses configured)`
-        );
-      }
-      return {
-        content: responses[index]!,
-        usage: { input_tokens: 10, output_tokens: 50 },
-        stop_reason: "end_turn",
-      };
-    },
-    parseJSON<T>(content: string, schema: ZodSchema<T>): T {
-      const jsonBlock = content.match(/```json\s*([\s\S]*?)```/);
-      const genericBlock = content.match(/```\s*([\s\S]*?)```/);
-      const jsonText = jsonBlock
-        ? jsonBlock[1]!.trim()
-        : genericBlock
-          ? genericBlock[1]!.trim()
-          : content.trim();
-      return schema.parse(JSON.parse(jsonText));
-    },
-  };
 }
 
 /** Build a two-call LLM response for compressToLongTerm (patterns + lessons). */
@@ -76,7 +45,7 @@ afterEach(() => {
 
 describe("initializeDirectories", () => {
   it("creates all required short-term and long-term subdirectories", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     const memDir = path.join(tmpDir, "memory");
@@ -88,7 +57,7 @@ describe("initializeDirectories", () => {
   });
 
   it("creates short-term and long-term index.json files", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     const memDir = path.join(tmpDir, "memory");
@@ -97,7 +66,7 @@ describe("initializeDirectories", () => {
   });
 
   it("creates global.json in long-term lessons", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     const globalPath = path.join(
@@ -114,7 +83,7 @@ describe("initializeDirectories", () => {
   });
 
   it("is idempotent — calling twice does not throw or corrupt files", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
     expect(() => mgr.initializeDirectories()).not.toThrow();
 
@@ -131,7 +100,7 @@ describe("initializeDirectories", () => {
 
 describe("recordToShortTerm", () => {
   it("records entry to experience-log.json for experience_log data type", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-1", "experience_log", { event: "loop_start" });
@@ -150,7 +119,7 @@ describe("recordToShortTerm", () => {
   });
 
   it("records entry to observations.json for observation data type", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-1", "observation", { value: 42 });
@@ -167,7 +136,7 @@ describe("recordToShortTerm", () => {
   });
 
   it("creates goal directory if it does not exist yet", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     const goalDir = path.join(tmpDir, "memory", "short-term", "goals", "new-goal");
@@ -179,7 +148,7 @@ describe("recordToShortTerm", () => {
   });
 
   it("returns a ShortTermEntry with generated ID, goal_id, data_type, and data", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     const entry = mgr.recordToShortTerm("goal-1", "knowledge", { fact: "cats meow" });
@@ -191,7 +160,7 @@ describe("recordToShortTerm", () => {
   });
 
   it("updates the short-term index after recording", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-1", "observation", { value: 10 }, { tags: ["perf"] });
@@ -202,7 +171,7 @@ describe("recordToShortTerm", () => {
   });
 
   it("appends multiple entries to the same file without overwriting", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-1", "experience_log", { seq: 1 });
@@ -222,7 +191,7 @@ describe("recordToShortTerm", () => {
   });
 
   it("stores options loopNumber, dimensions, and tags on the entry", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     const entry = mgr.recordToShortTerm(
@@ -238,7 +207,7 @@ describe("recordToShortTerm", () => {
   });
 
   it("entries for different goals are stored independently", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-A", "task", { status: "done" });
@@ -271,7 +240,7 @@ describe("recordToShortTerm", () => {
 
 describe("compressToLongTerm", () => {
   it("returns entries_compressed=0 and lessons_generated=0 when no expired entries", async () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]), {
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]), {
       default_retention_loops: 100,
     });
     mgr.initializeDirectories();
@@ -287,7 +256,7 @@ describe("compressToLongTerm", () => {
   it("compresses expired entries and generates lesson entries in long-term storage", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1)),
+      createMockLLMClient(makeLLMCompressionResponses(1)),
       { default_retention_loops: 5 }
     );
     mgr.initializeDirectories();
@@ -307,7 +276,7 @@ describe("compressToLongTerm", () => {
   it("stores lessons in by-goal file after successful compression", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1)),
+      createMockLLMClient(makeLLMCompressionResponses(1)),
       { default_retention_loops: 5 }
     );
     mgr.initializeDirectories();
@@ -371,7 +340,7 @@ describe("compressToLongTerm", () => {
   it("returns a valid CompressionResult schema (required fields present)", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1)),
+      createMockLLMClient(makeLLMCompressionResponses(1)),
       { default_retention_loops: 5 }
     );
     mgr.initializeDirectories();
@@ -392,7 +361,7 @@ describe("compressToLongTerm", () => {
   });
 
   it("handles empty entries gracefully (returns zero counts)", async () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]), {
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]), {
       default_retention_loops: 5,
     });
     mgr.initializeDirectories();
@@ -408,7 +377,7 @@ describe("compressToLongTerm", () => {
     // 2 failures, 1 lesson → 1 >= 2 * 0.5 → passes
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1)),
+      createMockLLMClient(makeLLMCompressionResponses(1)),
       { default_retention_loops: 5 }
     );
     mgr.initializeDirectories();
@@ -430,7 +399,7 @@ describe("compressToLongTerm", () => {
 
 describe("selectForWorkingMemory", () => {
   it("returns matching short-term entries by tag", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-1", "observation", { v: 1 }, { tags: ["perf"] });
@@ -442,7 +411,7 @@ describe("selectForWorkingMemory", () => {
   });
 
   it("returns matching short-term entries by dimension", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-1", "observation", { v: 10 }, { dimensions: ["churn_rate"] });
@@ -454,7 +423,7 @@ describe("selectForWorkingMemory", () => {
   });
 
   it("respects maxEntries limit", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     for (let i = 0; i < 10; i++) {
@@ -466,7 +435,7 @@ describe("selectForWorkingMemory", () => {
   });
 
   it("returns empty arrays when no matches in short-term or long-term", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-1", "observation", {}, { tags: ["x"] });
@@ -477,7 +446,7 @@ describe("selectForWorkingMemory", () => {
   });
 
   it("returns only entries for the specified goalId, not other goals", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     mgr.recordToShortTerm("goal-A", "observation", {}, { tags: ["shared"] });
@@ -488,7 +457,7 @@ describe("selectForWorkingMemory", () => {
   });
 
   it("returns empty arrays for a goal with no data at all", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     const { shortTerm, lessons } = mgr.selectForWorkingMemory(
@@ -509,7 +478,7 @@ describe("applyRetentionPolicy", () => {
   it("triggers compression when loop span exceeds retention limit", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1)),
+      createMockLLMClient(makeLLMCompressionResponses(1)),
       { default_retention_loops: 5 }
     );
     mgr.initializeDirectories();
@@ -526,7 +495,7 @@ describe("applyRetentionPolicy", () => {
   it("does not trigger compression when span is within retention limit", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient([]),
+      createMockLLMClient([]),
       { default_retention_loops: 100 }
     );
     mgr.initializeDirectories();
@@ -544,7 +513,7 @@ describe("applyRetentionPolicy", () => {
     // health_monitoring has retention=200 (from default overrides)
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient([]),
+      createMockLLMClient([]),
       { default_retention_loops: 5 }
     );
     mgr.initializeDirectories();
@@ -572,7 +541,7 @@ describe("onGoalClose", () => {
   it("creates archive directory for goal on close", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1))
+      createMockLLMClient(makeLLMCompressionResponses(1))
     );
     mgr.initializeDirectories();
 
@@ -587,7 +556,7 @@ describe("onGoalClose", () => {
   it("removes goal's short-term directory after close", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1))
+      createMockLLMClient(makeLLMCompressionResponses(1))
     );
     mgr.initializeDirectories();
 
@@ -610,7 +579,7 @@ describe("onGoalClose", () => {
   it("archives short-term files into archive/<goalId>/", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1))
+      createMockLLMClient(makeLLMCompressionResponses(1))
     );
     mgr.initializeDirectories();
 
@@ -624,7 +593,7 @@ describe("onGoalClose", () => {
   });
 
   it("does not throw when goal has no short-term data", async () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     await expect(mgr.onGoalClose("ghost-goal", "completed")).resolves.not.toThrow();
@@ -637,7 +606,7 @@ describe("onGoalClose", () => {
 
 describe("getStatistics", () => {
   it("returns null for a goal with no statistics", () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     mgr.initializeDirectories();
 
     const stats = mgr.getStatistics("nonexistent-goal");
@@ -647,7 +616,7 @@ describe("getStatistics", () => {
   it("returns a valid StatisticalSummary after compression creates statistics", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1)),
+      createMockLLMClient(makeLLMCompressionResponses(1)),
       { default_retention_loops: 5 }
     );
     mgr.initializeDirectories();
@@ -677,13 +646,13 @@ describe("getStatistics", () => {
 
 describe("runGarbageCollection", () => {
   it("does nothing when short-term directory does not exist", async () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]));
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     // Do NOT call initializeDirectories — directory won't exist
     await expect(mgr.runGarbageCollection()).resolves.not.toThrow();
   });
 
   it("does nothing when all goals are within size limit", async () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, makeMockLLMClient([]), {
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]), {
       size_limits: { short_term_per_goal_mb: 100, long_term_total_mb: 1000 },
     });
     mgr.initializeDirectories();
@@ -700,7 +669,7 @@ describe("runGarbageCollection", () => {
     // Use a tiny size limit (0.000001 MB = ~1 byte) so any data triggers GC
     const mgr = new MemoryLifecycleManager(
       tmpDir,
-      makeMockLLMClient(makeLLMCompressionResponses(1)),
+      createMockLLMClient(makeLLMCompressionResponses(1)),
       { size_limits: { short_term_per_goal_mb: 0.000001, long_term_total_mb: 1000 } }
     );
     mgr.initializeDirectories();

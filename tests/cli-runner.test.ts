@@ -231,6 +231,11 @@ async function runCLI(...args: string[]): Promise<number> {
 
 // ─── Construction ─────────────────────────────────────────────────────────────
 
+// NOTE: All significant dependencies are replaced with vi.fn() mocks.
+// These tests verify argument parsing, exit-code routing, and DI wiring
+// call patterns, but cannot detect bugs in actual dependency implementations.
+// For integration coverage, see cli-runner-integration.test.ts
+
 describe("CLIRunner construction", () => {
   it("can be instantiated", () => {
     const runner = new CLIRunner(tmpDir);

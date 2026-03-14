@@ -18,31 +18,7 @@ import type {
   LLMRequestOptions,
   LLMResponse,
 } from "../src/llm-client.js";
-
-// ─── Mock LLM Client ───
-
-function createMockLLMClient(responses: string[]): ILLMClient {
-  let callIndex = 0;
-  return {
-    async sendMessage(
-      _messages: LLMMessage[],
-      _options?: LLMRequestOptions
-    ): Promise<LLMResponse> {
-      return {
-        content: responses[callIndex++] ?? "",
-        usage: { input_tokens: 0, output_tokens: 0 },
-        stop_reason: "end_turn",
-      };
-    },
-    parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
-      const match = content.match(/```json\n?([\s\S]*?)\n?```/) || [
-        null,
-        content,
-      ];
-      return schema.parse(JSON.parse(match[1] ?? content));
-    },
-  };
-}
+import { createMockLLMClient } from "./helpers/mock-llm.js";
 
 // ─── Spy LLM Client (tracks messages sent) ───
 
@@ -1402,7 +1378,8 @@ describe("TaskLifecycle", () => {
 
     it("handles unparseable LLM response gracefully", async () => {
       // L1 no longer uses LLM, so only L2 gets garbage → should still produce a result
-      const llm = createMockLLMClient(["not json"]);
+      // L1 passes (MVP assumed pass) + L2 fails → triggers L2 retry (2nd call)
+      const llm = createMockLLMClient(["not json", "not json"]);
       const lifecycle = createLifecycle(llm);
       const task = makeTask();
       const result = makeExecutionResult();
@@ -2588,6 +2565,311 @@ describe("TaskLifecycle", () => {
       await lifecycle.executeTask(task, adapter);
 
       expect(statusDuringExecution).toBe("running");
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // failure handling paths
+  // ─────────────────────────────────────────────
+
+  describe("failure handling paths", () => {
+    // ── Test 1: L1 mechanical verification ─────────────────────────────────
+    // The current MVP implementation marks L1 as applicable-but-assumed-pass
+    // when any success criterion has a shell-command verification method.
+    // We verify the full verification pipeline confirms the evidence includes
+    // the mechanical layer, and that verdict is driven by L2 (LLM review).
+
+    it("L1 mechanical criteria detected: evidence includes mechanical layer", async () => {
+      // Task has a shell-command verification method → L1 applicable (assumed pass).
+      // L2 returns "pass" → overall verdict is "pass".
+      const llm = createMockLLMClient([
+        LLM_REVIEW_PASS, // L2 review
+      ]);
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({
+        id: "task-l1-mech",
+        success_criteria: [
+          {
+            description: "Tests pass",
+            verification_method: "npm test",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await lifecycle.verifyTask(task, {
+        success: true,
+        output: "All tests passed",
+        error: null,
+        exit_code: 0,
+        elapsed_ms: 50,
+        stopped_reason: "completed",
+      });
+
+      // Evidence should include the mechanical layer
+      const layers = result.evidence.map((e) => e.layer);
+      expect(layers).toContain("mechanical");
+      expect(layers).toContain("independent_review");
+      // L1 assumed pass + L2 pass → "pass"
+      expect(result.verdict).toBe("pass");
+    });
+
+    it("L1 mechanical criteria detected + L2 fail → re-review → overall fail", async () => {
+      // L1 assumed pass + L2 fail → triggers re-review; if re-review also fails → "fail"
+      const llm = createMockLLMClient([
+        LLM_REVIEW_FAIL, // first L2 review
+        LLM_REVIEW_FAIL, // re-review
+      ]);
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({
+        id: "task-l1-mech-fail",
+        success_criteria: [
+          {
+            description: "Build succeeds",
+            verification_method: "npx tsc --noEmit",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await lifecycle.verifyTask(task, {
+        success: false,
+        output: "TypeScript errors found",
+        error: "Compilation failed",
+        exit_code: 1,
+        elapsed_ms: 30,
+        stopped_reason: "error",
+      });
+
+      expect(result.verdict).toBe("fail");
+    });
+
+    it("L1 not applicable (no shell command): evidence has no mechanical layer, confidence 0.6 on pass", async () => {
+      const llm = createMockLLMClient([
+        LLM_REVIEW_PASS, // L2 returns pass
+      ]);
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({
+        id: "task-l1-skip",
+        success_criteria: [
+          {
+            description: "Peer review approved",
+            verification_method: "Manual code review",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await lifecycle.verifyTask(task, {
+        success: true,
+        output: "Review done",
+        error: null,
+        exit_code: 0,
+        elapsed_ms: 20,
+        stopped_reason: "completed",
+      });
+
+      // L1 skipped → pass with lower confidence (0.6)
+      expect(result.verdict).toBe("pass");
+      expect(result.confidence).toBe(0.6);
+      const layers = result.evidence.map((e) => e.layer);
+      expect(layers).not.toContain("mechanical");
+    });
+
+    // ── Test 2: keep / discard / escalate paths ─────────────────────────────
+
+    it("partial verdict with direction correct (partial = direction correct) → action is keep", async () => {
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({ id: "task-keep" });
+
+      const vr: import("../src/types/task.js").VerificationResult = {
+        task_id: "task-keep",
+        verdict: "partial",
+        confidence: 0.5,
+        evidence: [
+          { layer: "independent_review", description: "Partial progress", confidence: 0.6 },
+        ],
+        dimension_updates: [
+          { dimension_name: "dim", previous_value: 0.5, new_value: 0.65, confidence: 0.5 },
+        ],
+        timestamp: new Date().toISOString(),
+      };
+
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      // Save a goal so dimension updates can be applied
+      stateManager.writeRaw("goals/goal-1.json", {
+        id: "goal-1",
+        dimensions: [{ name: "dim", current_value: 0.5 }],
+      });
+
+      const result = await lifecycle.handleVerdict(task, vr);
+      expect(result.action).toBe("keep");
+    });
+
+    it("fail verdict with reversible task → revert succeeds → action is discard", async () => {
+      // handleFailure: fail verdict → direction wrong (verdict="fail"), reversible →
+      // attemptRevert → revert succeeds → discard.
+      const llm = createMockLLMClient([
+        REVERT_SUCCESS, // attemptRevert calls llm.sendMessage
+      ]);
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({
+        id: "task-discard",
+        reversibility: "reversible",
+        consecutive_failure_count: 0,
+      });
+
+      const vr: import("../src/types/task.js").VerificationResult = {
+        task_id: "task-discard",
+        verdict: "fail",
+        confidence: 0.9,
+        evidence: [
+          { layer: "independent_review", description: "Nothing worked", confidence: 0.8 },
+        ],
+        dimension_updates: [],
+        timestamp: new Date().toISOString(),
+      };
+
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await lifecycle.handleFailure(task, vr);
+      expect(result.action).toBe("discard");
+    });
+
+    it("consecutive_failure_count reaches 3 → action is escalate", async () => {
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm);
+      // Already at 2; handleFailure will increment to 3 → escalate before direction check
+      const task = makeTask({
+        id: "task-escalate",
+        consecutive_failure_count: 2,
+        reversibility: "reversible",
+      });
+
+      const vr: import("../src/types/task.js").VerificationResult = {
+        task_id: "task-escalate",
+        verdict: "fail",
+        confidence: 0.9,
+        evidence: [
+          { layer: "independent_review", description: "Repeated failures", confidence: 0.8 },
+        ],
+        dimension_updates: [],
+        timestamp: new Date().toISOString(),
+      };
+
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await lifecycle.handleFailure(task, vr);
+      expect(result.action).toBe("escalate");
+      expect(result.task.consecutive_failure_count).toBe(3);
+    });
+
+    it("fail verdict with irreversible task and direction wrong → action is escalate without revert", async () => {
+      // No LLM response needed — irreversible goes straight to escalate
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({
+        id: "task-irreversible-fail",
+        reversibility: "irreversible",
+        consecutive_failure_count: 0,
+      });
+
+      const vr: import("../src/types/task.js").VerificationResult = {
+        task_id: "task-irreversible-fail",
+        verdict: "fail",
+        confidence: 0.9,
+        evidence: [
+          { layer: "independent_review", description: "Did not meet criteria", confidence: 0.8 },
+        ],
+        dimension_updates: [],
+        timestamp: new Date().toISOString(),
+      };
+
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await lifecycle.handleFailure(task, vr);
+      expect(result.action).toBe("escalate");
+    });
+
+    // ── Test 3: Adapter timeout ─────────────────────────────────────────────
+
+    it("adapter that rejects with an Error → executeTask catches and returns error result", async () => {
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm);
+
+      const timeoutAdapter: import("../src/task-lifecycle.js").IAdapter = {
+        adapterType: "mock-timeout",
+        async execute() {
+          throw new Error("Adapter execution timed out after 30000ms");
+        },
+      };
+
+      const task = makeTask({ id: "task-timeout" });
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTask(task, timeoutAdapter);
+
+      // executeTask catches the error and returns a graceful failure result
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe("error");
+      expect(result.error).toContain("timed out");
+    });
+
+    it("adapter timeout followed by verifyTask produces a fail verdict", async () => {
+      // When adapter throws, execution result is {success: false}.
+      // verifyTask then calls LLM review with this failed output.
+      const llm = createMockLLMClient([
+        LLM_REVIEW_FAIL, // L2 review for the failed execution
+      ]);
+      const lifecycle = createLifecycle(llm);
+
+      const timeoutAdapter: import("../src/task-lifecycle.js").IAdapter = {
+        adapterType: "mock-timeout",
+        async execute() {
+          throw new Error("Connection timeout");
+        },
+      };
+
+      const task = makeTask({
+        id: "task-timeout-verify",
+        success_criteria: [
+          {
+            description: "Deployment successful",
+            verification_method: "Check deployment status manually",
+            is_blocking: true,
+          },
+        ],
+      });
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const executionResult = await lifecycle.executeTask(task, timeoutAdapter);
+      expect(executionResult.success).toBe(false);
+
+      const verificationResult = await lifecycle.verifyTask(task, executionResult);
+      expect(verificationResult.verdict).toBe("fail");
+    });
+
+    it("adapter that throws a non-Error value is handled gracefully", async () => {
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm);
+
+      const badAdapter: import("../src/task-lifecycle.js").IAdapter = {
+        adapterType: "mock-bad",
+        async execute() {
+          // eslint-disable-next-line @typescript-eslint/no-throw-literal
+          throw "string error value";
+        },
+      };
+
+      const task = makeTask({ id: "task-bad-throw" });
+      stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTask(task, badAdapter);
+
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe("error");
+      expect(typeof result.error).toBe("string");
     });
   });
 });

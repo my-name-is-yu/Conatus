@@ -2,26 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { IntentRecognizer } from "../../src/tui/intent-recognizer.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/llm-client.js";
-
-// ─── Helpers ───
-
-function makeMockLLMClient(response: string): ILLMClient {
-  return {
-    async sendMessage(
-      _messages: LLMMessage[],
-      _options?: LLMRequestOptions
-    ): Promise<LLMResponse> {
-      return {
-        content: response,
-        usage: { input_tokens: 10, output_tokens: response.length },
-        stop_reason: "end_turn",
-      };
-    },
-    parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
-      return schema.parse(JSON.parse(content.trim()));
-    },
-  };
-}
+import { createSingleMockLLMClient as makeMockLLMClient } from "../helpers/mock-llm.js";
 
 // ─── Keyword matching ───
 
