@@ -152,6 +152,41 @@ Implementation Phase — Stage 1-14 complete (2809 tests, 61 files).
 
 **Status**: 完了（2663テスト、53テストファイル、+744テスト、+13テストファイル）
 
+## Dogfooding Phase A/B (complete)
+
+### Phase A: GitHub Issueアダプタ実装
+
+- `src/adapters/github-issue.ts` — GitHubIssueAdapter（IAdapter実装、`gh` CLI経由でissue作成）
+- `src/adapters/github-issue-datasource.ts` — GitHubIssueDataSourceAdapter（IDataSourceAdapter実装、issue状態観測）
+- プロンプト解析: ` ```github-issue JSON``` ` ブロック or フォールバック（1行目=タイトル）
+- 観測次元: open_issue_count, closed_issue_count, completion_ratio, total_issue_count
+- 設定: `MOTIVA_GITHUB_REPO` 環境変数 or コンフィグ、デフォルトラベル `motiva`
+
+成功基準:
+- [x] `motiva run --adapter github_issue` でissueが作成される
+- [x] 作成されたissueが具体的で実行可能
+- [x] 次のループでissue状態を観測できる
+
+### Phase B: 小さいゴールでdogfood開始
+
+ゴール「MotivaのREADMEとGetting Startedガイドを整備する」を1イテレーションで達成。
+
+- アダプタ: OpenAI Codex CLI adapter（`src/adapters/openai-codex.ts`）を使用
+- データソース: FileExistenceDataSourceAdapter（`src/adapters/file-existence-datasource.ts`）でファイル存在を観測
+- 成果物: `README.md`, `docs/getting-started.md`
+- データソース設定修正: 当初 `GETTING_STARTED.md` → `docs/getting-started.md` に変更（実際のファイルパスに合わせる）
+
+成功基準:
+- [x] Motivaが3つ以上の有用なissueを自動起票
+- [x] issueを解決したらMotivaが進捗を正しく認識
+- [x] ループが自然に収束（ゴール達成 or satisficing判定）
+
+### 技術メモ
+
+- `gh` CLI を使用（GitHub API直接呼び出しより簡単、認証も`gh auth`で管理済み）
+- issue本文にMotiva metadata（goal_id, task_id, dimension）を埋め込む（観測時の紐付け用）
+- ラベル `motiva` でフィルタリング、追加ラベルで分類（`docs`, `test`, `bug`等）
+
 ## Post-Stage-14 追加実装 (complete)
 
 **Status**: 完了（2809テスト、61テストファイル）

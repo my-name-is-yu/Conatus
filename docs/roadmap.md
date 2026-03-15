@@ -1,423 +1,327 @@
 # Motiva ロードマップ
 
-前提: Stage 1-14 完了（2663テスト、53テストファイル）。実装済みの詳細は `docs/status.md` 参照。
+## 現在地
 
-Stage 1-11で実装済みの主要機能:
-- Stage 1: Zodスキーマ14ファイル、StateManager、GapCalculator
-- Stage 2: DriveSystem、TrustManager、ObservationEngine、DriveScorer、SatisficingJudge、StallDetector
-- Stage 3: LLMClient、EthicsGate(Layer 2)、SessionManager、StrategyManager、GoalNegotiator
-- Stage 4: AdapterLayer、ClaudeCodeCLIAdapter、ClaudeAPIAdapter、TaskLifecycle
-- Stage 5: ReportingEngine(ファイル+CLI)、CoreLoop
-- Stage 6: CLIRunner(5サブコマンド)
-- Stage 7: TUI(サイドバー、ReportView、useLoop)、npm publish準備
-- Stage 8: KnowledgeManager(ギャップ検知、獲得タスク生成、矛盾検知)、CapabilityDetector(不足検知、レジストリ、ユーザーエスカレーション)
-- Stage 9: PortfolioManager(並列戦略実行、効果測定、自動リバランス、3終了条件)、WaitStrategy
-- Stage 10: DaemonRunner、PIDManager、Logger、EventServer、NotificationDispatcher、MemoryLifecycleManager
-- Stage 11: 好奇心メカニズムMVP、倫理ゲートLayer 1、キャラクターカスタマイズ、満足化Phase 2（集約マッピング）
-
-各設計ドキュメントのPhase 1（MVP）は実装済み。本ロードマップはPhase 2以降の未実装機能を対象とする。
+Stage 1-14 完了（2809テスト、61テストファイル）。Dogfooding Phase A/B 完了。GitHub Issueアダプタ・FileExistenceDataSourceAdapter実装済み。詳細は `docs/status.md` 参照。
 
 ---
 
-## ビジョンへの道筋
+## ロードマップ概要
 
-ビジョン（`docs/vision.md`）が描く世界と、それを実現するStageの対応。
+Motivaは**ユニバーサルタスク発見エンジン**だ — コーディングだけでなく、どんなゴールにも適用できる。Dogfoodingはトラックではなく、各マイルストーンの**検証手段**として組み込まれている。
 
-| # | ビジョン要素 | 説明 | 実現Stage |
-|---|---|---|---|
-| 1 | **Goal-and-forget** | ユーザーがゴールを設定したら、Motivaが自律的に追求する | Stage 10 |
-| 2 | **年単位の永続動作** | セッション・日・月をまたいで動き続ける。蓄積データの記憶ライフサイクル管理（圧縮・忘却・アーカイブ）により、データ肥大化を防ぎつつ教訓を永続保持 | Stage 10 |
-| 3 | **プッシュ型の自己報告** | 適切なタイミング・粒度で自ら報告する | Stage 10 |
-| 4 | **正直な交渉** | 実現可能性を評価し、現実的な提案をする。盲従しない | Stage 11 |
-| 5 | **自律的知識獲得** | ゴール追求の一環としてドメイン知識を学ぶ | Stage 11, 12 |
-| 6 | **現実世界との接続** | ウェアラブル、ビジネスメトリクス、外部API、IoT | Stage 13 |
-| 7 | **自律的ツール調達** | エージェントにツール作成を指示する | Stage 13 |
-| 8 | **人間の役割変化** | タスク指示者からゴール設定者へ | 全Stage |
-| 9 | **再帰的Goal Tree + ポートフォリオ** | N層自動分解、並列戦略管理、動的再計画 | Stage 14 |
-
-※ 実現Stageはその機能が完成するStageを示す。基盤的な部分は先行Stageで着手される場合がある。
+| Milestone | テーマ | 検証方法 |
+|-----------|--------|----------|
+| **1** | 観測強化（LLM-powered観測） | READMEゴールで2ループ検証 |
+| **2** | 中規模Dogfooding（3テーマ） | 実戦での結合バグ検出 |
+| **3** | npm publish & パッケージ化 | Motivaに「publishできる状態にする」ゴールを与える |
+| **4** | 永続ランタイム Phase 2（旧 Stage 10 Phase 2） | Motivaをデーモンとして自律運用 |
+| **5** | 意味的埋め込み Phase 2（旧 Stage 12 Phase 2） | 複数ゴール横断のナレッジ検索検証 |
+| **6** | 能力自律調達 Phase 2（旧 Stage 13 Phase 2） | Motiva自身の新能力調達を委譲 |
+| **7** | 再帰的Goal Tree & 横断ポートフォリオ Phase 2（旧 Stage 14 Phase 2） | 大規模ゴールの木分解と並列実行 |
 
 ---
 
-## 全体サマリー
+## Milestone 1: 観測強化（LLM-powered観測）
 
-| Stage | テーマ | ビジョン対応 | 前提Stage | 状態 |
-|-------|--------|-------------|-----------|------|
-| **10** | 永続ランタイムとプッシュ報告 | 1. Goal-and-forget, 2. 永続動作, 3. プッシュ報告 | 9 | 実装済み |
-| **11** | 好奇心・倫理・キャラクター | 4. 正直な交渉, 5. 自律的知識獲得(MVP) | 9（10と並行可能） | 実装済み |
-| **12** | 意味的埋め込みと知識進化 | 5. 自律的知識獲得(高度化) | 10 | 実装済み |
-| **13** | 能力自律調達と外部世界接続 | 6. 現実世界との接続, 7. 自律的ツール調達 | 11, 12 | 実装済み |
-| **14** | ゴール横断ポートフォリオと学習 | 9. 再帰的Goal Tree + ポートフォリオ | 12, 13 | 実装済み |
+**テーマ**: `self_report` に依存しない、実質的な観測基盤を作る。現状の `self_report` はエージェントが自己申告した値をそのまま記録するだけで、複雑なゴール（品質改善など）には使えない。
 
-Stage 10-12は相互依存がなく、並行着手可能。ただしStage 12のポートフォリオ並列実行はゴール依存グラフ（12.6）と同時に実装することでリソース競合を管理する。記憶ライフサイクルMVP（10.5）はデーモンモード（10.1）と同一Stageで実装し、永続動作とデータ管理をセットで提供する。記憶ライフサイクルPhase 2（12.7）は埋め込み基盤（12.1）を前提とするため、Stage 12に配置する。Stage 13はデーモンモード（10）と好奇心（11）の両方を前提とする。Stage 14は知識基盤（13）とポートフォリオ並列化（12）を前提とする。Stage 15はStage 14の完了を前提とする。
+### C-1: LLM-powered observation実装
 
-```
-Stage 9 (完了)
-  ├── Stage 10 (永続ランタイム) ──┐
-  │                               ├── Stage 12 (埋め込み・知識) ──┐
-  └── Stage 11 (好奇心・倫理) ────┘                               ├── Stage 14 (横断ポートフォリオ)
-                                  └── Stage 13 (調達・外部接続) ──┘
-```
+**実装内容**:
+- `ObservationEngine.observe()` にLLM呼び出しを追加
+  - DataSourceで値が取れない次元に対してLLM評価を実行
+  - ワークスペースのファイル内容をアダプタ経由で取得 → LLMに渡して0-1スコアを返させる
+  - 信頼度: `independent_review` tier (0.50–0.84)
+- LLM観測プロンプト例:
+  ```
+  以下のファイル内容を読み、「{次元ラベル}」を0.0〜1.0で評価してください。
+  ゴール: {goal.description}
+  閾値（目標値）: {threshold}
+  ファイル: {content}
+  回答: {"score": 0.0〜1.0, "reason": "..."}
+  ```
+- 既存DataSource（FileExistence等）で取得可能な次元はDataSource優先
+
+**成功基準**:
+- [ ] `observe()` がLLM観測を実行し `independent_review` 信頼度でスコアを返す
+- [ ] DataSource未設定の次元でもLLM観測でギャップ計算が進む
+
+### C-2: 観測プロンプト改善
+
+**実装内容**:
+- 次元ごとにプロンプトを最適化（ゴールの `description` + 次元の `label` + `threshold` を含める）
+- DataSource観測とLLM観測の結果をマージするロジック
+  - DataSourceが取得できた場合 → DataSource優先（信頼度: `mechanical`）
+  - 取得できない場合 → LLM観測にフォールバック（信頼度: `independent_review`）
+- 次元名の不一致検出: DataSourceの次元名とゴール次元名が一致しない場合に警告ログ出力
+
+**成功基準**:
+- [ ] 次元ごとに適切な信頼度でスコアが返る
+- [ ] 不一致次元名に対して警告が出る
+
+### C-3: 観測精度テスト
+
+**実装内容**:
+- モック環境でLLM観測が正しいスコアを返すか確認するテスト
+- `FileExistenceDataSource` + LLM観測の併用テスト
+- 観測結果がギャップ計算→タスク生成の正しいインプットになるかE2E確認
+
+**成功基準**:
+- [ ] LLM観測テストがvitestで通過
+- [ ] FileExistence + LLM観測の併用でループ1周が完走する
+
+**Milestone 1 Dogfooding検証**: ゴール「MotivaのREADME品質を改善する」を再実行し、LLM観測が `independent_review` 信頼度で正しくスコアを返すことを2ループで確認する。
 
 ---
 
-## Stage 10 -- 永続ランタイムとプッシュ報告
+## Milestone 2: 中規模Dogfooding検証
+
+**前提**: Milestone 1（LLM-powered観測）の完了。
+
+**テーマ**: 観測基盤が整った状態で、より複雑なゴールを試す。タスク品質・dedup・satisficingの実戦検証。
+
+### D-1: README品質ゴール
+
+- **次元**: `readme_quality`（LLMがREADME.mdを評価）、`installation_guide_present`、`usage_example_present`
+- **観測方法**: LLM観測（独立レビュー）
+- **検証ポイント**: LLM観測の精度、タスク生成品質
+- **成功基準**: 2ループ以内に収束
+
+### D-2: E2Eループテスト自動化ゴール
+
+- **次元**: `e2e_test_file_exists`（FileExistenceDataSource）、`e2e_test_passing`（LLM観測）、`approval_loop_fixed`
+- **観測方法**: FileExistenceDataSource + LLM観測の併用
+- **検証ポイント**: DataSource + LLM観測の組み合わせ、ループ収束
+- **成功基準**: DataSource + LLM観測の併用で1ループ完走
+
+### D-3: npm publish準備ゴール
+
+- **次元**: `package_json_valid`（LLM観測: bin/main/exports設定）、`build_succeeds`（FileExistence: dist/ファイル存在）、`version_set`
+- **観測方法**: LLM観測 + FileExistenceDataSource
+- **検証ポイント**: 重複タスク防止（dedup）、satisficing判定
+- **成功基準**: satisficing判定が正しく動作しループが過剰に続かない
+
+---
+
+## Milestone 3: npm publish & パッケージ化
+
+**テーマ**: Motivaを外部から使えるnpmパッケージとして整備する。Motiva自身に「npm publishできる状態にする」ゴールを与え、自分で自分を整備させる。
+
+**実装内容**:
+- `package.json` の `bin`/`main`/`exports`/`types` フィールド整備
+- `npm run build` → `dist/` 出力の確認、TypeScript宣言ファイル生成
+- `README.md` のインストール手順・使用例の充実
+- バージョン戦略（semver）の確立
+- GitHub Actions: `npm publish` の自動化（タグトリガー）
+
+**Dogfooding検証**: Milestone 2のD-3「npm publish準備ゴール」の完了をそのまま検証とする。Motivaが自律的に `package.json` 不足を検出し、issueを起票し、解決まで追跡できれば合格。
+
+---
+
+## Milestone 4: 永続ランタイム Phase 2
 
 **ビジョン対応**: 1. Goal-and-forget / 2. 年単位の永続動作 / 3. プッシュ型の自己報告
 
-現在のMotivaは `motiva run` で手動起動し、プロセス終了とともに停止する。Stage 10でMotivaは「呼ばれたら動く」存在から「自ら動き続ける」存在に変わる。
+Stage 10でデーモンモード・イベント駆動・プッシュ報告のMVPは実装済み。Phase 2ではそれらを実用レベルに強化する。
 
-### 10.1 デーモンモード
+### 4.1 デーモンモード強化
 
-設計: `docs/runtime.md` Phase 2a, 2b
+設計: `docs/runtime.md` Phase 2b
 
-- `motiva start` / `motiva stop` サブコマンド
-- デーモンは内部的にコアループを繰り返し呼び出すラッパー
-- PIDファイル管理、ログローテーション
-- グレースフルシャットダウンとクラッシュリカバリ
+- グレースフルシャットダウンとクラッシュリカバリの実装完成
 - 状態復元: プロセス再起動後に中断地点から再開
-- `motiva cron` コマンドでcrontabエントリーを出力（デーモンを常駐させたくないユーザー向けの代替選択肢）
+- ログローテーション（サイズ/日付ベース）
+- `motiva cron` コマンドでcrontabエントリーを出力（デーモン不要ユーザー向け）
 
-### 10.2 イベント駆動システム
+### 4.2 イベント駆動システム強化
 
 設計: `docs/design/drive-system.md` Phase 2
 
-- インメモリイベントキュー（デーモン常駐時）
 - ファイルウォッチャー（`~/.motiva/events/` リアルタイム監視）
-- ローカルHTTPエンドポイント（デフォルト: `127.0.0.1:41700`、webhook受信）
+- ローカルHTTPエンドポイント（`127.0.0.1:41700`、webhook受信）強化
 - 外部イベントからの駆動トリガー（即時評価）
 
-### 10.3 プッシュ報告
+### 4.3 プッシュ報告強化
 
 設計: `docs/design/reporting.md` Phase 2
 
-- プッシュ通知チャネル追加:
-  - Slack（Webhook URL、コンパクト形式）
-  - メール（SMTP/メールAPI、HTML形式）
-  - Webhook（カスタムURL）
-- デーモンモードによるリアルタイム即時配信
+- Slack Webhook（コンパクト形式）
+- メール（SMTP、HTML形式）
 - Do Not Disturb機能（時間帯ベースの通知抑制、緊急アラート・承認要求は例外）
 - Slackボタンによるインタラクティブ承認応答
-- ユーザー定義のレポートカスタムテンプレート
 - ゴール別レポーティング設定オーバーライド（頻度・詳細度）
-- チャネル別フォーマット
 
-### 10.4 CI/CD
-
-- GitHub Actions（テスト、ビルド、npm publish自動化）
-- バージョニング戦略
-
-### 10.5 記憶ライフサイクル MVP
+### 4.4 記憶ライフサイクル MVP（10.5）
 
 設計: `docs/design/memory-lifecycle.md` Phase 1
 
-- 3層記憶モデル（Working Memory / Short-term Memory / Long-term Memory）の基盤実装
-- Short-term Memory: 設定可能な保持期間管理（ループ数/時間ベース、ゴール種別ごとのデフォルト値）
-- Short→Long 圧縮: LLMによる要約生成（パターン抽出、教訓の蒸留）+ 統計的要約（成功率、平均所要時間等）
-- 要約品質保証: 失敗パターン保持確認、矛盾検知、完全消去の禁止（MVP: 比率チェックで代替）
-- Working Memory選択: タグ完全一致 + 時系列ソートによるコンテキスト組み立て
-- 基本的な忘却ポリシー: 保持期間ベースのアーカイブ、矛盾する知識の自動無効化（superseded マーク）
-- ゴール完了/キャンセル時の教訓抽出とアーカイブ
-- ストレージ設計: `~/.motiva/memory/` ディレクトリ構造（short-term/long-term/archive）
-- インデックス設計: ゴール別・次元別の単純インデックス（タグ、タイムスタンプ、参照情報）
-- ガベージコレクション: サイズ制限（Short-term: ゴールあたり10MB、Long-term: 全体100MB）に基づく自動圧縮
+- 3層記憶モデル（Working / Short-term / Long-term）基盤実装
+- Short-term: 設定可能な保持期間管理（ループ数/時間ベース）
+- Short→Long 圧縮: LLMによる要約生成（パターン抽出、教訓の蒸留）
+- 要約品質保証: 失敗パターン保持確認、矛盾検知
+- ガベージコレクション: サイズ制限（Short-term: ゴールあたり10MB、Long-term: 全体100MB）
+
+**Dogfooding検証**: Motivaをデーモンとして24時間動かし、プッシュ通知が正しいタイミングで届くこと、ループ再起動後に状態が復元されることを確認する。
 
 ---
 
-## Stage 11 -- 好奇心・倫理・キャラクター [実装済み]
-
-**ビジョン対応**: 4. 正直な交渉 / 5. 自律的知識獲得（MVPレベル）
-
-Stage 10と並行して着手可能。「指示されたことを実行する」から「やるべきことを自ら発見する」への進化。好奇心はMotivaを他のエージェントオーケストレーターから決定的に区別する特性であり、Motivaのアイデンティティの核心だ。
-
-### 11.1 好奇心メカニズム MVP
-
-設計: `docs/design/curiosity.md` Phase 1
-
-- 5つの発動条件: タスクキュー空、予測外観測、繰り返し失敗、未定義問題、定期探索
-- 好奇心ゴール生成と承認フロー
-- 学習フィードバック: 高インパクトドメイン優先、失敗パターン再構成、盲点検出
-- クロスゴール転移（MVP: dimension_name完全一致）
-- リソース予算制約: ユーザーゴール優先、最大20%
-- 自動失効（12時間）、同時提案数上限（3）
-
-### 11.2 倫理ゲート Layer 1
-
-設計: `docs/design/goal-ethics.md` Phase 2
-
-- Layer 1: カテゴリベースブロックリスト（意図レベル分類、LLM不要の高速フィルター、jailbreak耐性）
-- TaskLifecycle.generateTask() の手段チェック（`checkMeans()` の統合）
-- ユーザーカスタマイズ可能な追加制約（組織固有のポリシー定義）
-
-### 11.3 キャラクターカスタマイズ
-
-設計: `docs/design/character.md` Phase 2
-
-- 4軸パラメータの調整機能:
-  - `caution_level`: 保守的 <-> 野心的（feasibility閾値の調整）
-  - `stall_flexibility`: 超柔軟 <-> 粘り強い（エスカレーション閾値の調整）
-  - `communication_directness`: 配慮的 <-> 直接的（代替案提示の省略可否）
-  - `proactivity_level`: 有事のみ <-> 詳細（通常ループの詳細度）
-- 構造的制約との分離保証テスト（キャラクターパラメータが倫理ゲート・不可逆操作ルールに波及しないことを検証）
-- `motiva config character` サブコマンド
-
-### 11.4 満足化 Phase 2（部分）
-
-設計: `docs/design/satisficing.md` Phase 2
-
-- 集約マッピング全種対応（min/avg/max/all_required）
-- サブゴール → 上位ゴールの次元伝播
-- 注: 意味的類似度による自動マッピング提案はStage 12に回す
-- ※ ゴール横断のグローバルな学習（類似ドメイン間でのパターン共有）はStage 15.3で実装
-
----
-
-## Stage 12 -- 意味的埋め込みと知識進化
+## Milestone 5: 意味的埋め込み Phase 2
 
 **ビジョン対応**: 5. 自律的知識獲得（高度化）
 
-Stage 10（デーモンモード）に依存。意味的埋め込み基盤を導入し、知識獲得・好奇心・満足化・状態ベクトル・セッション管理を横断的に進化させる。
+Stage 12で埋め込み基盤（EmbeddingClient, VectorIndex, KnowledgeGraph, GoalDependencyGraph）は実装済み。Phase 2ではこれらを実用的な機能として活かす。
 
-### 12.1 埋め込み基盤
-
-新規: LLMClient拡張
-
-- 埋め込みモデル統合（Anthropic/OpenAI）
-- ベクトル検索インフラの構築
-- 埋め込み生成・類似度計算のAPI
-
-### 12.2 知識獲得 Phase 2
+### 5.1 知識獲得 Phase 2 完成（12.2 残り）
 
 設計: `docs/design/knowledge-acquisition.md` Phase 2
 
 - ゴール横断共有ナレッジベース（ゴール別JSONからの移行）
 - 意味的埋め込みによるベクトル検索（異なるゴール間での暗黙的知識共有）
-- 知識グラフ（概念間関係）
-- 矛盾検知の高度化（埋め込み類似度による包括的な矛盾検出）
-- ドメイン安定性に基づく自動再検証スケジュール（知識の陳腐化対処）
+- ドメイン安定性に基づく自動再検証スケジュール
 
-### 12.3 好奇心 Phase 2
+### 5.2 記憶ライフサイクル Phase 2（12.7）
 
-設計: `docs/design/curiosity.md` Phase 2
+設計: `docs/design/memory-lifecycle.md` Phase 2
 
-- 意味的埋め込みによるファジー類似度（クロスゴール転移の高度化）
-  - MVPのdimension_name完全一致から、異なる名前でも構造的に同種の次元を検出
-- 埋め込みベースの盲点検出（`detection_method: "embedding_similarity"`）
+- Drive-based Memory Management: DriveScorer連携（不満駆動・締切駆動・機会駆動での圧縮優先度制御）
+- 意味的検索によるWorking Memory選択（12.1 埋め込み基盤を使ったタグ完全一致 → 埋め込みベースへの移行）
+- Long-term教訓のゴール横断検索
 
-### 12.4 満足化の意味的マッピング
-
-設計: `docs/design/satisficing.md` Phase 2（残り）
-
-- 意味的類似度による自動マッピング提案
-
-### 12.5 状態ベクトル Phase 2
-
-設計: `docs/design/state-vector.md` Phase 2
-
-- 集約次元マッピング全種対応（all_required/min/avg/max）
-- マイルストーンペース評価（on_track/at_risk/behind）とリスケジュール提案
-
-### 12.6 セッション・コンテキスト Phase 2
+### 5.3 セッション・コンテキスト Phase 2（12.6）
 
 設計: `docs/design/session-and-context.md` Phase 2
 
 - バジェットベースの動的コンテキスト選択（MVPの固定top-4から、トークンバジェットに応じた動的選択へ）
-- ゴール依存グラフの実装と管理（4タイプ: prerequisite, resource_conflict, synergy, conflict）
-- LLMによるゴール間依存関係の自動検出
-- 依存グラフに基づくスケジューリング制御（resource_conflict時の排他制御）
+- ゴール依存グラフの活用（resource_conflict時の排他制御）
 
-### 12.7 記憶ライフサイクル Phase 2
-
-設計: `docs/design/memory-lifecycle.md` Phase 2
-
-- Drive-based Memory Management: DriveScorer連携による動的な圧縮優先度制御
-  - 不満駆動: 高不満次元の記憶は圧縮を遅延（保持期間を最大2倍に延長）
-  - 締切駆動: 期限が近い次元の記憶をWorking Memoryに優先的に選択（最大30%ボーナス）
-  - 機会駆動: 類似の好機パターンをLong-term Memoryから優先検索
-- SatisficingJudge連携: 「十分」と判定された次元のShort-termデータを早期圧縮
-- 意味的検索によるWorking Memory選択（12.1 埋め込み基盤を前提、タグ完全一致から埋め込みベースへ）
-- 参照頻度ベースの動的アーカイブ（N回連続未参照でアクティブインデックスから除外）
-- Long-term教訓のゴール横断検索（意味的インデックスによる汎化された知見の共有）
-- 圧縮品質の改善: 要約の再帰的精緻化、失敗エントリとの完全照合
-- 高度な統計: トレンド分析、異常検知パターン
+**Dogfooding検証**: 複数の異なるゴールを同時に与え、一方のゴールで学んだ知識が別ゴールの観測・タスク生成に活用されることを確認する。
 
 ---
 
-## Stage 13 -- 能力自律調達と外部世界接続
+## Milestone 6: 能力自律調達 Phase 2
 
 **ビジョン対応**: 6. 現実世界との接続 / 7. 自律的ツール調達
 
-Stage 11（好奇心・倫理）とStage 12（埋め込み基盤）に依存。Motivaが自ら能力を拡張し、現実世界のデータソースと接続する段階。
+Stage 13でCapabilityDetector拡張・DataSourceAdapterは実装済み。Phase 2ではフルサイクル（能力不足検出→調達→検証→登録）を完成させる。
 
-### 13.1 能力の自律調達
+### 6.1 能力自律調達フルサイクル（13.1）
 
 設計: `docs/design/execution-boundary.md` Phase 2
 
-- エージェントへのツール/コード作成委譲（自律的能力調達）
-- 新能力の検証・自動登録（Capability Registry拡張）
-  - 基本動作、エラーハンドリング、制約との整合性、スコープ境界の検証
+- エージェントへのツール/コード作成委譲（自律的能力調達）の完成
 - 外部サービス連携の自動ガイド生成（設定手順をユーザーに提示、承認後に連携完了）
-- 能力不足検出 → 調達 → 検証 → 登録のフルサイクル
-- 前提: CapabilityDetector（Stage 8で実装済み）
+- 能力不足検出 → 調達 → 検証 → 登録 のフルサイクル検証
 
-### 13.2 外部データソース連携
-
-設計: `docs/vision.md` 5.7
-
-- データソースアダプタの抽象化（DB、API、IoT、ファイル）
-- 観測エンジンの拡張: LLM経由だけでなく直接データソースからの観測
-- メトリクス監視: 定期ポーリング、変化検知、閾値アラート
-- 認証・権限管理の統合
-
-### 13.3 Capability Registryの動的管理
+### 6.2 Capability Registryの動的管理（13.3）
 
 - 委譲可能な能力カタログの動的管理
 - 新しい種類のアダプタ/データソースのホットプラグ
 - 能力の依存関係と組み合わせの管理
-- 他のゴールでも再利用可能な形でのレジストリ登録（調達コンテキストの記録）
+
+**Dogfooding検証**: Motivaに「まだ持っていない能力を使うゴール」を与え、自律的に能力調達タスクをエージェントに委譲し、検証・登録が完了することを確認する。
 
 ---
 
-## Stage 14 -- ゴール横断ポートフォリオと学習
+## Milestone 7: 再帰的Goal Tree & 横断ポートフォリオ Phase 2
 
 **ビジョン対応**: 9. 再帰的Goal Tree + ポートフォリオ
 
-Stage 12, 13に依存。ビジョンが描く「曖昧な上位ゴールからタスクに至る道筋を自ら発見し、複数ゴールを統合管理する」能力の完成形。
+Stage 14でGoalTreeManager・StateAggregator・TreeLoopOrchestrator・CrossGoalPortfolio・LearningPipelineは実装済み。Phase 2では実運用レベルの安定化と高度化を行う。
 
-### 14.1 ゴール横断ポートフォリオ
-
-設計: `docs/design/portfolio-management.md` Phase 3
-
-- 複数ゴール間のリソース配分最適化
-- ゴール間の優先度動的調整
-- 戦略間の依存関係モデリング（ゴール横断）
-- 過去のゴールからの戦略テンプレート推薦
-
-### 14.2 再帰的Goal Tree
+### 7.1 Goal Tree Phase 2（14.2 残り）
 
 設計: `docs/vision.md` 5.2
 
-- N層ゴール自動分解ロジック（LLMによる分解 + 検証）
-- サブゴールの動的追加・剪定・再構成
-- 上位ゴール <-> 下位ゴール間の状態集約と伝播
-- 分解深度の自動制御（具体性閾値に基づく停止判定）
-- 各ノードで独立したタスク発見ループの並列実行
+- N層ゴール自動分解ロジックの品質向上（分解の深さ・粒度の自動制御）
+- サブゴールの動的追加・剪定・再構成の安定化
+- 分解深度の自動停止判定（具体性閾値）
 
-### 14.3 学習パイプライン Phase 2
+### 7.2 ゴール横断ポートフォリオ Phase 2（14.1 残り）
+
+設計: `docs/design/portfolio-management.md` Phase 3
+
+- 複数ゴール間のリソース配分最適化の実用化
+- ゴール間優先度の動的調整（依存グラフ活用）
+- 過去のゴールからの戦略テンプレート推薦の精度向上
+
+### 7.3 学習パイプライン Phase 2（14.3 残り）
 
 設計: `docs/mechanism.md` Phase 2
 
-- 全トリガーからの学習（マイルストーン到達時、停滞検知時、定期レビュー）
-- 全4ステップへの構造的フィードバック（観測精度、戦略選択、スコープサイジング、タスク生成）
-- クロスゴールパターン共有
+- 全4ステップへの構造的フィードバック（観測精度・戦略選択・スコープサイジング・タスク生成）
+- クロスゴールパターン共有の実用化
 
-### 14.4 ゴール間の知識・戦略転移
-
-- ゴールAでの学習をゴールBに自動適用
-- ドメイン横断のパターン認識
-- ゴール横断ナレッジベース（Stage 12）を活用した知識転移
+**Dogfooding検証**: Motivaに大規模・曖昧なゴール（「Motivaのコード品質を改善する」）を与え、ゴール木として自動分解し、並列ノードループが干渉なく動作することを確認する。
 
 ---
 
-## Stage間の依存関係
+## Phase E: 大規模ゴール（将来）
 
-### 技術的依存
+Milestone 1-7 の安定化後に着手する探索的テーマ。
 
-```
-デーモンモード (10.1)
-  └── enables: インメモリイベントキュー (10.2)
-  └── enables: プッシュ通知リアルタイム配信 (10.3)
+- **「Motivaのコード品質を改善する」** — 全ソースのリファクタリング提案をissue起票、ゴール木として追跡
+- **「Motivaを完成させる」** — ロードマップに沿った残機能実装の自動追跡、学習パイプラインへの蓄積
 
-意味的埋め込み基盤 (12.1)
-  └── enables: ベクトル検索 (12.2)
-  └── enables: ファジー類似度 (12.3)
-  └── enables: 自動マッピング (12.4)
-  └── enables: 集約次元マッピング (12.5)
+各段階で学んだことをMotiva自身のLearningPipelineに蓄積し、次のゴールに知識転移する。
 
-ゴール横断ナレッジベース (12.2)
-  └── enables: クロスゴールパターン共有 (14.3)
-  └── enables: クロスゴール転移高度化 (12.3)
+---
 
-ゴール依存グラフ (12.6)
-  └── enables: 戦略間依存関係モデリング (14.1)
-  └── enables: ゴール横断ポートフォリオ (14.1)
+## Lessons Learned（Phase A/B Dogfoodingから）
 
-記憶ライフサイクル MVP (10.5)
-  └── enables: 年単位の安定運用（データ肥大化防止）
+将来のMilestoneで活きる教訓。
 
-Drive-based Memory Management (12.7)
-  └── requires: 埋め込み基盤 (12.1)
-  └── requires: DriveScorer（Stage 2で実装済み）
-```
+1. **DataSource次元名とゴール次元名の不一致がスタックの最大原因**
+   - DataSourceが返す次元名（例: `file_exists`）とゴール定義の次元名（例: `readme_completeness`）が一致しないと観測値が使われず、ループが前進しない
+   - Milestone 1 C-2で不一致検出の警告ログを追加する
 
-### 独立して着手可能な機能
+2. **`--yes` フラグがないと承認ループで止まる**
+   - インタラクティブな承認プロンプトがある限り、自動実行ができない
+   - Dogfoodingでは常に `--yes` を使う。承認が必要な場面では明示的に除外する
 
-以下はStage 9完了時点で外部依存なく実装可能:
+3. **ファイルパス設定ミスで観測がずれる → 設定検証の仕組みが必要**
+   - Phase Bで `GETTING_STARTED.md` → `docs/getting-started.md` の修正が必要だった
+   - DataSource設定時にファイルパスの存在チェックや正規化を行う仕組みを将来整備する
 
-- 好奇心 MVP（11.1）: 既存機能のみで実装可能
-- 倫理ゲート Layer 1（11.2）: 外部依存なし
-- キャラクターカスタマイズ（11.3）: リファクタリングのみ
-- 能力自律調達（13.1）: CapabilityDetector（Stage 8）が前提だが実装済み
+4. **`self_report` 観測は実質何もしない → LLM-powered観測が必須**
+   - `self_report` はエージェントが自己申告した値をそのまま記録するだけ
+   - 複雑なゴール（品質改善など）ではLLMが独立してワークスペースを評価する必要がある（Milestone 1 C-1）
+
+5. **単純なゴールでも多くのバグが見つかる → Dogfoodingの価値は高い**
+   - Phase Bの1ゴールだけで、次元名不一致・ファイルパスミス・`--yes`フラグ不足など複数の問題が露見した
+   - 実際のゴールを動かすことでユニットテストでは発見できない結合バグが見つかる
 
 ---
 
 ## リスクフラグ
 
-| リスク | 該当Stage | 対応方針 |
-|--------|----------|----------|
-| Node.jsデーモン化のプロセス管理 | 10 | pm2等の外部ツール依存を検討。設計フェーズで技術選定 |
-| プッシュ通知の信頼性と頻度制御 | 10 | 通知疲れを避ける設計が必要。MVP時はSlack webhookに絞る |
-| 好奇心ゴールのスコープ制御 | 11 | 5つの制約（ユーザーゴール優先、同時提案上限、自動失効、スコープ制約、リソース予算）が安全弁 |
-| キャラクターカスタマイズと安全性 | 11 | 構造的制約との分離をテストで保証。「性格を緩めて倫理ゲートを迂回する」リスクの排除 |
-| LLM要約による情報欠落 | 10 | 要約品質の検証が必要。MVPでは比率チェックで代替、Phase 2で完全照合 |
-| 埋め込みモデルの技術選定 | 12 | Anthropic/OpenAIの埋め込みモデルと検索エンジンの選定。Stage 10完了時に技術調査 |
-| ベクトル検索のスケーラビリティ | 12 | ローカルファイルベースから開始し、必要に応じて外部DBに移行 |
-| 能力自律調達の安全性 | 13 | EthicsGateとの統合を密に。エージェントが作成するツールの検証が不可欠 |
-| 外部データソースの多様性 | 13 | アダプタパターンで抽象化するが、実際のデータソースごとに個別対応が必要 |
-| N層Goal Tree分解の品質 | 14 | 分解の深さ・粒度をLLMに依存する。検証ループと人間レビューの併用 |
-| ゴール横断ポートフォリオの複雑性 | 14 | 単一ゴール内の並列化（Stage 9）が安定してから着手。段階的なリスク管理 |
+| リスク | 該当Milestone | 対応方針 |
+|--------|--------------|----------|
+| LLM観測の精度とコスト | M1 | 観測1回あたりの推定コストを計測。高コストな次元はキャッシュ優先 |
+| DataSource次元名不一致 | M1 | 不一致検出の警告ログ（C-2）が安全弁。将来的に自動マッピング提案 |
+| Node.jsデーモン化のプロセス管理 | M4 | pm2等の外部ツール依存を検討。設計フェーズで技術選定 |
+| プッシュ通知の信頼性と頻度制御 | M4 | 通知疲れを避ける設計が必要。MVP時はSlack webhookに絞る |
+| LLM要約による情報欠落 | M4 | 要約品質の検証が必要。MVPでは比率チェックで代替、Phase 2で完全照合 |
+| 埋め込みモデルの技術選定 | M5 | IEmbeddingClient抽象化済み（OpenAI/Ollama/Mock）。選定は実測コストで判断 |
+| ベクトル検索のスケーラビリティ | M5 | ローカルファイルベースから開始し、必要に応じて外部DBに移行 |
+| 能力自律調達の安全性 | M6 | EthicsGateとの統合を密に。エージェントが作成するツールの検証が不可欠 |
+| N層Goal Tree分解の品質 | M7 | 分解の深さ・粒度をLLMに依存する。検証ループと人間レビューの併用 |
+| ゴール横断ポートフォリオの複雑性 | M7 | 単一ゴール内の並列化が安定してから着手。段階的なリスク管理 |
 
 ---
 
 ## 設計ドキュメントとの対応
 
-| 設計ドキュメント | 対応Stage | Phase |
-|----------------|----------|-------|
-| `runtime.md` | 10.1 | Phase 2a, 2b |
-| `drive-system.md` | 10.2 | Phase 2 |
-| `reporting.md` | 10.3 | Phase 2 |
-| `curiosity.md` | 11.1 (MVP), 12.3 (Phase 2) | Phase 1, 2 |
-| `goal-ethics.md` | 11.2 | Phase 2 (Layer 1 + means check + user constraints) |
-| `character.md` | 11.3 | Phase 2 |
-| `satisficing.md` | 11.4 (集約), 12.4 (意味的) | Phase 2 |
-| `knowledge-acquisition.md` | 12.2 | Phase 2 |
-| `state-vector.md` | 12.5 | Phase 2 |
-| `session-and-context.md` | 12.6 | Phase 2 |
-| `memory-lifecycle.md` | 10.5 (MVP), 12.7 (Phase 2) | Phase 1, 2 |
-| `execution-boundary.md` | 13.1 | Phase 2 |
-| `portfolio-management.md` | 14.1 | Phase 3 |
-| `mechanism.md` (学習パイプライン) | 14.3 | Phase 2 |
-| `vision.md` (Goal Tree) | 14.2 | -- |
-| `vision.md` (外部世界接続) | 13.2 | -- |
-
-**Phase 2がない設計ドキュメント**: observation.md, stall-detection.md, drive-scoring.md, gap-calculation.md, goal-negotiation.md, trust-and-safety.md, task-lifecycle.md -- これらはPhase 1で完結しており、本ロードマップの対象外。
-
----
-
-## 全Stage完了時のビジョン到達度
-
-Stage 14まで完了すると、ビジョンが描く世界の大部分が実現される。
-
-| ビジョン要素 | 実現手段 | 到達Stage |
-|---|---|---|
-| **Goal-and-forget** | デーモンモード + イベント駆動で、人間の介入なしに動き続ける | 10 |
-| **年単位の永続動作** | 永続ランタイム + 状態復元 + クラッシュリカバリ + 記憶ライフサイクル管理（データ圧縮・忘却・アーカイブ） | 10 |
-| **プッシュ型の自己報告** | プッシュ通知 + 定期レポート + 緊急アラート + DND | 10 |
-| **正直な交渉** | GoalNegotiator（実装済み）+ キャラクターカスタマイズ | 11 |
-| **自律的知識獲得** | 好奇心メカニズム + ゴール横断ナレッジベース + ベクトル検索 + ナレッジグラフ | 11, 12 |
-| **現実世界との接続** | 外部データソースアダプタ + メトリクス監視 | 13 |
-| **自律的ツール調達** | エージェントへの委譲 + 検証 + 自動登録 | 13 |
-| **人間の役割変化** | 上記すべてにより、タスク指示者からゴール設定者へ | 全体 |
-| **再帰的Goal Tree + ポートフォリオ** | N層自動分解 + ゴール横断ポートフォリオ + 知識・戦略転移 | 14 |
-
-残る発展領域は、実運用を通じて発見されるドメイン固有の最適化と、ユーザーコミュニティからのフィードバックに基づく進化になる。
+| 設計ドキュメント | 対応Milestone | フェーズ |
+|----------------|--------------|---------|
+| `observation.md` | M1 (C-1, C-2) | Phase 2 (LLM観測) |
+| `runtime.md` | M4 (4.1) | Phase 2b |
+| `drive-system.md` | M4 (4.2) | Phase 2 |
+| `reporting.md` | M4 (4.3) | Phase 2 |
+| `memory-lifecycle.md` | M4 (4.4 MVP), M5 (5.2 Phase 2) | Phase 1, 2 |
+| `knowledge-acquisition.md` | M5 (5.1) | Phase 2 |
+| `session-and-context.md` | M5 (5.3) | Phase 2 |
+| `execution-boundary.md` | M6 (6.1) | Phase 2 |
+| `portfolio-management.md` | M7 (7.2) | Phase 3 |
+| `mechanism.md` (学習パイプライン) | M7 (7.3) | Phase 2 |
+| `vision.md` (Goal Tree) | M7 (7.1) | -- |
