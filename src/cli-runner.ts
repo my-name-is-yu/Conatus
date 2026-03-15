@@ -97,7 +97,7 @@ export class CLIRunner {
     };
   }
 
-  private buildDeps(_apiKey: string | undefined, config?: LoopConfig, approvalFn?: (task: Task) => Promise<boolean>) {
+  private buildDeps(_apiKey: string | undefined, config?: LoopConfig, approvalFn?: (task: Task) => Promise<boolean>, logger?: Logger) {
     const stateManager = this.stateManager;
     const characterConfig = this.characterConfigManager.load();
     const llmClient = buildLLMClient();
@@ -138,7 +138,7 @@ export class CLIRunner {
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn }
+      { approvalFn, logger }
     );
 
     const reportingEngine = new ReportingEngine(stateManager, undefined, characterConfig);
@@ -180,6 +180,7 @@ export class CLIRunner {
       goalTreeManager,
       stateAggregator,
       treeLoopOrchestrator,
+      logger,
     }, config);
 
     const goalNegotiator = new GoalNegotiator(
@@ -234,9 +235,15 @@ export class CLIRunner {
         }
       : this.buildApprovalFn(rl!);
 
+    const logger = new Logger({
+      dir: path.join(os.homedir(), ".motiva", "logs"),
+      level: "debug",
+      consoleOutput: false,
+    });
+
     let deps: ReturnType<typeof this.buildDeps>;
     try {
-      deps = this.buildDeps(apiKey, loopConfig, approvalFn);
+      deps = this.buildDeps(apiKey, loopConfig, approvalFn, logger);
     } catch (err) {
       rl?.close();
       const message = err instanceof Error ? err.message : String(err);

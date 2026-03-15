@@ -1,4 +1,5 @@
 import { CuriosityEngine } from "./curiosity-engine.js";
+import type { Logger } from "./logger.js";
 import type { KnowledgeTransfer } from "./knowledge-transfer.js";
 import type { TransferCandidate } from "./types/cross-portfolio.js";
 import type { CrossGoalPortfolio } from "./cross-goal-portfolio.js";
@@ -144,6 +145,7 @@ export interface CoreLoopDeps {
   crossGoalPortfolio?: CrossGoalPortfolio;
   learningPipeline?: LearningPipeline;
   knowledgeTransfer?: KnowledgeTransfer;
+  logger?: Logger;
 }
 
 // ─── Helpers ───
@@ -203,6 +205,7 @@ function sleep(ms: number): Promise<void> {
 export class CoreLoop {
   private readonly deps: CoreLoopDeps;
   private readonly config: Required<LoopConfig>;
+  private readonly logger?: Logger;
   private stopped = false;
   private lastLearningReviewAt: number = Date.now();
   private transferCheckCounter: number = 0;
@@ -210,6 +213,7 @@ export class CoreLoop {
   constructor(deps: CoreLoopDeps, config?: LoopConfig) {
     this.deps = deps;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.logger = deps.logger;
   }
 
   // ─── Public API ───
@@ -365,7 +369,7 @@ export class CoreLoop {
         }
       } catch (err) {
         // Curiosity failures should never break the main loop
-        console.warn("CoreLoop: curiosity evaluation failed:", err);
+        this.logger?.warn("CoreLoop: curiosity evaluation failed", { error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -430,7 +434,7 @@ export class CoreLoop {
       goal = loaded;
     } catch (err) {
       result.error = `Failed to load goal: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`CoreLoop: ${result.error}`);
+      this.logger?.error(`CoreLoop: ${result.error}`, { goalId });
       result.elapsedMs = Date.now() - startTime;
       return result;
     }
@@ -461,14 +465,14 @@ export class CoreLoop {
       };
 
       // Build a set of data source IDs available on the observation engine
-      console.log(`[DEBUG] engine.getDataSources exists: ${typeof engine.getDataSources === "function"}`);
+      this.logger?.debug("CoreLoop: engine.getDataSources exists", { exists: typeof engine.getDataSources === "function" });
       const dataSources = typeof engine.getDataSources === "function"
         ? engine.getDataSources()
         : [];
 
       const observedDimensions = new Set<string>();
 
-      console.log(`[DEBUG] dataSources.length: ${dataSources.length}, observeFromDataSource exists: ${typeof engine.observeFromDataSource === "function"}`);
+      this.logger?.debug("CoreLoop: observation setup", { dataSourceCount: dataSources.length, observeFromDataSourceExists: typeof engine.observeFromDataSource === "function" });
       if (dataSources.length > 0 && typeof engine.observeFromDataSource === "function") {
         // Try each dimension against available data sources
         for (const dim of goal.dimensions) {
@@ -479,7 +483,7 @@ export class CoreLoop {
               break; // This dimension is covered — move on to the next
             } catch (dsErr) {
               // This data source cannot observe this dimension — try next source
-              console.warn(`CoreLoop: DataSource observation failed for dim="${dim.name}" source="${ds.sourceId}": ${dsErr instanceof Error ? dsErr.message : String(dsErr)}`);
+              this.logger?.warn("CoreLoop: DataSource observation failed", { dim: dim.name, sourceId: ds.sourceId, error: dsErr instanceof Error ? dsErr.message : String(dsErr) });
             }
           }
         }
@@ -505,7 +509,7 @@ export class CoreLoop {
       }
     } catch (err) {
       // Observation failure is non-fatal — continue with current goal state
-      console.warn(`CoreLoop: observation failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      this.logger?.warn("CoreLoop: observation failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
     }
 
     // ─── 3. Gap Calculate ───
@@ -539,7 +543,7 @@ export class CoreLoop {
       });
     } catch (err) {
       result.error = `Gap calculation failed: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`CoreLoop: ${result.error}`);
+      this.logger?.error(`CoreLoop: ${result.error}`, { goalId });
       result.elapsedMs = Date.now() - startTime;
       return result;
     }
@@ -554,7 +558,7 @@ export class CoreLoop {
       driveScores = rankedScores;
     } catch (err) {
       result.error = `Drive scoring failed: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`CoreLoop: ${result.error}`);
+      this.logger?.error(`CoreLoop: ${result.error}`, { goalId });
       result.elapsedMs = Date.now() - startTime;
       return result;
     }
@@ -633,7 +637,7 @@ export class CoreLoop {
       }
     } catch (err) {
       result.error = `Completion check failed: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`CoreLoop: ${result.error}`);
+      this.logger?.error(`CoreLoop: ${result.error}`, { goalId });
       result.elapsedMs = Date.now() - startTime;
       return result;
     }
@@ -817,7 +821,7 @@ export class CoreLoop {
     } catch (err) {
       // Stall detection errors are non-fatal — log and continue
       // (we still want to run the task cycle)
-      console.warn(`CoreLoop: stall detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      this.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
     }
 
     // ─── 6b. Dependency Graph Scheduling Control ───
@@ -893,7 +897,7 @@ export class CoreLoop {
         }
       }
 
-      console.log(`[DEBUG] About to run task cycle with adapter: ${adapter.adapterType}`);
+      this.logger?.debug("CoreLoop: running task cycle", { adapter: adapter.adapterType, goalId });
       const taskResult = await this.deps.taskLifecycle.runTaskCycle(
         goalId,
         gapVector,
@@ -902,7 +906,7 @@ export class CoreLoop {
         knowledgeContext,
         existingTasks
       );
-      console.log(`[DEBUG] Task cycle result: action=${taskResult.action}, task_id=${taskResult.task.id}`);
+      this.logger?.info("CoreLoop: task cycle result", { action: taskResult.action, taskId: taskResult.task.id });
       result.taskResult = taskResult;
 
       // Portfolio: record task completion for the strategy that generated this task
@@ -924,7 +928,7 @@ export class CoreLoop {
       }
     } catch (err) {
       result.error = `Task cycle failed: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`CoreLoop: ${result.error}`);
+      this.logger?.error(`CoreLoop: ${result.error}`, { goalId });
       result.elapsedMs = Date.now() - startTime;
       this.tryGenerateReport(goalId, loopIndex, result, goal);
       return result;

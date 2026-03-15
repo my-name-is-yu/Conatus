@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as _fs from "node:fs";
 import * as _path from "node:path";
+import type { Logger } from "./logger.js";
 import { z } from "zod";
 import { StateManager } from "./state-manager.js";
 import type { ILLMClient } from "./llm-client.js";
@@ -93,6 +94,7 @@ export class TaskLifecycle {
   private readonly approvalFn: (task: Task) => Promise<boolean>;
   private readonly ethicsGate?: EthicsGate;
   private readonly capabilityDetector?: CapabilityDetector;
+  private readonly logger?: Logger;
   private onTaskComplete?: (strategyId: string) => void;
 
   constructor(
@@ -106,6 +108,7 @@ export class TaskLifecycle {
       approvalFn?: (task: Task) => Promise<boolean>;
       ethicsGate?: EthicsGate;
       capabilityDetector?: CapabilityDetector;
+      logger?: Logger;
     }
   ) {
     this.stateManager = stateManager;
@@ -117,6 +120,7 @@ export class TaskLifecycle {
     this.approvalFn = options?.approvalFn ?? ((_task: Task) => Promise.resolve(false));
     this.ethicsGate = options?.ethicsGate;
     this.capabilityDetector = options?.capabilityDetector;
+    this.logger = options?.logger;
   }
 
   // ─── setOnTaskComplete ───
@@ -184,9 +188,9 @@ export class TaskLifecycle {
     try {
       generated = this.llmClient.parseJSON(response.content, LLMGeneratedTaskSchema) as ReturnType<typeof LLMGeneratedTaskSchema.parse>;
     } catch (err) {
-      console.error(
-        "Task generation failed: LLM response did not match expected schema.\n" +
-        `Raw LLM response: ${response.content}`
+      this.logger?.error(
+        "Task generation failed: LLM response did not match expected schema.",
+        { rawResponse: response.content.substring(0, 500) }
       );
       throw err;
     }
