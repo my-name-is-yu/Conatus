@@ -163,9 +163,10 @@ export class TaskLifecycle {
     goalId: string,
     targetDimension: string,
     strategyId?: string,
-    knowledgeContext?: string
+    knowledgeContext?: string,
+    adapterType?: string
   ): Promise<Task> {
-    const prompt = this.buildTaskGenerationPrompt(goalId, targetDimension, knowledgeContext);
+    const prompt = this.buildTaskGenerationPrompt(goalId, targetDimension, knowledgeContext, adapterType);
 
     const response = await this.llmClient.sendMessage(
       [{ role: "user", content: prompt }],
@@ -349,6 +350,34 @@ export class TaskLifecycle {
     task: Task,
     executionResult: AgentResult
   ): Promise<VerificationResult> {
+    // ─── Short-circuit: GitHub issue URL evidence ───
+    // When execution succeeded and output contains a GitHub issue URL,
+    // treat as mechanical pass without running full L1/L2 verification.
+    // Dimension updates are left to ObservationEngine (next loop iteration).
+    const githubIssueUrlPattern = /github\.com\/.+\/issues\/\d+/;
+    if (
+      executionResult.success === true &&
+      executionResult.output &&
+      githubIssueUrlPattern.test(executionResult.output)
+    ) {
+      const scResult = VerificationResultSchema.parse({
+        task_id: task.id,
+        verdict: "pass",
+        confidence: 0.95,
+        evidence: [
+          {
+            layer: "mechanical" as const,
+            description:
+              "GitHub issue URL found in execution output — mechanical evidence of successful issue creation",
+            confidence: 0.95,
+          },
+        ],
+        dimension_updates: [],
+        timestamp: new Date().toISOString(),
+      });
+      return scResult;
+    }
+
     // ─── Layer 1: Mechanical verification ───
     const l1Result = await this.runMechanicalVerification(task);
 
@@ -672,7 +701,7 @@ export class TaskLifecycle {
     const targetDimension = this.selectTargetDimension(gapVector, driveContext);
 
     // 2. Generate task (optionally with injected knowledge context)
-    const task = await this.generateTask(goalId, targetDimension, undefined, knowledgeContext);
+    const task = await this.generateTask(goalId, targetDimension, undefined, knowledgeContext, adapter.adapterType);
 
     // 3a. Ethics means check (reject → skip, flag → require approval, pass → proceed)
     if (this.ethicsGate) {
@@ -796,12 +825,19 @@ export class TaskLifecycle {
     const executionResult = await this.executeTask(task, adapter);
     console.log(`[DEBUG-TL] Execution result: success=${executionResult.success}, stopped=${executionResult.stopped_reason}, error=${executionResult.error}, output=${executionResult.output?.substring(0, 200)}`);
 
+    // Reload task from disk to get accurate status/started_at/completed_at set by executeTask
+    let taskForVerification = task;
+    try {
+      const raw = this.stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`);
+      if (raw) taskForVerification = TaskSchema.parse(raw);
+    } catch { /* fall back to in-memory task */ }
+
     // 5. Verify task
-    const verificationResult = await this.verifyTask(task, executionResult);
+    const verificationResult = await this.verifyTask(taskForVerification, executionResult);
     console.log(`[DEBUG-TL] Verification: verdict=${verificationResult.verdict}, evidence=${verificationResult.evidence.map(e => e.description).join('; ').substring(0, 300)}`);
 
     // 6. Handle verdict
-    const verdictResult = await this.handleVerdict(task, verificationResult);
+    const verdictResult = await this.handleVerdict(taskForVerification, verificationResult);
 
     return {
       task: verdictResult.task,
@@ -815,15 +851,65 @@ export class TaskLifecycle {
   private buildTaskGenerationPrompt(
     goalId: string,
     targetDimension: string,
-    knowledgeContext?: string
+    knowledgeContext?: string,
+    adapterType?: string
   ): string {
+    // Load goal context to enrich the prompt
+    const goal = this.stateManager.loadGoal(goalId);
+    const dim = goal?.dimensions.find((d) => d.name === targetDimension);
+
+    // Build goal context section
+    let goalSection: string;
+    if (goal) {
+      const titleLine = `Goal: ${goal.title}`;
+      const descLine = goal.description ? `Description: ${goal.description}` : "";
+      goalSection = [titleLine, descLine].filter(Boolean).join("\n");
+    } else {
+      goalSection = `Goal ID: ${goalId}`;
+    }
+
+    // Build dimension context section
+    let dimensionSection: string;
+    if (dim) {
+      const currentVal = dim.current_value !== null && dim.current_value !== undefined
+        ? String(dim.current_value)
+        : "unknown";
+      const threshold = dim.threshold;
+      let targetDesc: string;
+      if (threshold.type === "min") {
+        targetDesc = `at least ${threshold.value}`;
+      } else if (threshold.type === "max") {
+        targetDesc = `at most ${threshold.value}`;
+      } else if (threshold.type === "range") {
+        targetDesc = `between ${threshold.low} and ${threshold.high}`;
+      } else if (threshold.type === "present") {
+        targetDesc = "present (non-null)";
+      } else {
+        targetDesc = `equal to ${(threshold as { value: unknown }).value}`;
+      }
+      dimensionSection = `Dimension to improve: "${targetDimension}" (label: ${dim.label})
+Current value: ${currentVal}
+Target: ${targetDesc}`;
+    } else {
+      dimensionSection = `Dimension to improve: "${targetDimension}"`;
+    }
+
+    // Build adapter context section
+    let adapterSection = "";
+    if (adapterType === "github_issue") {
+      adapterSection = `\nExecution context: This task will be executed via GitHub issue creation.\nIMPORTANT: The work_description should contain the issue title on the first line, followed by the issue body. Generate a SPECIFIC, actionable issue — not a vague review task.\n`;
+    } else if (adapterType) {
+      adapterSection = `\nExecution context: This task will be executed via the "${adapterType}" adapter.\n`;
+    }
+
     const knowledgeSection = knowledgeContext
       ? `\nRelevant domain knowledge:\n${knowledgeContext}\n`
       : "";
 
-    return `Generate a task to improve the "${targetDimension}" dimension for goal "${goalId}".
-${knowledgeSection}
-The task should be concrete, actionable, and achievable in a single work session.
+    return `${goalSection}
+${dimensionSection}
+${adapterSection}${knowledgeSection}
+Generate ONE specific, concrete, actionable task that will directly improve the "${targetDimension}" dimension toward its target. The task should produce a single measurable output achievable in a single work session. Do not generate vague review or triage tasks — generate a task with a precise, well-defined deliverable.
 
 Return a JSON object with the following schema:
 {
@@ -856,7 +942,7 @@ Respond with only the JSON object inside a markdown code block.`;
     task: Task
   ): Promise<{ applicable: boolean; passed: boolean; description: string }> {
     // Mechanical prefixes that indicate a command can be run directly
-    const mechanicalPrefixes = ["npm", "npx", "pytest", "sh", "bash", "node", "make", "cargo", "go "];
+    const mechanicalPrefixes = ["npm", "npx", "pytest", "sh", "bash", "node", "make", "cargo", "go ", "gh "];
 
     // Check if any success criterion has a mechanically-verifiable verification_method
     const hasMechanicalCriteria = task.success_criteria.some((c) => {
