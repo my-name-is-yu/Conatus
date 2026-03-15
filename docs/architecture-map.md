@@ -439,6 +439,15 @@ CharacterConfigManagerが4軸パラメータ（caution_level/stall_flexibility/c
 **好奇心エンジン（curiosity-engine）**
 CuriosityEngineはCoreLoopのオプショナル依存として実装される。5つの発動条件（タスクキュー空/予測外の観測/繰り返し失敗/定期探索/外部シグナル）で好奇心ゴールを自動生成し、GoalNegotiatorに提案として渡す。ユーザーゴールより常に低優先とし、未承認は12時間で自動失効。既存ゴールとのクロスゴール類似度チェック（dimension_name完全一致）で重複提案を防止する。
 
+**再帰的Goal Tree（goal-tree）**
+GoalTreeManagerがゴールをN層の木構造に分解する。各ノードが独自の状態ベクトル・達成基準・満足化基準を持ち、StateAggregatorが子ノード状態を集約して親ノードへカスケードする。ゴール木は静的な計画ではなく、実行中に発見・追加・削除・再構成される。TreeLoopOrchestratorが各ノードの独立ループを並列実行し、完了コールバックで親ノードの集約を更新する。CLIからは`--tree`オプションで起動可能。
+
+**ゴール横断ポートフォリオ（cross-goal-portfolio）**
+CrossGoalPortfolioが複数ゴールを横断した優先度計算とリソース配分を担う。各ゴールの駆動スコア・依存関係・リソース消費を考慮して配分を決定し、効果の低いゴールを自動リバランスする。StrategyTemplateRegistryが過去に有効だった戦略パターンをテンプレートとして登録・検索し、類似状況のゴールへ推薦・適用する。
+
+**学習パイプライン Phase 2（learning-pipeline）**
+LearningPipelineが4種トリガー（milestone到達時・停滞検知時・定期レビュー・goal_completed時）で経験ログを分析しフィードバックを生成する。VectorIndexを利用した意味的類似度マッチングで、あるゴールで有効だった戦略パターンをクロスゴールで共有する。KnowledgeTransferがゴール間の知識・戦略転移を検出・適用・評価し、複数ゴールを横断するメタパターンを抽出する。
+
 ---
 
 ## 7. 用語集
