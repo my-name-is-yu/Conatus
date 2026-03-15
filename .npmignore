@@ -8,3 +8,11 @@ memory/
 tsconfig.json
 vitest.config.*
 .gitignore
+motiva-workspace/
+.DS_Store
+*.md
+!README.md
+!LICENSE
+node_modules/
+.env*
+coverage/

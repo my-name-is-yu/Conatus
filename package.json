@@ -5,6 +5,15 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "license": "MIT",
+  "author": "yuyoshimuta",
+  "homepage": "https://github.com/yuyoshimuta/motiva#readme",
   "bin": {
     "motiva": "dist/cli-runner.js"
   },

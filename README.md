@@ -18,18 +18,25 @@ Motiva knows when to stop. Rather than pursuing perfection, it applies *satisfic
 
 ## Quick Start
 
-**Requirements:** Node.js 18+, an Anthropic API key.
+**Requirements:** Node.js 18+, an OpenAI or Anthropic API key.
+
+### Installation (npm)
 
 ```bash
-# Install
-git clone https://github.com/your-org/motiva.git
-cd motiva
-npm install
-npm run build
+# Install from npm (recommended)
+npm install -g motiva
 
-# Set your API key
+# Set your API key (OpenAI is the default provider)
+export OPENAI_API_KEY=sk-...
+
+# Or use Anthropic instead
+export MOTIVA_LLM_PROVIDER=anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
+```
 
+### First Run
+
+```bash
 # Register a goal (launches goal negotiation — Motiva will assess feasibility
 # and propose measurable dimensions)
 motiva goal add "Create a comprehensive README for this project"
@@ -48,6 +55,34 @@ motiva report
 ```
 
 On first run, Motiva initializes its state directory at `~/.motiva/`.
+
+### Development Installation
+
+```bash
+# Clone and build from source
+git clone https://github.com/your-org/motiva.git
+cd motiva
+npm install
+npm run build
+
+# Set your API key
+export OPENAI_API_KEY=sk-...
+# or ANTHROPIC_API_KEY + MOTIVA_LLM_PROVIDER
+
+# Run the local CLI
+npx tsx src/index.ts goal add "Your goal here"
+npx tsx src/index.ts run
+```
+
+---
+
+## Programmatic Usage
+
+```typescript
+import { CoreLoop, CLIRunner } from "motiva";
+
+// See docs/ for full API documentation
+```
 
 ---
 
