@@ -100,6 +100,78 @@ export class StateManager {
     return true;
   }
 
+  /**
+   * Archive a completed goal by moving its state files to
+   * <base>/archive/<goalId>/.
+   *
+   * Moves:
+   *   goals/<goalId>/         → archive/<goalId>/goal/
+   *   tasks/<goalId>/         → archive/<goalId>/tasks/    (if exists)
+   *   strategies/<goalId>/    → archive/<goalId>/strategies/ (if exists)
+   *   stalls/<goalId>.json    → archive/<goalId>/stalls.json (if exists)
+   *   reports/<goalId>/       → archive/<goalId>/reports/  (if exists)
+   *
+   * Returns true if the goal was archived, false if the goal was not found.
+   */
+  archiveGoal(goalId: string): boolean {
+    const goalDir = path.join(this.baseDir, "goals", goalId);
+    if (!fs.existsSync(goalDir)) return false;
+
+    const archiveBase = path.join(this.baseDir, "archive", goalId);
+    fs.mkdirSync(archiveBase, { recursive: true });
+
+    // Move goals/<goalId>/ → archive/<goalId>/goal/
+    const archiveGoalDir = path.join(archiveBase, "goal");
+    fs.cpSync(goalDir, archiveGoalDir, { recursive: true });
+    fs.rmSync(goalDir, { recursive: true, force: true });
+
+    // Move tasks/<goalId>/ → archive/<goalId>/tasks/ (if exists)
+    const tasksDir = path.join(this.baseDir, "tasks", goalId);
+    if (fs.existsSync(tasksDir)) {
+      const archiveTasksDir = path.join(archiveBase, "tasks");
+      fs.cpSync(tasksDir, archiveTasksDir, { recursive: true });
+      fs.rmSync(tasksDir, { recursive: true, force: true });
+    }
+
+    // Move strategies/<goalId>/ → archive/<goalId>/strategies/ (if exists)
+    const strategiesDir = path.join(this.baseDir, "strategies", goalId);
+    if (fs.existsSync(strategiesDir)) {
+      const archiveStrategiesDir = path.join(archiveBase, "strategies");
+      fs.cpSync(strategiesDir, archiveStrategiesDir, { recursive: true });
+      fs.rmSync(strategiesDir, { recursive: true, force: true });
+    }
+
+    // Move stalls/<goalId>.json → archive/<goalId>/stalls.json (if exists)
+    const stallsFile = path.join(this.baseDir, "stalls", `${goalId}.json`);
+    if (fs.existsSync(stallsFile)) {
+      const archiveStallsFile = path.join(archiveBase, "stalls.json");
+      fs.cpSync(stallsFile, archiveStallsFile);
+      fs.rmSync(stallsFile, { force: true });
+    }
+
+    // Move reports/<goalId>/ → archive/<goalId>/reports/ (if exists)
+    const reportsDir = path.join(this.baseDir, "reports", goalId);
+    if (fs.existsSync(reportsDir)) {
+      const archiveReportsDir = path.join(archiveBase, "reports");
+      fs.cpSync(reportsDir, archiveReportsDir, { recursive: true });
+      fs.rmSync(reportsDir, { recursive: true, force: true });
+    }
+
+    return true;
+  }
+
+  /**
+   * Returns the goal IDs of all archived goals under <base>/archive/.
+   */
+  listArchivedGoals(): string[] {
+    const archiveDir = path.join(this.baseDir, "archive");
+    if (!fs.existsSync(archiveDir)) return [];
+    return fs
+      .readdirSync(archiveDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  }
+
   listGoalIds(): string[] {
     const goalsDir = path.join(this.baseDir, "goals");
     if (!fs.existsSync(goalsDir)) return [];

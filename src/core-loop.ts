@@ -19,6 +19,7 @@ import type { CapabilityDetector } from "./capability-detector.js";
 import type { PortfolioManager } from "./portfolio-manager.js";
 import type { GoalDependencyGraph } from "./goal-dependency-graph.js";
 import type { LearningPipeline } from "./learning-pipeline.js";
+import type { MemoryLifecycleManager } from "./memory-lifecycle.js";
 import type { Goal } from "./types/goal.js";
 import type { GapVector } from "./types/gap.js";
 import type { DriveContext, DriveScore } from "./types/drive.js";
@@ -145,6 +146,7 @@ export interface CoreLoopDeps {
   crossGoalPortfolio?: CrossGoalPortfolio;
   learningPipeline?: LearningPipeline;
   knowledgeTransfer?: KnowledgeTransfer;
+  memoryLifecycleManager?: MemoryLifecycleManager;
   logger?: Logger;
 }
 
@@ -379,6 +381,24 @@ export class CoreLoop {
         await this.deps.learningPipeline.onGoalCompleted(goalId);
       } catch {
         // non-fatal: learning pipeline failure should not block main loop
+      }
+    }
+
+    // Trigger memory lifecycle close on completion
+    if (this.deps.memoryLifecycleManager && finalStatus === "completed") {
+      try {
+        await this.deps.memoryLifecycleManager.onGoalClose(goalId, "completed");
+      } catch {
+        // non-fatal: memory lifecycle failure should not block main loop
+      }
+    }
+
+    // Archive goal state on completion
+    if (finalStatus === "completed") {
+      try {
+        this.deps.stateManager.archiveGoal(goalId);
+      } catch {
+        // non-fatal: archive failure should not block main loop
       }
     }
 

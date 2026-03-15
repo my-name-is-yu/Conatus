@@ -20,7 +20,7 @@ import { GitHubIssueAdapter } from "./adapters/github-issue.js";
  * Configuration priority (highest to lowest):
  *   1. MOTIVA_LLM_PROVIDER environment variable
  *   2. ~/.motiva/provider.json llm_provider field
- *   3. Default: Anthropic
+ *   3. Default: OpenAI
  *
  * Providers:
  *   - "anthropic" → LLMClient (ANTHROPIC_API_KEY required)
@@ -51,14 +51,21 @@ export function buildLLMClient(): ILLMClient {
         model: config.ollama?.model ?? "qwen3:4b",
       });
 
-    default:
-      // "anthropic" or any unknown value falls back to Anthropic
+    case "anthropic":
       if (!config.anthropic?.api_key) {
         throw new Error(
           "ANTHROPIC_API_KEY is required (or set MOTIVA_LLM_PROVIDER=openai|ollama|codex)"
         );
       }
       return new LLMClient(config.anthropic.api_key);
+
+    default:
+      // Unknown or unset value falls back to OpenAI
+      return new OpenAILLMClient({
+        apiKey: config.openai?.api_key,
+        model: config.openai?.model,
+        baseURL: config.openai?.base_url,
+      });
   }
 }
 

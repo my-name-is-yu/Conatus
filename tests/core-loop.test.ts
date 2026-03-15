@@ -2556,4 +2556,79 @@ describe("CoreLoop tree mode (14C)", () => {
     // Normal task cycle is called
     expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalled();
   });
+
+  // ─── Archive on completion ───
+
+  describe("archive on completion", () => {
+    it("calls memoryLifecycleManager.onGoalClose on completion", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      mocks.satisficingJudge.isGoalComplete.mockReturnValue(
+        makeCompletionJudgment({ is_complete: true, blocking_dimensions: [] })
+      );
+
+      const memoryLifecycleManager = {
+        onGoalClose: vi.fn().mockResolvedValue(undefined),
+      };
+      deps.memoryLifecycleManager = memoryLifecycleManager as unknown as import("../src/memory-lifecycle.js").MemoryLifecycleManager;
+
+      const loop = new CoreLoop(deps, { maxIterations: 10, delayBetweenLoopsMs: 0 });
+      const result = await loop.run("goal-1");
+
+      expect(result.finalStatus).toBe("completed");
+      expect(memoryLifecycleManager.onGoalClose).toHaveBeenCalledWith("goal-1", "completed");
+    });
+
+    it("calls stateManager.archiveGoal on completion", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      mocks.satisficingJudge.isGoalComplete.mockReturnValue(
+        makeCompletionJudgment({ is_complete: true, blocking_dimensions: [] })
+      );
+
+      const archiveSpy = vi.spyOn(mocks.stateManager, "archiveGoal");
+
+      const loop = new CoreLoop(deps, { maxIterations: 10, delayBetweenLoopsMs: 0 });
+      const result = await loop.run("goal-1");
+
+      expect(result.finalStatus).toBe("completed");
+      expect(archiveSpy).toHaveBeenCalledWith("goal-1");
+    });
+
+    it("archive failure is non-fatal", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      mocks.satisficingJudge.isGoalComplete.mockReturnValue(
+        makeCompletionJudgment({ is_complete: true, blocking_dimensions: [] })
+      );
+
+      // Make archiveGoal throw
+      vi.spyOn(mocks.stateManager, "archiveGoal").mockImplementation(() => {
+        throw new Error("Archive failure");
+      });
+
+      const loop = new CoreLoop(deps, { maxIterations: 10, delayBetweenLoopsMs: 0 });
+      const result = await loop.run("goal-1");
+
+      // Loop should still complete successfully despite archive failure
+      expect(result.finalStatus).toBe("completed");
+    });
+
+    it("does not call archiveGoal when loop did not complete", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      mocks.stateManager.saveGoal(makeGoal());
+
+      // Goal never completes — max_iterations
+      const archiveSpy = vi.spyOn(mocks.stateManager, "archiveGoal");
+
+      const loop = new CoreLoop(deps, { maxIterations: 2, delayBetweenLoopsMs: 0 });
+      const result = await loop.run("goal-1");
+
+      expect(result.finalStatus).toBe("max_iterations");
+      expect(archiveSpy).not.toHaveBeenCalled();
+    });
+  });
 });

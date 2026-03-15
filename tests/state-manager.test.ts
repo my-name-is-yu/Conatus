@@ -575,4 +575,95 @@ describe("StateManager", () => {
       expect(manager.readRaw("does/not/exist.json")).toBeNull();
     });
   });
+
+  describe("archiveGoal", () => {
+    it("archives a completed goal — moves all state files", () => {
+      const goalId = "archive-full";
+      const goal = makeGoal({ id: goalId });
+      manager.saveGoal(goal);
+
+      // Create tasks/<goalId>/ directory with a file
+      const tasksDir = path.join(tmpDir, "tasks", goalId);
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
+
+      // Create strategies/<goalId>/ directory with a file
+      const strategiesDir = path.join(tmpDir, "strategies", goalId);
+      fs.mkdirSync(strategiesDir, { recursive: true });
+      fs.writeFileSync(path.join(strategiesDir, "strategy.json"), JSON.stringify({ id: "s1" }));
+
+      // Create stalls/<goalId>.json
+      const stallsDir = path.join(tmpDir, "stalls");
+      fs.mkdirSync(stallsDir, { recursive: true });
+      fs.writeFileSync(path.join(stallsDir, `${goalId}.json`), JSON.stringify({ stall: true }));
+
+      // Create reports/<goalId>/ directory with a file
+      const reportsDir = path.join(tmpDir, "reports", goalId);
+      fs.mkdirSync(reportsDir, { recursive: true });
+      fs.writeFileSync(path.join(reportsDir, "report.json"), JSON.stringify({ report: 1 }));
+
+      const result = manager.archiveGoal(goalId);
+      expect(result).toBe(true);
+
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+
+      // Goal files moved to archive/<goalId>/goal/
+      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
+      // Original goal dir removed
+      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
+
+      // Tasks moved
+      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
+      expect(fs.existsSync(tasksDir)).toBe(false);
+
+      // Strategies moved
+      expect(fs.existsSync(path.join(archiveBase, "strategies", "strategy.json"))).toBe(true);
+      expect(fs.existsSync(strategiesDir)).toBe(false);
+
+      // Stalls moved
+      expect(fs.existsSync(path.join(archiveBase, "stalls.json"))).toBe(true);
+      expect(fs.existsSync(path.join(stallsDir, `${goalId}.json`))).toBe(false);
+
+      // Reports moved
+      expect(fs.existsSync(path.join(archiveBase, "reports", "report.json"))).toBe(true);
+      expect(fs.existsSync(reportsDir)).toBe(false);
+    });
+
+    it("returns false for non-existent goal", () => {
+      const result = manager.archiveGoal("does-not-exist");
+      expect(result).toBe(false);
+    });
+
+    it("handles partial state (only goal dir, no tasks/strategies)", () => {
+      const goalId = "archive-partial";
+      const goal = makeGoal({ id: goalId });
+      manager.saveGoal(goal);
+
+      const result = manager.archiveGoal(goalId);
+      expect(result).toBe(true);
+
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+
+      // Goal files moved
+      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
+      // Optional dirs not created in archive (they didn't exist)
+      expect(fs.existsSync(path.join(archiveBase, "tasks"))).toBe(false);
+      expect(fs.existsSync(path.join(archiveBase, "strategies"))).toBe(false);
+      expect(fs.existsSync(path.join(archiveBase, "stalls.json"))).toBe(false);
+    });
+
+    it("listArchivedGoals returns archived goal IDs", () => {
+      // No archives yet
+      expect(manager.listArchivedGoals()).toEqual([]);
+
+      // Archive two goals
+      manager.saveGoal(makeGoal({ id: "arc-1" }));
+      manager.saveGoal(makeGoal({ id: "arc-2" }));
+      manager.archiveGoal("arc-1");
+      manager.archiveGoal("arc-2");
+
+      const archived = manager.listArchivedGoals().sort();
+      expect(archived).toEqual(["arc-1", "arc-2"]);
+    });
+  });
 });

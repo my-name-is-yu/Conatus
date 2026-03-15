@@ -5,6 +5,7 @@
 //   motiva run --goal <id>            Run CoreLoop once for a given goal
 //   motiva goal add "<description>"   Negotiate and register a new goal (interactive)
 //   motiva goal list                  List all registered goals
+//   motiva goal archive <id>          Archive a completed goal
 //   motiva goal show <id>             Show goal details
 //   motiva goal reset <id>            Reset goal state for re-running
 //   motiva status --goal <id>         Show current progress report
@@ -13,6 +14,7 @@
 //   motiva start --goal <id>          Start daemon mode for one or more goals
 //   motiva stop                       Stop the running daemon
 //   motiva cron --goal <id>           Print crontab entry for a goal
+//   motiva cleanup                    Archive all completed goals and remove stale data
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -423,45 +425,77 @@ export class CLIRunner {
     }
   }
 
-  private cmdGoalList(): number {
+  private cmdGoalList(opts: { archived?: boolean } = {}): number {
     const goalsDir = path.join(this.stateManager.getBaseDir(), "goals");
 
-    if (!fs.existsSync(goalsDir)) {
-      console.log("No goals found. Use `motiva goal add` to create one.");
-      return 0;
-    }
-
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(goalsDir);
-    } catch {
-      console.error("Error reading goals directory.");
-      return 1;
-    }
-
-    const goalDirs = entries.filter((e) => {
-      try {
-        return fs.statSync(path.join(goalsDir, e)).isDirectory();
-      } catch {
-        return false;
-      }
-    });
-
-    if (goalDirs.length === 0) {
+    if (!fs.existsSync(goalsDir) || fs.readdirSync(goalsDir).length === 0) {
       console.log("No goals registered. Use `motiva goal add` to create one.");
-      return 0;
+    } else {
+      let entries: string[];
+      try {
+        entries = fs.readdirSync(goalsDir);
+      } catch {
+        console.error("Error reading goals directory.");
+        return 1;
+      }
+
+      const goalDirs = entries.filter((e) => {
+        try {
+          return fs.statSync(path.join(goalsDir, e)).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+
+      if (goalDirs.length === 0) {
+        console.log("No goals registered. Use `motiva goal add` to create one.");
+      } else {
+        console.log(`Found ${goalDirs.length} goal(s):\n`);
+        for (const goalId of goalDirs) {
+          const goal = this.stateManager.loadGoal(goalId);
+          if (!goal) {
+            console.log(`[${goalId}] (could not load)`);
+            continue;
+          }
+          console.log(
+            `[${goalId}] status: ${goal.status} — ${goal.title} (dimensions: ${goal.dimensions.length})`
+          );
+        }
+      }
     }
 
-    console.log(`Found ${goalDirs.length} goal(s):\n`);
-    for (const goalId of goalDirs) {
-      const goal = this.stateManager.loadGoal(goalId);
-      if (!goal) {
-        console.log(`[${goalId}] (could not load)`);
-        continue;
+    // Show archived goals count (or full list if --archived flag is set)
+    const archivedIds = this.stateManager.listArchivedGoals();
+    if (opts.archived && archivedIds.length > 0) {
+      console.log(`\nArchived goals (${archivedIds.length}):\n`);
+      for (const goalId of archivedIds) {
+        // Archived goal.json lives at archive/<goalId>/goal/goal.json
+        const archivedGoalPath = path.join(
+          this.stateManager.getBaseDir(),
+          "archive",
+          goalId,
+          "goal",
+          "goal.json"
+        );
+        let title = "(could not load)";
+        let status = "unknown";
+        let dimCount = 0;
+        try {
+          if (fs.existsSync(archivedGoalPath)) {
+            const raw = JSON.parse(fs.readFileSync(archivedGoalPath, "utf-8")) as {
+              title?: string;
+              status?: string;
+              dimensions?: unknown[];
+            };
+            title = raw.title ?? title;
+            status = raw.status ?? status;
+            dimCount = raw.dimensions?.length ?? 0;
+          }
+        } catch { /* ignore */ }
+        console.log(`[${goalId}] status: ${status} — ${title} (dimensions: ${dimCount})`);
       }
-      console.log(
-        `[${goalId}] status: ${goal.status} — ${goal.title} (dimensions: ${goal.dimensions.length})`
-      );
+    } else {
+      console.log(`\nArchived goals: ${archivedIds.length} (use \`motiva goal list --archived\` to show)`);
     }
 
     return 0;
@@ -1010,6 +1044,82 @@ Options:
     }
   }
 
+  private async cmdGoalArchive(goalId: string, opts: { yes?: boolean; force?: boolean }): Promise<number> {
+    const goal = this.stateManager.loadGoal(goalId);
+    if (!goal) {
+      console.error(`Error: Goal "${goalId}" not found.`);
+      return 1;
+    }
+
+    if (goal.status !== "completed" && !opts.force && !opts.yes) {
+      console.warn(`Warning: Goal "${goalId}" is not completed (status: ${goal.status}).`);
+      console.warn("Archive anyway? Use --yes or --force to skip this check.");
+      return 1;
+    }
+
+    const archived = this.stateManager.archiveGoal(goalId);
+    if (!archived) {
+      console.error(`Error: Failed to archive goal "${goalId}".`);
+      return 1;
+    }
+
+    console.log(`Goal "${goalId}" archived successfully.`);
+    console.log(`  Title:  ${goal.title}`);
+    console.log(`  Status: ${goal.status}`);
+    return 0;
+  }
+
+  private cmdCleanup(): number {
+    const goalIds = this.stateManager.listGoalIds();
+
+    const completed: string[] = [];
+    for (const goalId of goalIds) {
+      const goal = this.stateManager.loadGoal(goalId);
+      if (goal && goal.status === "completed") {
+        completed.push(goalId);
+      }
+    }
+
+    if (completed.length === 0) {
+      console.log("No completed goals to archive.");
+    } else {
+      for (const goalId of completed) {
+        this.stateManager.archiveGoal(goalId);
+      }
+      console.log(`Archived ${completed.length} completed goal(s).`);
+    }
+
+    // Report orphaned task/strategy/stall directories not matching any active goal
+    const activeGoalIds = new Set(this.stateManager.listGoalIds());
+    const baseDir = this.stateManager.getBaseDir();
+    const staleReports: string[] = [];
+
+    const reportsDir = path.join(baseDir, "reports");
+    if (fs.existsSync(reportsDir)) {
+      try {
+        const reportFiles = fs.readdirSync(reportsDir).filter((f) => f.endsWith(".json"));
+        for (const file of reportFiles) {
+          try {
+            const raw = JSON.parse(fs.readFileSync(path.join(reportsDir, file), "utf-8")) as { goal_id?: string };
+            if (raw.goal_id && !activeGoalIds.has(raw.goal_id)) {
+              staleReports.push(file);
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+
+    if (staleReports.length > 0) {
+      console.log(`\nOrphaned report files (no matching active goal): ${staleReports.length}`);
+      for (const f of staleReports) {
+        console.log(`  ${f}`);
+      }
+      console.log("(These can be removed manually from ~/.motiva/reports/)");
+    }
+
+    return 0;
+  }
+
   /** Mask API keys in a config object for safe display. */
   private maskSecrets(config: ProviderConfig): ProviderConfig {
     const mask = (val: string | undefined): string | undefined =>
@@ -1146,7 +1256,7 @@ Options:
       const goalSubcommand = argv[1];
 
       if (!goalSubcommand) {
-        console.error("Error: goal subcommand required. Available: goal add, goal list, goal remove, goal show, goal reset");
+        console.error("Error: goal subcommand required. Available: goal add, goal list, goal archive, goal remove, goal show, goal reset");
         return 1;
       }
 
@@ -1178,7 +1288,35 @@ Options:
       }
 
       if (goalSubcommand === "list") {
-        return this.cmdGoalList();
+        let listValues: { archived?: boolean } = {};
+        try {
+          ({ values: listValues } = parseArgs({
+            args: argv.slice(2),
+            options: { archived: { type: "boolean" } },
+            strict: false,
+          }) as { values: { archived?: boolean } });
+        } catch { listValues = {}; }
+        return this.cmdGoalList({ archived: listValues.archived });
+      }
+
+      if (goalSubcommand === "archive") {
+        const goalId = argv[2];
+        if (!goalId) {
+          console.error("Error: goal ID is required. Usage: motiva goal archive <id>");
+          return 1;
+        }
+        let archiveValues: { yes?: boolean; force?: boolean } = {};
+        try {
+          ({ values: archiveValues } = parseArgs({
+            args: argv.slice(3),
+            options: {
+              yes: { type: "boolean", short: "y" },
+              force: { type: "boolean" },
+            },
+            strict: false,
+          }) as { values: { yes?: boolean; force?: boolean } });
+        } catch { archiveValues = {}; }
+        return await this.cmdGoalArchive(goalId, archiveValues);
       }
 
       if (goalSubcommand === "remove") {
@@ -1216,7 +1354,7 @@ Options:
       }
 
       console.error(`Unknown goal subcommand: "${goalSubcommand}"`);
-      console.error("Available: goal add, goal list, goal remove, goal show, goal reset");
+      console.error("Available: goal add, goal list, goal archive, goal remove, goal show, goal reset");
       return 1;
     }
 
@@ -1329,6 +1467,10 @@ Options:
       return 1;
     }
 
+    if (subcommand === "cleanup") {
+      return this.cmdCleanup();
+    }
+
     if (subcommand === "provider") {
       return this.cmdProvider(argv.slice(1));
     }
@@ -1378,9 +1520,12 @@ Usage:
   motiva run --goal <id>              Run CoreLoop for a goal
   motiva goal add "<description>"     Register a new goal (interactive)
   motiva goal list                    List all registered goals
+  motiva goal list --archived         Also list archived goals
+  motiva goal archive <id>            Archive a completed goal (moves state to ~/.motiva/archive/)
   motiva goal remove <id>             Remove a goal by ID
   motiva goal show <id>               Show goal details (dimensions, constraints, deadline)
   motiva goal reset <id>              Reset goal state for re-running
+  motiva cleanup                      Archive all completed goals and remove stale data
   motiva status --goal <id>           Show current status and progress
   motiva report --goal <id>           Show latest report
   motiva log --goal <id>              View observation and gap history log
