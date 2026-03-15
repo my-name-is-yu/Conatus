@@ -129,7 +129,24 @@ export class CLIRunner {
       }
     } catch { /* ignore errors */ }
 
-    const observationEngine = new ObservationEngine(stateManager, dataSources, llmClient);
+    const contextProvider = async (): Promise<string> => {
+      const cwd = process.cwd();
+      const candidates = ['README.md', 'package.json', 'CLAUDE.md', 'tsconfig.json', 'docs/status.md'];
+      const parts: string[] = [`# Workspace: ${cwd}`];
+      try {
+        const entries = fs.readdirSync(cwd);
+        parts.push(`## Directory listing\n${entries.join(', ')}`);
+      } catch { /* skip */ }
+      for (const rel of candidates) {
+        try {
+          const content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+          parts.push(`## ${rel}\n\`\`\`\n${content.slice(0, 2000)}\n\`\`\``);
+        } catch { /* skip missing */ }
+      }
+      return parts.join('\n\n');
+    };
+
+    const observationEngine = new ObservationEngine(stateManager, dataSources, llmClient, contextProvider);
     const stallDetector = new StallDetector(stateManager, characterConfig);
     const satisficingJudge = new SatisficingJudge(stateManager);
     const ethicsGate = new EthicsGate(stateManager, llmClient);
