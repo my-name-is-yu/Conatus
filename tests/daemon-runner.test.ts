@@ -36,6 +36,8 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
     shouldActivate: vi.fn().mockReturnValue(true),
     getSchedule: vi.fn().mockReturnValue(null),
     prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),
+    startWatcher: vi.fn(),
+    stopWatcher: vi.fn(),
   };
 
   const mockStateManager = {
@@ -468,6 +470,186 @@ describe("DaemonRunner", () => {
     });
   });
 
+  // ─── Graceful Shutdown ───
+
+  describe("graceful shutdown", () => {
+    it("should set shuttingDown flag on SIGTERM signal", async () => {
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 500 } });
+      const daemon = new DaemonRunner(deps);
+
+      const startPromise = daemon.start(["goal-1"]);
+      // Wait for daemon to be running
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Emit SIGTERM to trigger the shutdown handler
+      process.emit("SIGTERM");
+
+      // Give the handler time to run
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Daemon should resolve because shuttingDown exits the loop
+      await expect(startPromise).resolves.toBeUndefined();
+    });
+
+    it("should complete current loop before stopping", async () => {
+      let loopRunCount = 0;
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockImplementation(async () => {
+        loopRunCount++;
+        // Simulate a loop that takes some time
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return makeLoopResult();
+      });
+
+      const daemon = new DaemonRunner(deps);
+      const startPromise = daemon.start(["goal-1"]);
+
+      // Wait for one loop to start
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      // Stop the daemon — it should finish the current loop
+      daemon.stop();
+      await startPromise;
+
+      // At least one loop should have completed
+      expect(loopRunCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should save interrupted_goals on shutdown", async () => {
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      const daemon = new DaemonRunner(deps);
+
+      const startPromise = daemon.start(["goal-a", "goal-b"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      daemon.stop();
+      await startPromise;
+
+      const statePath = path.join(tmpDir, "daemon-state.json");
+      const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+      // interrupted_goals should contain the active goals that were running
+      expect(state.interrupted_goals).toBeDefined();
+      expect(Array.isArray(state.interrupted_goals)).toBe(true);
+    });
+
+    it("should timeout and force stop after graceful_shutdown_timeout_ms", async () => {
+      // Use a very short timeout to test the force-stop path
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 10,
+          crash_recovery: {
+            enabled: true,
+            max_retries: 10,
+            retry_delay_ms: 10,
+            graceful_shutdown_timeout_ms: 50,
+          },
+        },
+      });
+
+      // Make the loop hang indefinitely so graceful shutdown times out
+      let resolveLoop: (() => void) | null = null;
+      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockImplementation(() => {
+        return new Promise<LoopResult>((resolve) => {
+          resolveLoop = () => resolve(makeLoopResult());
+        });
+      });
+
+      const daemon = new DaemonRunner(deps);
+      const startPromise = daemon.start(["goal-1"]);
+
+      // Wait for the loop to start (hanging)
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      // Emit SIGTERM — this sets shuttingDown=true and starts the timeout
+      process.emit("SIGTERM");
+
+      // The force-stop timer fires after 50ms and sets running=false
+      // which exits the loop even though the current iteration is stuck
+      // We also need to resolve the hanging loop for the test to complete
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      if (resolveLoop) resolveLoop();
+
+      await expect(startPromise).resolves.toBeUndefined();
+    });
+  });
+
+  // ─── State Restoration ───
+
+  describe("state restoration", () => {
+    it("should restore interrupted_goals from daemon-state.json on start", async () => {
+      // Write a pre-existing daemon-state.json with interrupted_goals
+      const savedState = {
+        pid: 99999,
+        started_at: new Date().toISOString(),
+        last_loop_at: null,
+        loop_count: 0,
+        active_goals: ["goal-prev"],
+        status: "stopped",
+        crash_count: 0,
+        last_error: null,
+        interrupted_goals: ["goal-prev"],
+      };
+      fs.writeFileSync(
+        path.join(tmpDir, "daemon-state.json"),
+        JSON.stringify(savedState),
+        "utf-8"
+      );
+
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      const daemon = new DaemonRunner(deps);
+
+      const startPromise = daemon.start(["goal-new"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const statePath = path.join(tmpDir, "daemon-state.json");
+      const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+      // active_goals should include both the new goal and the restored goal
+      expect(state.active_goals).toContain("goal-new");
+      expect(state.active_goals).toContain("goal-prev");
+
+      daemon.stop();
+      await startPromise;
+    });
+
+    it("should merge interrupted_goals with new goalIds without duplicates", async () => {
+      // Write a pre-existing daemon-state.json with interrupted_goals that overlap
+      const savedState = {
+        pid: 99999,
+        started_at: new Date().toISOString(),
+        last_loop_at: null,
+        loop_count: 0,
+        active_goals: ["goal-a"],
+        status: "stopped",
+        crash_count: 0,
+        last_error: null,
+        interrupted_goals: ["goal-a", "goal-b"],
+      };
+      fs.writeFileSync(
+        path.join(tmpDir, "daemon-state.json"),
+        JSON.stringify(savedState),
+        "utf-8"
+      );
+
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      const daemon = new DaemonRunner(deps);
+
+      // Start with goal-a (overlaps with interrupted_goals) and goal-c
+      const startPromise = daemon.start(["goal-a", "goal-c"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const statePath = path.join(tmpDir, "daemon-state.json");
+      const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+      // Should contain goal-a, goal-b, goal-c — no duplicates
+      expect(state.active_goals).toContain("goal-a");
+      expect(state.active_goals).toContain("goal-b");
+      expect(state.active_goals).toContain("goal-c");
+      // No duplicate goal-a
+      const goalACount = state.active_goals.filter((g: string) => g === "goal-a").length;
+      expect(goalACount).toBe(1);
+
+      daemon.stop();
+      await startPromise;
+    });
+  });
+
   // ─── Cleanup ───
 
   describe("cleanup after loop", () => {
@@ -494,6 +676,148 @@ describe("DaemonRunner", () => {
 
       const files = fs.readdirSync(tmpDir);
       expect(files.some((f) => f.endsWith(".tmp"))).toBe(false);
+    });
+  });
+
+  // ─── Event-Driven Integration ───
+
+  describe("event-driven integration", () => {
+    function makeEventServerMock() {
+      return {
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        isRunning: vi.fn().mockReturnValue(true),
+        getHost: vi.fn().mockReturnValue("127.0.0.1"),
+        getPort: vi.fn().mockReturnValue(41700),
+      };
+    }
+
+    it("should start EventServer on daemon start if provided", async () => {
+      const eventServer = makeEventServerMock();
+      const deps = makeDeps(tmpDir, {
+        config: { check_interval_ms: 50 },
+        eventServer: eventServer as unknown as DaemonDeps["eventServer"],
+      });
+      const daemon = new DaemonRunner(deps);
+
+      const startPromise = daemon.start(["goal-1"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      daemon.stop();
+      await startPromise;
+
+      expect(eventServer.start).toHaveBeenCalledOnce();
+    });
+
+    it("should stop EventServer on daemon stop", async () => {
+      const eventServer = makeEventServerMock();
+      const deps = makeDeps(tmpDir, {
+        config: { check_interval_ms: 50 },
+        eventServer: eventServer as unknown as DaemonDeps["eventServer"],
+      });
+      const daemon = new DaemonRunner(deps);
+
+      const startPromise = daemon.start(["goal-1"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      daemon.stop();
+      await startPromise;
+
+      expect(eventServer.stop).toHaveBeenCalledOnce();
+    });
+
+    it("should start file watcher on daemon start", async () => {
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      const startWatcherSpy = vi.spyOn(
+        deps.driveSystem as unknown as { startWatcher: (cb: unknown) => void },
+        "startWatcher"
+      );
+
+      const daemon = new DaemonRunner(deps);
+      const startPromise = daemon.start(["goal-1"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      daemon.stop();
+      await startPromise;
+
+      expect(startWatcherSpy).toHaveBeenCalledOnce();
+      // Callback should be a function
+      expect(typeof startWatcherSpy.mock.calls[0][0]).toBe("function");
+    });
+
+    it("should stop file watcher on daemon stop", async () => {
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      const stopWatcherSpy = vi.spyOn(
+        deps.driveSystem as unknown as { stopWatcher: () => void },
+        "stopWatcher"
+      );
+
+      const daemon = new DaemonRunner(deps);
+      const startPromise = daemon.start(["goal-1"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      daemon.stop();
+      await startPromise;
+
+      expect(stopWatcherSpy).toHaveBeenCalledOnce();
+    });
+
+    it("should wake up from sleep when event is received", async () => {
+      // Use a very long sleep interval so the daemon will stay sleeping without event
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 5_000 } });
+
+      let capturedCallback: ((event: unknown) => void) | null = null;
+      (
+        deps.driveSystem as unknown as { startWatcher: (cb: (event: unknown) => void) => void }
+      ).startWatcher = vi.fn((cb) => {
+        capturedCallback = cb;
+      });
+      (
+        deps.driveSystem as unknown as { stopWatcher: () => void }
+      ).stopWatcher = vi.fn();
+
+      const runSpy = deps.coreLoop as { run: ReturnType<typeof vi.fn> };
+
+      const daemon = new DaemonRunner(deps);
+      const startPromise = daemon.start(["goal-1"]);
+
+      // Wait for one loop iteration to complete and daemon to enter the 5s sleep
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      const callCountBeforeEvent = runSpy.run.mock.calls.length;
+
+      // Simulate an event arriving while daemon is sleeping — should wake immediately
+      expect(capturedCallback).not.toBeNull();
+      capturedCallback!({
+        type: "external",
+        source: "test",
+        timestamp: new Date().toISOString(),
+        data: {},
+      });
+
+      // Give the loop time to wake and start another iteration (much less than 5s)
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const callCountAfterEvent = runSpy.run.mock.calls.length;
+      expect(callCountAfterEvent).toBeGreaterThan(callCountBeforeEvent);
+
+      // Stop the daemon; abort the sleep so it exits quickly
+      daemon.stop();
+      capturedCallback!({
+        type: "internal",
+        source: "test-stop",
+        timestamp: new Date().toISOString(),
+        data: {},
+      });
+      await startPromise;
+    }, 10_000);
+
+    it("should work without EventServer (optional dependency)", async () => {
+      // No eventServer provided — daemon should start and stop normally
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      const daemon = new DaemonRunner(deps);
+
+      const startPromise = daemon.start(["goal-1"]);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      daemon.stop();
+
+      await expect(startPromise).resolves.toBeUndefined();
     });
   });
 });

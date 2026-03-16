@@ -1,6 +1,7 @@
 import * as https from "node:https";
 import * as http from "node:http";
 import { URL } from "node:url";
+import nodemailer from "nodemailer";
 import type { Report } from "./types/report.js";
 import type {
   NotificationChannel,
@@ -194,23 +195,73 @@ async function sendSlack(
   }
 }
 
+/** Build a simple HTML body for a report. */
+function buildEmailHtml(report: Report): string {
+  const rows = [
+    ["ID", report.id],
+    ["Type", report.report_type],
+    ["Goal", report.goal_id ?? "(none)"],
+    ["Generated", report.generated_at],
+  ]
+    .map(
+      ([k, v]) =>
+        `<tr><th style="text-align:left;padding:4px 8px;background:#f5f5f5">${k}</th>` +
+        `<td style="padding:4px 8px">${v}</td></tr>`
+    )
+    .join("\n");
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:sans-serif;color:#333">
+<h2>${report.title}</h2>
+<table border="0" cellpadding="0" cellspacing="4" style="border-collapse:collapse">
+${rows}
+</table>
+<hr>
+<pre style="white-space:pre-wrap;background:#fafafa;padding:12px;border-radius:4px">${report.content}</pre>
+</body>
+</html>`;
+}
+
 async function sendEmail(
   channel: EmailChannel,
   report: Report
 ): Promise<NotificationResult> {
-  // MVP stub: log intent, actual SMTP deferred
-  console.log(
-    `[NotificationDispatcher] Would send email to ${channel.address} — ${report.title}`
-  );
-  console.log(
-    `[NotificationDispatcher] Email SMTP deferred (host: ${channel.smtp.host}:${channel.smtp.port})`
-  );
-  return {
-    channel_type: "email",
-    success: true,
-    delivered_at: new Date().toISOString(),
-    suppressed: false,
-  };
+  try {
+    const transport = nodemailer.createTransport({
+      host: channel.smtp.host,
+      port: channel.smtp.port,
+      secure: channel.smtp.secure,
+      auth: {
+        user: channel.smtp.auth.user,
+        pass: channel.smtp.auth.pass,
+      },
+    });
+
+    await transport.sendMail({
+      from: channel.smtp.auth.user,
+      to: channel.address,
+      subject: report.title,
+      text: `${report.title}\n\n${report.content}`,
+      html: buildEmailHtml(report),
+    });
+
+    return {
+      channel_type: "email",
+      success: true,
+      delivered_at: new Date().toISOString(),
+      suppressed: false,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      channel_type: "email",
+      success: false,
+      error: `Email send error: ${message}`,
+      suppressed: false,
+    };
+  }
 }
 
 async function sendWebhook(

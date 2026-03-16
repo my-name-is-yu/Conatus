@@ -13,6 +13,7 @@ export const DaemonConfigSchema = z.object({
     enabled: z.boolean().default(true),
     max_retries: z.number().int().nonnegative().default(3),
     retry_delay_ms: z.number().int().positive().default(10_000),
+    graceful_shutdown_timeout_ms: z.number().int().positive().optional(),
   }).default({}),
   goal_intervals: z.record(z.string(), z.number().int().positive()).optional(), // goal_id -> interval_ms override
 });
@@ -28,6 +29,7 @@ export const DaemonStateSchema = z.object({
   status: z.enum(["running", "stopping", "stopped", "crashed"]),
   crash_count: z.number().int().nonnegative().default(0),
   last_error: z.string().nullable().default(null),
+  interrupted_goals: z.array(z.string()).optional(),
 });
 export type DaemonState = z.infer<typeof DaemonStateSchema>;
 

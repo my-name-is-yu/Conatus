@@ -4,6 +4,17 @@ import { NotificationDispatcher } from "../src/notification-dispatcher.js";
 import type { Report } from "../src/types/report.js";
 import type { NotificationConfig } from "../src/types/notification.js";
 
+// ─── nodemailer mock ───
+const { mockSendMail, mockCreateTransport } = vi.hoisted(() => {
+  const mockSendMail = vi.fn();
+  const mockCreateTransport = vi.fn(() => ({ sendMail: mockSendMail }));
+  return { mockSendMail, mockCreateTransport };
+});
+
+vi.mock("nodemailer", () => ({
+  default: { createTransport: mockCreateTransport },
+}));
+
 // ─── Helpers ───
 
 const createMockReport = (overrides?: Partial<Report>): Report => ({
@@ -701,6 +712,76 @@ describe("dispatch() — report type filtering", () => {
     const emailResult = results.find((r) => r.channel_type === "email");
     expect(emailResult?.suppressed).toBe(true);
     expect(emailResult?.suppression_reason).toBe("filtered");
+  });
+});
+
+// ─── Email SMTP implementation ───
+
+describe("dispatch() — Email SMTP implementation", () => {
+  const emailChannel = {
+    type: "email" as const,
+    address: "recipient@example.com",
+    smtp: {
+      host: "smtp.example.com",
+      port: 587,
+      secure: true,
+      auth: { user: "sender@example.com", pass: "secret" },
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSendMail.mockResolvedValue({ messageId: "test-id" });
+  });
+
+  it("returns success=true when SMTP send succeeds", async () => {
+    const dispatcher = new NotificationDispatcher({ channels: [emailChannel] });
+    const results = await dispatcher.dispatch(createMockReport());
+
+    expect(results).toHaveLength(1);
+    expect(results[0].channel_type).toBe("email");
+    expect(results[0].success).toBe(true);
+    expect(results[0].suppressed).toBe(false);
+    expect(results[0].delivered_at).toBeDefined();
+  });
+
+  it("calls nodemailer.createTransport with correct SMTP config", async () => {
+    const dispatcher = new NotificationDispatcher({ channels: [emailChannel] });
+    await dispatcher.dispatch(createMockReport());
+
+    expect(mockCreateTransport).toHaveBeenCalledWith({
+      host: "smtp.example.com",
+      port: 587,
+      secure: true,
+      auth: { user: "sender@example.com", pass: "secret" },
+    });
+  });
+
+  it("calls sendMail with correct to, subject, and html", async () => {
+    const report = createMockReport({
+      title: "My SMTP Report",
+      content: "Report body content",
+    });
+    const dispatcher = new NotificationDispatcher({ channels: [emailChannel] });
+    await dispatcher.dispatch(report);
+
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
+    const mailArgs = mockSendMail.mock.calls[0][0] as Record<string, unknown>;
+    expect(mailArgs.to).toBe("recipient@example.com");
+    expect(mailArgs.subject).toBe("My SMTP Report");
+    expect(typeof mailArgs.html).toBe("string");
+    expect((mailArgs.html as string)).toContain("My SMTP Report");
+  });
+
+  it("returns success=false with error when SMTP throws", async () => {
+    mockSendMail.mockRejectedValue(new Error("Connection refused"));
+
+    const dispatcher = new NotificationDispatcher({ channels: [emailChannel] });
+    const results = await dispatcher.dispatch(createMockReport());
+
+    expect(results[0].success).toBe(false);
+    expect(results[0].error).toContain("Connection refused");
+    expect(results[0].suppressed).toBe(false);
   });
 });
 

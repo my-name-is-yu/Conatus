@@ -322,3 +322,109 @@ describe("log rotation", () => {
     expect(files[0]).toBe("motiva.log");
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// Date-based Rotation
+// ═══════════════════════════════════════════════════════
+
+describe("date-based rotation", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("should not rotate on first write (just record date)", () => {
+    vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
+    const logger = new Logger({ dir: tmpDir, consoleOutput: false });
+
+    logger.info("first write");
+
+    // Only motiva.log should exist; no date-suffixed file
+    const files = logFiles(tmpDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toBe("motiva.log");
+  });
+
+  it("should rotate log file when date changes", () => {
+    vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
+    const logger = new Logger({ dir: tmpDir, consoleOutput: false });
+
+    logger.info("day one message");
+
+    // Advance to the next day
+    vi.setSystemTime(new Date("2026-03-17T02:00:00Z"));
+    logger.info("day two message");
+
+    const files = logFiles(tmpDir);
+    // Both motiva.log (new day) and a rotated file should exist
+    expect(files).toContain("motiva.log");
+    // At least one rotated file
+    expect(files.length).toBeGreaterThan(1);
+  });
+
+  it("should name rotated file with date suffix (motiva.YYYY-MM-DD.log)", () => {
+    vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
+    const logger = new Logger({ dir: tmpDir, consoleOutput: false });
+
+    logger.info("day one message");
+
+    // Advance to the next day to trigger rotation
+    vi.setSystemTime(new Date("2026-03-17T02:00:00Z"));
+    logger.info("day two message");
+
+    const files = logFiles(tmpDir);
+    expect(files).toContain("motiva.2026-03-16.log");
+  });
+
+  it("should work together with size-based rotation", () => {
+    vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
+    const logger = new Logger({
+      dir: tmpDir,
+      maxSizeMB: 0.001, // ~1 KB — triggers size rotation too
+      consoleOutput: false,
+    });
+
+    // Trigger size-based rotation on day one
+    for (let i = 0; i < 100; i++) {
+      logger.info("E".repeat(100));
+    }
+
+    // Advance to next day and write more — triggers date rotation
+    vi.setSystemTime(new Date("2026-03-17T02:00:00Z"));
+    logger.info("day two first message");
+
+    const files = logFiles(tmpDir);
+    // Size-based rotated files (motiva.1.log, ...) and date-rotated file should all exist
+    const hasDateRotated = files.some((f) => /motiva\.\d{4}-\d{2}-\d{2}\.log/.test(f));
+    const hasSizeRotated = files.some((f) => /motiva\.\d+\.log/.test(f));
+    expect(hasDateRotated).toBe(true);
+    expect(hasSizeRotated).toBe(true);
+  });
+
+  it("should not rotate by date when rotateByDate is false", () => {
+    vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
+    const logger = new Logger({
+      dir: tmpDir,
+      rotateByDate: false,
+      maxSizeMB: 100, // prevent size rotation too
+      consoleOutput: false,
+    });
+
+    logger.info("day one message");
+
+    // Advance to next day
+    vi.setSystemTime(new Date("2026-03-17T02:00:00Z"));
+    logger.info("day two message");
+
+    const files = logFiles(tmpDir);
+    // No date-suffixed file should exist
+    const hasDateRotated = files.some((f) => /motiva\.\d{4}-\d{2}-\d{2}\.log/.test(f));
+    expect(hasDateRotated).toBe(false);
+    // Only motiva.log
+    expect(files).toHaveLength(1);
+    expect(files[0]).toBe("motiva.log");
+  });
+});

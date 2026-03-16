@@ -16,6 +16,7 @@ export interface LoggerConfig {
   maxFiles?: number;             // Max number of rotated files (default: 5)
   level?: LogLevel;              // Minimum log level (default: "info")
   consoleOutput?: boolean;       // Also log to console (default: true)
+  rotateByDate?: boolean;        // Rotate log file when date changes (default: true)
 }
 
 export class Logger {
@@ -24,7 +25,9 @@ export class Logger {
   private maxFiles: number;
   private level: number;
   private consoleOutput: boolean;
+  private rotateByDate: boolean;
   private currentFile: string;
+  private lastWriteDate: string | null = null;
 
   constructor(config: LoggerConfig) {
     this.dir = config.dir;
@@ -32,6 +35,7 @@ export class Logger {
     this.maxFiles = config.maxFiles ?? 5;
     this.level = LOG_LEVELS[config.level ?? "info"];
     this.consoleOutput = config.consoleOutput ?? true;
+    this.rotateByDate = config.rotateByDate ?? true;
     this.currentFile = path.join(this.dir, "motiva.log");
 
     // Ensure log directory exists
@@ -85,10 +89,38 @@ export class Logger {
     }
   }
 
+  // Returns the current date as YYYY-MM-DD (overridable for testing via vi.setSystemTime)
+  private getCurrentDate(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  private rotateCurrent(destName: string): void {
+    // Rename the current motiva.log to destName (e.g. motiva.1.log or motiva.2026-03-16.log)
+    fs.renameSync(this.currentFile, path.join(this.dir, destName));
+  }
+
   private rotateIfNeeded(): void {
     try {
-      if (!fs.existsSync(this.currentFile)) return;
+      // ── Date-based rotation ──────────────────────────────────────────────
+      // Run regardless of whether the current file exists yet (lastWriteDate
+      // must be initialized even before the first byte is written).
+      if (this.rotateByDate) {
+        const today = this.getCurrentDate();
+        if (this.lastWriteDate === null) {
+          // First write: just record the date, no rotation
+          this.lastWriteDate = today;
+        } else if (this.lastWriteDate !== today) {
+          // Date changed: rename existing file to motiva.YYYY-MM-DD.log
+          if (fs.existsSync(this.currentFile)) {
+            this.rotateCurrent(`motiva.${this.lastWriteDate}.log`);
+          }
+          this.lastWriteDate = today;
+          return; // file was rotated (or didn't exist); fresh motiva.log created on append
+        }
+      }
 
+      // ── Size-based rotation ──────────────────────────────────────────────
+      if (!fs.existsSync(this.currentFile)) return;
       const stat = fs.statSync(this.currentFile);
       if (stat.size < this.maxSizeBytes) return;
 

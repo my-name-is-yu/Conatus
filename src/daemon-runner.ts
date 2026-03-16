@@ -6,6 +6,8 @@ import { DriveSystem } from "./drive-system.js";
 import { StateManager } from "./state-manager.js";
 import { PIDManager } from "./pid-manager.js";
 import { Logger } from "./logger.js";
+import type { EventServer } from "./event-server.js";
+import type { MotivaEvent } from "./types/drive.js";
 import type { DaemonConfig, DaemonState } from "./types/daemon.js";
 import { DaemonConfigSchema, DaemonStateSchema } from "./types/daemon.js";
 
@@ -31,6 +33,7 @@ export interface DaemonDeps {
   pidManager: PIDManager;
   logger: Logger;
   config?: Partial<DaemonConfig>;
+  eventServer?: EventServer;
 }
 
 export class DaemonRunner {
@@ -41,8 +44,12 @@ export class DaemonRunner {
   private logger: Logger;
   private config: DaemonConfig;
   private running = false;
+  private shuttingDown = false;
   private state: DaemonState;
   private baseDir: string;
+  private shutdownHandler: (() => void) | null = null;
+  private eventServer: EventServer | undefined;
+  private sleepAbortController: AbortController | null = null;
 
   constructor(deps: DaemonDeps) {
     this.coreLoop = deps.coreLoop;
@@ -50,6 +57,7 @@ export class DaemonRunner {
     this.stateManager = deps.stateManager;
     this.pidManager = deps.pidManager;
     this.logger = deps.logger;
+    this.eventServer = deps.eventServer;
 
     // Parse config with defaults via DaemonConfigSchema.parse()
     this.config = DaemonConfigSchema.parse(deps.config ?? {});
@@ -89,51 +97,94 @@ export class DaemonRunner {
     // 2. Write PID file
     this.pidManager.writePID();
 
-    // 3. Set up signal handlers — use process.once() for graceful stop
-    const shutdown = (): void => {
-      this.logger.info("Received shutdown signal, stopping daemon...");
-      this.stop();
-    };
-    process.once("SIGINT", shutdown);
-    process.once("SIGTERM", shutdown);
+    // 2b. Start EventServer (if provided) and file watcher
+    if (this.eventServer) {
+      await this.eventServer.start();
+      this.logger.info("EventServer started", {
+        host: this.eventServer.getHost(),
+        port: this.eventServer.getPort(),
+      });
+    }
+    this.driveSystem.startWatcher((event) => this.onEventReceived(event));
 
-    // 4. Save initial daemon state
+    // 3. Set up signal handlers for graceful shutdown
+    this.shuttingDown = false;
+    const shutdownTimeout = this.config.crash_recovery.graceful_shutdown_timeout_ms ?? 30_000;
+    let forceStopTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const shutdown = (): void => {
+      if (this.shuttingDown) return;
+      this.shuttingDown = true;
+      this.logger.info("Received shutdown signal, stopping daemon gracefully...");
+      // Start a timeout to force-stop if graceful shutdown takes too long
+      forceStopTimer = setTimeout(() => {
+        this.logger.warn(
+          `Graceful shutdown timeout (${shutdownTimeout}ms) exceeded, forcing stop`
+        );
+        this.running = false;
+      }, shutdownTimeout);
+    };
+    this.shutdownHandler = shutdown;
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+
+    // 4. Restore state from previous interrupted run
+    const mergedGoalIds = await this.restoreState(goalIds);
+
+    // 5. Save initial daemon state
     this.running = true;
     this.state = DaemonStateSchema.parse({
       pid: process.pid,
       started_at: new Date().toISOString(),
       last_loop_at: null,
       loop_count: 0,
-      active_goals: goalIds,
+      active_goals: mergedGoalIds,
       status: "running",
       crash_count: 0,
       last_error: null,
     });
     this.saveDaemonState();
 
-    // 5. Log start
+    // 6. Log start
     this.logger.info("Daemon started", {
       pid: process.pid,
-      goals: goalIds,
+      goals: mergedGoalIds,
       check_interval_ms: this.config.check_interval_ms,
     });
 
-    // 6. Run main loop
+    // 7. Run main loop
     try {
-      await this.runLoop(goalIds);
+      await this.runLoop(mergedGoalIds);
     } finally {
-      // Remove signal handlers if loop exits without signal
-      process.off("SIGINT", shutdown);
-      process.off("SIGTERM", shutdown);
+      // Cancel the force-stop timer if it's still pending
+      if (forceStopTimer !== null) {
+        clearTimeout(forceStopTimer);
+        forceStopTimer = null;
+      }
+      // Remove signal handlers
+      if (this.shutdownHandler) {
+        process.removeListener("SIGTERM", this.shutdownHandler);
+        process.removeListener("SIGINT", this.shutdownHandler);
+        this.shutdownHandler = null;
+      }
+      // Stop file watcher and EventServer
+      this.driveSystem.stopWatcher();
+      if (this.eventServer) {
+        await this.eventServer.stop();
+        this.logger.info("EventServer stopped");
+      }
     }
   }
 
   /**
    * Signal daemon to stop after current iteration completes.
+   * Saves interrupted_goals so they can be restored on next start.
    */
   stop(): void {
     this.running = false;
     this.state.status = "stopping";
+    // Save current active_goals as interrupted_goals for state restoration
+    this.state.interrupted_goals = [...this.state.active_goals];
     this.saveDaemonState();
     this.logger.info("Stop requested — daemon will stop after current iteration");
   }
@@ -144,7 +195,7 @@ export class DaemonRunner {
    * Main daemon loop. Runs until this.running is false or a critical error occurs.
    */
   private async runLoop(goalIds: string[]): Promise<void> {
-    while (this.running) {
+    while (this.running && !this.shuttingDown) {
       try {
         // 1. Determine which goals need activation
         const activeGoals = this.determineActiveGoals(goalIds);
@@ -324,6 +375,27 @@ export class DaemonRunner {
     }
   }
 
+  /**
+   * Restore state from a previous interrupted run.
+   * Merges interrupted_goals from daemon-state.json with the given goalIds (deduped).
+   * Returns the merged goal ID array.
+   */
+  private async restoreState(goalIds: string[]): Promise<string[]> {
+    const saved = this.loadDaemonState();
+    if (!saved || !saved.interrupted_goals || saved.interrupted_goals.length === 0) {
+      return goalIds;
+    }
+
+    const merged = Array.from(new Set([...goalIds, ...saved.interrupted_goals]));
+    if (merged.length > goalIds.length) {
+      this.logger.info("Restored interrupted goals from previous run", {
+        interrupted: saved.interrupted_goals,
+        merged,
+      });
+    }
+    return merged;
+  }
+
   // ─── Private: Cleanup ───
 
   /**
@@ -346,9 +418,32 @@ export class DaemonRunner {
 
   /**
    * Sleep for the given number of milliseconds.
+   * Can be aborted early via sleepAbortController (e.g. when an event arrives).
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    this.sleepAbortController = new AbortController();
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      this.sleepAbortController!.signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    }).finally(() => {
+      this.sleepAbortController = null;
+    });
+  }
+
+  // ─── Private: Event Handling ───
+
+  /**
+   * Called when a file-watcher event arrives from DriveSystem.
+   * Aborts the current sleep so the loop runs immediately.
+   */
+  private onEventReceived(event: MotivaEvent): void {
+    this.logger.info("Event received, triggering immediate loop", {
+      event_type: event.type,
+    });
+    this.sleepAbortController?.abort();
   }
 
   // ─── Static Utilities ───

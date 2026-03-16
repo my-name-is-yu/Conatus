@@ -17,12 +17,23 @@
   "bin": {
     "motiva": "dist/cli-runner.js"
   },
-  "keywords": ["ai", "agent", "orchestrator", "motivation", "autonomous", "llm"],
+  "keywords": [
+    "ai",
+    "agent",
+    "orchestrator",
+    "motivation",
+    "autonomous",
+    "llm"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/yuyoshimuta/motiva.git"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -38,12 +49,14 @@
     "ink": "^5.2.1",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
+    "nodemailer": "^8.0.2",
     "openai": "^6.27.0",
     "react": "^18.3.1",
     "zod": "^3.22.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "^18.3.28",
     "typescript": "^5.3.0",
     "vitest": "^1.0.0"
