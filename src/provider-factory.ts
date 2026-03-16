@@ -33,14 +33,24 @@ export function buildLLMClient(): ILLMClient {
 
   switch (config.llm_provider) {
     case "codex":
+      if (!config.openai?.api_key) {
+        throw new Error(
+          "OPENAI_API_KEY is not set.\nSet it via: export OPENAI_API_KEY=sk-..."
+        );
+      }
       return new CodexLLMClient({
         cliPath: config.codex?.cli_path,
         model: config.codex?.model,
       });
 
     case "openai":
+      if (!config.openai?.api_key) {
+        throw new Error(
+          "OPENAI_API_KEY is not set.\nSet it via: export OPENAI_API_KEY=sk-..."
+        );
+      }
       return new OpenAILLMClient({
-        apiKey: config.openai?.api_key,
+        apiKey: config.openai.api_key,
         model: config.openai?.model,
         baseURL: config.openai?.base_url,
       });
@@ -54,15 +64,20 @@ export function buildLLMClient(): ILLMClient {
     case "anthropic":
       if (!config.anthropic?.api_key) {
         throw new Error(
-          "ANTHROPIC_API_KEY is required (or set MOTIVA_LLM_PROVIDER=openai|ollama|codex)"
+          "ANTHROPIC_API_KEY is not set.\nSet it via: export ANTHROPIC_API_KEY=sk-ant-..."
         );
       }
       return new LLMClient(config.anthropic.api_key);
 
     default:
       // Unknown or unset value falls back to OpenAI
+      if (!config.openai?.api_key) {
+        throw new Error(
+          "OPENAI_API_KEY is not set.\nSet it via: export OPENAI_API_KEY=sk-..."
+        );
+      }
       return new OpenAILLMClient({
-        apiKey: config.openai?.api_key,
+        apiKey: config.openai.api_key,
         model: config.openai?.model,
         baseURL: config.openai?.base_url,
       });

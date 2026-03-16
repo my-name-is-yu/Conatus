@@ -341,6 +341,27 @@ function buildThreshold(
   }
 }
 
+// ─── Helper: deduplicate dimension keys ───
+
+/**
+ * When the LLM returns multiple dimensions with the same `name` (key),
+ * append `_2`, `_3`, … suffixes to the duplicates so every key is unique.
+ * All dimensions are preserved — none are dropped.
+ */
+function deduplicateDimensionKeys(dimensions: DimensionDecomposition[]): DimensionDecomposition[] {
+  const seen = new Map<string, number>(); // key → count so far
+  for (const dim of dimensions) {
+    const base = dim.name;
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    if (count > 0) {
+      // Second occurrence → `_2`, third → `_3`, etc.
+      dim.name = `${base}_${count + 1}`;
+    }
+  }
+  return dimensions;
+}
+
 // ─── GoalNegotiator ───
 
 export class GoalNegotiator {
@@ -459,6 +480,9 @@ export class GoalNegotiator {
         );
       }
     }
+
+    // Post-process: ensure all dimension keys are unique (LLM may return duplicates)
+    deduplicateDimensionKeys(dimensions);
 
     log.step2_decomposition = {
       dimensions,
@@ -828,6 +852,9 @@ export class GoalNegotiator {
         }
       }
     }
+
+    // Post-process: ensure all dimension keys are unique (LLM may return duplicates)
+    deduplicateDimensionKeys(dimensions);
 
     log.step2_decomposition = { dimensions, method: "llm" };
 

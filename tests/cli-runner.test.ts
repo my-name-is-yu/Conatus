@@ -420,6 +420,91 @@ describe("run subcommand", () => {
   });
 });
 
+// ─── `--yes` flag position independence ──────────────────────────────────────
+
+describe("--yes flag position independence", () => {
+  // The mock CoreLoop never calls approvalFn, so we cannot observe "Auto-approved"
+  // in console output. Instead we verify that:
+  //   (a) routing succeeds (exit code 0, not "unknown subcommand")
+  //   (b) CoreLoop.run() is called with the correct goalId
+  // This confirms --yes is correctly stripped before subcommand dispatch.
+
+  it("honours --yes placed before the subcommand (motiva --yes run --goal <id>)", async () => {
+    stateManager.saveGoal(makeGoal({ id: "g-yes-before" }));
+
+    const mockRun = vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-yes-before" }));
+    vi.mocked(CoreLoop).mockImplementation(
+      () => ({ run: mockRun, stop: vi.fn() } as unknown as CoreLoop)
+    );
+
+    // --yes appears BEFORE the subcommand — previously this was treated as an
+    // unknown subcommand and returned exit code 1.
+    const code = await runCLI("--yes", "run", "--goal", "g-yes-before");
+
+    expect(code).toBe(0);
+    expect(mockRun).toHaveBeenCalledWith("g-yes-before");
+  });
+
+  it("honours --yes placed after --goal (motiva run --goal <id> --yes)", async () => {
+    stateManager.saveGoal(makeGoal({ id: "g-yes-after" }));
+
+    const mockRun = vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-yes-after" }));
+    vi.mocked(CoreLoop).mockImplementation(
+      () => ({ run: mockRun, stop: vi.fn() } as unknown as CoreLoop)
+    );
+
+    // --yes appears after the subcommand — the original behaviour must still work.
+    const code = await runCLI("run", "--goal", "g-yes-after", "--yes");
+
+    expect(code).toBe(0);
+    expect(mockRun).toHaveBeenCalledWith("g-yes-after");
+  });
+
+  it("honours -y shorthand placed before the subcommand", async () => {
+    stateManager.saveGoal(makeGoal({ id: "g-y-before" }));
+
+    const mockRun = vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-y-before" }));
+    vi.mocked(CoreLoop).mockImplementation(
+      () => ({ run: mockRun, stop: vi.fn() } as unknown as CoreLoop)
+    );
+
+    const code = await runCLI("-y", "run", "--goal", "g-y-before");
+
+    expect(code).toBe(0);
+    expect(mockRun).toHaveBeenCalledWith("g-y-before");
+  });
+
+  it("--yes before subcommand does not break exit-code when loop fails", async () => {
+    stateManager.saveGoal(makeGoal({ id: "g-yes-fail" }));
+
+    vi.mocked(CoreLoop).mockImplementation(() => ({
+      run: vi.fn().mockResolvedValue(makeLoopResult({ finalStatus: "stalled" })),
+      stop: vi.fn(),
+    } as unknown as CoreLoop));
+
+    const code = await runCLI("--yes", "run", "--goal", "g-yes-fail");
+
+    // stalled → exit 2, same as without --yes
+    expect(code).toBe(2);
+  });
+
+  it("--yes before 'goal archive' skips confirmation for non-completed goals", async () => {
+    // A goal that is NOT completed — without --yes/--force this should return exit 1
+    stateManager.saveGoal(makeGoal({ id: "g-archive-yes", status: "active" }));
+
+    // Without --yes: should fail (status not completed, no force flag)
+    const codeNoYes = await runCLI("goal", "archive", "g-archive-yes");
+    expect(codeNoYes).toBe(1);
+
+    // Save the goal again since archiving may have side effects on first call
+    stateManager.saveGoal(makeGoal({ id: "g-archive-yes2", status: "active" }));
+
+    // With global --yes before subcommand: should succeed (confirmation skipped)
+    const codeWithYes = await runCLI("--yes", "goal", "archive", "g-archive-yes2");
+    expect(codeWithYes).toBe(0);
+  });
+});
+
 // ─── `goal add` subcommand ───────────────────────────────────────────────────
 
 describe("goal add subcommand", () => {

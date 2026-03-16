@@ -2206,4 +2206,139 @@ describe("GoalNegotiator CharacterConfig integration", () => {
       }
     });
   });
+
+  // ─── Dimension key deduplication ───
+
+  describe("dimension key deduplication", () => {
+    it("deduplicates dimensions with identical keys by appending _2, _3 suffixes", async () => {
+      const duplicateKeysResponse = JSON.stringify([
+        {
+          name: "contributing_md_exists",
+          label: "CONTRIBUTING.md File Exists",
+          threshold_type: "present",
+          threshold_value: null,
+          observation_method_hint: "Check if CONTRIBUTING.md exists",
+        },
+        {
+          name: "contributing_md_exists",
+          label: "CONTRIBUTING.md Quality",
+          threshold_type: "min",
+          threshold_value: 0.7,
+          observation_method_hint: "Evaluate quality of CONTRIBUTING.md",
+        },
+        {
+          name: "contributing_md_exists",
+          label: "CONTRIBUTING.md Completeness",
+          threshold_type: "min",
+          threshold_value: 0.8,
+          observation_method_hint: "Check completeness of CONTRIBUTING.md",
+        },
+      ]);
+
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        duplicateKeysResponse,
+        FEASIBILITY_REALISTIC,
+        FEASIBILITY_REALISTIC,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const result = await negotiator.negotiate("Improve documentation quality");
+      const dimNames = result.goal.dimensions.map((d) => d.name);
+
+      // All three dimensions must be present (none dropped)
+      expect(dimNames).toHaveLength(3);
+      // Keys must all be unique
+      const uniqueNames = new Set(dimNames);
+      expect(uniqueNames.size).toBe(3);
+      // First occurrence keeps original key
+      expect(dimNames[0]).toBe("contributing_md_exists");
+      // Subsequent duplicates get suffixes
+      expect(dimNames[1]).toBe("contributing_md_exists_2");
+      expect(dimNames[2]).toBe("contributing_md_exists_3");
+    });
+
+    it("preserves dimensions without duplicate keys unchanged", async () => {
+      const noDuplicatesResponse = JSON.stringify([
+        {
+          name: "readme_quality",
+          label: "README Quality",
+          threshold_type: "min",
+          threshold_value: 0.8,
+          observation_method_hint: "Evaluate README quality",
+        },
+        {
+          name: "contributing_md_exists",
+          label: "CONTRIBUTING.md Exists",
+          threshold_type: "present",
+          threshold_value: null,
+          observation_method_hint: "Check file existence",
+        },
+      ]);
+
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        noDuplicatesResponse,
+        FEASIBILITY_REALISTIC,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const result = await negotiator.negotiate("Improve documentation");
+      const dimNames = result.goal.dimensions.map((d) => d.name);
+
+      expect(dimNames).toHaveLength(2);
+      expect(dimNames[0]).toBe("readme_quality");
+      expect(dimNames[1]).toBe("contributing_md_exists");
+    });
+
+    it("deduplication preserves the threshold of each dimension independently", async () => {
+      const duplicateKeysResponse = JSON.stringify([
+        {
+          name: "file_quality",
+          label: "File Exists",
+          threshold_type: "present",
+          threshold_value: null,
+          observation_method_hint: "Check existence",
+        },
+        {
+          name: "file_quality",
+          label: "File Quality Score",
+          threshold_type: "min",
+          threshold_value: 0.7,
+          observation_method_hint: "Score quality",
+        },
+      ]);
+
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        duplicateKeysResponse,
+        FEASIBILITY_REALISTIC,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const result = await negotiator.negotiate("Check file quality");
+      const dims = result.goal.dimensions;
+
+      expect(dims).toHaveLength(2);
+      // First dimension keeps its `present` threshold
+      expect(dims[0].threshold.type).toBe("present");
+      // Second dimension keeps its `min` threshold
+      expect(dims[1].threshold.type).toBe("min");
+      if (dims[1].threshold.type === "min") {
+        expect(dims[1].threshold.value).toBe(0.7);
+      }
+    });
+  });
 });

@@ -56,6 +56,7 @@ import * as GapCalculator from "./gap-calculator.js";
 import * as DriveScorer from "./drive-scorer.js";
 import type { GapCalculatorModule, DriveScorerModule, LoopConfig } from "./core-loop.js";
 import type { Task } from "./types/task.js";
+import type { ProgressEvent } from "./core-loop.js";
 
 // ─── CLIRunner ───
 
@@ -102,7 +103,7 @@ export class CLIRunner {
     };
   }
 
-  private buildDeps(_apiKey: string | undefined, config?: LoopConfig, approvalFn?: (task: Task) => Promise<boolean>, logger?: Logger) {
+  private buildDeps(_apiKey: string | undefined, config?: LoopConfig, approvalFn?: (task: Task) => Promise<boolean>, logger?: Logger, onProgress?: (event: ProgressEvent) => void) {
     const stateManager = this.stateManager;
     const characterConfig = this.characterConfigManager.load();
     const llmClient = buildLLMClient();
@@ -199,6 +200,7 @@ export class CLIRunner {
       treeLoopOrchestrator,
       logger,
       contextProvider,
+      onProgress,
     }, config);
 
     const goalNegotiator = new GoalNegotiator(
@@ -220,7 +222,8 @@ export class CLIRunner {
   private async cmdRun(
     goalId: string,
     loopConfig?: LoopConfig,
-    autoApprove?: boolean
+    autoApprove?: boolean,
+    verbose?: boolean
   ): Promise<number> {
     const apiKey = this.getApiKey();
     const providerConfig = loadProviderConfig();
@@ -259,13 +262,46 @@ export class CLIRunner {
       consoleOutput: false,
     });
 
+    // Build progress callback for iteration output
+    const maxIterations = loopConfig?.maxIterations ?? 100;
+    let lastIterationLogged = -1;
+    const onProgress = (event: ProgressEvent): void => {
+      const prefix = `[${event.iteration}/${event.maxIterations}]`;
+      if (event.phase === "Observing...") {
+        if (event.iteration !== lastIterationLogged) {
+          lastIterationLogged = event.iteration;
+          const gapStr = event.gap !== undefined ? ` gap=${event.gap.toFixed(2)}` : "";
+          process.stdout.write(`${prefix} Observing...${gapStr}\n`);
+        }
+      } else if (event.phase === "Generating task...") {
+        const gapStr = event.gap !== undefined ? ` gap=${event.gap.toFixed(2)}` : "";
+        process.stdout.write(`${prefix} Generating task...${gapStr}\n`);
+      } else if (event.phase === "Executing task...") {
+        if (event.taskDescription) {
+          process.stdout.write(`${prefix} Executing task: "${event.taskDescription}"\n`);
+        } else {
+          process.stdout.write(`${prefix} Executing task...\n`);
+        }
+      } else if (event.phase === "Verifying result...") {
+        if (event.taskDescription) {
+          process.stdout.write(`${prefix} Verifying: "${event.taskDescription}"\n`);
+        } else {
+          process.stdout.write(`${prefix} Verifying result...\n`);
+        }
+      }
+    };
+    void maxIterations; // suppress unused warning
+
     let deps: ReturnType<typeof this.buildDeps>;
     try {
-      deps = this.buildDeps(apiKey, loopConfig, approvalFn, logger);
+      deps = this.buildDeps(apiKey, loopConfig, approvalFn, logger, onProgress);
     } catch (err) {
       rl?.close();
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Error: Failed to initialise dependencies: ${message}`);
+      if (verbose || process.env.DEBUG) {
+        console.error(err instanceof Error ? err.stack : String(err));
+      }
       return 1;
     }
 
@@ -303,6 +339,10 @@ export class CLIRunner {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${message}`);
+      console.error(`Hint: Check ~/.motiva/logs/ for details or re-run with DEBUG=1 for stack traces.`);
+      if (verbose || process.env.DEBUG) {
+        console.error(err instanceof Error ? err.stack : String(err));
+      }
       process.off("SIGINT", shutdown);
       process.off("SIGTERM", shutdown);
       this.activeCoreLoop = null;
@@ -1314,10 +1354,23 @@ Options:
       return 1;
     }
 
+    // Extract --yes / -y globally so it works regardless of position
+    // (e.g. `motiva --yes run --goal <id>` as well as `motiva run --goal <id> --yes`).
+    let globalYes = false;
+    const filteredArgv: string[] = [];
+    for (const arg of argv) {
+      if (arg === "--yes" || arg === "-y") {
+        globalYes = true;
+      } else {
+        filteredArgv.push(arg);
+      }
+    }
+    argv = filteredArgv;
+
     const subcommand = argv[0];
 
     if (subcommand === "run") {
-      let values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean };
+      let values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean };
       try {
         ({ values } = parseArgs({
           args: argv.slice(1),
@@ -1327,9 +1380,10 @@ Options:
             adapter: { type: "string" },
             tree: { type: "boolean" },
             yes: { type: "boolean", short: "y" },
+            verbose: { type: "boolean" },
           },
           strict: false,
-        }) as { values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean } });
+        }) as { values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean } });
       } catch {
         values = {};
       }
@@ -1354,7 +1408,7 @@ Options:
         loopConfig.treeMode = true;
       }
 
-      return await this.cmdRun(goalId, loopConfig, values.yes);
+      return await this.cmdRun(goalId, loopConfig, globalYes || values.yes, values.verbose);
     }
 
     if (subcommand === "goal") {
@@ -1389,7 +1443,7 @@ Options:
 
         const deadline = values.deadline;
         const constraints = values.constraint ?? [];
-        const yes = values.yes ?? false;
+        const yes = globalYes || (values.yes ?? false);
 
         return await this.cmdGoalAdd(description, { deadline, constraints, yes });
       }
@@ -1423,7 +1477,7 @@ Options:
             strict: false,
           }) as { values: { yes?: boolean; force?: boolean } });
         } catch { archiveValues = {}; }
-        return await this.cmdGoalArchive(goalId, archiveValues);
+        return await this.cmdGoalArchive(goalId, { ...archiveValues, yes: globalYes || archiveValues.yes });
       }
 
       if (goalSubcommand === "remove") {

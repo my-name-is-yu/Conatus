@@ -164,6 +164,24 @@ export interface CoreLoopDeps {
   logger?: Logger;
   /** Optional context provider for workspace-aware task generation */
   contextProvider?: (goalId: string, dimensionName: string) => Promise<string>;
+  /**
+   * Optional progress callback. Called at key phases during each iteration so
+   * callers (e.g. CLIRunner) can print user-friendly progress lines.
+   */
+  onProgress?: (event: ProgressEvent) => void;
+}
+
+export interface ProgressEvent {
+  /** 1-based iteration number */
+  iteration: number;
+  /** Maximum iterations configured */
+  maxIterations: number;
+  /** Current phase label */
+  phase: string;
+  /** Gap aggregate from latest gap calculation (undefined before first gap calc) */
+  gap?: number;
+  /** Short description of the task being executed (undefined outside execute phase) */
+  taskDescription?: string;
 }
 
 // ─── Helpers ───
@@ -496,6 +514,11 @@ export class CoreLoop {
     //   2. LLM (independent_review) — if llmClient is available and no DataSource
     //   3. self_report — last resort
     // Passing an empty methods array tells observe() to iterate ALL dimensions.
+    this.deps.onProgress?.({
+      iteration: loopIndex + 1,
+      maxIterations: this.config.maxIterations,
+      phase: "Observing...",
+    });
     try {
       const engine = this.deps.observationEngine as unknown as {
         observe?: (goalId: string, methods: unknown[]) => Promise<void> | void;
@@ -539,6 +562,13 @@ export class CoreLoop {
         goal.gap_aggregation
       );
       result.gapAggregate = gapAggregate;
+
+      this.deps.onProgress?.({
+        iteration: loopIndex + 1,
+        maxIterations: this.config.maxIterations,
+        phase: "Generating task...",
+        gap: gapAggregate,
+      });
 
       // Persist gap history entry
       this.deps.stateManager.appendGapHistoryEntry(goalId, {
@@ -918,6 +948,12 @@ export class CoreLoop {
       }
 
       this.logger?.debug("CoreLoop: running task cycle", { adapter: adapter.adapterType, goalId });
+      this.deps.onProgress?.({
+        iteration: loopIndex + 1,
+        maxIterations: this.config.maxIterations,
+        phase: "Executing task...",
+        gap: result.gapAggregate,
+      });
       const taskResult = await this.deps.taskLifecycle.runTaskCycle(
         goalId,
         gapVector,
@@ -929,6 +965,15 @@ export class CoreLoop {
       );
       this.logger?.info("CoreLoop: task cycle result", { action: taskResult.action, taskId: taskResult.task.id });
       result.taskResult = taskResult;
+      this.deps.onProgress?.({
+        iteration: loopIndex + 1,
+        maxIterations: this.config.maxIterations,
+        phase: "Verifying result...",
+        gap: result.gapAggregate,
+        taskDescription: taskResult.task.work_description
+          ? taskResult.task.work_description.split("\n")[0]?.slice(0, 80)
+          : undefined,
+      });
 
       // Portfolio: record task completion for the strategy that generated this task
       if (this.deps.portfolioManager && taskResult.action === "completed" && taskResult.task.strategy_id) {
