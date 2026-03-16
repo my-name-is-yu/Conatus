@@ -1,41 +1,84 @@
-# Contributing
+# Contributing to Motiva
 
-Thank you for your interest in contributing to this project.
+Thank you for contributing to Motiva. This project focuses on reliable, evidence-based agent orchestration, so contributions should be clear, testable, and scoped to a specific improvement.
 
 ## How to Contribute
 
-Contributions are welcome through bug reports, feature requests, documentation improvements, and code changes.
+You can contribute by:
 
-To contribute:
+- Reporting bugs
+- Proposing features or design improvements
+- Improving documentation
+- Adding or refining tests
+- Submitting code changes
 
-1. Fork the repository and create a branch for your work.
-2. Make focused changes that address a clear issue or improvement.
-3. Test your changes before submitting them.
-4. Update documentation when your changes affect behavior or usage.
+Recommended workflow:
 
-## Reporting Bugs and Requesting Features
+1. Review the existing documentation in `README.md` and relevant source files before making changes.
+2. Create a focused branch for your work.
+3. Keep changes narrow in scope and avoid unrelated refactors.
+4. Add or update tests when behavior changes.
+5. Update documentation when commands, APIs, or user-facing behavior change.
 
-To report a bug or request a feature, please open an issue in the GitHub repository. Provide a clear description of the issue or feature, steps to reproduce if applicable, and any relevant screenshots or logs.
+For local development:
+
+```bash
+npm install
+npm run build
+npm test
+npm run typecheck
+```
+
+Motiva requires Node.js 18 or newer.
 
 ## Code of Conduct
 
-Please contribute in a respectful, constructive, and professional manner.
+All contributors are expected to participate professionally and respectfully.
 
-By participating in this project, you agree to:
+- Be constructive in discussions, reviews, and issue reports.
+- Assume good intent and focus on technical substance.
+- Do not engage in harassment, discrimination, personal attacks, or disruptive behavior.
+- Accept feedback and provide it in a clear, actionable form.
 
-- Be respectful in discussions and reviews.
-- Provide helpful, actionable feedback.
-- Avoid harassment, discrimination, or abusive behavior.
-- Work collaboratively and assume good intent.
+Project maintainers may moderate discussions and contributions to keep collaboration productive and safe.
 
-## Submitting Changes
+## Submitting Issues
 
-When your changes are ready:
+Open an issue when you find a bug, have a feature request, or want to propose a significant change.
 
-1. Commit your work with clear, descriptive commit messages.
-2. Push your branch to your fork or remote repository.
-3. Open a pull request that explains what changed and why.
-4. Include any relevant issue links, testing notes, or screenshots if applicable.
-5. Respond to review feedback and update the pull request as needed.
+Please include:
 
-Keeping pull requests small and focused helps reviews move faster.
+- A clear summary of the problem or proposal
+- Relevant context and expected behavior
+- Steps to reproduce, if reporting a bug
+- Logs, error messages, screenshots, or test output when useful
+- Notes about your environment, such as Node.js version or provider configuration, when relevant
+
+Before opening a new issue, check whether the topic has already been reported.
+
+## Pull Request Guidelines
+
+Pull requests should be easy to review and grounded in observable behavior.
+
+Before submitting a pull request:
+
+1. Confirm the branch contains only relevant changes.
+2. Run `npm run build`, `npm test`, and `npm run typecheck`.
+3. Update documentation or inline comments where needed.
+4. Write clear commit messages and a concise pull request description.
+
+Each pull request should include:
+
+- What changed
+- Why the change was needed
+- How it was tested
+- Any follow-up work, tradeoffs, or known limitations
+
+Additional guidance:
+
+- Prefer small, focused pull requests over large mixed changesets.
+- Preserve existing project structure and naming conventions.
+- Avoid breaking public behavior without documenting it clearly.
+- If a change affects CLI behavior, reports, or state handling, include enough detail for reviewers to verify it quickly.
+
+Maintainers may request revisions before merging.
