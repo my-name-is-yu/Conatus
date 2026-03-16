@@ -42,8 +42,8 @@ export interface ProviderConfig {
 const PROVIDER_CONFIG_PATH = path.join(os.homedir(), ".motiva", "provider.json");
 
 const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
-  llm_provider: "anthropic",
-  default_adapter: "claude_api",
+  llm_provider: "codex",
+  default_adapter: "openai_codex_cli",
 };
 
 // ─── Helpers ───
