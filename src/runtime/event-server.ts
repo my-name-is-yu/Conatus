@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as http from "node:http";
 import type { DriveSystem } from "../drive/drive-system.js";
 import { MotivaEventSchema } from "../types/drive.js";
@@ -5,6 +7,7 @@ import { MotivaEventSchema } from "../types/drive.js";
 export interface EventServerConfig {
   host?: string; // default: "127.0.0.1" (localhost only!)
   port?: number; // default: 41700
+  eventsDir?: string; // default: ~/.motiva/events/
 }
 
 export class EventServer {
@@ -12,11 +15,20 @@ export class EventServer {
   private driveSystem: DriveSystem;
   private host: string;
   private port: number;
+  private eventsDir: string;
+  private fileWatcher: fs.FSWatcher | null = null;
 
   constructor(driveSystem: DriveSystem, config?: EventServerConfig) {
     this.driveSystem = driveSystem;
     this.host = config?.host ?? "127.0.0.1";
     this.port = config?.port ?? 41700;
+    // Default events directory: ~/.motiva/events/
+    const defaultEventsDir = path.join(
+      process.env.HOME ?? process.env.USERPROFILE ?? "/tmp",
+      ".motiva",
+      "events"
+    );
+    this.eventsDir = config?.eventsDir ?? defaultEventsDir;
   }
 
   /** Start HTTP server */
@@ -30,6 +42,7 @@ export class EventServer {
 
   /** Stop HTTP server */
   async stop(): Promise<void> {
+    this.stopFileWatcher();
     return new Promise((resolve) => {
       if (!this.server) {
         resolve();
@@ -37,6 +50,70 @@ export class EventServer {
       }
       this.server.close(() => resolve());
     });
+  }
+
+  /**
+   * Start watching the events directory for new `.json` files.
+   * When a file appears:
+   *   1. Read and parse it
+   *   2. Validate via MotivaEventSchema
+   *   3. Dispatch to DriveSystem (writeEvent)
+   *   4. Move to events/processed/ subdirectory
+   *   5. Log errors for malformed files but don't crash
+   *
+   * Creates the events directory if it doesn't exist.
+   */
+  startFileWatcher(): void {
+    if (this.fileWatcher) return; // already watching
+
+    // Ensure directory exists
+    fs.mkdirSync(this.eventsDir, { recursive: true });
+
+    this.fileWatcher = fs.watch(this.eventsDir, (eventType, filename) => {
+      if (eventType !== "rename" || !filename) return;
+      if (!filename.endsWith(".json") || filename.endsWith(".tmp")) return;
+
+      const filePath = path.join(this.eventsDir, filename);
+      this.processEventFile(filePath, filename);
+    });
+  }
+
+  /** Stop the file watcher and clean up the handle. */
+  stopFileWatcher(): void {
+    if (this.fileWatcher) {
+      this.fileWatcher.close();
+      this.fileWatcher = null;
+    }
+  }
+
+  /**
+   * Read, validate, dispatch, and move a single event file.
+   * Errors are logged but never propagated (caller must not crash).
+   */
+  private processEventFile(filePath: string, filename: string): void {
+    try {
+      if (!fs.existsSync(filePath)) return; // file already removed
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile()) return;
+
+      const content = fs.readFileSync(filePath, "utf-8");
+      const raw = JSON.parse(content) as unknown;
+      const event = MotivaEventSchema.parse(raw);
+
+      // Dispatch to DriveSystem
+      this.driveSystem.writeEvent(event);
+
+      // Move to processed/
+      const processedDir = path.join(this.eventsDir, "processed");
+      fs.mkdirSync(processedDir, { recursive: true });
+      const dstPath = path.join(processedDir, filename);
+      fs.renameSync(filePath, dstPath);
+    } catch (err) {
+      console.error(
+        `EventServer: failed to process event file "${filename}": ${String(err)}`
+      );
+      // Do not re-throw — watcher must keep running
+    }
   }
 
   /** Handle incoming HTTP request */
@@ -72,11 +149,20 @@ export class EventServer {
     return this.server !== null && this.server.listening;
   }
 
+  /** Check if file watcher is active */
+  isWatching(): boolean {
+    return this.fileWatcher !== null;
+  }
+
   getPort(): number {
     return this.port;
   }
 
   getHost(): string {
     return this.host;
+  }
+
+  getEventsDir(): string {
+    return this.eventsDir;
   }
 }
