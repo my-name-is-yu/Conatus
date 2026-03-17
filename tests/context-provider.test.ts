@@ -1,9 +1,61 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as path from "path";
+
+// ---------------------------------------------------------------------------
+// Create mock BEFORE vi.mock so we have a direct reference.
+// ---------------------------------------------------------------------------
+// Create mock with custom promisify so that promisify(execFileMock) returns
+// { stdout, stderr } just like the real execFile.
+const execFileMock = vi.hoisted(() => {
+  const fn = vi.fn();
+  // Attach custom promisify implementation that returns { stdout, stderr }
+  // matching the real child_process.execFile behavior.
+  const customPromisify = (...args: unknown[]) =>
+    new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      fn(...args, (err: Error | null, stdout: string, stderr: string) => {
+        if (err) reject(err);
+        else resolve({ stdout, stderr });
+      });
+    });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (fn as any)[Symbol.for("nodejs.util.promisify.custom")] = customPromisify;
+  return fn;
+});
+
+vi.mock("child_process", () => ({
+  execFile: execFileMock,
+}));
+
+// After the mock is in place, import the module under test.
+// promisify(execFileMock) will use the default callback wrapper.
 import {
   buildWorkspaceContext,
   dimensionNameToSearchTerms,
 } from "../src/observation/context-provider.js";
-import * as path from "path";
+
+// Build a callback-style mock compatible with util.promisify.
+// `handler` receives (file, args) and returns { stdout } on success or an
+// Error instance to simulate a non-zero exit / missing command.
+function makeExecFileMock(
+  handler: (file: string, args: string[]) => { stdout: string } | Error
+) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (...callArgs: any[]) => {
+    const file: string = callArgs[0];
+    const args: string[] = Array.isArray(callArgs[1]) ? callArgs[1] : [];
+    const callback = callArgs[callArgs.length - 1];
+    const result = handler(file, args);
+    // Use queueMicrotask so callback is invoked asynchronously
+    // (matches the real execFile behavior that promisify expects).
+    queueMicrotask(() => {
+      if (result instanceof Error) {
+        callback(result, "", "");
+      } else {
+        callback(null, result.stdout, "");
+      }
+    });
+  };
+}
 
 describe("dimensionNameToSearchTerms", () => {
   it("returns ['TODO'] for todo_count", () => {
@@ -22,14 +74,11 @@ describe("dimensionNameToSearchTerms", () => {
   });
 
   it("returns fallback terms for unknown_metric", () => {
-    // "unknown_metric" → split by "_", words > 2 chars: ["unknown", "metric"]
     const terms = dimensionNameToSearchTerms("unknown_metric");
     expect(terms.length).toBeGreaterThan(0);
-    // Should not include any of the known special terms
     expect(terms).not.toContain("TODO");
     expect(terms).not.toContain("FIXME");
     expect(terms).not.toContain("test");
-    // Should fall back to the words from the dimension name
     expect(terms).toContain("unknown");
   });
 
@@ -46,7 +95,6 @@ describe("dimensionNameToSearchTerms", () => {
   });
 
   it("returns the full dimension name as fallback when no word is long enough", () => {
-    // All words are <= 2 chars, so falls through to full name fallback
     const terms = dimensionNameToSearchTerms("a_b");
     expect(terms.length).toBeGreaterThan(0);
   });
@@ -55,67 +103,149 @@ describe("dimensionNameToSearchTerms", () => {
 describe("buildWorkspaceContext (integration)", () => {
   const projectRoot = path.resolve(__dirname, "..");
 
+  beforeEach(() => {
+    execFileMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("returns a string result", async () => {
+    execFileMock.mockImplementation(
+      makeExecFileMock((file) => {
+        if (file === "grep") {
+          return {
+            stdout: `${projectRoot}/src/foo.ts\n${projectRoot}/src/bar.ts\n`,
+          };
+        }
+        if (file === "git") {
+          return { stdout: "src/foo.ts | 3 +++\n1 file changed" };
+        }
+        if (file === "npx") {
+          return {
+            stdout:
+              "........\n\nTest Files  1 passed (1)\nTests  10 passed (10)\n",
+          };
+        }
+        return { stdout: "" };
+      })
+    );
+
     const result = await buildWorkspaceContext("goal-1", "todo_count", {
       cwd: projectRoot,
       maxFileContentLines: 10,
     });
     expect(typeof result).toBe("string");
-  }, 60000);
+  });
 
   it("includes file content sections when grep finds matches", async () => {
-    // "TODO" is likely present in this TypeScript project
+    const realFile = path.join(
+      projectRoot,
+      "src/observation/context-provider.ts"
+    );
+    execFileMock.mockImplementation(
+      makeExecFileMock((file) => {
+        if (file === "grep") {
+          return { stdout: `${realFile}\n` };
+        }
+        if (file === "git") {
+          return {
+            stdout:
+              "src/observation/context-provider.ts | 5 +++++\n1 file changed",
+          };
+        }
+        if (file === "npx") {
+          return { stdout: "Tests  100 passed (100)\n" };
+        }
+        return { stdout: "" };
+      })
+    );
+
     const result = await buildWorkspaceContext("goal-2", "todo_count", {
       cwd: projectRoot,
       maxFileContentLines: 10,
     });
-    // Either files were found (grep matched) or we get the fallback
     expect(typeof result).toBe("string");
     expect(result.length).toBeGreaterThan(0);
-    // If TODO was found, it should contain a file section marker
-    if (result.includes('[grep "TODO"')) {
-      expect(result).toMatch(/\[File: .+\]/);
-    }
-  }, 60000);
+    expect(result).toMatch(/\[grep "TODO"/);
+    expect(result).toMatch(/\[File: .+\]/);
+  });
 
   it("handles a dimension with no grep matches gracefully", async () => {
-    // Use a very unusual dimension name unlikely to match any file
+    execFileMock.mockImplementation(
+      makeExecFileMock((file) => {
+        if (file === "grep") {
+          return new Error("grep: no matches");
+        }
+        if (file === "git") {
+          return { stdout: "" };
+        }
+        if (file === "npx") {
+          return { stdout: "Tests  10 passed (10)\n" };
+        }
+        return { stdout: "" };
+      })
+    );
+
     const result = await buildWorkspaceContext(
       "goal-3",
       "zzz_xyzzy_nonexistent_9999",
       { cwd: projectRoot, maxFileContentLines: 5 }
     );
     expect(typeof result).toBe("string");
-    // Should not throw; returns either content or the fallback message
-    // The result might be empty-context fallback or git diff / test output
     expect(result).toBeDefined();
-  }, 60000);
+  });
 
   it("respects maxFileContentLines option by limiting lines per file", async () => {
+    const realFile = path.join(
+      projectRoot,
+      "src/observation/context-provider.ts"
+    );
+    execFileMock.mockImplementation(
+      makeExecFileMock((file) => {
+        if (file === "grep") {
+          return { stdout: `${realFile}\n` };
+        }
+        if (file === "git") {
+          return {
+            stdout: "context-provider.ts | 10 ++++++++++\n1 file changed",
+          };
+        }
+        if (file === "npx") {
+          return { stdout: "Tests  3412 passed (3412)\n" };
+        }
+        return { stdout: "" };
+      })
+    );
+
     const result = await buildWorkspaceContext("goal-4", "test_coverage", {
       cwd: projectRoot,
       maxFileContentLines: 3,
     });
     expect(typeof result).toBe("string");
-    // Parse individual file sections using regex:
-    // a file section starts with "[File: ...]" and ends before the next "[" marker
-    const fileSectionRegex = /\[File: [^\]]+\]\n([\s\S]*?)(?=\n\[(?:grep|File|Recent|Test)|$)/g;
+    const fileSectionRegex =
+      /\[File: [^\]]+\]\n([\s\S]*?)(?=\n\[(?:grep|File|Recent|Test)|$)/g;
     let match: RegExpExecArray | null;
     while ((match = fileSectionRegex.exec(result)) !== null) {
       const fileContent = match[1];
-      const nonEmptyLines = fileContent.split("\n").filter((l) => l.trim() !== "");
-      // File content must be bounded by maxFileContentLines (3), allow generous slack
+      const nonEmptyLines = fileContent
+        .split("\n")
+        .filter((l) => l.trim() !== "");
       expect(nonEmptyLines.length).toBeLessThanOrEqual(20);
     }
-  }, 60000);
+  });
 
   it("returns fallback message when no context is available at all", async () => {
-    // Point to a temp dir with no files, no git, no tests
+    execFileMock.mockImplementation(
+      makeExecFileMock((_file) => new Error("command not found"))
+    );
+
     const result = await buildWorkspaceContext("goal-5", "unknown_xyz", {
       cwd: "/tmp",
       maxFileContentLines: 5,
     });
     expect(typeof result).toBe("string");
-    // Should not throw; fallback is acceptable
-  }, 60000);
+    expect(result).toBe("(No workspace context available)");
+  });
 });

@@ -20,7 +20,15 @@ afterEach(() => {
 });
 
 describe("createWorkspaceContextProvider — external file reading", () => {
-  const workDir = os.tmpdir(); // safe workDir that exists
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = fs.mkdtempSync(path.join(os.tmpdir(), "motiva-test-ext-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
 
   it("reads a /tmp/ file mentioned in goal description", async () => {
     const tmpPath = path.join("/tmp", `motiva-test-${Date.now()}.txt`);

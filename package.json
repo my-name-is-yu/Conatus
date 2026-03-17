@@ -36,7 +36,10 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run --exclude tests/e2e",
+    "test:all": "vitest run",
+    "test:e2e": "vitest run tests/e2e",
+    "test:changed": "vitest run --changed",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "tui": "node dist/tui/entry.js"
