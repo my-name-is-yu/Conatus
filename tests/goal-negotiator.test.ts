@@ -1598,9 +1598,9 @@ describe("GoalNegotiator", () => {
 
       await negotiator.negotiate("Improve project completion");
 
-      // The DataSource section should appear BEFORE "Return a JSON array of dimension objects. Example:"
-      const dsIndex = capturedPrompt.indexOf("CRITICAL CONSTRAINT");
-      const exampleIndex = capturedPrompt.indexOf("Return a JSON array of dimension objects. Example:");
+      // The DataSource section should appear BEFORE the example JSON
+      const dsIndex = capturedPrompt.indexOf("DataSources");
+      const exampleIndex = capturedPrompt.indexOf("Example:");
       expect(dsIndex).toBeGreaterThanOrEqual(0);
       expect(exampleIndex).toBeGreaterThan(dsIndex);
     });
@@ -1639,8 +1639,8 @@ describe("GoalNegotiator", () => {
 
       await negotiator.negotiate("Maintain comfortable environment");
 
-      expect(capturedPrompt).toContain("CRITICAL CONSTRAINT");
-      expect(capturedPrompt).toContain("you MUST use those exact dimension names");
+      expect(capturedPrompt).toContain("DataSources");
+      expect(capturedPrompt).toContain("use exact dimension names");
       expect(capturedPrompt).toContain("temperature_celsius");
       expect(capturedPrompt).toContain("humidity_percent");
     });

@@ -202,14 +202,14 @@ describe("negotiate() with workspaceContext", () => {
     const calls = sendMessageSpy.mock.calls;
     const decompositionCall = calls.find((call) => {
       const content = call[0][0]?.content ?? "";
-      return content.includes("Decompose the following goal");
+      return content.includes("Decompose this goal") || content.includes("Decompose the following goal");
     });
 
     expect(decompositionCall).toBeDefined();
     const prompt = decompositionCall![0][0]!.content as string;
-    expect(prompt).toContain("Current Workspace State");
+    expect(prompt).toContain("Workspace");
     expect(prompt).toContain("Workspace Context");
-    expect(prompt).toContain("directly measurable from this codebase");
+    expect(prompt).toContain("measurable from this codebase");
   });
 
   it("omits workspace section from prompt when workspaceContext is not provided", async () => {
@@ -235,13 +235,13 @@ describe("negotiate() with workspaceContext", () => {
     const calls = sendMessageSpy.mock.calls;
     const decompositionCall = calls.find((call) => {
       const content = call[0][0]?.content ?? "";
-      return content.includes("Decompose the following goal");
+      return content.includes("Decompose this goal") || content.includes("Decompose the following goal");
     });
 
     expect(decompositionCall).toBeDefined();
     const prompt = decompositionCall![0][0]!.content as string;
-    expect(prompt).not.toContain("Current Workspace State");
-    expect(prompt).not.toContain("directly measurable from this codebase");
+    expect(prompt).not.toContain("Workspace Context");
+    expect(prompt).not.toContain("measurable from this codebase");
   });
 
   it("omits workspace section when workspaceContext is empty string", async () => {
@@ -269,12 +269,12 @@ describe("negotiate() with workspaceContext", () => {
     const calls = sendMessageSpy.mock.calls;
     const decompositionCall = calls.find((call) => {
       const content = call[0][0]?.content ?? "";
-      return content.includes("Decompose the following goal");
+      return content.includes("Decompose this goal") || content.includes("Decompose the following goal");
     });
 
     expect(decompositionCall).toBeDefined();
     const prompt = decompositionCall![0][0]!.content as string;
-    expect(prompt).not.toContain("Current Workspace State");
+    expect(prompt).not.toContain("Workspace Context");
   });
 
   it("negotiate() succeeds and returns a goal with workspaceContext provided", async () => {

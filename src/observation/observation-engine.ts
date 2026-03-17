@@ -759,32 +759,21 @@ export class ObservationEngine {
       : "WARNING: No workspace content was provided. Score MUST be 0.0 per Rule 2.";
 
     const prompt =
-      `You are an independent observer evaluating a goal dimension.\n` +
-      `Your task: score the dimension from 0.0 (not achieved) to 1.0 (fully achieved).\n\n` +
+      `Score a goal dimension 0.0 (not achieved) to 1.0 (fully achieved).\n\n` +
       `CRITICAL RULES:\n` +
-      `1. Base your score ONLY on the evidence in the workspace content below. Do not invent or assume.\n` +
+      `1. Use ONLY the evidence below. Do not invent or assume.\n` +
       `2. If no workspace content is provided, score MUST be 0.0.\n` +
-      `3. Read every line of the provided content before scoring.\n` +
-      `4. Return ONLY valid JSON: {"score": <0.0-1.0>, "reason": "<one sentence>"}\n\n` +
+      `3. Return ONLY valid JSON: {"score": <0.0-1.0>, "reason": "<one sentence>"}\n\n` +
       `Goal: ${goalDescription}\n` +
       `Dimension: ${dimensionLabel}\n` +
-      `Target threshold: ${thresholdDescription}\n` +
+      `Target: ${thresholdDescription}\n` +
       `Previous score: ${previousScoreText}\n\n` +
-      `=== FEW-SHOT CALIBRATION ===\n` +
-      `Example A — evidence confirms achievement:\n` +
-      `  Context: grep output shows 0 TODO matches in codebase\n` +
-      `  Output: {"score": 1.0, "reason": "No TODOs found; target of 0 achieved"}\n\n` +
-      `Example B — evidence shows shortfall:\n` +
-      `  Context: grep output shows 3 matches: src/foo.ts:42: TODO fix this\n` +
-      `  Output: {"score": 0.0, "reason": "3 TODOs remain; target is 0"}\n\n` +
-      `Example C — no content provided:\n` +
-      `  Context: (empty)\n` +
-      `  Output: {"score": 0.0, "reason": "No evidence available; cannot confirm achievement"}\n` +
-      `=== END CALIBRATION ===\n\n` +
-      `=== WORKSPACE CONTENT ===\n` +
-      `${contextContent}\n` +
-      `=== END CONTENT ===\n\n` +
-      `Score the dimension now based strictly on the above content.`;
+      `FEW-SHOT CALIBRATION:\n` +
+      `- Context: grep shows 0 TODO matches → {"score": 1.0, "reason": "No TODOs; target achieved"}\n` +
+      `- Context: grep shows 3 matches: src/foo.ts:42: TODO fix this → {"score": 0.0, "reason": "3 TODOs remain"}\n\n` +
+      `WORKSPACE CONTENT:\n` +
+      `${contextContent}\n\n` +
+      `Score now based strictly on the above content.`;
 
     const response = await this.llmClient.sendMessage([
       { role: "user", content: prompt },

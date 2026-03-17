@@ -1529,8 +1529,8 @@ describe("TaskLifecycle", () => {
       // L1 no longer uses LLM, so first call is L2
       expect(spy.calls.length).toBeGreaterThanOrEqual(1);
       const l2Call = spy.calls[0]!;
-      expect(l2Call.options?.system).toContain("independent task reviewer");
-      expect(l2Call.options?.system).toContain("Do NOT consider");
+      expect(l2Call.options?.system).toContain("Review task results objectively");
+      expect(l2Call.options?.system).toContain("Ignore executor self-assessment");
     });
 
     it("LLM reviewer receives correct prompt with success criteria", async () => {

@@ -211,67 +211,32 @@ function buildDecompositionPrompt(
 
   const dataSourcesSection =
     availableDataSources && availableDataSources.length > 0
-      ? `CRITICAL CONSTRAINT: For dimensions that overlap with the available data sources below, you MUST use those exact dimension names so mechanical measurements can be wired automatically. You MAY add 1-2 additional dimensions beyond DataSources, only if they are directly observable via shell commands or file inspection.
-
-Available Data Sources and their exact dimension names:
-${availableDataSources.map((ds) => `- "${ds.name}" provides: ${ds.dimensions.join(", ")}`).join("\n")}
+      ? `DataSources (use exact dimension names for overlap; add 1-2 extra only if shell-measurable):
+${availableDataSources.map((ds) => `- "${ds.name}": ${ds.dimensions.join(", ")}`).join("\n")}
 
 `
       : "";
 
   const workspaceSection = workspaceContext
-    ? `\n=== Current Workspace State ===\n${workspaceContext}\n\nUse the above workspace facts to generate dimensions that are directly measurable from this codebase. For example, if unresolved task-note comments exist, use dimensions like "task_note_count" with threshold type "max" and value 0.\n`
+    ? `\nWorkspace:\n${workspaceContext}\nDerive dimensions measurable from this codebase (e.g. "task_note_count" max:0 if TODOs exist).\n`
     : "";
 
-  return `${dataSourcesSection}Decompose the following goal into measurable dimensions.
+  return `${dataSourcesSection}Decompose this goal into measurable dimensions.
 
 Goal: ${description}${constraintsSection}${workspaceSection}
 
-For each dimension, provide:
-- name: a snake_case identifier (use an exact DataSource dimension name if one fits, otherwise use a descriptive custom name)
-- label: human-readable label
-- threshold_type: one of "min", "max", "range", "present", "match"
-- threshold_value: the target value (number, string, or boolean), or null if not yet determined
-- observation_method_hint: how to measure this dimension
+Each dimension needs: name (snake_case, prefer exact DataSource name), label, threshold_type ("min"|"max"|"range"|"present"|"match"), threshold_value (number/string/bool or null), observation_method_hint.
 
-IMPORTANT — Dimension quality rules:
-1. Do NOT create only "present" type dimensions. Goals about quality, correctness, or completeness MUST have quality-scoring dimensions with "min" type thresholds (0.0-1.0 scale).
-2. "present" type is ONLY appropriate for pure existence checks (e.g., "does the file exist at all?"). If the goal mentions quality, content, correctness, completeness, or any qualitative attribute, use "min" type with a 0.0-1.0 score instead.
-3. Generate at most 5-7 dimensions total. Prefer dimensions that can be measured mechanically (via shell commands, file counting, grep, test runners). Do NOT generate generic quality dimensions like "code_quality", "readability", or "completeness" unless the goal description explicitly names that attribute AND you can describe a concrete shell command to measure it.
+Rules:
+- 5-7 dimensions max; prefer mechanically measurable (shell/grep/test runner)
+- "present" only for pure existence checks; use "min" (0.0-1.0) for quality/correctness/completeness
+- No generic dimensions (code_quality, readability) unless goal names them AND a concrete shell command exists
 
-Return a JSON array of dimension objects. Example:
+Example:
 [
-  {
-    "name": "test_coverage",
-    "label": "Test Coverage",
-    "threshold_type": "min",
-    "threshold_value": 80,
-    "observation_method_hint": "Run test suite and check coverage report"
-  },
-  {
-    "name": "readme_installation_quality",
-    "label": "README Installation Section Quality",
-    "threshold_type": "min",
-    "threshold_value": 0.7,
-    "observation_method_hint": "Evaluate if README has clear installation instructions with code examples, covering npm install, basic setup, and common configurations. Score 0.0-1.0."
-  },
-  {
-    "name": "package_json_exports_valid",
-    "label": "package.json exports/main/types Correctness",
-    "threshold_type": "min",
-    "threshold_value": 0.8,
-    "observation_method_hint": "Check that package.json has correct bin, main, exports, and types fields pointing to valid paths. Score 0.0-1.0."
-  },
-  {
-    "name": "license_file_exists",
-    "label": "License File Exists",
-    "threshold_type": "present",
-    "threshold_value": true,
-    "observation_method_hint": "Check if LICENSE or LICENSE.md file exists in the project root"
-  }
-]
-
-Return ONLY a JSON array, no other text.`;
+  {"name":"test_coverage","label":"Test Coverage","threshold_type":"min","threshold_value":80,"observation_method_hint":"Run test suite, check coverage %"},
+  {"name":"license_file_exists","label":"License File","threshold_type":"present","threshold_value":true,"observation_method_hint":"Check for LICENSE file in root"}
+]`;
 }
 
 function buildFeasibilityPrompt(
@@ -281,24 +246,13 @@ function buildFeasibilityPrompt(
   thresholdValue: number | string | boolean | (number | string)[] | null,
   timeHorizonDays: number
 ): string {
-  return `Assess the feasibility of achieving this dimension target.
+  return `Dimension: ${dimension}
+Goal: ${description}
+Baseline: ${baselineValue === null ? "unknown" : String(baselineValue)}
+Target: ${thresholdValue === null ? "unknown" : String(thresholdValue)}
+Horizon: ${timeHorizonDays} days
 
-Dimension: ${dimension}
-Goal context: ${description}
-Current baseline: ${baselineValue === null ? "unknown" : String(baselineValue)}
-Target value: ${thresholdValue === null ? "not yet determined" : String(thresholdValue)}
-Time horizon: ${timeHorizonDays} days
-
-Return a JSON object with:
-{
-  "assessment": "realistic" | "ambitious" | "infeasible",
-  "confidence": "high" | "medium" | "low",
-  "reasoning": "brief explanation",
-  "key_assumptions": ["assumption1", ...],
-  "main_risks": ["risk1", ...]
-}
-
-Return ONLY a JSON object, no other text.`;
+{"assessment":"realistic"|"ambitious"|"infeasible","confidence":"high"|"medium"|"low","reasoning":"...","key_assumptions":[...],"main_risks":[...]}`;
 }
 
 function buildResponsePrompt(
@@ -308,27 +262,21 @@ function buildResponsePrompt(
   counterProposal?: { realistic_target: number; reasoning: string }
 ): string {
   const feasibilitySummary = feasibilityResults
-    .map((r) => `- ${r.dimension}: ${r.assessment} (confidence: ${r.confidence})`)
+    .map((r) => `- ${r.dimension}: ${r.assessment} (${r.confidence})`)
     .join("\n");
 
-  let instruction = "";
-  if (responseType === "accept") {
-    instruction = "Generate an encouraging acceptance message for the user.";
-  } else if (responseType === "counter_propose") {
-    instruction = `Generate a counter-proposal message. The realistic target is ${counterProposal?.realistic_target}. Reasoning: ${counterProposal?.reasoning}. Suggest this as a safer alternative.`;
-  } else {
-    instruction =
-      "Generate a message flagging this goal as ambitious. List the risks and suggest the user review carefully.";
-  }
+  const instruction =
+    responseType === "accept"
+      ? "Write an encouraging acceptance message."
+      : responseType === "counter_propose"
+        ? `Write a counter-proposal: suggest ${counterProposal?.realistic_target} as a safer target. Reason: ${counterProposal?.reasoning}.`
+        : "Flag this goal as ambitious. Note the risks and ask user to review.";
 
   return `Goal: ${description}
-
-Feasibility assessment:
+Feasibility:
 ${feasibilitySummary}
 
-${instruction}
-
-Return a brief, user-facing message (1-3 sentences). Return ONLY the message text, no JSON.`;
+${instruction} Reply in 1-3 sentences, plain text.`;
 }
 
 // ─── Qualitative feasibility schema for LLM parsing ───

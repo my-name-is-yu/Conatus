@@ -77,16 +77,17 @@ Gap Analysis:
   // Build adapter context section
   let adapterSection = "";
   if (adapterType === "github_issue") {
-    adapterSection = `\nExecution context: This task will be executed via GitHub issue creation.\nIMPORTANT: The work_description should contain the issue title on the first line, followed by the issue body. Generate a SPECIFIC, actionable issue — not a vague review task.\n`;
+    adapterSection = `\nExecution context: GitHub issue creation.
+- work_description: issue title (line 1) + issue body
+- Generate specific, actionable issues only\n`;
   } else if (adapterType === "openai_codex_cli" || adapterType === "claude_code_cli") {
-    adapterSection = `\nExecution context: This task will be executed via the "${adapterType}" adapter (a CLI-based code agent).
-IMPORTANT constraints for success_criteria:
-- The agent runs in a sandbox and CANNOT perform git commit, git push, or merge operations.
-- Success criteria MUST focus on file creation/modification only (e.g., "file X exists with content Y").
-- Do NOT include "merged into repository", "committed", or "pushed" as success criteria.
-- The verification_method should check file existence or content (e.g., "test -f README.md").\n`;
+    adapterSection = `\nExecution context: CLI code agent in sandbox.
+Constraints:
+- No git commit/push/merge operations
+- Success criteria must use file checks only (e.g., "file X exists")
+- verification_method: use file existence/content checks (e.g., "test -f README.md")\n`;
   } else if (adapterType) {
-    adapterSection = `\nExecution context: This task will be executed via the "${adapterType}" adapter.\n`;
+    adapterSection = `\nExecution context: ${adapterType} adapter.\n`;
   }
 
   const knowledgeSection = knowledgeContext
@@ -128,36 +129,25 @@ IMPORTANT constraints for success_criteria:
   return `${goalSection}
 ${dimensionSection}
 ${repoSection}${adapterSection}${knowledgeSection}${workspaceSection}${existingTasksSection}
-IMPORTANT: Generate a task that is SPECIFIC to the actual project described above (goal title, description, and repository context). Do NOT suggest generic software improvements (e.g., user authentication, social media login, unrelated features) unless they are explicitly mentioned in the goal description. Base the task entirely on what the goal and project are actually about.
+Requirements:
+- Specific to actual project (goal, description, repo context)
+- No generic improvements unless in goal description
+- One concrete, actionable task for "${targetDimension}" dimension
+- Single measurable output in one session
+- work_description: target file path(s), specific changes (not "improve X" → "add section Y to file Z")
+- No vague review/triage tasks
 
-Generate ONE specific, concrete, actionable task that will directly improve the "${targetDimension}" dimension toward its target. The task should produce a single measurable output achievable in a single work session. Do not generate vague review or triage tasks — generate a task with a precise, well-defined deliverable.
-
-IMPORTANT: The task's work_description MUST include:
-1. Target file path(s) to modify or create
-2. Specific changes (not "improve X" but "add section Y to file Z")
-3. Completion criteria that can be verified
-
-Return a JSON object with the following schema:
+Return JSON only (inside markdown code block):
 {
-  "work_description": "string — what to do",
-  "rationale": "string — why this task matters",
-  "approach": "string — how to accomplish it",
+  "work_description": "what to do (include file paths and specific changes)",
+  "rationale": "why this matters",
+  "approach": "how to accomplish it",
   "success_criteria": [
-    {
-      "description": "string — what success looks like",
-      "verification_method": "string — how to verify",
-      "is_blocking": true
-    }
+    {"description": "what success looks like", "verification_method": "how to verify", "is_blocking": true}
   ],
-  "scope_boundary": {
-    "in_scope": ["string — what is included"],
-    "out_of_scope": ["string — what is excluded"],
-    "blast_radius": "string — what could be affected"
-  },
-  "constraints": ["string — any constraints"],
-  "reversibility": "reversible" | "irreversible" | "unknown",
-  "estimated_duration": { "value": number, "unit": "minutes" | "hours" | "days" | "weeks" } | null
-}
-
-Respond with only the JSON object inside a markdown code block.`;
+  "scope_boundary": {"in_scope": ["included"], "out_of_scope": ["excluded"], "blast_radius": "what could be affected"},
+  "constraints": ["any constraints"],
+  "reversibility": "reversible|irreversible|unknown",
+  "estimated_duration": {"value": number, "unit": "minutes|hours|days|weeks"} | null
+}`;
 }

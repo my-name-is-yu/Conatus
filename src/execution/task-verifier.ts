@@ -528,30 +528,27 @@ async function runLLMReview(
     )
     .join("\n");
 
-  const prompt = `Evaluate this task execution result against the success criteria.
+  const prompt = `Evaluate task execution against success criteria.
 
 Task: ${task.work_description}
 Approach: ${task.approach}
 
-Success Criteria:
+Criteria:
 ${criteriaList}
 
-Execution Output (first 2000 chars):
+Output (first 2000 chars):
 ${executionResult.output.slice(0, 2000)}
 
-Execution Status: ${executionResult.stopped_reason}
-Execution Success: ${executionResult.success}
-
+Status: ${executionResult.stopped_reason} | Success: ${executionResult.success}
 Context: ${reviewContext.map((s) => s.content).join(" ")}
 
-Evaluate whether the task output satisfies the success criteria. Respond with JSON:
-{"verdict": "pass" | "partial" | "fail", "reasoning": "explanation", "criteria_met": number, "criteria_total": number}`;
+Return JSON:
+{"verdict": "pass"|"partial"|"fail", "reasoning": "...", "criteria_met": #, "criteria_total": #}`;
 
   const response = await deps.llmClient.sendMessage(
     [{ role: "user", content: prompt }],
     {
-      system:
-        "You are an independent task reviewer. Evaluate task results objectively against success criteria. Do NOT consider the executor's self-assessment.",
+      system: "Review task results objectively against criteria. Ignore executor self-assessment.",
       max_tokens: 1024,
     }
   );
@@ -607,14 +604,13 @@ async function attemptRevert(deps: VerifierDeps, task: Task): Promise<boolean> {
       task.id
     );
 
-    const revertPrompt = `Revert the changes made by task "${task.work_description}". Undo all modifications within scope: ${task.scope_boundary.in_scope.join(", ")}.
+    const revertPrompt = `Revert task "${task.work_description}". Undo all changes in: ${task.scope_boundary.in_scope.join(", ")}.
 
-After completing the revert, respond with a JSON object:
-{"success": true/false, "reason": "explanation of what was done or why it failed"}`;
+Return JSON: {"success": true|false, "reason": "..."}`;
 
     const response = await deps.llmClient.sendMessage(
       [{ role: "user", content: revertPrompt }],
-      { system: "You are reverting a failed task. Undo all changes. Respond with JSON: {\"success\": boolean, \"reason\": string}", max_tokens: 512 }
+      { system: "Revert failed task changes. Respond with JSON only.", max_tokens: 512 }
     );
 
     deps.sessionManager.endSession(revertSession.id, response.content);
