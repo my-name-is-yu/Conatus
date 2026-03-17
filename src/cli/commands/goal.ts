@@ -463,7 +463,7 @@ export const SHELL_DIMENSION_PATTERNS: Record<string, ShellCommandConfig> = {
   test_count:        { argv: ["grep", "-rEc", "it\\(|test\\(|describe\\(", "tests/"], output_type: "number" },
   lint_errors:       { argv: ["npx", "eslint", "src/", "--format", "compact", "--max-warnings", "9999"], output_type: "number" },
   tsc_error_count:   { argv: ["npx", "tsc", "--noEmit", "--pretty", "false"], output_type: "number" },
-  test_coverage:     { argv: ["npx", "vitest", "run", "--coverage", "--reporter=json"], output_type: "number", timeout_ms: 180000 },
+  test_coverage:     { argv: ["node", "scripts/measure-coverage.cjs"], output_type: "raw", timeout_ms: 180000 },
 };
 
 // ─── Raw Goal Add (no LLM) ───

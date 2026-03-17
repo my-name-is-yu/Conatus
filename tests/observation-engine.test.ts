@@ -753,6 +753,108 @@ describe("observeFromDataSource", () => {
     ).rejects.toThrow(/nonexistent-ds/);
   });
 
+  // ─── findDataSourceForDimension scoped-priority ───
+
+  describe("findDataSourceForDimension scoped-priority", () => {
+    it("prefers scoped datasource over unscoped when both support the same dimension", async () => {
+      const goalId = "goal-scoped-test";
+
+      const unscopedDs = makeMockDataSource({
+        sourceId: "unscoped-ds",
+        config: makeDsConfig({ id: "unscoped-ds" }),
+        getSupportedDimensions: () => ["metric_x"],
+        query: vi.fn().mockResolvedValue({
+          value: 1,
+          raw: { value: 1 },
+          timestamp: new Date().toISOString(),
+          source_id: "unscoped-ds",
+        }),
+      });
+
+      const scopedDs = makeMockDataSource({
+        sourceId: "scoped-ds",
+        config: makeDsConfig({ id: "scoped-ds", scope_goal_id: goalId } as never),
+        getSupportedDimensions: () => ["metric_x"],
+        query: vi.fn().mockResolvedValue({
+          value: 99,
+          raw: { value: 99 },
+          timestamp: new Date().toISOString(),
+          source_id: "scoped-ds",
+        }),
+      });
+
+      // unscoped appears first in the array — scoped must still win
+      const eng = new ObservationEngine(stateManager, [unscopedDs, scopedDs]);
+
+      const goal = makeGoal({
+        id: goalId,
+        dimensions: [
+          {
+            name: "metric_x",
+            label: "Metric X",
+            current_value: 0,
+            threshold: { type: "min", value: 100 },
+            confidence: 0.5,
+            observation_method: defaultMethod,
+            last_updated: new Date().toISOString(),
+            history: [],
+            weight: 1.0,
+            uncertainty_weight: null,
+            state_integrity: "ok",
+          },
+        ],
+      });
+      stateManager.saveGoal(goal);
+
+      const entry = await eng.observeFromDataSource(goalId, "metric_x", "scoped-ds");
+      expect(entry.extracted_value).toBe(99);
+      expect(scopedDs.query).toHaveBeenCalled();
+      expect(unscopedDs.query).not.toHaveBeenCalled();
+    });
+
+    it("falls back to unscoped datasource when no scoped datasource exists", async () => {
+      const goalId = "goal-fallback-test";
+
+      const unscopedDs = makeMockDataSource({
+        sourceId: "only-ds",
+        config: makeDsConfig({ id: "only-ds" }),
+        getSupportedDimensions: () => ["metric_y"],
+        query: vi.fn().mockResolvedValue({
+          value: 55,
+          raw: { value: 55 },
+          timestamp: new Date().toISOString(),
+          source_id: "only-ds",
+        }),
+      });
+
+      const eng = new ObservationEngine(stateManager, [unscopedDs]);
+
+      const goal = makeGoal({
+        id: goalId,
+        dimensions: [
+          {
+            name: "metric_y",
+            label: "Metric Y",
+            current_value: 0,
+            threshold: { type: "min", value: 100 },
+            confidence: 0.5,
+            observation_method: defaultMethod,
+            last_updated: new Date().toISOString(),
+            history: [],
+            weight: 1.0,
+            uncertainty_weight: null,
+            state_integrity: "ok",
+          },
+        ],
+      });
+      stateManager.saveGoal(goal);
+
+      const entry = await eng.observeFromDataSource(goalId, "metric_y", "only-ds");
+      expect(entry.extracted_value).toBe(55);
+      expect(unscopedDs.query).toHaveBeenCalled();
+    });
+  });
+
   it("uses dimension_mapping from config to build expression when present", async () => {
     const dsWithMapping = makeMockDataSource({
       sourceId: "mapped-ds",

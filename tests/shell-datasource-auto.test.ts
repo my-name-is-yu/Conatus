@@ -176,8 +176,8 @@ describe("SHELL_DIMENSION_PATTERNS", () => {
   it("contains entry for test_coverage", () => {
     expect(SHELL_DIMENSION_PATTERNS).toHaveProperty("test_coverage");
     const spec = SHELL_DIMENSION_PATTERNS.test_coverage;
-    expect(spec.output_type).toBe("number");
-    expect(spec.argv.some((a: string) => a.includes("vitest") || a.includes("coverage"))).toBe(true);
+    expect(spec.output_type).toBe("raw");
+    expect(spec.argv.some((a: string) => a.includes("node") || a.includes("coverage"))).toBe(true);
   });
 
   it("all entries have an argv array and valid output_type", () => {
