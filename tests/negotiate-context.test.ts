@@ -8,6 +8,7 @@ import { EthicsGate } from "../src/traits/ethics-gate.js";
 import { ObservationEngine } from "../src/observation/observation-engine.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { PASS_VERDICT_SIMPLE_JSON as PASS_VERDICT } from "./helpers/ethics-fixtures.js";
 
 // ─── Helpers ───
 
@@ -30,16 +31,6 @@ function makeSrcWithTodos(dir: string): void {
     "utf-8"
   );
 }
-
-// ─── LLM fixtures ───
-
-const PASS_VERDICT = JSON.stringify({
-  verdict: "pass",
-  category: "safe",
-  reasoning: "Safe goal.",
-  risks: [],
-  confidence: 0.95,
-});
 
 const DIMENSIONS_RESPONSE = JSON.stringify([
   {

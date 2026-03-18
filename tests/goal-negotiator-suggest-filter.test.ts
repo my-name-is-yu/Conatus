@@ -8,16 +8,7 @@ import { ObservationEngine } from "../src/observation/observation-engine.js";
 import { GoalNegotiator } from "../src/goal/goal-negotiator.js";
 import type { CapabilityDetector } from "../src/observation/capability-detector.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
-
-// ─── Fixtures ───
-
-const PASS_VERDICT = JSON.stringify({
-  verdict: "pass",
-  category: "safe",
-  reasoning: "This goal is clearly safe.",
-  risks: [],
-  confidence: 0.95,
-});
+import { PASS_VERDICT_SAFE_JSON as PASS_VERDICT } from "./helpers/ethics-fixtures.js";
 
 function makeSuggestionList(titles: string[]) {
   return JSON.stringify(

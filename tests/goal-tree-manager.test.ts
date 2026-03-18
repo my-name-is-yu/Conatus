@@ -9,6 +9,7 @@ import type { GoalDecompositionConfig } from "../src/types/goal-tree.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 import { makeGoal as _makeGoal, makeDimension } from "./helpers/fixtures.js";
+import { PASS_VERDICT_SIMPLE_JSON as PASS_VERDICT } from "./helpers/ethics-fixtures.js";
 
 // ─── Local defaults matching the original local makeGoal ───
 
@@ -36,16 +37,6 @@ function makeGoal(overrides: Parameters<typeof _makeGoal>[0] = {}) {
     ...overrides,
   });
 }
-
-// ─── Fixtures ───
-
-const PASS_VERDICT = JSON.stringify({
-  verdict: "pass",
-  category: "safe",
-  reasoning: "Safe goal.",
-  risks: [],
-  confidence: 0.95,
-});
 
 // Specificity responses
 const HIGH_SPECIFICITY = JSON.stringify({ specificity_score: 0.9, reasoning: "Very concrete goal" });

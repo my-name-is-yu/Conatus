@@ -7,32 +7,11 @@ import { EthicsGate } from "../src/traits/ethics-gate.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm/llm-client.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
-
-// ─── Fixtures ───
-
-const PASS_VERDICT_JSON = JSON.stringify({
-  verdict: "pass",
-  category: "safe",
-  reasoning: "This goal is clearly safe and ethical.",
-  risks: [],
-  confidence: 0.95,
-});
-
-const REJECT_VERDICT_JSON = JSON.stringify({
-  verdict: "reject",
-  category: "illegal",
-  reasoning: "This goal involves clearly illegal activities.",
-  risks: ["illegal activity", "potential harm to others"],
-  confidence: 0.99,
-});
-
-const FLAG_VERDICT_JSON = JSON.stringify({
-  verdict: "flag",
-  category: "privacy_concern",
-  reasoning: "This goal involves collecting user data, which may raise privacy concerns.",
-  risks: ["potential privacy violation", "data misuse"],
-  confidence: 0.70,
-});
+import {
+  PASS_VERDICT_JSON,
+  REJECT_VERDICT_JSON,
+  FLAG_VERDICT_JSON,
+} from "./helpers/ethics-fixtures.js";
 
 const LOW_CONFIDENCE_PASS_JSON = JSON.stringify({
   verdict: "pass",

@@ -12,32 +12,11 @@ import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../
 import * as os from "node:os";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
-
-// ─── Fixtures ───
-
-const PASS_VERDICT = JSON.stringify({
-  verdict: "pass",
-  category: "safe",
-  reasoning: "This goal is clearly safe.",
-  risks: [],
-  confidence: 0.95,
-});
-
-const REJECT_VERDICT = JSON.stringify({
-  verdict: "reject",
-  category: "illegal",
-  reasoning: "This goal involves illegal activities.",
-  risks: ["illegal activity"],
-  confidence: 0.99,
-});
-
-const FLAG_VERDICT = JSON.stringify({
-  verdict: "flag",
-  category: "privacy_concern",
-  reasoning: "Privacy risks identified.",
-  risks: ["data collection concern", "potential misuse"],
-  confidence: 0.70,
-});
+import {
+  PASS_VERDICT_SAFE_JSON as PASS_VERDICT,
+  REJECT_VERDICT_ILLEGAL_JSON as REJECT_VERDICT,
+  FLAG_VERDICT_PRIVACY_JSON as FLAG_VERDICT,
+} from "./helpers/ethics-fixtures.js";
 
 const DIMENSIONS_RESPONSE = JSON.stringify([
   {

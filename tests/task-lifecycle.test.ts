@@ -20,6 +20,11 @@ import type {
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import type { Dimension } from "../src/types/goal.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import {
+  PASS_VERDICT,
+  REJECT_VERDICT,
+  FLAG_VERDICT,
+} from "./helpers/ethics-fixtures.js";
 
 // ─── Spy LLM Client (tracks messages sent) ───
 
@@ -3173,30 +3178,6 @@ describe("TaskLifecycle", async () => {
         checkMeans: vi.fn().mockImplementation(checkMeansImpl),
       };
     }
-
-    const PASS_VERDICT: import("../src/types/ethics.js").EthicsVerdict = {
-      verdict: "pass",
-      category: "safe",
-      reasoning: "Task approach is safe",
-      risks: [],
-      confidence: 0.9,
-    };
-
-    const REJECT_VERDICT: import("../src/types/ethics.js").EthicsVerdict = {
-      verdict: "reject",
-      category: "harmful",
-      reasoning: "Task involves harmful actions",
-      risks: ["potential harm to users"],
-      confidence: 0.95,
-    };
-
-    const FLAG_VERDICT: import("../src/types/ethics.js").EthicsVerdict = {
-      verdict: "flag",
-      category: "privacy_concern",
-      reasoning: "Task may expose user data",
-      risks: ["privacy risk"],
-      confidence: 0.7,
-    };
 
     it("ethicsGate not provided: runTaskCycle proceeds normally and task executes successfully", async () => {
       // No ethicsGate passed → ethics check is entirely skipped

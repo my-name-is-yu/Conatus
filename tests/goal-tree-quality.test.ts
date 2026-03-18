@@ -8,15 +8,7 @@ import { evaluateDecompositionQuality } from "../src/goal/goal-tree-quality.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
-// ─── Fixtures ───
-
-const PASS_VERDICT = JSON.stringify({
-  verdict: "pass",
-  category: "safe",
-  reasoning: "Safe goal.",
-  risks: [],
-  confidence: 0.95,
-});
+import { PASS_VERDICT_SIMPLE_JSON as PASS_VERDICT } from "./helpers/ethics-fixtures.js";
 
 // Quality evaluation responses
 const GOOD_QUALITY_RESPONSE = JSON.stringify({
