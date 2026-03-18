@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getMotivaDirPath } from "./utils/paths.js";
+import type { Logger } from "./runtime/logger.js";
 import { GoalSchema, GoalTreeSchema } from "./types/goal.js";
 import { ObservationLogSchema, ObservationLogEntrySchema } from "./types/state.js";
 import { GapHistoryEntrySchema } from "./types/gap.js";
@@ -27,9 +28,11 @@ import type { PaceSnapshot } from "./types/goal.js";
  */
 export class StateManager {
   private readonly baseDir: string;
+  private readonly logger?: Logger;
 
-  constructor(baseDir?: string) {
+  constructor(baseDir?: string, logger?: Logger) {
     this.baseDir = baseDir ?? getMotivaDirPath();
+    this.logger = logger;
     this.ensureDirectories();
   }
 
@@ -84,7 +87,7 @@ export class StateManager {
     try {
       return JSON.parse(content) as T;
     } catch (err) {
-      console.warn(`[StateManager] Corrupt JSON at ${filePath}:`, err);
+      this.logger?.warn(`[StateManager] Corrupt JSON at ${filePath}: ${err}`);
       throw err;
     }
   }

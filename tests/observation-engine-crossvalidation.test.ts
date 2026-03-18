@@ -201,26 +201,24 @@ describe("ObservationEngine cross-validation", () => {
     // DataSource returns 5, LLM returns score=0.0 → extractedValue=0
     const mockLLMClient = createMockLLMClient(0.0, "nothing found");
     const mockDs = makeMockDataSource(5);
+    const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const engine = new ObservationEngine(
       stateManager,
       [mockDs],
       mockLLMClient,
       undefined,
-      { crossValidationEnabled: true, divergenceThreshold: 0.20 }
+      { crossValidationEnabled: true, divergenceThreshold: 0.20 },
+      mockLogger as never
     );
-
-    const warnSpy = vi.spyOn(console, "warn");
 
     await engine.observe("goal-xval-diverge", [defaultMethod]);
 
     // Should have logged a CrossValidation DIVERGED warning
-    const divergedWarn = warnSpy.mock.calls.find(
-      (call) => typeof call[0] === "string" && call[0].includes("[CrossValidation] DIVERGED")
+    const divergedWarn = mockLogger.warn.mock.calls.find(
+      (call: unknown[]) => typeof call[0] === "string" && (call[0] as string).includes("[CrossValidation] DIVERGED")
     );
     expect(divergedWarn).toBeDefined();
     expect(divergedWarn![0]).toContain('resolution=mechanical_wins');
-
-    warnSpy.mockRestore();
   });
 
   // ─── Test 5: Goal dimension retains mechanical value — LLM does NOT overwrite ───
@@ -286,22 +284,22 @@ describe("ObservationEngine cross-validation", () => {
       parseJSON: vi.fn(),
     };
     const mockDs = makeMockDataSource(0.85, ["dim1"]);
+    const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const engine = new ObservationEngine(
       stateManager,
       [mockDs],
       failingLLMClient,
       undefined,
-      { crossValidationEnabled: true }
+      { crossValidationEnabled: true },
+      mockLogger as never
     );
-
-    const warnSpy = vi.spyOn(console, "warn");
 
     // Should not throw even though LLM fails
     await expect(engine.observe("goal-xval-llm-fail", [defaultMethod])).resolves.toBeUndefined();
 
     // A warning should have been emitted about the LLM failure
-    const crossValWarn = warnSpy.mock.calls.find(
-      (call) => typeof call[0] === "string" && call[0].includes("[CrossValidation] LLM comparison failed")
+    const crossValWarn = mockLogger.warn.mock.calls.find(
+      (call: unknown[]) => typeof call[0] === "string" && (call[0] as string).includes("[CrossValidation] LLM comparison failed")
     );
     expect(crossValWarn).toBeDefined();
 
@@ -311,7 +309,5 @@ describe("ObservationEngine cross-validation", () => {
     const dim = updatedGoal!.dimensions.find((d) => d.name === "dim1");
     expect(dim).not.toBeNull();
     expect(dim!.current_value).toBe(0.85);
-
-    warnSpy.mockRestore();
   });
 });

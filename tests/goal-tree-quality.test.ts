@@ -117,22 +117,22 @@ describe("evaluateDecompositionQuality", () => {
 
   it("logs a warning when coverage is below 0.5", async () => {
     const llm = createMockLLMClient([LOW_COVERAGE_RESPONSE]);
-    const warnSpy = vi.spyOn(console, "warn");
+    const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
     await evaluateDecompositionQuality(
       "Launch a complete e-commerce platform",
       ["Set up product listing page"],
-      { llmClient: llm }
+      { llmClient: llm, logger: mockLogger as never }
     );
 
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.stringContaining("poor quality detected")
     );
   });
 
   it("logs a warning when overlap is above 0.7", async () => {
     const llm = createMockLLMClient([HIGH_OVERLAP_RESPONSE]);
-    const warnSpy = vi.spyOn(console, "warn");
+    const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
     await evaluateDecompositionQuality(
       "Improve code quality",
@@ -140,17 +140,17 @@ describe("evaluateDecompositionQuality", () => {
         "Write unit tests to improve code quality",
         "Write tests to verify code quality",
       ],
-      { llmClient: llm }
+      { llmClient: llm, logger: mockLogger as never }
     );
 
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.stringContaining("poor quality detected")
     );
   });
 
   it("does NOT log a warning for good quality", async () => {
     const llm = createMockLLMClient([GOOD_QUALITY_RESPONSE]);
-    const warnSpy = vi.spyOn(console, "warn");
+    const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
     await evaluateDecompositionQuality(
       "Build a reliable web application",
@@ -159,29 +159,29 @@ describe("evaluateDecompositionQuality", () => {
         "Implement error monitoring",
         "Deploy with zero-downtime strategy",
       ],
-      { llmClient: llm }
+      { llmClient: llm, logger: mockLogger as never }
     );
 
-    expect(warnSpy).not.toHaveBeenCalledWith(
+    expect(mockLogger.warn).not.toHaveBeenCalledWith(
       expect.stringContaining("poor quality detected")
     );
   });
 
   it("handles empty subgoals — returns zero coverage and warns", async () => {
     const llm = createMockLLMClient([]);
-    const warnSpy = vi.spyOn(console, "warn");
+    const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
     const metrics = await evaluateDecompositionQuality(
       "Build a reliable web application",
       [],
-      { llmClient: llm }
+      { llmClient: llm, logger: mockLogger as never }
     );
 
     expect(metrics.coverage).toBe(0);
     expect(metrics.overlap).toBe(0);
     expect(metrics.actionability).toBe(0);
     expect(metrics.depthEfficiency).toBe(1);
-    expect(warnSpy).toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalled();
   });
 
   it("handles single subgoal without throwing", async () => {

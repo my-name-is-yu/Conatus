@@ -2,6 +2,7 @@ import * as https from "node:https";
 import * as http from "node:http";
 import { URL } from "node:url";
 import nodemailer from "nodemailer";
+import type { Logger } from "./logger.js";
 import type { Report } from "../types/report.js";
 import type {
   NotificationChannel,
@@ -335,10 +336,12 @@ export class NotificationDispatcher implements INotificationDispatcher {
   /** reportType -> timestamp of last successful send */
   private lastSent: Map<string, number> = new Map();
   private notifierRegistry?: NotifierRegistry;
+  private readonly logger?: Logger;
 
-  constructor(config?: Partial<NotificationConfig>, notifierRegistry?: NotifierRegistry) {
+  constructor(config?: Partial<NotificationConfig>, notifierRegistry?: NotifierRegistry, logger?: Logger) {
     this.config = NotificationConfigSchema.parse(config ?? {});
     this.notifierRegistry = notifierRegistry;
+    this.logger = logger;
   }
 
   /** Replace or set the NotifierRegistry after construction. */
@@ -437,7 +440,7 @@ export class NotificationDispatcher implements INotificationDispatcher {
       if (result.status === "rejected") {
         const notifierName = notifiers[i].name;
         const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-        console.error(`[NotificationDispatcher] plugin notifier "${notifierName}" failed: ${reason}`);
+        this.logger?.error(`[NotificationDispatcher] plugin notifier "${notifierName}" failed: ${reason}`);
       }
     }
   }

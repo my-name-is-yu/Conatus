@@ -42,8 +42,6 @@ import { generateTask as _generateTask } from "./task-generation.js";
 import { executeTask as _executeTask, reloadTaskFromDisk, durationToMs } from "./task-executor.js";
 import { runPreExecutionChecks } from "./task-approval.js";
 
-const DEBUG = process.env.MOTIVA_DEBUG === "true";
-
 // ─── Internal types ───
 
 export interface TaskCycleResult {
@@ -346,15 +344,15 @@ export class TaskLifecycle {
     if (preCheckResult !== null) return preCheckResult;
 
     // 4. Execute task
-    if (DEBUG) console.log(`[DEBUG-TL] Executing task ${task.id} via adapter ${adapter.adapterType}`);
+    this.logger?.debug(`[DEBUG-TL] Executing task ${task.id} via adapter ${adapter.adapterType}`);
     const executionResult = await this.executeTask(task, adapter, workspaceContext);
-    if (DEBUG) console.log(`[DEBUG-TL] Execution result: success=${executionResult.success}, stopped=${executionResult.stopped_reason}, error=${executionResult.error}, output=${executionResult.output?.substring(0, 200)}`);
+    this.logger?.debug(`[DEBUG-TL] Execution result: success=${executionResult.success}, stopped=${executionResult.stopped_reason}, error=${executionResult.error}, output=${executionResult.output?.substring(0, 200)}`);
 
     // 4b. Post-execution health check (opt-in)
     if (executionResult.success && this.healthCheckEnabled) {
       const healthCheck = await this.runPostExecutionHealthCheck(adapter, task);
       if (!healthCheck.healthy) {
-        console.warn(`[TaskLifecycle] Post-execution health check FAILED: ${healthCheck.output}`);
+        this.logger?.warn(`[TaskLifecycle] Post-execution health check FAILED: ${healthCheck.output}`);
         executionResult.success = false;
         executionResult.output = (executionResult.output || "") +
           `\n\n[Health Check Failed]\n${healthCheck.output}`;
@@ -366,7 +364,7 @@ export class TaskLifecycle {
 
     // 5. Verify task
     const verificationResult = await this.verifyTask(taskForVerification, executionResult);
-    if (DEBUG) console.log(`[DEBUG-TL] Verification: verdict=${verificationResult.verdict}, evidence=${verificationResult.evidence.map(e => e.description).join('; ').substring(0, 300)}`);
+    this.logger?.debug(`[DEBUG-TL] Verification: verdict=${verificationResult.verdict}, evidence=${verificationResult.evidence.map(e => e.description).join('; ').substring(0, 300)}`);
 
     // 6. Handle verdict
     const verdictResult = await this.handleVerdict(taskForVerification, verificationResult);

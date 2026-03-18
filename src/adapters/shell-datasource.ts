@@ -22,6 +22,7 @@ import type {
   DataSourceQuery,
   DataSourceResult,
 } from "../types/data-source.js";
+import type { Logger } from "../runtime/logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,11 +40,13 @@ export class ShellDataSourceAdapter implements IDataSourceAdapter {
 
   private readonly commands: Record<string, ShellCommandSpec>;
   private readonly defaultCwd: string;
+  private readonly logger?: Logger;
 
-  constructor(sourceId: string, commands: Record<string, ShellCommandSpec>, cwd?: string) {
+  constructor(sourceId: string, commands: Record<string, ShellCommandSpec>, cwd?: string, logger?: Logger) {
     this.sourceId = sourceId;
     this.commands = commands;
     this.defaultCwd = cwd ?? process.cwd();
+    this.logger = logger;
 
     // Synthesize a minimal DataSourceConfig to satisfy the interface
     this.config = {
@@ -104,7 +107,7 @@ export class ShellDataSourceAdapter implements IDataSourceAdapter {
           // Test runners (vitest, jest) exit 1 when tests fail but still output valid results
           results[dimName] = this.parseOutput(err.stdout, spec.output_type);
         } else {
-          console.warn(`[ShellDataSource] command failed for "${dimName}": ${String(err)}`);
+          this.logger?.warn(`[ShellDataSource] command failed for "${dimName}": ${String(err)}`);
           // Don't include in results — let ObservationEngine fallback handle it
         }
       }

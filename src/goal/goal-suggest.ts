@@ -5,6 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { Logger } from "../runtime/logger.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
 import type { CapabilityDetector } from "../observation/capability-detector.js";
@@ -127,6 +128,7 @@ export async function suggestGoals(
     maxSuggestions?: number;
     existingGoals?: string[];
     capabilityDetector?: CapabilityDetector;
+    logger?: Logger;
   }
 ): Promise<GoalSuggestion[]> {
   const maxSuggestions = options?.maxSuggestions ?? 5;
@@ -180,6 +182,7 @@ export async function suggestGoals(
     options?.existingGoals || [],
     adapterCapabilities,
     options?.capabilityDetector,
+    options?.logger,
   );
 }
 
@@ -190,6 +193,7 @@ export async function filterSuggestions(
   existingGoals: string[],
   adapterCapabilities: Array<{ adapterType: string; capabilities: string[] }> | undefined,
   capabilityDetector?: CapabilityDetector,
+  logger?: Logger,
 ): Promise<GoalSuggestion[]> {
   const filtered: GoalSuggestion[] = [];
 
@@ -201,7 +205,7 @@ export async function filterSuggestions(
       return existingLower.includes(titleLower) || titleLower.includes(existingLower);
     });
     if (isDuplicate) {
-      console.log(`[GoalNegotiator] Filtered duplicate suggestion: "${suggestion.title}"`);
+      logger?.info(`[GoalNegotiator] Filtered duplicate suggestion: "${suggestion.title}"`);
       continue;
     }
 
@@ -213,12 +217,12 @@ export async function filterSuggestions(
           adapterCapabilities?.map(a => a.capabilities).flat() || []
         );
         if (gap && !gap.acquirable) {
-          console.log(`[GoalNegotiator] Filtered infeasible suggestion: "${suggestion.title}" — ${gap.gap.reason}`);
+          logger?.info(`[GoalNegotiator] Filtered infeasible suggestion: "${suggestion.title}" — ${gap.gap.reason}`);
           continue;
         }
       } catch (err) {
         // Non-blocking: if capability check fails, keep the suggestion
-        console.warn(`[GoalNegotiator] Capability check failed for "${suggestion.title}": ${err}`);
+        logger?.warn(`[GoalNegotiator] Capability check failed for "${suggestion.title}": ${err}`);
       }
     }
 

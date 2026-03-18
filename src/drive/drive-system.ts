@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { MotivaEventSchema, GoalScheduleSchema } from "../types/drive.js";
 import type { MotivaEvent, GoalSchedule } from "../types/drive.js";
 import type { StateManager } from "../state-manager.js";
+import type { Logger } from "../runtime/logger.js";
 
 /**
  * DriveSystem handles lightweight activation checks (no LLM calls), event queue
@@ -19,13 +20,15 @@ import type { StateManager } from "../state-manager.js";
 export class DriveSystem {
   private readonly baseDir: string;
   private readonly stateManager: StateManager;
+  private readonly logger?: Logger;
   private watcher: fs.FSWatcher | null = null;
   private inMemoryQueue: MotivaEvent[] = [];
   private onEventCallback: ((event: MotivaEvent) => void) | null = null;
 
-  constructor(stateManager: StateManager, options?: { baseDir?: string }) {
+  constructor(stateManager: StateManager, options?: { baseDir?: string; logger?: Logger }) {
     this.stateManager = stateManager;
     this.baseDir = options?.baseDir ?? stateManager.getBaseDir();
+    this.logger = options?.logger;
     this.watcher = null;
     this.inMemoryQueue = [];
     this.onEventCallback = null;
@@ -131,7 +134,7 @@ export class DriveSystem {
         const event = MotivaEventSchema.parse(raw);
         events.push(event);
       } catch (err) {
-        console.warn(`DriveSystem: skipping invalid event file "${fileName}": ${err}`);
+        this.logger?.warn(`DriveSystem: skipping invalid event file "${fileName}": ${err}`);
       }
     }
 
@@ -191,7 +194,7 @@ export class DriveSystem {
         this.archiveEvent(fileName);
         events.push(event);
       } catch (err) {
-        console.warn(`DriveSystem: skipping invalid event file "${fileName}" during processEvents: ${err}`);
+        this.logger?.warn(`DriveSystem: skipping invalid event file "${fileName}" during processEvents: ${err}`);
       }
     }
 
@@ -221,7 +224,7 @@ export class DriveSystem {
       if (typeof err === "object" && err !== null && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
         return null;
       }
-      console.warn(`DriveSystem: failed to load schedule for goal "${goalId}": ${err}`);
+      this.logger?.warn(`DriveSystem: failed to load schedule for goal "${goalId}": ${err}`);
       return null;
     }
   }
@@ -328,7 +331,7 @@ export class DriveSystem {
         content = fs.readFileSync(filePath, "utf-8");
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // file deleted — expected
-        console.warn(`[DriveSystem] watcher read error: ${String(err)}`);
+        this.logger?.warn(`[DriveSystem] watcher read error: ${String(err)}`);
         return;
       }
       try {
@@ -338,7 +341,7 @@ export class DriveSystem {
           this.onEventCallback(event);
         }
       } catch (err) {
-        console.warn(`[DriveSystem] watcher parse error in ${filename}: ${String(err)}`);
+        this.logger?.warn(`[DriveSystem] watcher parse error in ${filename}: ${String(err)}`);
       }
     });
   }

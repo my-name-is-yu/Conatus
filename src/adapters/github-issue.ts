@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
+import type { Logger } from "../runtime/logger.js";
 
 // ─── Config ───
 
@@ -43,12 +44,14 @@ export class GitHubIssueAdapter implements IAdapter {
   private readonly defaultLabels: string[];
   private readonly ghPath: string;
   private readonly dryRun: boolean;
+  private readonly logger?: Logger;
 
-  constructor(config?: GitHubIssueAdapterConfig) {
+  constructor(config?: GitHubIssueAdapterConfig, logger?: Logger) {
     this.repo = config?.repo ?? process.env["MOTIVA_GITHUB_REPO"];
     this.defaultLabels = config?.defaultLabels ?? ["motiva"];
     this.ghPath = config?.ghPath ?? "gh";
     this.dryRun = config?.dryRun ?? false;
+    this.logger = logger;
   }
 
   async execute(task: AgentTask): Promise<AgentResult> {
@@ -60,7 +63,7 @@ export class GitHubIssueAdapter implements IAdapter {
       const repo = this.repo ?? "(auto-detect)";
       const cmd = this.buildGhArgs(parsed, repo).join(" ");
       const dryMsg = `[dry-run] Would run: ${this.ghPath} ${cmd}`;
-      console.log(dryMsg);
+      this.logger?.info(dryMsg);
       return {
         success: true,
         output: dryMsg,
@@ -75,7 +78,7 @@ export class GitHubIssueAdapter implements IAdapter {
     const dupResult = await this.checkOpenIssueExists(parsed.title);
     if (dupResult !== null) {
       const skipMsg = `Skipped: similar issue already exists (#${dupResult})`;
-      console.debug(`[GitHubIssueAdapter] ${skipMsg}`);
+      this.logger?.debug(`[GitHubIssueAdapter] ${skipMsg}`);
       return {
         success: true,
         output: skipMsg,

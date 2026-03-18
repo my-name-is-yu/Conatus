@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { EthicsGate } from "./ethics-gate.js";
+import type { Logger } from "../runtime/logger.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
 import type { KnowledgeTransfer } from "../knowledge/knowledge-transfer.js";
 import {
@@ -62,6 +63,7 @@ export interface ProposalGenerationDeps {
   vectorIndex?: VectorIndex;
   knowledgeTransfer?: KnowledgeTransfer;
   config: CuriosityConfig;
+  logger?: Logger;
 }
 
 // ─── Prompt Builder ───
@@ -204,7 +206,7 @@ export async function generateProposals(
       ) as LLMProposalItem[];
     } catch (err) {
       // Don't throw on LLM failure — return what we have so far
-      console.warn(
+      deps.logger?.warn(
         `CuriosityEngine: LLM proposal generation failed for trigger "${trigger.type}": ${err}`
       );
       continue;
@@ -235,7 +237,7 @@ export async function generateProposals(
         );
       } catch (err) {
         // On ethics check failure, skip this proposal (conservative)
-        console.warn(
+        deps.logger?.warn(
           `CuriosityEngine: ethics check failed for proposal "${item.description.slice(0, 60)}": ${err}`
         );
         continue;

@@ -5,6 +5,7 @@ import type { StateManager } from "../state-manager.js";
 import type { KnowledgeGapSignal } from "../types/knowledge.js";
 import type { IDataSourceAdapter } from "./data-source-adapter.js";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { Logger } from "../runtime/logger.js";
 import {
   applyProgressCeiling,
   getConfidenceTier,
@@ -50,19 +51,22 @@ export class ObservationEngine {
   private readonly llmClient?: ILLMClient;
   private readonly contextProvider?: (goalId: string, dimensionName: string) => Promise<string>;
   private readonly options: ObservationEngineOptions;
+  private readonly logger?: Logger;
 
   constructor(
     stateManager: StateManager,
     dataSources: IDataSourceAdapter[] = [],
     llmClient?: ILLMClient,
     contextProvider?: (goalId: string, dimensionName: string) => Promise<string>,
-    options: ObservationEngineOptions = {}
+    options: ObservationEngineOptions = {},
+    logger?: Logger
   ) {
     this.stateManager = stateManager;
     this.dataSources = dataSources;
     this.llmClient = llmClient;
     this.contextProvider = contextProvider;
     this.options = options;
+    this.logger = logger;
   }
 
   // ─── Cross-Validation ───
@@ -84,7 +88,7 @@ export class ObservationEngine {
     const diverged = ratio > threshold;
 
     if (diverged) {
-      console.warn(
+      this.logger?.warn(
         `[CrossValidation] DIVERGED goal="${goalId}" dim="${dimensionName}" ` +
         `mechanical=${mechanicalValue} llm=${llmValue} ` +
         `ratio=${ratio.toFixed(3)} threshold=${threshold} resolution=mechanical_wins`
@@ -156,7 +160,7 @@ export class ObservationEngine {
    * deduplicate JSON keys.  Only applied to names from external (LLM) input.
    */
   normalizeDimensionName(name: string): string {
-    return normalizeDimensionName(name);
+    return normalizeDimensionName(name, this.logger);
   }
 
   // ─── Apply Observation to Goal ───
@@ -227,14 +231,14 @@ export class ObservationEngine {
           contextCache.set(cacheKey, ctx);
           return ctx;
         } catch (err) {
-          console.warn(
+          this.logger?.warn(
             `[ObservationEngine] contextProvider failed: ${err instanceof Error ? err.message : String(err)}. LLM observation will proceed without workspace context.`
           );
         }
       } else {
         if (!warnedNoProvider) {
           warnedNoProvider = true;
-          console.warn(
+          this.logger?.warn(
             `[ObservationEngine] No contextProvider configured. LLM observation will proceed without workspace context (scores may be unreliable).`
           );
         }
@@ -273,13 +277,13 @@ export class ObservationEngine {
               const llmValue = typeof llmEntry.extracted_value === "number" ? llmEntry.extracted_value : 0;
               this.crossValidate(goalId, dim.name, mechanicalValue, llmValue);
             } catch (err) {
-              console.warn(`[CrossValidation] LLM comparison failed for "${dim.name}": ${err}`);
+              this.logger?.warn(`[CrossValidation] LLM comparison failed for "${dim.name}": ${err}`);
             }
           }
 
           continue;
         } catch (err) {
-          console.warn(
+          this.logger?.warn(
             `[ObservationEngine] DataSource observation failed for dimension "${dim.name}" (source: ${dataSource.sourceId}): ${err instanceof Error ? err.message : String(err)}. Falling through to LLM fallback.`
           );
         }
@@ -300,13 +304,13 @@ export class ObservationEngine {
           );
           continue;
         } catch (err) {
-          console.warn(
+          this.logger?.warn(
             `[ObservationEngine] LLM observation failed for dimension "${dim.name}": ${err instanceof Error ? err.message : String(err)}. Falling back to self_report.`
           );
         }
       } else if (this.dataSources.length > 0) {
         // DataSources exist but none match this dimension and no LLM client
-        console.warn(
+        this.logger?.warn(
           `[ObservationEngine] Warning: dimension "${dim.name}" has no matching DataSource and no LLM client available for observation`
         );
       }
@@ -418,7 +422,8 @@ export class ObservationEngine {
       (gId, entry) => this.applyObservation(gId, entry),
       workspaceContext,
       previousScore,
-      dryRun
+      dryRun,
+      this.logger
     );
   }
 

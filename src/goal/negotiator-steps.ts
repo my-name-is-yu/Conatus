@@ -8,6 +8,7 @@
 import { z } from "zod";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { ObservationEngine } from "../observation/observation-engine.js";
+import type { Logger } from "../runtime/logger.js";
 import {
   DimensionDecompositionSchema,
   FeasibilityResultSchema,
@@ -55,7 +56,8 @@ export async function runDecompositionStep(
   constraints: string[],
   observationEngine: ObservationEngine,
   llmClient: ILLMClient,
-  workspaceContext?: string
+  workspaceContext?: string,
+  logger?: Logger
 ): Promise<{ dimensions: DimensionDecomposition[]; availableDataSources: ReturnType<ObservationEngine["getAvailableDimensionInfo"]> }> {
   const availableDataSources = observationEngine.getAvailableDimensionInfo();
   const decompositionPrompt = buildDecompositionPrompt(
@@ -90,7 +92,7 @@ export async function runDecompositionStep(
     const allRemapped =
       dimensions.length > 0 && dimensions.every((dim) => allDsNames.includes(dim.name));
     if (allRemapped) {
-      console.warn(
+      logger?.warn(
         "[GoalNegotiator] Warning: all dimensions were remapped to DataSource dimensions. " +
           "Quality-specific dimensions may be missing. Consider adding dimensions that directly " +
           "measure the goal's quality aspects."
@@ -199,7 +201,8 @@ export async function runCapabilityCheckStep(
   dimensions: DimensionDecomposition[],
   adapterCapabilities: Array<{ adapterType: string; capabilities: string[] }>,
   feasibilityResults: FeasibilityResult[],
-  log: NegotiationLog
+  log: NegotiationLog,
+  logger?: Logger
 ): Promise<void> {
   try {
     const capCheckPrompt = buildCapabilityCheckPrompt(
@@ -240,7 +243,7 @@ export async function runCapabilityCheckStep(
       infeasible_dimensions: infeasibleDimensions,
     });
   } catch {
-    console.warn(
+    logger?.warn(
       "[GoalNegotiator] Step 4b capability check failed, continuing without it"
     );
   }

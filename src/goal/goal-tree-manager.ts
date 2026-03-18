@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { Logger } from "../runtime/logger.js";
 import type { StateManager } from "../state-manager.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
@@ -195,11 +196,13 @@ function buildGoalFromSubgoalSpec(
 export interface GoalTreeManagerOptions {
   concretenesThreshold?: number;
   maxDepth?: number;
+  logger?: Logger;
 }
 
 export class GoalTreeManager {
   private readonly concretenesThreshold: number | null;
   private readonly maxDepth: number;
+  private readonly logger?: Logger;
 
   constructor(
     private readonly stateManager: StateManager,
@@ -212,6 +215,7 @@ export class GoalTreeManager {
     // null means concreteness auto-stop is disabled (backward compatible)
     this.concretenesThreshold = options?.concretenesThreshold ?? null;
     this.maxDepth = options?.maxDepth ?? 5;
+    this.logger = options?.logger;
   }
 
   // ─── Concreteness Scoring (private) ───
@@ -388,7 +392,7 @@ export class GoalTreeManager {
       if (Array.isArray(preprocessed)) {
         for (const item of preprocessed) {
           if (item && typeof item === "object" && !("hypothesis" in item)) {
-            console.warn(
+            this.logger?.warn(
               "[GoalTreeManager] Subgoal item missing hypothesis. Keys:",
               Object.keys(item as object)
             );
@@ -429,7 +433,7 @@ export class GoalTreeManager {
       subgoalSpecs = subgoalSpecs.slice(0, maxChildren);
     } catch (err) {
       // If subgoal generation fails, treat as leaf -- but log the error for diagnostics
-      console.error(
+      this.logger?.error(
         `[GoalTreeManager] Subgoal generation failed for "${goal.id}":`,
         err instanceof Error ? err.message : String(err)
       );

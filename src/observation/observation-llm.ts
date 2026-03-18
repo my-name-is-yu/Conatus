@@ -4,6 +4,7 @@ import type { ObservationLogEntry } from "../types/state.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import { LLMObservationResponseSchema } from "./observation-helpers.js";
 import type { ObservationEngineOptions } from "./observation-helpers.js";
+import type { Logger } from "../runtime/logger.js";
 
 /**
  * Fetch a concise workspace context via git diff when no contextProvider is available.
@@ -83,9 +84,10 @@ export async function observeWithLLM(
   applyObservation: (goalId: string, entry: ObservationLogEntry) => void,
   workspaceContext?: string,
   previousScore?: number | null,
-  dryRun?: boolean
+  dryRun?: boolean,
+  logger?: Logger
 ): Promise<ObservationLogEntry> {
-  console.log(
+  logger?.info(
     `[ObservationEngine] LLM observation for dimension "${dimensionLabel}" (goal: ${goalId})`
   );
 
@@ -95,7 +97,7 @@ export async function observeWithLLM(
     const gitCtx = fetchGitDiffContext(options, 3000);
     if (gitCtx.trim().length > 0) {
       resolvedContext = gitCtx;
-      console.log(
+      logger?.info(
         `[ObservationEngine] No contextProvider output — using git diff fallback for "${dimensionLabel}"`
       );
     }
@@ -141,7 +143,7 @@ export async function observeWithLLM(
 
   const parsed = llmClient.parseJSON(response.content, LLMObservationResponseSchema);
 
-  console.log(
+  logger?.info(
     `[ObservationEngine] LLM observation result for "${dimensionLabel}": score=${parsed.score.toFixed(3)}`
   );
 

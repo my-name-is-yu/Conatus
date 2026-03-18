@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { EthicsVerdict } from "../types/ethics.js";
+import type { Logger } from "../runtime/logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,7 +19,8 @@ const ISSUE_MARKER = "FIX" + "ME";
  */
 export async function gatherNegotiationContext(
   goalDescription: string,
-  cwd?: string
+  cwd?: string,
+  logger?: Logger
 ): Promise<string> {
   const dir = cwd ?? process.cwd();
   const parts: string[] = [];
@@ -129,7 +131,7 @@ export async function gatherNegotiationContext(
       parts.splice(1, 0, `Keywords found:\n${keywordResults.join("\n")}`);
     }
   } catch (err) {
-    console.warn("[gatherNegotiationContext] Unexpected error:", err);
+    logger?.warn("[gatherNegotiationContext] Unexpected error:", err);
     return "";
   }
 

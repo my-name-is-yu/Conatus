@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { Logger } from "../runtime/logger.js";
 import type { ConcretenessScore, DecompositionQualityMetrics } from "../types/goal-tree.js";
 import { ConcretenessScoreSchema, DecompositionQualityMetricsSchema } from "../types/goal-tree.js";
 
@@ -77,6 +78,7 @@ Return ONLY the JSON object, no other text.`;
 
 export interface GoalTreeQualityDeps {
   llmClient: ILLMClient;
+  logger?: Logger;
 }
 
 // ─── Quality Functions ───
@@ -154,7 +156,7 @@ export async function evaluateDecompositionQuality(
       actionability: 0,
       depthEfficiency: 1,
     });
-    console.warn(
+    deps.logger?.warn(
       "GoalTreeManager.evaluateDecompositionQuality: no subgoals provided — coverage=0"
     );
     return metrics;
@@ -191,7 +193,7 @@ export async function evaluateDecompositionQuality(
   });
 
   if (coverage < 0.5 || overlap > 0.7) {
-    console.warn(
+    deps.logger?.warn(
       `GoalTreeManager.evaluateDecompositionQuality: poor quality detected — coverage=${coverage.toFixed(2)}, overlap=${overlap.toFixed(2)}`
     );
   }

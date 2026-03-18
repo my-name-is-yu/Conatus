@@ -191,11 +191,6 @@ export async function executeTask(
       });
       result.filesChanged = diffStat.trim().length > 0;
       if (!result.filesChanged) {
-        if (DEBUG) {
-          console.warn(
-            "[TaskLifecycle] Adapter reported success but no files were modified"
-          );
-        }
         logger?.warn(
           "[TaskLifecycle] Adapter reported success but no files were modified",
           { taskId: task.id }

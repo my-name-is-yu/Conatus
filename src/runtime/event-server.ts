@@ -4,6 +4,7 @@ import * as http from "node:http";
 import type { DriveSystem } from "../drive/drive-system.js";
 import { MotivaEventSchema } from "../types/drive.js";
 import { getEventsDir } from "../utils/paths.js";
+import type { Logger } from "./logger.js";
 
 export interface EventServerConfig {
   host?: string; // default: "127.0.0.1" (localhost only!)
@@ -18,13 +19,15 @@ export class EventServer {
   private port: number;
   private eventsDir: string;
   private fileWatcher: fs.FSWatcher | null = null;
+  private readonly logger?: Logger;
 
-  constructor(driveSystem: DriveSystem, config?: EventServerConfig) {
+  constructor(driveSystem: DriveSystem, config?: EventServerConfig, logger?: Logger) {
     this.driveSystem = driveSystem;
     this.host = config?.host ?? "127.0.0.1";
     this.port = config?.port ?? 41700;
     // Default events directory: ~/.motiva/events/
     this.eventsDir = config?.eventsDir ?? getEventsDir();
+    this.logger = logger;
   }
 
   /** Start HTTP server */
@@ -112,7 +115,7 @@ export class EventServer {
       const dstPath = path.join(processedDir, filename);
       fs.renameSync(filePath, dstPath);
     } catch (err) {
-      console.error(
+      this.logger?.error(
         `EventServer: failed to process event file "${filename}": ${String(err)}`
       );
       // Do not re-throw — watcher must keep running

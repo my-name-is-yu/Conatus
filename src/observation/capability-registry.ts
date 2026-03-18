@@ -12,6 +12,7 @@ import type {
   CapabilityStatus,
   AcquisitionContext,
 } from "../types/capability.js";
+import type { Logger } from "../runtime/logger.js";
 
 // ─── Constants ───
 
@@ -178,7 +179,8 @@ export async function setCapabilityStatus(
 export async function escalateToUser(
   deps: EscalateDeps,
   gap: CapabilityGap,
-  goalId: string
+  goalId: string,
+  logger?: Logger
 ): Promise<void> {
   const capabilityName = gap.missing_capability.name;
   const capabilityType = gap.missing_capability.type;
@@ -207,7 +209,7 @@ export async function escalateToUser(
   try {
     deps.reportingEngine.saveReport(notification);
   } catch (err) {
-    console.error(
+    logger?.error(
       "[CapabilityDetector] escalateToUser: failed to save report — " +
         (err instanceof Error ? err.message : String(err))
     );

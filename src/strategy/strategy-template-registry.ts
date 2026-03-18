@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { Logger } from "../runtime/logger.js";
 import type { IEmbeddingClient } from "../knowledge/embedding-client.js";
 import { VectorIndex } from "../knowledge/vector-index.js";
 import { StrategyTemplateSchema } from "../types/cross-portfolio.js";
@@ -46,14 +47,17 @@ const AdaptTemplateResponseSchema = z.object({
 export class StrategyTemplateRegistry {
   private readonly templates: Map<string, StrategyTemplate> = new Map();
   private readonly persistPath: string;
+  private readonly logger?: Logger;
 
   constructor(
     private readonly llmClient: ILLMClient,
     private readonly vectorIndex: VectorIndex,
     private readonly embeddingClient: IEmbeddingClient,
-    private readonly basePath: string
+    private readonly basePath: string,
+    logger?: Logger
   ) {
     this.persistPath = path.join(basePath, "strategy-templates.json");
+    this.logger = logger;
   }
 
   /**
@@ -401,7 +405,7 @@ export class StrategyTemplateRegistry {
         this.templates.set(template.template_id, template);
       }
     } catch (err) {
-      console.warn(`[StrategyTemplateRegistry] Failed to load templates from ${this.persistPath}, starting fresh: ${err}`);
+      this.logger?.warn(`[StrategyTemplateRegistry] Failed to load templates from ${this.persistPath}, starting fresh: ${err}`);
     }
   }
 

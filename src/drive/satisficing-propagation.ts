@@ -4,6 +4,7 @@ import type {
   CompletionJudgment,
 } from "../types/satisficing.js";
 import { aggregateValues, getSatisfiedValue } from "./satisficing-helpers.js";
+import type { Logger } from "../runtime/logger.js";
 
 /**
  * Judge completion of an entire goal tree by checking all children recursively.
@@ -106,7 +107,8 @@ export function propagateSubgoalCompletion(
   parentGoalId: string,
   stateManager: StateManager,
   computeActualProgress: (dim: import("../types/goal.js").Dimension) => number,
-  subgoalDimensions?: import("../types/goal.js").Dimension[]
+  subgoalDimensions?: import("../types/goal.js").Dimension[],
+  logger?: Logger
 ): void {
   const parentGoal = stateManager.loadGoal(parentGoalId);
   if (parentGoal === null) {
@@ -155,7 +157,7 @@ export function propagateSubgoalCompletion(
             } else {
               // Non-numeric in avg mode: skip with warning
               if (aggregation === "avg") {
-                console.warn(
+                logger?.warn(
                   `propagateSubgoalCompletion: skipping non-numeric current_value "${cv}" for dimension "${dim.name}" in avg aggregation`
                 );
               }

@@ -2,6 +2,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import yaml from "js-yaml";
 import { getPluginsDir } from "../utils/paths.js";
+import type { Logger } from "./logger.js";
 import {
   PluginManifestSchema,
   PluginStateSchema,
@@ -31,17 +32,20 @@ export class PluginLoader {
   private notifierRegistry: NotifierRegistry;
   private pluginsDir: string;
   private pluginStates: Map<string, PluginState> = new Map();
+  private readonly logger?: Logger;
 
   constructor(
     adapterRegistry: AdapterRegistry,
     dataSourceRegistry: DataSourceRegistry,
     notifierRegistry: NotifierRegistry,
-    pluginsDir?: string
+    pluginsDir?: string,
+    logger?: Logger
   ) {
     this.adapterRegistry = adapterRegistry;
     this.dataSourceRegistry = dataSourceRegistry;
     this.notifierRegistry = notifierRegistry;
     this.pluginsDir = pluginsDir ?? getPluginsDir();
+    this.logger = logger;
   }
 
   /**
@@ -246,7 +250,7 @@ export class PluginLoader {
       reason instanceof Error ? reason.message : String(reason);
     const dirName = path.basename(pluginDir);
 
-    console.error(`[PluginLoader] プラグインのロードに失敗: ${pluginDir}\n  ${errorMessage}`);
+    this.logger?.error(`[PluginLoader] プラグインのロードに失敗: ${pluginDir}\n  ${errorMessage}`);
 
     // Build a minimal manifest for the error state
     const fallbackManifest: PluginManifest = PluginManifestSchema.parse({

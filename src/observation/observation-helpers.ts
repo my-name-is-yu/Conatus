@@ -5,6 +5,7 @@ import type { ObservationLayer, ObservationMethod, ObservationTrigger, Confidenc
 import { KnowledgeGapSignalSchema } from "../types/knowledge.js";
 import type { KnowledgeGapSignal } from "../types/knowledge.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
+import type { Logger } from "../runtime/logger.js";
 
 // ─── Options ───
 
@@ -194,10 +195,10 @@ export function resolveContradiction(entries: ObservationLogEntry[]): Observatio
  *   "step_count"    → "step_count"  (trailing token is not a digit-only suffix)
  *   "coverage"      → "coverage"
  */
-export function normalizeDimensionName(name: string): string {
+export function normalizeDimensionName(name: string, logger?: Logger): string {
   const stripped = name.replace(/_\d+$/, "");
   if (stripped !== name) {
-    console.warn(`[ObservationEngine] normalizeDimensionName: stripped "${name}" → "${stripped}"`);
+    logger?.warn(`[ObservationEngine] normalizeDimensionName: stripped "${name}" → "${stripped}"`);
   }
   return stripped;
 }
