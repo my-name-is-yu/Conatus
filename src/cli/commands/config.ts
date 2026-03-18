@@ -3,6 +3,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
+import { getDatasourcesDir } from "../../utils/paths.js";
+import { writeJsonFileSync, readJsonFileSync } from "../../utils/json-io.js";
 
 import { StateManager } from "../../state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
@@ -274,13 +276,13 @@ export async function cmdDatasourceAdd(
     created_at: new Date().toISOString(),
   };
 
-  const datasourcesDir = path.join(stateManager.getBaseDir(), "datasources");
+  const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
   if (!fs.existsSync(datasourcesDir)) {
     fs.mkdirSync(datasourcesDir, { recursive: true });
   }
 
   const configPath = path.join(datasourcesDir, `${id}.json`);
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  writeJsonFileSync(configPath, config);
 
   console.log(`Data source registered successfully!`);
   console.log(`  ID:   ${id}`);
@@ -291,7 +293,7 @@ export async function cmdDatasourceAdd(
 }
 
 export function cmdDatasourceList(stateManager: StateManager): number {
-  const datasourcesDir = path.join(stateManager.getBaseDir(), "datasources");
+  const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
 
   if (!fs.existsSync(datasourcesDir)) {
     console.log("No data sources registered. Use `motiva datasource add` to register one.");
@@ -319,8 +321,7 @@ export function cmdDatasourceList(stateManager: StateManager): number {
 
   for (const file of jsonFiles) {
     try {
-      const raw = fs.readFileSync(path.join(datasourcesDir, file), "utf-8");
-      const cfg = JSON.parse(raw) as { id?: string; type?: string; name?: string; enabled?: boolean };
+      const cfg = readJsonFileSync<{ id?: string; type?: string; name?: string; enabled?: boolean }>(path.join(datasourcesDir, file));
       const id = cfg.id ?? file.replace(".json", "");
       const type = cfg.type ?? "unknown";
       const enabled = cfg.enabled !== false ? "yes" : "no";
@@ -344,7 +345,7 @@ export function cmdDatasourceRemove(
     return 1;
   }
 
-  const configPath = path.join(stateManager.getBaseDir(), "datasources", `${id}.json`);
+  const configPath = path.join(getDatasourcesDir(stateManager.getBaseDir()), `${id}.json`);
 
   if (!fs.existsSync(configPath)) {
     console.error(`Error: Data source "${id}" not found.`);

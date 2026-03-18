@@ -11,27 +11,9 @@ import type {
   GoalDecompositionConfig,
   DecompositionResult,
   GoalTreeState,
-  PruneDecision,
-  PruneReason,
   ConcretenessScore,
-  DecompositionQualityMetrics,
-  PruneRecord,
 } from "../types/goal-tree.js";
-import { DecompositionQualityMetricsSchema } from "../types/goal-tree.js";
-import {
-  pruneGoal as _pruneGoal,
-  pruneSubgoal as _pruneSubgoal,
-  getPruneHistory as _getPruneHistory,
-  cancelGoalAndDescendants,
-} from "./goal-tree-pruner.js";
-import {
-  scoreConcreteness as _scoreConcreteness,
-  evaluateDecompositionQuality as _evaluateDecompositionQuality,
-} from "./goal-tree-quality.js";
-
-// Re-export for backward compatibility
-export type { GoalTreePrunerDeps } from "./goal-tree-pruner.js";
-export type { GoalTreeQualityDeps } from "./goal-tree-quality.js";
+import { scoreConcreteness as _scoreConcreteness } from "./goal-tree-quality.js";
 
 // ─── LLM Response Schemas ───
 
@@ -64,13 +46,6 @@ const CoverageResponseSchema = z.object({
   missing_dimensions: z.array(z.string()).default([]),
   reasoning: z.string(),
 });
-
-const RestructureSuggestionSchema = z.object({
-  action: z.enum(["move", "merge", "split", "reorder"]),
-  goal_ids: z.array(z.string()),
-  reasoning: z.string(),
-});
-const RestructureResponseSchema = z.array(RestructureSuggestionSchema);
 
 // ─── Prompt Builders ───
 
@@ -145,22 +120,6 @@ ${childSummaries}
 Return ONLY: {"covers_parent":<true|false>,"missing_dimensions":[],"reasoning":"<brief>"}`;
 }
 
-function buildRestructurePrompt(rootId: string, treeState: GoalTreeState, goals: Goal[]): string {
-  const goalSummaries = goals
-    .map((g) => `${g.id} "${g.title}" d=${g.decomposition_depth} ${g.status}`)
-    .join("\n");
-
-  return `Suggest restructuring actions to improve this goal tree.
-
-Root: ${rootId} | nodes=${treeState.total_nodes} depth=${treeState.max_depth_reached} active=${treeState.active_loops.length} pruned=${treeState.pruned_nodes.length}
-
-Goals:
-${goalSummaries}
-
-Each action: {"action":"move"|"merge"|"split"|"reorder","goal_ids":[],"reasoning":"<why>"}
-Return ONLY a JSON array ([] if none needed).`;
-}
-
 // ─── Helper: Build a Goal from subgoal spec ───
 
 function buildGoalFromSubgoalSpec(
@@ -225,16 +184,12 @@ function buildGoalFromSubgoalSpec(
 // ─── GoalTreeManager ───
 
 /**
- * GoalTreeManager handles recursive goal decomposition, pruning,
- * dynamic subgoal addition, tree restructuring, and tree state queries.
+ * GoalTreeManager handles recursive goal decomposition and tree state queries.
  *
  * Responsibilities:
  *   - Specificity evaluation (LLM)
  *   - N-layer recursive decomposition
  *   - Decomposition validation (coverage + cycle check)
- *   - Pruning (cancel goal + all descendants) — delegates to goal-tree-pruner.ts
- *   - Quality scoring — delegates to goal-tree-quality.ts
- *   - Dynamic subgoal addition
  *   - Tree state queries
  */
 export interface GoalTreeManagerOptions {
@@ -245,7 +200,6 @@ export interface GoalTreeManagerOptions {
 export class GoalTreeManager {
   private readonly concretenesThreshold: number | null;
   private readonly maxDepth: number;
-  private readonly pruneHistory: Map<string, PruneRecord[]> = new Map();
 
   constructor(
     private readonly stateManager: StateManager,
@@ -260,31 +214,10 @@ export class GoalTreeManager {
     this.maxDepth = options?.maxDepth ?? 5;
   }
 
-  // ─── Concreteness Scoring (thin wrapper) ───
+  // ─── Concreteness Scoring (private) ───
 
-  /**
-   * Scores the concreteness of a goal description on four dimensions using an LLM.
-   * Score = weighted average of 4 boolean dimensions (each 0.25).
-   * Falls back to zero score on LLM/parse failures.
-   */
-  async scoreConcreteness(description: string): Promise<ConcretenessScore> {
+  private async scoreConcreteness(description: string): Promise<ConcretenessScore> {
     return _scoreConcreteness(description, { llmClient: this.llmClient });
-  }
-
-  // ─── Decomposition Quality (thin wrapper) ───
-
-  /**
-   * Evaluates the quality of a decomposition using an LLM.
-   * Measures coverage, overlap, actionability, and computes depthEfficiency.
-   * Logs a warning when quality is poor (coverage < 0.5 or overlap > 0.7).
-   */
-  async evaluateDecompositionQuality(
-    parentDescription: string,
-    subgoalDescriptions: string[]
-  ): Promise<DecompositionQualityMetrics> {
-    return _evaluateDecompositionQuality(parentDescription, subgoalDescriptions, {
-      llmClient: this.llmClient,
-    });
   }
 
   // ─── Specificity Evaluation ───
@@ -318,8 +251,8 @@ export class GoalTreeManager {
 
   /**
    * Recursively decomposes a goal into subgoals until each subgoal either:
-   *   (a) has specificity_score >= config.min_specificity → leaf node
-   *   (b) has decomposition_depth >= config.max_depth → forced leaf
+   *   (a) has specificity_score >= config.min_specificity -> leaf node
+   *   (b) has decomposition_depth >= config.max_depth -> forced leaf
    *   (c) concreteness score >= concretenesThreshold (auto-stop)
    *   (d) current depth >= maxDepth (depth guard)
    *
@@ -425,7 +358,7 @@ export class GoalTreeManager {
         [{ role: "user", content: subgoalPrompt }],
         { temperature: 0 }
       );
-      // Sanitize threshold_type values before schema validation —
+      // Sanitize threshold_type values before schema validation --
       // LLMs sometimes return "exact", "scale", "qualitative" etc.
       const THRESHOLD_TYPE_MAP: Record<string, string> = {
         exact: "match",
@@ -454,26 +387,27 @@ export class GoalTreeManager {
       }
       if (Array.isArray(preprocessed)) {
         for (const item of preprocessed) {
-          if (item && typeof item === 'object' && !('hypothesis' in item)) {
-            console.warn('[GoalTreeManager] Subgoal item missing hypothesis. Keys:', Object.keys(item as object));
-            const alt = (item as Record<string, unknown>).title
-              ?? (item as Record<string, unknown>).description
-              ?? (item as Record<string, unknown>).goal
-              ?? (item as Record<string, unknown>).objective
-              ?? (item as Record<string, unknown>).name
-              ?? (item as Record<string, unknown>).text
-              ?? (item as Record<string, unknown>).summary
-              ?? (item as Record<string, unknown>).label
-              ?? 'Unnamed subgoal';
+          if (item && typeof item === "object" && !("hypothesis" in item)) {
+            console.warn(
+              "[GoalTreeManager] Subgoal item missing hypothesis. Keys:",
+              Object.keys(item as object)
+            );
+            const alt =
+              (item as Record<string, unknown>).title ??
+              (item as Record<string, unknown>).description ??
+              (item as Record<string, unknown>).goal ??
+              (item as Record<string, unknown>).objective ??
+              (item as Record<string, unknown>).name ??
+              (item as Record<string, unknown>).text ??
+              (item as Record<string, unknown>).summary ??
+              (item as Record<string, unknown>).label ??
+              "Unnamed subgoal";
             (item as Record<string, unknown>).hypothesis = String(alt);
           }
         }
         sanitized = JSON.stringify(preprocessed);
       }
-      const parsed = this.llmClient.parseJSON(
-        sanitized,
-        SubgoalsResponseSchema
-      );
+      const parsed = this.llmClient.parseJSON(sanitized, SubgoalsResponseSchema);
       subgoalSpecs = parsed.map((sg: (typeof parsed)[number]) => {
         // Derive hypothesis from dimensions or parent goal title when the LLM omitted it
         let hypothesis = sg.hypothesis;
@@ -494,8 +428,11 @@ export class GoalTreeManager {
       // Clamp to max_children_per_node
       subgoalSpecs = subgoalSpecs.slice(0, maxChildren);
     } catch (err) {
-      // If subgoal generation fails, treat as leaf — but log the error for diagnostics
-      console.error(`[GoalTreeManager] Subgoal generation failed for "${goal.id}":`, err instanceof Error ? err.message : String(err));
+      // If subgoal generation fails, treat as leaf -- but log the error for diagnostics
+      console.error(
+        `[GoalTreeManager] Subgoal generation failed for "${goal.id}":`,
+        err instanceof Error ? err.message : String(err)
+      );
       const leafGoal: Goal = {
         ...updatedGoal,
         node_type: "leaf",
@@ -572,7 +509,7 @@ export class GoalTreeManager {
           reasoning: `Parent-child relationship from goal decomposition`,
         });
       } catch {
-        // Dependency graph may not support parent_child type — skip silently
+        // Dependency graph may not support parent_child type -- skip silently
       }
     }
 
@@ -622,7 +559,7 @@ export class GoalTreeManager {
    *
    * Returns true only if both checks pass.
    */
-  async validateDecomposition(result: DecompositionResult): Promise<boolean> {
+  private async validateDecomposition(result: DecompositionResult): Promise<boolean> {
     const parent = this.stateManager.loadGoal(result.parent_id);
     if (!parent) return false;
 
@@ -650,253 +587,13 @@ export class GoalTreeManager {
 
     // Check 2: Cycle detection
     for (const child of children as Goal[]) {
-      const wouldCycle = this.goalDependencyGraph.detectCycle(
-        result.parent_id,
-        child.id
-      );
+      const wouldCycle = this.goalDependencyGraph.detectCycle(result.parent_id, child.id);
       if (wouldCycle) {
         return false;
       }
     }
 
     return true;
-  }
-
-  // ─── Pruning (thin wrappers) ───
-
-  /**
-   * Prunes a goal and all its descendants by setting status = "cancelled".
-   * Removes the goal from its parent's children_ids.
-   * Returns a PruneDecision.
-   */
-  pruneGoal(goalId: string, reason: PruneReason): PruneDecision {
-    return _pruneGoal(goalId, reason, { stateManager: this.stateManager });
-  }
-
-  /**
-   * Prunes a subgoal with a free-form reason string for tracking.
-   * Records a PruneRecord in the history for the parent goal tree.
-   * The parentGoalId is the root goal whose history you want to track.
-   */
-  pruneSubgoal(
-    subgoalId: string,
-    reason: string,
-    parentGoalId?: string
-  ): PruneDecision {
-    return _pruneSubgoal(subgoalId, reason, this.pruneHistory, { stateManager: this.stateManager }, parentGoalId);
-  }
-
-  /**
-   * Returns the prune history for a given goal tree root ID.
-   * Returns an empty array if no prunes have been recorded.
-   */
-  getPruneHistory(goalId: string): PruneRecord[] {
-    return _getPruneHistory(goalId, this.pruneHistory);
-  }
-
-  // ─── Dynamic Subgoal Addition ───
-
-  /**
-   * Adds a new subgoal to a parent goal.
-   * - Validates the parent exists
-   * - Saves the new goal with parent_id set
-   * - Adds child ID to parent's children_ids
-   * - Registers the dependency in GoalDependencyGraph
-   * Returns the saved goal.
-   */
-  addSubgoal(parentId: string, goal: Goal): Goal {
-    const parent = this.stateManager.loadGoal(parentId);
-    if (!parent) {
-      throw new Error(`GoalTreeManager.addSubgoal: parent goal "${parentId}" not found`);
-    }
-
-    const now = new Date().toISOString();
-
-    // Ensure parent_id is set on the new goal
-    const goalWithParent: Goal = GoalSchema.parse({
-      ...goal,
-      parent_id: parentId,
-      updated_at: now,
-    });
-
-    // Save the new goal
-    this.stateManager.saveGoal(goalWithParent);
-
-    // Update parent's children_ids
-    const updatedParent: Goal = {
-      ...parent,
-      children_ids: [...parent.children_ids, goalWithParent.id],
-      updated_at: now,
-    };
-    this.stateManager.saveGoal(updatedParent);
-
-    // Register dependency
-    try {
-      this.goalDependencyGraph.addEdge({
-        from_goal_id: parentId,
-        to_goal_id: goalWithParent.id,
-        type: "parent_child" as never,
-        status: "active",
-        condition: null,
-        affected_dimensions: goalWithParent.dimensions.map((d) => d.name),
-        mitigation: null,
-        detection_confidence: 1.0,
-        reasoning: `Parent-child relationship (dynamic subgoal addition)`,
-      });
-    } catch {
-      // Dependency graph may not support parent_child type — skip silently
-    }
-
-    return goalWithParent;
-  }
-
-  // ─── Tree Restructure ───
-
-  /**
-   * Asks an LLM for restructuring suggestions on the current tree rooted at goalId,
-   * then applies them. Currently supports identifying merge/move candidates.
-   *
-   * After restructuring, evaluates quality of the new structure. If quality
-   * metrics do not show improvement (overall score degraded), reverts changes
-   * by restoring the snapshot taken before restructuring.
-   *
-   * Returns the quality metrics of the final (kept) structure.
-   */
-  async restructureTree(goalId: string): Promise<DecompositionQualityMetrics | null | undefined> {
-    const allGoalIdsBefore = this._collectAllDescendantIds(goalId);
-    allGoalIdsBefore.unshift(goalId);
-
-    const qualityEnabled = this.concretenesThreshold !== null;
-
-    // Snapshot state before restructuring (needed for quality-based revert)
-    const snapshot = new Map<string, Goal>();
-    if (qualityEnabled) {
-      for (const id of allGoalIdsBefore) {
-        const g = this.stateManager.loadGoal(id);
-        if (g) snapshot.set(id, g);
-      }
-    }
-
-    // Evaluate quality before restructuring (only when concreteness feature is enabled)
-    const rootGoalBefore = this.stateManager.loadGoal(goalId);
-    let qualityBefore: DecompositionQualityMetrics | null = null;
-    if (qualityEnabled) {
-      const beforeSubgoalDescs = allGoalIdsBefore
-        .slice(1)
-        .map((id) => snapshot.get(id)?.description ?? "")
-        .filter(Boolean);
-      qualityBefore =
-        beforeSubgoalDescs.length > 0 && rootGoalBefore
-          ? await this.evaluateDecompositionQuality(
-              rootGoalBefore.description,
-              beforeSubgoalDescs
-            )
-          : null;
-    }
-
-    const treeState = this.getTreeState(goalId);
-    const goals: Goal[] = [];
-    for (const id of allGoalIdsBefore) {
-      const g = this.stateManager.loadGoal(id);
-      if (g) goals.push(g);
-    }
-
-    const prompt = buildRestructurePrompt(goalId, treeState, goals);
-    let restructuringApplied = false;
-    try {
-      const response = await this.llmClient.sendMessage(
-        [{ role: "user", content: prompt }],
-        { temperature: 0 }
-      );
-      const suggestions = this.llmClient.parseJSON(
-        response.content,
-        RestructureResponseSchema
-      );
-
-      const now = new Date().toISOString();
-
-      for (const suggestion of suggestions) {
-        if (suggestion.action === "merge" && suggestion.goal_ids.length >= 2) {
-          // Merge: cancel all but first goal in the list
-          const [keepId, ...mergeIds] = suggestion.goal_ids;
-          if (keepId) {
-            for (const mergeId of mergeIds) {
-              const mergeGoal = this.stateManager.loadGoal(mergeId);
-              if (mergeGoal && mergeGoal.status !== "cancelled") {
-                cancelGoalAndDescendants(mergeGoal, now, this.stateManager);
-                restructuringApplied = true;
-                // Remove from parent
-                if (mergeGoal.parent_id) {
-                  const parent = this.stateManager.loadGoal(mergeGoal.parent_id);
-                  if (parent) {
-                    const updatedParent: Goal = {
-                      ...parent,
-                      children_ids: parent.children_ids.filter((id) => id !== mergeId),
-                      updated_at: now,
-                    };
-                    this.stateManager.saveGoal(updatedParent);
-                  }
-                }
-              }
-            }
-          }
-        }
-        // Other actions (move, split, reorder) are logged but not fully automated in MVP
-      }
-    } catch {
-      // Restructure is best-effort; silently ignore errors
-    }
-
-    // Quality evaluation after restructuring (only when concreteness feature is enabled)
-    if (!qualityEnabled || !restructuringApplied || !rootGoalBefore) {
-      // When quality evaluation is not enabled, return undefined
-      // to maintain backward compatibility with pre-M7 void return
-      return qualityEnabled ? qualityBefore : undefined;
-    }
-
-    const allGoalIdsAfter = this._collectAllDescendantIds(goalId);
-    allGoalIdsAfter.unshift(goalId);
-    const afterSubgoalDescs = allGoalIdsAfter
-      .slice(1)
-      .map((id) => {
-        const g = this.stateManager.loadGoal(id);
-        return g?.description ?? "";
-      })
-      .filter(Boolean);
-
-    const qualityAfter =
-      afterSubgoalDescs.length > 0
-        ? await this.evaluateDecompositionQuality(
-            rootGoalBefore.description,
-            afterSubgoalDescs
-          )
-        : DecompositionQualityMetricsSchema.parse({
-            coverage: 0,
-            overlap: 0,
-            actionability: 0,
-            depthEfficiency: 1,
-          });
-
-    // Compute an overall score: higher coverage + lower overlap + higher actionability is better
-    const scoreBefore = qualityBefore
-      ? qualityBefore.coverage * 0.4 +
-        (1 - qualityBefore.overlap) * 0.3 +
-        qualityBefore.actionability * 0.3
-      : 0;
-    const scoreAfter =
-      qualityAfter.coverage * 0.4 +
-      (1 - qualityAfter.overlap) * 0.3 +
-      qualityAfter.actionability * 0.3;
-
-    if (scoreAfter < scoreBefore) {
-      // Revert: restore all goals from snapshot
-      for (const [, savedGoal] of snapshot) {
-        this.stateManager.saveGoal(savedGoal);
-      }
-      return qualityBefore;
-    }
-
-    return qualityAfter;
   }
 
   // ─── Tree State ───

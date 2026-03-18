@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { getMotivaDirPath } from "./utils/paths.js";
 import { GoalSchema, GoalTreeSchema } from "./types/goal.js";
 import { ObservationLogSchema, ObservationLogEntrySchema } from "./types/state.js";
 import { GapHistoryEntrySchema } from "./types/gap.js";
@@ -29,7 +29,7 @@ export class StateManager {
   private readonly baseDir: string;
 
   constructor(baseDir?: string) {
-    this.baseDir = baseDir ?? path.join(os.homedir(), ".motiva");
+    this.baseDir = baseDir ?? getMotivaDirPath();
     this.ensureDirectories();
   }
 

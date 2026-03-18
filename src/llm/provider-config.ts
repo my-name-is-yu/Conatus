@@ -7,6 +7,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { getMotivaDirPath } from "../utils/paths.js";
+import { readJsonFileSync, writeJsonFileSync } from "../utils/json-io.js";
 
 // ─── Types ───
 
@@ -39,7 +41,7 @@ export interface ProviderConfig {
 
 // ─── Constants ───
 
-const PROVIDER_CONFIG_PATH = path.join(os.homedir(), ".motiva", "provider.json");
+const PROVIDER_CONFIG_PATH = path.join(getMotivaDirPath(), "provider.json");
 
 const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
   llm_provider: "codex",
@@ -168,7 +170,7 @@ export function loadProviderConfig(): ProviderConfig {
  * Creates the ~/.motiva directory if it does not exist.
  */
 export function saveProviderConfig(config: ProviderConfig): void {
-  const motivaDir = path.join(os.homedir(), ".motiva");
+  const motivaDir = getMotivaDirPath();
   if (!fs.existsSync(motivaDir)) {
     fs.mkdirSync(motivaDir, { recursive: true });
   }

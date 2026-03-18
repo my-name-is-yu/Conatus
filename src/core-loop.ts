@@ -1,3 +1,4 @@
+import { sleep } from "./utils/sleep.js";
 import type { Logger } from "./runtime/logger.js";
 import type { TaskCycleResult } from "./execution/task-lifecycle.js";
 import type { IAdapter } from "./execution/adapter-layer.js";
@@ -50,10 +51,6 @@ const DEFAULT_CONFIG: Required<LoopConfig> = {
   minIterations: 1,
   autoArchive: false,
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 // ─── CoreLoop ───
 

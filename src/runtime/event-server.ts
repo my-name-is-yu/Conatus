@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as http from "node:http";
 import type { DriveSystem } from "../drive/drive-system.js";
 import { MotivaEventSchema } from "../types/drive.js";
+import { getEventsDir } from "../utils/paths.js";
 
 export interface EventServerConfig {
   host?: string; // default: "127.0.0.1" (localhost only!)
@@ -23,12 +24,7 @@ export class EventServer {
     this.host = config?.host ?? "127.0.0.1";
     this.port = config?.port ?? 41700;
     // Default events directory: ~/.motiva/events/
-    const defaultEventsDir = path.join(
-      process.env.HOME ?? process.env.USERPROFILE ?? "/tmp",
-      ".motiva",
-      "events"
-    );
-    this.eventsDir = config?.eventsDir ?? defaultEventsDir;
+    this.eventsDir = config?.eventsDir ?? getEventsDir();
   }
 
   /** Start HTTP server */

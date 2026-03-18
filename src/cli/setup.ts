@@ -3,10 +3,12 @@
 // buildDeps() wires all Motiva dependencies for CLI subcommands.
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { getMotivaDirPath, getDatasourcesDir } from "../utils/paths.js";
+import { readJsonFileSync } from "../utils/json-io.js";
 
 import { StateManager } from "../state-manager.js";
+import type { DataSourceConfig } from "../types/data-source.js";
 import type { IDataSourceAdapter } from "../observation/data-source-adapter.js";
 import { FileDataSourceAdapter, HttpApiDataSourceAdapter } from "../observation/data-source-adapter.js";
 import { GitHubIssueDataSourceAdapter } from "../adapters/github-issue-datasource.js";
@@ -55,13 +57,13 @@ export function buildDeps(
   const driveSystem = new DriveSystem(stateManager);
 
   // Read datasource configs from ~/.motiva/datasources/
-  const dsDir = path.join(os.homedir(), '.motiva', 'datasources');
+  const dsDir = getDatasourcesDir();
   const dataSources: IDataSourceAdapter[] = [];
   try {
     if (fs.existsSync(dsDir)) {
       const files = fs.readdirSync(dsDir).filter(f => f.endsWith('.json'));
       for (const file of files) {
-        const cfg = JSON.parse(fs.readFileSync(path.join(dsDir, file), 'utf-8'));
+        const cfg = readJsonFileSync<DataSourceConfig>(path.join(dsDir, file));
         if (cfg.type === 'file') {
           dataSources.push(new FileDataSourceAdapter(cfg));
         } else if (cfg.type === 'http_api') {
@@ -73,7 +75,7 @@ export function buildDeps(
         } else if (cfg.type === 'shell') {
           const adapter = new ShellDataSourceAdapter(
             cfg.id,
-            cfg.commands ?? {},
+            (cfg.connection.commands ?? {}) as Record<string, import("../adapters/shell-datasource.js").ShellCommandSpec>,
             cfg.connection?.path ?? process.cwd()
           );
           dataSources.push(adapter);
@@ -129,7 +131,7 @@ export function buildDeps(
   );
 
   // MemoryLifecycleManager — wires 3-tier memory model into CoreLoop.
-  const motivaBaseDir = path.join(os.homedir(), ".motiva");
+  const motivaBaseDir = getMotivaDirPath();
   let memoryLifecycleManager: MemoryLifecycleManager | undefined;
   let driveScoreAdapter: DriveScoreAdapter | undefined;
   try {

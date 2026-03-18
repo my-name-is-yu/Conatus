@@ -3,6 +3,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { getDatasourcesDir, getArchiveDir, getReportsDir } from "../../utils/paths.js";
+import { writeJsonFileSync, readJsonFileSync } from "../../utils/json-io.js";
 
 import { StateManager } from "../../state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
@@ -169,8 +171,7 @@ export function cmdGoalList(
     console.log(`\nArchived goals (${archivedIds.length}):\n`);
     for (const goalId of archivedIds) {
       const archivedGoalPath = path.join(
-        stateManager.getBaseDir(),
-        "archive",
+        getArchiveDir(stateManager.getBaseDir()),
         goalId,
         "goal",
         "goal.json"
@@ -180,11 +181,11 @@ export function cmdGoalList(
       let dimCount = 0;
       try {
         if (fs.existsSync(archivedGoalPath)) {
-          const raw = JSON.parse(fs.readFileSync(archivedGoalPath, "utf-8")) as {
+          const raw = readJsonFileSync<{
             title?: string;
             status?: string;
             dimensions?: unknown[];
-          };
+          }>(archivedGoalPath);
           title = raw.title ?? title;
           status = raw.status ?? status;
           dimCount = raw.dimensions?.length ?? 0;
@@ -415,13 +416,13 @@ export function cmdCleanup(stateManager: StateManager): number {
   const baseDir = stateManager.getBaseDir();
   const staleReports: string[] = [];
 
-  const reportsDir = path.join(baseDir, "reports");
+  const reportsDir = getReportsDir(baseDir);
   if (fs.existsSync(reportsDir)) {
     try {
       const reportFiles = fs.readdirSync(reportsDir).filter((f) => f.endsWith(".json"));
       for (const file of reportFiles) {
         try {
-          const raw = JSON.parse(fs.readFileSync(path.join(reportsDir, file), "utf-8")) as { goal_id?: string };
+          const raw = readJsonFileSync<{ goal_id?: string }>(path.join(reportsDir, file));
           if (raw.goal_id && !activeGoalIds.has(raw.goal_id)) {
             staleReports.push(file);
           }
@@ -701,7 +702,7 @@ export function autoRegisterFileExistenceDataSources(
 
     if (Object.keys(dimensionMapping).length === 0) return;
 
-    const datasourcesDir = path.join(stateManager.getBaseDir(), "datasources");
+    const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
     if (!fs.existsSync(datasourcesDir)) {
       fs.mkdirSync(datasourcesDir, { recursive: true });
     }
@@ -719,7 +720,7 @@ export function autoRegisterFileExistenceDataSources(
     };
 
     const configPath = path.join(datasourcesDir, `${id}.json`);
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    writeJsonFileSync(configPath, config);
 
     console.log(
       `[auto] Registered FileExistenceDataSource for: ${Object.keys(dimensionMapping).join(", ")}`
@@ -746,7 +747,7 @@ export function autoRegisterShellDataSources(
 
     if (Object.keys(matchedCommands).length === 0) return;
 
-    const datasourcesDir = path.join(stateManager.getBaseDir(), "datasources");
+    const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
     if (!fs.existsSync(datasourcesDir)) {
       fs.mkdirSync(datasourcesDir, { recursive: true });
     }
@@ -772,7 +773,7 @@ export function autoRegisterShellDataSources(
     };
 
     const configPath = path.join(datasourcesDir, `${id}.json`);
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    writeJsonFileSync(configPath, config);
 
     console.log(
       `[auto] Registered ShellDataSource for: ${Object.keys(matchedCommands).join(", ")}`

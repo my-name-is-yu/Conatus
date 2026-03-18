@@ -1,8 +1,7 @@
 // ─── motiva run command ───
 
-import * as os from "node:os";
-import * as path from "node:path";
 import * as readline from "node:readline";
+import { getLogsDir } from "../../utils/paths.js";
 
 import { StateManager } from "../../state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
@@ -70,7 +69,7 @@ export async function cmdRun(
     : buildApprovalFn(rl!);
 
   const logger = new Logger({
-    dir: path.join(os.homedir(), ".motiva", "logs"),
+    dir: getLogsDir(),
     level: "debug",
     consoleOutput: false,
   });

@@ -10,6 +10,7 @@ import {
   type LLMRequestOptions,
   type LLMResponse,
 } from "./llm-client.js";
+import { sleep } from "../utils/sleep.js";
 
 // ─── Constants ───
 
@@ -18,12 +19,6 @@ const MAX_RETRY_ATTEMPTS = 3;
 
 /** Exponential backoff delays in milliseconds: 1s, 2s, 4s */
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
-
-// ─── Helpers ───
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Build a single prompt string from messages and system prompt.

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ZodSchema } from "zod";
 import { extractJSON, type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse } from "./llm-client.js";
+import { sleep } from "../utils/sleep.js";
 
 // ─── Constants ───
 
@@ -14,12 +15,6 @@ const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
 /** Model prefixes that do not support the temperature parameter */
 const REASONING_MODEL_PREFIXES = ["o1", "o3", "o4"];
-
-// ─── Helpers ───
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function isReasoningModel(model: string): boolean {
   return REASONING_MODEL_PREFIXES.some((prefix) => model.startsWith(prefix));

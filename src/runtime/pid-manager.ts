@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { readJsonFileSync, writeJsonFileSync } from "../utils/json-io.js";
 
 export class PIDManager {
   private pidPath: string;
@@ -15,7 +16,7 @@ export class PIDManager {
       started_at: new Date().toISOString(),
     };
     const tmpPath = this.pidPath + ".tmp";
-    fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), "utf-8");
+    writeJsonFileSync(tmpPath, info);
     fs.renameSync(tmpPath, this.pidPath);
   }
 
@@ -23,8 +24,7 @@ export class PIDManager {
   readPID(): { pid: number; started_at: string } | null {
     try {
       if (!fs.existsSync(this.pidPath)) return null;
-      const content = fs.readFileSync(this.pidPath, "utf-8");
-      const data = JSON.parse(content);
+      const data = readJsonFileSync<{ pid: number; started_at: string }>(this.pidPath);
       if (typeof data.pid !== "number") return null;
       return data;
     } catch {

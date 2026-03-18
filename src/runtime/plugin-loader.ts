@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import yaml from "js-yaml";
+import { getPluginsDir } from "../utils/paths.js";
 import {
   PluginManifestSchema,
   PluginStateSchema,
@@ -41,7 +41,7 @@ export class PluginLoader {
     this.adapterRegistry = adapterRegistry;
     this.dataSourceRegistry = dataSourceRegistry;
     this.notifierRegistry = notifierRegistry;
-    this.pluginsDir = pluginsDir ?? path.join(os.homedir(), ".motiva", "plugins");
+    this.pluginsDir = pluginsDir ?? getPluginsDir();
   }
 
   /**

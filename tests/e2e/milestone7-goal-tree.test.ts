@@ -15,6 +15,7 @@ import * as path from "node:path";
 
 import { StateManager } from "../../src/state-manager.js";
 import { GoalTreeManager } from "../../src/goal/goal-tree-manager.js";
+import { scoreConcreteness, evaluateDecompositionQuality } from "../../src/goal/goal-tree-quality.js";
 import { GoalDependencyGraph } from "../../src/goal/goal-dependency-graph.js";
 import { EthicsGate } from "../../src/traits/ethics-gate.js";
 import { CrossGoalPortfolio } from "../../src/strategy/cross-goal-portfolio.js";
@@ -202,7 +203,6 @@ describe("Milestone 7 — Group 1: GoalTreeManager", () => {
   // ── Test 1.2: scoreConcreteness scores a concrete description ──
 
   it("scoreConcreteness: concrete description (3/4 dimensions true) returns score 0.75", async () => {
-    const stateManager = new StateManager(tempDir);
     const concreteResponse = JSON.stringify({
       hasQuantitativeThreshold: true,
       hasObservableOutcome: true,
@@ -212,13 +212,9 @@ describe("Milestone 7 — Group 1: GoalTreeManager", () => {
     });
 
     const mockLLM = createSequentialMockLLMClient([concreteResponse]);
-    const ethicsLLM = createSequentialMockLLMClient([]);
-    const ethicsGate = new EthicsGate(stateManager, ethicsLLM);
-    const depGraph = new GoalDependencyGraph(stateManager);
-    const goalTreeManager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, depGraph);
 
     const description = "Achieve >= 80% documentation coverage with observable section presence, clearly scoped to public API docs";
-    const result = await goalTreeManager.scoreConcreteness(description);
+    const result = await scoreConcreteness(description, { llmClient: mockLLM });
 
     // 3 true dimensions × 0.25 each = 0.75
     expect(result.score).toBe(0.75);
@@ -230,56 +226,9 @@ describe("Milestone 7 — Group 1: GoalTreeManager", () => {
     expect(result.reason.length).toBeGreaterThan(0);
   });
 
-  // ── Test 1.3: pruneSubgoal cancels a leaf subgoal and removes it from parent's children_ids ──
-
-  it("pruneSubgoal: cancels leaf subgoal and removes it from parent's children_ids", () => {
-    const stateManager = new StateManager(tempDir);
-    // No LLM calls needed for pruneSubgoal
-    const mockLLM = createSequentialMockLLMClient([]);
-    const ethicsLLM = createSequentialMockLLMClient([]);
-    const ethicsGate = new EthicsGate(stateManager, ethicsLLM);
-    const depGraph = new GoalDependencyGraph(stateManager);
-    const goalTreeManager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, depGraph);
-
-    // Pre-seed: parent goal with one child (the subgoal to be pruned)
-    const parentGoal = makeGoal("parent-prune-test", "Parent goal for prune test", {
-      children_ids: ["subgoal-to-prune"],
-    });
-    const subgoal = makeGoal("subgoal-to-prune", "Low-value subgoal to be pruned", {
-      parent_id: "parent-prune-test",
-      node_type: "leaf",
-      decomposition_depth: 1,
-    });
-    stateManager.saveGoal(parentGoal);
-    stateManager.saveGoal(subgoal);
-
-    // Call pruneSubgoal
-    const decision = goalTreeManager.pruneSubgoal("subgoal-to-prune", "low value", "parent-prune-test");
-
-    // Assert: decision has correct goal_id
-    expect(decision.goal_id).toBe("subgoal-to-prune");
-
-    // Assert: subgoal status is "cancelled"
-    const cancelledSubgoal = stateManager.loadGoal("subgoal-to-prune");
-    expect(cancelledSubgoal).not.toBeNull();
-    expect(cancelledSubgoal!.status).toBe("cancelled");
-
-    // Assert: parent's children_ids no longer contains subgoalId
-    const updatedParent = stateManager.loadGoal("parent-prune-test");
-    expect(updatedParent).not.toBeNull();
-    expect(updatedParent!.children_ids).not.toContain("subgoal-to-prune");
-
-    // Assert: prune history recorded for parentGoalId
-    const history = goalTreeManager.getPruneHistory("parent-prune-test");
-    expect(history.length).toBe(1);
-    expect(history[0]!.subgoalId).toBe("subgoal-to-prune");
-    expect(history[0]!.reason).toBe("low value");
-  });
-
-  // ── Test 1.4: evaluateDecompositionQuality returns metrics with correct structure ──
+  // ── Test 1.3: evaluateDecompositionQuality returns metrics with correct structure ──
 
   it("evaluateDecompositionQuality: returns metrics object with expected structure and computed depthEfficiency", async () => {
-    const stateManager = new StateManager(tempDir);
     // Mock LLM returns coverage=0.8, overlap=0.1, actionability=0.7
     // depthEfficiency = 1 - overlap * 0.5 = 1 - 0.1 * 0.5 = 0.95
     const qualityResponse = JSON.stringify({
@@ -290,10 +239,6 @@ describe("Milestone 7 — Group 1: GoalTreeManager", () => {
     });
 
     const mockLLM = createSequentialMockLLMClient([qualityResponse]);
-    const ethicsLLM = createSequentialMockLLMClient([]);
-    const ethicsGate = new EthicsGate(stateManager, ethicsLLM);
-    const depGraph = new GoalDependencyGraph(stateManager);
-    const goalTreeManager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, depGraph);
 
     const parentDescription = "Improve overall documentation quality";
     const subgoalDescriptions = [
@@ -301,7 +246,7 @@ describe("Milestone 7 — Group 1: GoalTreeManager", () => {
       "Add usage examples to README within 1 week",
     ];
 
-    const metrics = await goalTreeManager.evaluateDecompositionQuality(parentDescription, subgoalDescriptions);
+    const metrics = await evaluateDecompositionQuality(parentDescription, subgoalDescriptions, { llmClient: mockLLM });
 
     // Assert: individual metric values
     expect(metrics.coverage).toBe(0.8);
