@@ -1025,7 +1025,7 @@ describe("TaskLifecycle", async () => {
       await lifecycle.executeTask(task, adapter);
 
       // Verify session was created by checking state
-      const sessions = sessionManager.getActiveSessions("goal-1");
+      const sessions = await sessionManager.getActiveSessions("goal-1");
       // Session should be ended (not active anymore)
       expect(sessions.length).toBe(0);
     });
@@ -1139,7 +1139,7 @@ describe("TaskLifecycle", async () => {
       await lifecycle.executeTask(task, adapter);
 
       // All sessions should be ended (no active ones)
-      const activeSessions = sessionManager.getActiveSessions("goal-1");
+      const activeSessions = await sessionManager.getActiveSessions("goal-1");
       expect(activeSessions.length).toBe(0);
     });
 

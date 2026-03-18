@@ -129,8 +129,8 @@ export class LoopController {
       lastResult: null,
     });
 
-    // Initial dimension refresh
-    this.refreshState(goalId);
+    // Initial dimension refresh (awaited so dimensions are populated before polling starts)
+    await this.refreshState(goalId);
 
     // Start polling
     this.pollInterval = setInterval(() => {

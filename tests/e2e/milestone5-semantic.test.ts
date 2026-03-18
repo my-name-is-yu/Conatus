@@ -235,14 +235,14 @@ describe("Milestone 5 — Group 1: Cross-Goal Knowledge Sharing", () => {
     expect(shared.entry_id).toBe("entry-kb-a1");
 
     // Query from goal B — should find it via tags
-    const results = km.querySharedKnowledge(["readme"]);
+    const results = await km.querySharedKnowledge(["readme"]);
     expect(results.length).toBeGreaterThanOrEqual(1);
     const found = results.find((e) => e.entry_id === "entry-kb-a1");
     expect(found).toBeDefined();
     expect(found!.source_goal_ids).toContain("goal-readme");
 
     // Query from goal B's perspective — no goalId filter → still finds it
-    const resultsFromB = km.querySharedKnowledge(["documentation"]);
+    const resultsFromB = await km.querySharedKnowledge(["documentation"]);
     expect(resultsFromB.some((e) => e.entry_id === "entry-kb-a1")).toBe(true);
   });
 
@@ -262,7 +262,7 @@ describe("Milestone 5 — Group 1: Cross-Goal Knowledge Sharing", () => {
     await km.saveToSharedKnowledgeBase(entry, "goal-readme");
     await km.saveToSharedKnowledgeBase(entry, "goal-tests");
 
-    const results = km.querySharedKnowledge(["testing"]);
+    const results = await km.querySharedKnowledge(["testing"]);
     const found = results.find((e) => e.entry_id === "entry-shared-multi");
     expect(found).toBeDefined();
     expect(found!.source_goal_ids).toContain("goal-readme");
@@ -347,7 +347,7 @@ describe("Milestone 5 — Group 1: Cross-Goal Knowledge Sharing", () => {
     });
     await stateManager.writeRaw("memory/shared-knowledge/entries.json", mutated);
 
-    const stale = km.getStaleEntries();
+    const stale = await km.getStaleEntries();
     expect(stale.length).toBeGreaterThanOrEqual(1);
     expect(stale.some((e) => e.entry_id === "stale-entry-1")).toBe(true);
   });
@@ -364,7 +364,7 @@ describe("Milestone 5 — Group 1: Cross-Goal Knowledge Sharing", () => {
     await km.saveToSharedKnowledgeBase(entryA, "goal-filter-a");
     await km.saveToSharedKnowledgeBase(entryB, "goal-filter-b");
 
-    const onlyA = km.querySharedKnowledge(["common-tag"], "goal-filter-a");
+    const onlyA = await km.querySharedKnowledge(["common-tag"], "goal-filter-a");
     expect(onlyA.every((e) => e.source_goal_ids.includes("goal-filter-a"))).toBe(true);
     expect(onlyA.some((e) => e.entry_id === "filter-a")).toBe(true);
     // filter-b should NOT appear when filtering to goal-filter-a
@@ -717,7 +717,7 @@ describe("Milestone 5 — Group 4: Full Integration — Multi-Goal Loop with Kno
     expect(sharedEntry.source_goal_ids).toContain("goal-readme-m5");
 
     // Goal B should now be able to access the knowledge
-    const goalBKnowledge = km.querySharedKnowledge(["documentation"]);
+    const goalBKnowledge = await km.querySharedKnowledge(["documentation"]);
     expect(goalBKnowledge.length).toBeGreaterThanOrEqual(1);
 
     const found = goalBKnowledge.find((e) => e.entry_id === "km-readme-finding");

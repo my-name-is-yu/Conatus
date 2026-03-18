@@ -297,7 +297,7 @@ describe("example unit coverage", () => {
       { primary_dimension: "sales", actual_elapsed_ms: 120, estimated_duration_ms: 500 },
       { primary_dimension: "sales", actual_elapsed_ms: 150, estimated_duration_ms: 500 },
     ]);
-    const proposals = judge.detectThresholdAdjustmentNeeded(
+    const proposals = await judge.detectThresholdAdjustmentNeeded(
       proposalGoal,
       new Map([
         ["sales", 4],

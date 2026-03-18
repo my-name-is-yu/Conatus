@@ -381,6 +381,7 @@ export class CuriosityEngine {
     triggers: CuriosityTrigger[],
     goals: Goal[]
   ): Promise<CuriosityProposal[]> {
+    await this.ensureStateLoaded();
     const activeProposals = this.getActiveProposals();
 
     const newProposals = await generateProposalsImpl(
@@ -578,6 +579,7 @@ export class CuriosityEngine {
    */
   async shouldExplore(goals: Goal[]): Promise<boolean> {
     if (!this.config.enabled) return false;
+    await this.ensureStateLoaded();
 
     // Quick check 1: task queue empty
     const userGoals = goals.filter((g) => g.origin !== "curiosity");

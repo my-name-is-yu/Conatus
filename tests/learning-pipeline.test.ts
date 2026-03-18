@@ -733,7 +733,7 @@ describe("LearningPipeline", () => {
   // ─── 2. フィードバック生成（generateFeedback）───
 
   describe("generateFeedback", () => {
-    it("should return empty array for empty patterns list", () => {
+    it("should return empty array for empty patterns list", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 

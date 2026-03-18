@@ -10,7 +10,7 @@ import { makeTempDir } from "../helpers/temp-dir.js";
 import { makeGoal } from "../helpers/fixtures.js";
 
 /** Flush enough microtask/Promise queues for async StateManager I/O to settle */
-async function flushAsync(rounds = 10): Promise<void> {
+async function flushAsync(rounds = 50): Promise<void> {
   for (let i = 0; i < rounds; i++) {
     await Promise.resolve();
   }
@@ -26,7 +26,7 @@ const OBS_METHOD = {
 
 function makeMockTrustManager(balance = 0): TrustManager {
   return {
-    getBalance: vi.fn().mockReturnValue({ domain: "default", balance }),
+    getBalance: vi.fn().mockResolvedValue({ domain: "default", balance }),
     recordSuccess: vi.fn(),
     recordFailure: vi.fn(),
     getActionQuadrant: vi.fn(),

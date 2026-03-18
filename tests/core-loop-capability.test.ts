@@ -319,7 +319,7 @@ describe("CoreLoop — capability_acquiring handler", () => {
   it("successful acquire -> verify(pass) -> register cycle", async () => {
     const { deps, mocks } = createMockDeps(tmpDir);
     const goal = makeGoal();
-    mocks.stateManager.saveGoal(goal);
+    await mocks.stateManager.saveGoal(goal);
 
     // capabilityDetector.verifyAcquiredCapability returns "pass"
     mocks.capabilityDetector.verifyAcquiredCapability.mockResolvedValue("pass");
@@ -361,7 +361,7 @@ describe("CoreLoop — capability_acquiring handler", () => {
   it("verify failure retries up to 3 times then escalates", async () => {
     const { deps, mocks } = createMockDeps(tmpDir);
     const goal = makeGoal();
-    mocks.stateManager.saveGoal(goal);
+    await mocks.stateManager.saveGoal(goal);
 
     // verifyAcquiredCapability returns "fail" every time
     mocks.capabilityDetector.verifyAcquiredCapability.mockResolvedValue("fail");
@@ -400,7 +400,7 @@ describe("CoreLoop — capability_acquiring handler", () => {
   it("immediate escalation when verify returns 'escalate'", async () => {
     const { deps, mocks } = createMockDeps(tmpDir);
     const goal = makeGoal();
-    mocks.stateManager.saveGoal(goal);
+    await mocks.stateManager.saveGoal(goal);
 
     // verifyAcquiredCapability returns "escalate" (max verification attempts in verifier)
     mocks.capabilityDetector.verifyAcquiredCapability.mockResolvedValue("escalate");
@@ -425,7 +425,7 @@ describe("CoreLoop — capability_acquiring handler", () => {
   it("missing capabilityDetector gracefully skips (no crash)", async () => {
     const { deps, mocks } = createMockDeps(tmpDir);
     const goal = makeGoal();
-    mocks.stateManager.saveGoal(goal);
+    await mocks.stateManager.saveGoal(goal);
 
     // Remove capabilityDetector from deps
     delete (deps as Partial<CoreLoopDeps>).capabilityDetector;
@@ -443,7 +443,7 @@ describe("CoreLoop — capability_acquiring handler", () => {
   it("adapter execution failure records failure and escalates after 3", async () => {
     const { deps, mocks } = createMockDeps(tmpDir);
     const goal = makeGoal();
-    mocks.stateManager.saveGoal(goal);
+    await mocks.stateManager.saveGoal(goal);
 
     // adapter.execute throws an error
     (mocks.adapter.execute as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("connection refused"));

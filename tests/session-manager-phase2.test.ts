@@ -418,11 +418,11 @@ describe("SessionManager Phase 2", () => {
   // ─── createSession dynamic budget wiring ───
 
   describe("createSession conflict-aware context wiring", () => {
-    it("uses conflict-aware context when dependencyGraph is available", () => {
+    it("uses conflict-aware context when dependencyGraph is available", async () => {
       const depGraph = new GoalDependencyGraph(stateManager);
       const managerWithGraph = new SessionManager(stateManager, depGraph);
 
-      depGraph.addEdge({
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "resource_conflict",
@@ -434,13 +434,13 @@ describe("SessionManager Phase 2", () => {
         reasoning: null,
       });
 
-      const session = managerWithGraph.createSession("goal_review", "goal-A", null);
+      const session = await managerWithGraph.createSession("goal_review", "goal-A", null);
       const labels = session.context_slots.map((s) => s.label);
       expect(labels).toContain("resource_conflict_awareness");
     });
 
-    it("falls back to basic context when no dependencyGraph is configured", () => {
-      const session = manager.createSession("goal_review", "goal-A", null);
+    it("falls back to basic context when no dependencyGraph is configured", async () => {
+      const session = await manager.createSession("goal_review", "goal-A", null);
       const labels = session.context_slots.map((s) => s.label);
       expect(labels).not.toContain("resource_conflict_awareness");
       expect(labels).toContain("goal_definition");

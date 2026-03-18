@@ -112,7 +112,7 @@ export async function observeFromDataSource(
   dimensionName: string,
   sourceId: string,
   dataSources: IDataSourceAdapter[],
-  applyFn: (goalId: string, entry: ObservationLogEntry) => void
+  applyFn: (goalId: string, entry: ObservationLogEntry) => Promise<void>
 ): Promise<ObservationLogEntry> {
   const source = dataSources.find((s) => s.sourceId === sourceId);
   if (!source) {
@@ -172,7 +172,7 @@ export async function observeFromDataSource(
     notes: `Data source: ${sourceId}`,
   });
 
-  applyFn(goalId, entry);
+  await applyFn(goalId, entry);
 
   return entry;
 }

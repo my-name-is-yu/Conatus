@@ -314,31 +314,34 @@ describe("GoalDependencyGraph", () => {
       expect(freshGraph.getGraph().nodes).toHaveLength(0);
     });
 
-    it("persists and reloads edges correctly", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
-      graph.addEdge(makeEdge("goal-B", "goal-C", "synergy"));
+    it("persists and reloads edges correctly", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+      await graph.addEdge(makeEdge("goal-B", "goal-C", "synergy"));
 
       const freshGraph = new GoalDependencyGraph(stateManager);
+      await freshGraph.init();
       expect(freshGraph.getGraph().edges).toHaveLength(2);
       expect(freshGraph.getGraph().nodes).toContain("goal-A");
       expect(freshGraph.getGraph().nodes).toContain("goal-B");
       expect(freshGraph.getGraph().nodes).toContain("goal-C");
     });
 
-    it("persists edge status updates", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
-      graph.updateEdgeStatus("goal-A", "goal-B", "satisfied");
+    it("persists edge status updates", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+      await graph.updateEdgeStatus("goal-A", "goal-B", "satisfied");
 
       const freshGraph = new GoalDependencyGraph(stateManager);
+      await freshGraph.init();
       const edge = freshGraph.getEdge("goal-A", "goal-B");
       expect(edge?.status).toBe("satisfied");
     });
 
-    it("persists removals", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
-      graph.removeEdge("goal-A", "goal-B", "prerequisite");
+    it("persists removals", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+      await graph.removeEdge("goal-A", "goal-B", "prerequisite");
 
       const freshGraph = new GoalDependencyGraph(stateManager);
+      await freshGraph.init();
       expect(freshGraph.getGraph().edges).toHaveLength(0);
     });
   });
@@ -415,6 +418,7 @@ describe("GoalDependencyGraph", () => {
       await graphWithLLM.autoDetectDependencies("goal-new", ["goal-A"]);
 
       const freshGraph = new GoalDependencyGraph(stateManager);
+      await freshGraph.init();
       expect(freshGraph.getGraph().edges).toHaveLength(1);
     });
 
