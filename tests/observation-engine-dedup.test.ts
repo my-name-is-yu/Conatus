@@ -6,6 +6,7 @@ import { StateManager } from "../src/state-manager.js";
 import type { Goal } from "../src/types/goal.js";
 import type { ObservationMethod } from "../src/types/core.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal, makeDimension } from "./helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -16,48 +17,6 @@ const defaultMethod: ObservationMethod = {
   endpoint: null,
   confidence_tier: "mechanical",
 };
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "Test goal description",
-    status: "active",
-    dimensions: overrides.dimensions ?? [
-      {
-        name: "todo_count",
-        label: "Todo Count",
-        current_value: 5,
-        threshold: { type: "min", value: 10 },
-        confidence: 0.9,
-        observation_method: defaultMethod,
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
 
 // ─── Tests ───
 
@@ -103,7 +62,7 @@ describe("ObservationEngine dimension name dedup normalization", () => {
 
   it("applyObservation succeeds when dimension_name has _2 suffix matching a real dimension", () => {
     const goalId = "goal-dedup-int";
-    const goal = makeGoal({ id: goalId });
+    const goal = makeGoal({ id: goalId, dimensions: [makeDimension({ name: "todo_count", label: "Todo Count" })] });
     stateManager.saveGoal(goal);
 
     // Build an entry with the deduplicated key "todo_count_2"
@@ -131,7 +90,7 @@ describe("ObservationEngine dimension name dedup normalization", () => {
 
   it("applyObservation throws when stripped name still has no match in goal dimensions", () => {
     const goalId = "goal-dedup-unknown";
-    const goal = makeGoal({ id: goalId }); // only has "todo_count"
+    const goal = makeGoal({ id: goalId }); // only has "dim1"
     stateManager.saveGoal(goal);
 
     // "unknown_metric_2" strips to "unknown_metric" — still not in goal

@@ -10,6 +10,7 @@ import type { Goal } from "../src/types/goal.js";
 import type { ObservationMethod } from "../src/types/core.js";
 import type { ILLMClient } from "../src/llm/llm-client.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal } from "./helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -21,47 +22,20 @@ const defaultMethod: ObservationMethod = {
   confidence_tier: "independent_review",
 };
 
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: overrides.description ?? "Improve code quality",
-    status: "active",
-    dimensions: overrides.dimensions ?? [
-      {
-        name: "code_quality",
-        label: "Code Quality",
-        current_value: 0.5,
-        threshold: { type: "min", value: 0.8 },
-        confidence: 0.3,
-        observation_method: defaultMethod,
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+const codeQualityDimension = {
+  name: "code_quality",
+  label: "Code Quality",
+  current_value: 0.5,
+  threshold: { type: "min" as const, value: 0.8 },
+  confidence: 0.3,
+  observation_method: defaultMethod,
+  last_updated: new Date().toISOString(),
+  history: [],
+  weight: 1.0,
+  uncertainty_weight: null,
+  state_integrity: "ok" as const,
+  dimension_mapping: null,
+};
 
 function createMockLLMClient(
   score: number = 0.75,
@@ -199,7 +173,7 @@ describe("ObservationEngine contextProvider integration", () => {
 
     const engine = new ObservationEngine(stateManager, [], mockLLMClient, contextProvider);
 
-    const goal = makeGoal({ id: "goal-ctx-args" });
+    const goal = makeGoal({ id: "goal-ctx-args", dimensions: [codeQualityDimension] });
     stateManager.saveGoal(goal);
 
     await engine.observe("goal-ctx-args", [defaultMethod]);
@@ -229,7 +203,7 @@ describe("ObservationEngine contextProvider integration", () => {
 
     const engine = new ObservationEngine(stateManager, [], mockLLMClient, contextProvider);
 
-    const goal = makeGoal({ id: "goal-prompt-ctx" });
+    const goal = makeGoal({ id: "goal-prompt-ctx", dimensions: [codeQualityDimension] });
     stateManager.saveGoal(goal);
 
     await engine.observe("goal-prompt-ctx", [defaultMethod]);

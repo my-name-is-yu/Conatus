@@ -3,56 +3,7 @@ import { ActionHandler } from "../../src/tui/actions.js";
 import type { ActionDeps } from "../../src/tui/actions.js";
 import type { RecognizedIntent } from "../../src/tui/intent-recognizer.js";
 import type { Goal } from "../../src/types/goal.js";
-
-// ─── Fixtures ───
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: "goal-1",
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "テストゴール",
-    status: "active",
-    dimensions: [
-      {
-        name: "coverage",
-        label: "Coverage",
-        current_value: 0.5,
-        threshold: { type: "min", value: 0.8 },
-        confidence: 0.9,
-        observation_method: {
-          type: "mechanical",
-          source: "test",
-          schedule: null,
-          endpoint: null,
-          confidence_tier: "mechanical",
-        },
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+import { makeGoal } from "../helpers/fixtures.js";
 
 function makeReport() {
   return {
@@ -228,7 +179,7 @@ describe("ActionHandler — handle()", () => {
     });
 
     it("shows goal title and dimension info", async () => {
-      const goal = makeGoal();
+      const goal = makeGoal({ dimensions: [{ name: "coverage", label: "Coverage", current_value: 0.5, threshold: { type: "min", value: 0.8 }, confidence: 0.9, observation_method: { type: "mechanical", source: "test", schedule: null, endpoint: null, confidence_tier: "mechanical" }, last_updated: new Date().toISOString(), history: [], weight: 1.0, uncertainty_weight: null, state_integrity: "ok", dimension_mapping: null }] });
       const deps = makeDeps();
       vi.mocked(deps.stateManager.listGoalIds).mockReturnValue(["goal-1"]);
       vi.mocked(deps.stateManager.loadGoal).mockReturnValue(goal);

@@ -6,9 +6,9 @@ import type { IDataSourceAdapter } from "../src/observation/data-source-adapter.
 import { ObservationEngine } from "../src/observation/observation-engine.js";
 import { StateManager } from "../src/state-manager.js";
 import type { DataSourceConfig } from "../src/types/data-source.js";
-import type { Goal } from "../src/types/goal.js";
 import type { ObservationMethod } from "../src/types/core.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal, makeDimension } from "./helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -48,48 +48,6 @@ const defaultMethod: ObservationMethod = {
   endpoint: null,
   confidence_tier: "mechanical",
 };
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "Hotplug test goal",
-    status: "active",
-    dimensions: overrides.dimensions ?? [
-      {
-        name: "test_dim",
-        label: "Test Dimension",
-        current_value: 0.3,
-        threshold: { type: "min", value: 1.0 },
-        confidence: 0.5,
-        observation_method: defaultMethod,
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
 
 // ─── DataSourceRegistry.upsert() ───
 
@@ -171,7 +129,7 @@ describe("ObservationEngine addDataSource / removeDataSource", () => {
   });
 
   it("addDataSource allows observe() to use the new source for a matching dimension", async () => {
-    const goal = makeGoal();
+    const goal = makeGoal({ dimensions: [makeDimension({ name: "test_dim", observation_method: defaultMethod })] });
     stateManager.saveGoal(goal);
 
     const adapter = makeAdapter("dynamic-ds", ["test_dim"]);
@@ -204,7 +162,7 @@ describe("ObservationEngine addDataSource / removeDataSource", () => {
   });
 
   it("observe() does not use removed datasource", async () => {
-    const goal = makeGoal();
+    const goal = makeGoal({ dimensions: [makeDimension({ name: "test_dim", observation_method: defaultMethod })] });
     stateManager.saveGoal(goal);
 
     const adapter = makeAdapter("temp-ds", ["test_dim"]);

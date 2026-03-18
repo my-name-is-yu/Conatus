@@ -9,6 +9,7 @@ import type { ILLMClient } from "../src/llm/llm-client.js";
 import type { IDataSourceAdapter } from "../src/observation/data-source-adapter.js";
 import type { DataSourceConfig } from "../src/types/data-source.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal } from "./helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -19,48 +20,6 @@ const defaultMethod: ObservationMethod = {
   endpoint: null,
   confidence_tier: "mechanical",
 };
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: overrides.description ?? "Improve code quality",
-    status: "active",
-    dimensions: overrides.dimensions ?? [
-      {
-        name: "code_quality",
-        label: "Code Quality",
-        current_value: 0.5,
-        threshold: { type: "min", value: 0.8 },
-        confidence: 0.3,
-        observation_method: defaultMethod,
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
 
 function makeDsConfig(overrides: Partial<DataSourceConfig> = {}): DataSourceConfig {
   return {
@@ -125,7 +84,7 @@ describe("ObservationEngine cross-validation", () => {
 
   it("LLM is NOT called when crossValidationEnabled is false (default) and DataSource succeeds", async () => {
     const mockLLMClient = createMockLLMClient(0.5);
-    const mockDs = makeMockDataSource(0.85);
+    const mockDs = makeMockDataSource(0.85, ["dim1"]);
     // No options passed — default is crossValidationEnabled=false
     const engine = new ObservationEngine(stateManager, [mockDs], mockLLMClient);
 
@@ -144,7 +103,7 @@ describe("ObservationEngine cross-validation", () => {
 
   it("LLM IS called when crossValidationEnabled=true and DataSource succeeds", async () => {
     const mockLLMClient = createMockLLMClient(0.82);
-    const mockDs = makeMockDataSource(0.85);
+    const mockDs = makeMockDataSource(0.85, ["dim1"]);
     const engine = new ObservationEngine(
       stateManager,
       [mockDs],
@@ -326,7 +285,7 @@ describe("ObservationEngine cross-validation", () => {
       sendMessage: vi.fn().mockRejectedValue(new Error("LLM service unavailable")),
       parseJSON: vi.fn(),
     };
-    const mockDs = makeMockDataSource(0.85);
+    const mockDs = makeMockDataSource(0.85, ["dim1"]);
     const engine = new ObservationEngine(
       stateManager,
       [mockDs],
@@ -349,7 +308,7 @@ describe("ObservationEngine cross-validation", () => {
     // The goal state should still reflect the mechanical value
     const updatedGoal = stateManager.loadGoal("goal-xval-llm-fail");
     expect(updatedGoal).not.toBeNull();
-    const dim = updatedGoal!.dimensions.find((d) => d.name === "code_quality");
+    const dim = updatedGoal!.dimensions.find((d) => d.name === "dim1");
     expect(dim).not.toBeNull();
     expect(dim!.current_value).toBe(0.85);
 

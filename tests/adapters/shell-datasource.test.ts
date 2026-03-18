@@ -7,6 +7,7 @@ import { StateManager } from "../../src/state-manager.js";
 import type { Goal } from "../../src/types/goal.js";
 import type { ObservationMethod } from "../../src/types/core.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
+import { makeGoal } from "../helpers/fixtures.js";
 
 const defaultMethod: ObservationMethod = {
   type: "mechanical",
@@ -15,48 +16,6 @@ const defaultMethod: ObservationMethod = {
   endpoint: null,
   confidence_tier: "mechanical",
 };
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "test",
-    status: "active",
-    dimensions: overrides.dimensions ?? [
-      {
-        name: "todo_count",
-        label: "TODO Count",
-        current_value: 5,
-        threshold: { type: "max", value: 0 },
-        confidence: 0.5,
-        observation_method: defaultMethod,
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
 
 // ─── Tests ───
 

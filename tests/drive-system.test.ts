@@ -7,36 +7,7 @@ import { DriveSystem } from "../src/drive/drive-system.js";
 import type { MotivaEvent, GoalSchedule } from "../src/types/drive.js";
 import type { Goal } from "../src/types/goal.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
-
-// ─── Helpers ───
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "",
-    status: "active",
-    dimensions: [],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+import { makeGoal } from "./helpers/fixtures.js";
 
 function makeEvent(overrides: Partial<MotivaEvent> = {}): MotivaEvent {
   return {

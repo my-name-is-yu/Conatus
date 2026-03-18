@@ -5,11 +5,37 @@ import { StateManager } from "../src/state-manager.js";
 import { EthicsGate } from "../src/traits/ethics-gate.js";
 import { GoalDependencyGraph } from "../src/goal/goal-dependency-graph.js";
 import { GoalTreeManager } from "../src/goal/goal-tree-manager.js";
-import { GoalSchema } from "../src/types/goal.js";
-import type { Goal } from "../src/types/goal.js";
 import type { GoalDecompositionConfig } from "../src/types/goal-tree.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal as _makeGoal, makeDimension } from "./helpers/fixtures.js";
+
+// ─── Local defaults matching the original local makeGoal ───
+
+const metricADim = () =>
+  makeDimension({
+    name: "metric_a",
+    label: "Metric A",
+    current_value: 30,
+    threshold: { type: "min", value: 80 },
+    confidence: 0.7,
+    observation_method: {
+      type: "manual",
+      source: "test",
+      schedule: null,
+      endpoint: null,
+      confidence_tier: "self_report",
+    },
+  });
+
+function makeGoal(overrides: Parameters<typeof _makeGoal>[0] = {}) {
+  return _makeGoal({
+    id: overrides?.id ?? crypto.randomUUID(),
+    description: overrides?.description ?? "A goal for testing decomposition",
+    dimensions: overrides?.dimensions ?? [metricADim()],
+    ...overrides,
+  });
+}
 
 // ─── Fixtures ───
 
@@ -117,59 +143,6 @@ const SHALLOW_CONFIG: GoalDecompositionConfig = {
   auto_prune_threshold: 0.3,
   parallel_loop_limit: 3,
 };
-
-// ─── Helpers ───
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return GoalSchema.parse({
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: overrides.parent_id ?? null,
-    node_type: overrides.node_type ?? "goal",
-    title: overrides.title ?? "Test Goal",
-    description: overrides.description ?? "A goal for testing decomposition",
-    status: overrides.status ?? "active",
-    dimensions: overrides.dimensions ?? [
-      {
-        name: "metric_a",
-        label: "Metric A",
-        current_value: 30,
-        threshold: { type: "min", value: 80 },
-        confidence: 0.7,
-        observation_method: {
-          type: "manual",
-          source: "test",
-          schedule: null,
-          endpoint: null,
-          confidence_tier: "self_report",
-        },
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-        dimension_mapping: null,
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: overrides.constraints ?? [],
-    children_ids: overrides.children_ids ?? [],
-    target_date: null,
-    origin: overrides.origin ?? null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    decomposition_depth: overrides.decomposition_depth ?? 0,
-    specificity_score: overrides.specificity_score ?? null,
-    loop_status: overrides.loop_status ?? "idle",
-    created_at: overrides.created_at ?? now,
-    updated_at: overrides.updated_at ?? now,
-  });
-}
 
 // ─── Test Suite ───
 

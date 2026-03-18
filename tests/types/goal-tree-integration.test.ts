@@ -5,6 +5,7 @@ import { StateManager } from "../../src/state-manager.js";
 import { SatisficingJudge } from "../../src/drive/satisficing-judge.js";
 import type { Goal, Dimension } from "../../src/types/goal.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
+import { makeGoal } from "../helpers/fixtures.js";
 
 function makeDimension(overrides: Partial<Dimension> = {}): Dimension {
   return {
@@ -26,37 +27,6 @@ function makeDimension(overrides: Partial<Dimension> = {}): Dimension {
     uncertainty_weight: null,
     state_integrity: "ok",
     dimension_mapping: null,
-    ...overrides,
-  };
-}
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "",
-    status: "active",
-    dimensions: [makeDimension()],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    decomposition_depth: 0,
-    specificity_score: null,
-    loop_status: "idle",
-    created_at: now,
-    updated_at: now,
     ...overrides,
   };
 }

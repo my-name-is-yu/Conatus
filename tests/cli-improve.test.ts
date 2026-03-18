@@ -102,34 +102,7 @@ import { GoalNegotiator } from "../src/goal/goal-negotiator.js";
 import type { Goal } from "../src/types/goal.js";
 import type { LoopResult } from "../src/core-loop.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: "goal-improve-1",
-    parent_id: null,
-    node_type: "goal",
-    title: "Improve test coverage",
-    description: "Increase test coverage to 90%",
-    status: "active",
-    dimensions: [],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: "manual",
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+import { makeGoal } from "./helpers/fixtures.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   const now = new Date().toISOString();

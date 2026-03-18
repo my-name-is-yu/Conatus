@@ -6,53 +6,7 @@ import type { Goal, GoalTree } from "../src/types/goal.js";
 import type { ObservationLogEntry } from "../src/types/state.js";
 import type { GapHistoryEntry } from "../src/types/gap.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "",
-    status: "active",
-    dimensions: [
-      {
-        name: "test_dim",
-        label: "Test Dimension",
-        current_value: 50,
-        threshold: { type: "min", value: 100 },
-        confidence: 0.9,
-        observation_method: {
-          type: "mechanical",
-          source: "test",
-          schedule: null,
-          endpoint: null,
-          confidence_tier: "mechanical",
-        },
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+import { makeGoal, makeDimension } from "./helpers/fixtures.js";
 
 describe("StateManager", () => {
   let tmpDir: string;
@@ -83,7 +37,7 @@ describe("StateManager", () => {
 
   describe("Goal CRUD", () => {
     it("saves and loads a goal", () => {
-      const goal = makeGoal({ id: "goal-1", title: "My Goal" });
+      const goal = makeGoal({ id: "goal-1", title: "My Goal", dimensions: [makeDimension({ name: "test_dim" })] });
       manager.saveGoal(goal);
       const loaded = manager.loadGoal("goal-1");
       expect(loaded).not.toBeNull();

@@ -4,6 +4,7 @@ import type { CuriosityEngineDeps } from "../src/traits/curiosity-engine.js";
 import type { Goal, Dimension } from "../src/types/goal.js";
 import type { CuriosityProposal, CuriosityTrigger } from "../src/types/curiosity.js";
 import type { StallState } from "../src/types/stall.js";
+import { makeGoal } from "./helpers/fixtures.js";
 
 // ─── Helper Factories ───
 
@@ -32,33 +33,6 @@ function createDimension(overrides: Partial<Dimension> = {}): Dimension {
   };
 }
 
-function createGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: "goal-1",
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "A test goal",
-    status: "active",
-    dimensions: [createDimension()],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
 
 function createProposal(overrides: Partial<CuriosityProposal> = {}): CuriosityProposal {
   const now = new Date();
@@ -199,7 +173,7 @@ describe("CuriosityEngine — constructor", () => {
   it("creates with curiosity disabled", () => {
     const deps = createMockDeps({ config: { enabled: false } });
     const engine = new CuriosityEngine(deps);
-    const triggers = engine.evaluateTriggers([createGoal({ status: "completed" })]);
+    const triggers = engine.evaluateTriggers([makeGoal({ status: "completed" })]);
     expect(triggers).toHaveLength(0);
   });
 
@@ -236,8 +210,8 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       const deps = createMockDeps();
       const engine = new CuriosityEngine(deps);
       const goals = [
-        createGoal({ id: "g1", status: "completed", origin: null }),
-        createGoal({ id: "g2", status: "completed", origin: null }),
+        makeGoal({ id: "g1", status: "completed", origin: null }),
+        makeGoal({ id: "g2", status: "completed", origin: null }),
       ];
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -248,7 +222,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       const deps = createMockDeps();
       const engine = new CuriosityEngine(deps);
       const goals = [
-        createGoal({ id: "g1", status: "waiting", origin: null }),
+        makeGoal({ id: "g1", status: "waiting", origin: null }),
       ];
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -259,8 +233,8 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       const deps = createMockDeps();
       const engine = new CuriosityEngine(deps);
       const goals = [
-        createGoal({ id: "g1", status: "completed", origin: null }),
-        createGoal({ id: "g2", status: "waiting", origin: null }),
+        makeGoal({ id: "g1", status: "completed", origin: null }),
+        makeGoal({ id: "g2", status: "waiting", origin: null }),
       ];
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -278,8 +252,8 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       });
       const engine = new CuriosityEngine(deps);
       const goals = [
-        createGoal({ id: "g1", status: "active", origin: null }),
-        createGoal({ id: "g2", status: "completed", origin: null }),
+        makeGoal({ id: "g1", status: "active", origin: null }),
+        makeGoal({ id: "g2", status: "completed", origin: null }),
       ];
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -311,8 +285,8 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       const engine = new CuriosityEngine(deps);
       // Only curiosity goal is active; user goals are all completed
       const goals = [
-        createGoal({ id: "g1", status: "active", origin: "curiosity" }),
-        createGoal({ id: "g2", status: "completed", origin: null }),
+        makeGoal({ id: "g1", status: "active", origin: "curiosity" }),
+        makeGoal({ id: "g2", status: "completed", origin: null }),
       ];
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -340,7 +314,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
         { value: 50, timestamp: new Date().toISOString(), confidence: 0.9, source_observation_id: "obs4" },
       ];
       const goals = [
-        createGoal({
+        makeGoal({
           id: "g1",
           status: "active",
           origin: null,
@@ -377,7 +351,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
         { value: 50, timestamp: new Date().toISOString(), confidence: 0.9, source_observation_id: "obs4" },
       ];
       const goals = [
-        createGoal({
+        makeGoal({
           id: "g1",
           status: "active",
           origin: null,
@@ -403,7 +377,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       const engine = new CuriosityEngine(deps);
 
       const goals = [
-        createGoal({
+        makeGoal({
           id: "g1",
           status: "active",
           origin: null,
@@ -436,7 +410,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
         { value: 50, timestamp: new Date().toISOString(), confidence: 0.9, source_observation_id: "obs4" },
       ];
       const goals = [
-        createGoal({
+        makeGoal({
           id: "g1",
           status: "completed",
           origin: null,
@@ -466,7 +440,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       );
 
       const engine = new CuriosityEngine(deps);
-      const goals = [createGoal({ id: "goal-1", status: "active", origin: null })];
+      const goals = [makeGoal({ id: "goal-1", status: "active", origin: null })];
 
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -486,7 +460,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       );
 
       const engine = new CuriosityEngine(deps);
-      const goals = [createGoal({ id: "goal-abc", status: "active", origin: null })];
+      const goals = [makeGoal({ id: "goal-abc", status: "active", origin: null })];
 
       const triggers = engine.evaluateTriggers(goals);
       const failureTrigger = triggers.find((t) => t.type === "repeated_failure");
@@ -506,7 +480,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       );
 
       const engine = new CuriosityEngine(deps);
-      const goals = [createGoal({ id: "goal-1", status: "active", origin: null })];
+      const goals = [makeGoal({ id: "goal-1", status: "active", origin: null })];
 
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -526,7 +500,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       );
 
       const engine = new CuriosityEngine(deps);
-      const goals = [createGoal({ id: "goal-1", status: "active", origin: "curiosity" })];
+      const goals = [makeGoal({ id: "goal-1", status: "active", origin: "curiosity" })];
 
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -546,7 +520,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       );
 
       const engine = new CuriosityEngine(deps);
-      const goals = [createGoal({ id: "goal-1", status: "waiting", origin: null })];
+      const goals = [makeGoal({ id: "goal-1", status: "waiting", origin: null })];
 
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
@@ -566,7 +540,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
       const engine = new CuriosityEngine(deps);
       const goals = [
-        createGoal({
+        makeGoal({
           id: "g1",
           status: "active",
           origin: null,
@@ -594,7 +568,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
       const engine = new CuriosityEngine(deps);
       const goals = [
-        createGoal({
+        makeGoal({
           id: "g1",
           status: "active",
           origin: null,
@@ -622,7 +596,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       const engine = new CuriosityEngine(deps);
       // 1 of 2 = 50%; ratio >= 0.5 means it WILL trigger (boundary inclusive)
       const goals = [
-        createGoal({
+        makeGoal({
           id: "g1",
           status: "active",
           origin: null,
@@ -650,7 +624,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
       const engine = new CuriosityEngine(deps);
       const goals = [
-        createGoal({
+        makeGoal({
           id: "g1",
           status: "completed",
           dimensions: [
@@ -711,7 +685,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
       const engine = new CuriosityEngine(deps);
       // Use a goal that is active to suppress task_queue_empty
-      const goals = [createGoal({ status: "active", origin: null })];
+      const goals = [makeGoal({ status: "active", origin: null })];
       const triggers = engine.evaluateTriggers(goals);
       const types = triggers.map((t) => t.type);
       expect(types).not.toContain("periodic_exploration");
@@ -730,7 +704,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
   it("returns empty array when curiosity is disabled", () => {
     const deps = createMockDeps({ config: { enabled: false } });
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ status: "completed" })];
+    const goals = [makeGoal({ status: "completed" })];
     const triggers = engine.evaluateTriggers(goals);
     expect(triggers).toHaveLength(0);
   });
@@ -739,7 +713,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
     // Completed goals → task_queue_empty + periodic_exploration (null state)
     const deps = createMockDeps();
     const engine = new CuriosityEngine(deps); // last_exploration_at = null
-    const goals = [createGoal({ status: "completed", origin: null })];
+    const goals = [makeGoal({ status: "completed", origin: null })];
     const triggers = engine.evaluateTriggers(goals);
     expect(triggers.length).toBeGreaterThan(1);
   });
@@ -1519,8 +1493,8 @@ describe("CuriosityEngine — getResourceBudget", () => {
     });
     const engine = new CuriosityEngine(deps);
     const goals = [
-      createGoal({ id: "g1", status: "active", origin: null }),
-      createGoal({ id: "g2", status: "completed", origin: null }),
+      makeGoal({ id: "g1", status: "active", origin: null }),
+      makeGoal({ id: "g2", status: "completed", origin: null }),
     ];
     expect(engine.getResourceBudget(goals)).toBe(20);
   });
@@ -1531,8 +1505,8 @@ describe("CuriosityEngine — getResourceBudget", () => {
     });
     const engine = new CuriosityEngine(deps);
     const goals = [
-      createGoal({ id: "g1", status: "waiting", origin: null }),
-      createGoal({ id: "g2", status: "completed", origin: null }),
+      makeGoal({ id: "g1", status: "waiting", origin: null }),
+      makeGoal({ id: "g2", status: "completed", origin: null }),
     ];
     expect(engine.getResourceBudget(goals)).toBe(50);
   });
@@ -1541,8 +1515,8 @@ describe("CuriosityEngine — getResourceBudget", () => {
     const deps = createMockDeps();
     const engine = new CuriosityEngine(deps);
     const goals = [
-      createGoal({ id: "g1", status: "completed", origin: null }),
-      createGoal({ id: "g2", status: "completed", origin: "manual" }),
+      makeGoal({ id: "g1", status: "completed", origin: null }),
+      makeGoal({ id: "g2", status: "completed", origin: "manual" }),
     ];
     expect(engine.getResourceBudget(goals)).toBe(100);
   });
@@ -1556,7 +1530,7 @@ describe("CuriosityEngine — getResourceBudget", () => {
   it("returns 0 when curiosity is disabled", () => {
     const deps = createMockDeps({ config: { enabled: false } });
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ status: "active", origin: null })];
+    const goals = [makeGoal({ status: "active", origin: null })];
     expect(engine.getResourceBudget(goals)).toBe(0);
   });
 
@@ -1567,8 +1541,8 @@ describe("CuriosityEngine — getResourceBudget", () => {
     const engine = new CuriosityEngine(deps);
     // Only curiosity goal is active; user goal is completed
     const goals = [
-      createGoal({ id: "g1", status: "active", origin: "curiosity" }),
-      createGoal({ id: "g2", status: "completed", origin: null }),
+      makeGoal({ id: "g1", status: "active", origin: "curiosity" }),
+      makeGoal({ id: "g2", status: "completed", origin: null }),
     ];
     // User goals: only g2, all completed → should be 100
     expect(engine.getResourceBudget(goals)).toBe(100);
@@ -1579,7 +1553,7 @@ describe("CuriosityEngine — getResourceBudget", () => {
       config: { resource_budget: { active_user_goals_max_percent: 10, waiting_user_goals_max_percent: 50 } },
     });
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ status: "active", origin: null })];
+    const goals = [makeGoal({ status: "active", origin: null })];
     expect(engine.getResourceBudget(goals)).toBe(10);
   });
 
@@ -1588,7 +1562,7 @@ describe("CuriosityEngine — getResourceBudget", () => {
       config: { resource_budget: { active_user_goals_max_percent: 20, waiting_user_goals_max_percent: 30 } },
     });
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ status: "waiting", origin: null })];
+    const goals = [makeGoal({ status: "waiting", origin: null })];
     expect(engine.getResourceBudget(goals)).toBe(30);
   });
 
@@ -1597,7 +1571,7 @@ describe("CuriosityEngine — getResourceBudget", () => {
       config: { resource_budget: { active_user_goals_max_percent: 20, waiting_user_goals_max_percent: 50 } },
     });
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ status: "active", origin: null })];
+    const goals = [makeGoal({ status: "active", origin: null })];
     expect(engine.getResourceBudget(goals)).toBe(20);
   });
 
@@ -1606,7 +1580,7 @@ describe("CuriosityEngine — getResourceBudget", () => {
       config: { resource_budget: { active_user_goals_max_percent: 20, waiting_user_goals_max_percent: 50 } },
     });
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ status: "active", origin: "negotiation" })];
+    const goals = [makeGoal({ status: "active", origin: "negotiation" })];
     expect(engine.getResourceBudget(goals)).toBe(20);
   });
 });
@@ -1623,7 +1597,7 @@ describe("CuriosityEngine — shouldExplore", () => {
       rejected_proposal_hashes: [],
     });
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ status: "completed", origin: null })];
+    const goals = [makeGoal({ status: "completed", origin: null })];
     expect(engine.shouldExplore(goals)).toBe(true);
   });
 
@@ -1660,7 +1634,7 @@ describe("CuriosityEngine — shouldExplore", () => {
     );
 
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ status: "active", origin: null })];
+    const goals = [makeGoal({ status: "active", origin: null })];
     expect(engine.shouldExplore(goals)).toBe(true);
   });
 
@@ -1679,7 +1653,7 @@ describe("CuriosityEngine — shouldExplore", () => {
 
     const engine = new CuriosityEngine(deps);
     // Active user goal → not queue empty, no stall → false
-    const goals = [createGoal({ status: "active", origin: null })];
+    const goals = [makeGoal({ status: "active", origin: null })];
     expect(engine.shouldExplore(goals)).toBe(false);
   });
 
@@ -1718,8 +1692,8 @@ describe("CuriosityEngine — shouldExplore", () => {
 
     const engine = new CuriosityEngine(deps);
     const goals = [
-      createGoal({ id: "g1", status: "active", origin: null }),
-      createGoal({ id: "g2", status: "active", origin: "manual" }),
+      makeGoal({ id: "g1", status: "active", origin: null }),
+      makeGoal({ id: "g2", status: "active", origin: "manual" }),
     ];
     expect(engine.shouldExplore(goals)).toBe(false);
   });
@@ -1741,8 +1715,8 @@ describe("CuriosityEngine — shouldExplore", () => {
     // Active curiosity goal should not prevent the "queue empty" check
     // from returning true when user goals are completed
     const goals = [
-      createGoal({ id: "g1", status: "active", origin: "curiosity" }),
-      createGoal({ id: "g2", status: "completed", origin: null }),
+      makeGoal({ id: "g1", status: "active", origin: "curiosity" }),
+      makeGoal({ id: "g2", status: "completed", origin: null }),
     ];
     expect(engine.shouldExplore(goals)).toBe(true);
   });
@@ -1790,7 +1764,7 @@ describe("CuriosityEngine — learning feedback", () => {
     (deps.llmClient.parseJSON as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
     const engine = new CuriosityEngine(deps);
-    const goals = [createGoal({ id: "g1", title: "Special Goal Title", status: "active" })];
+    const goals = [makeGoal({ id: "g1", title: "Special Goal Title", status: "active" })];
 
     await engine.generateProposals(
       [{ type: "periodic_exploration", detected_at: new Date().toISOString(), source_goal_id: null, details: "Test", severity: 0.3 }],

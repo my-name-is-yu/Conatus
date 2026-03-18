@@ -8,6 +8,7 @@ import type { DimensionDecomposition } from "../src/types/negotiation.js";
 import type { Goal } from "../src/types/goal.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal } from "./helpers/fixtures.js";
 
 type EthicsVerdict = {
   verdict: "pass" | "flag" | "reject";
@@ -32,58 +33,6 @@ function makeDimension(
     threshold_type: overrides.threshold_type,
     threshold_value: overrides.threshold_value ?? null,
     observation_method_hint: overrides.observation_method_hint ?? "Inspect progress",
-  };
-}
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? "goal-1",
-    parent_id: overrides.parent_id ?? null,
-    node_type: overrides.node_type ?? "goal",
-    title: overrides.title ?? "Improve repository quality",
-    description: overrides.description ?? "Improve repository quality",
-    status: overrides.status ?? "active",
-    dimensions:
-      overrides.dimensions ?? [
-        {
-          name: "coverage",
-          label: "Coverage",
-          current_value: 50,
-          threshold: { type: "min", value: 80 },
-          confidence: 0.8,
-          observation_method: {
-            type: "manual",
-            source: "test",
-            schedule: null,
-            endpoint: null,
-            confidence_tier: "self_report",
-          },
-          last_updated: now,
-          history: [],
-          weight: 1,
-          uncertainty_weight: null,
-          state_integrity: "ok",
-          dimension_mapping: null,
-        },
-      ],
-    gap_aggregation: overrides.gap_aggregation ?? "max",
-    dimension_mapping: overrides.dimension_mapping ?? null,
-    constraints: overrides.constraints ?? [],
-    children_ids: overrides.children_ids ?? [],
-    target_date: overrides.target_date ?? null,
-    origin: overrides.origin ?? "negotiation",
-    pace_snapshot: overrides.pace_snapshot ?? null,
-    deadline: overrides.deadline ?? null,
-    confidence_flag: overrides.confidence_flag ?? "high",
-    user_override: overrides.user_override ?? false,
-    feasibility_note: overrides.feasibility_note ?? null,
-    uncertainty_weight: overrides.uncertainty_weight ?? 1,
-    decomposition_depth: overrides.decomposition_depth ?? 0,
-    specificity_score: overrides.specificity_score ?? null,
-    loop_status: overrides.loop_status ?? "idle",
-    created_at: overrides.created_at ?? now,
-    updated_at: overrides.updated_at ?? now,
   };
 }
 

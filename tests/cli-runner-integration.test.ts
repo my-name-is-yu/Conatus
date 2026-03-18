@@ -59,55 +59,7 @@ vi.mock("../src/adapters/claude-api.js", () => ({
 
 import { CLIRunner } from "../src/cli-runner.js";
 import { StateManager } from "../src/state-manager.js";
-import type { Goal } from "../src/types/goal.js";
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: "integ-goal-1",
-    parent_id: null,
-    node_type: "goal",
-    title: "Integration Test Goal",
-    description: "Improve test coverage to 80%",
-    status: "active",
-    dimensions: [
-      {
-        name: "test_coverage",
-        label: "Test Coverage",
-        current_value: 0.5,
-        threshold: { type: "min", value: 80 },
-        confidence: 0.5,
-        observation_method: {
-          type: "llm_review",
-          source: "Run test suite",
-          schedule: null,
-          endpoint: null,
-          confidence_tier: "self_report",
-        },
-        last_updated: null,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: "manual",
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+import { makeGoal } from "./helpers/fixtures.js";
 
 async function runCLI(tmpDir: string, ...args: string[]): Promise<number> {
   const runner = new CLIRunner(tmpDir);

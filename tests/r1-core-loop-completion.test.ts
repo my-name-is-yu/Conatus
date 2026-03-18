@@ -23,60 +23,9 @@ import type { GapVector } from "../src/types/gap.js";
 import type { DriveScore } from "../src/types/drive.js";
 import type { TaskCycleResult } from "../src/execution/task-lifecycle.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal } from "./helpers/fixtures.js";
 
 // ─── Helpers ───
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: "goal-1",
-    parent_id: null,
-    node_type: "goal",
-    title: "R1 Test Goal",
-    description: "A test goal for R1 verification",
-    status: "active",
-    dimensions: [
-      {
-        name: "quality",
-        label: "Quality",
-        current_value: 9.5,
-        threshold: { type: "min", value: 9.0 },
-        confidence: 0.9,
-        observation_method: {
-          type: "mechanical",
-          source: "test",
-          schedule: null,
-          endpoint: null,
-          confidence_tier: "mechanical",
-        },
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-        dimension_mapping: null,
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    decomposition_depth: 0,
-    specificity_score: null,
-    loop_status: "idle",
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
 
 function makeCompletionJudgment(
   overrides: Partial<CompletionJudgment> = {}

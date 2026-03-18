@@ -18,84 +18,12 @@ import type { StallDetector } from "../src/drive/stall-detector.js";
 import type { StrategyManager } from "../src/strategy/strategy-manager.js";
 import type { DriveSystem } from "../src/drive/drive-system.js";
 import type { AdapterRegistry, IAdapter } from "../src/execution/adapter-layer.js";
-import type { Goal } from "../src/types/goal.js";
 import type { GapVector } from "../src/types/gap.js";
 import type { CompletionJudgment } from "../src/types/satisficing.js";
 import type { StallReport } from "../src/types/stall.js";
 import type { DriveScore } from "../src/types/drive.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: "goal-1",
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "A test goal",
-    status: "active",
-    dimensions: [
-      {
-        name: "dim1",
-        label: "Dimension 1",
-        current_value: 5,
-        threshold: { type: "min", value: 10 },
-        confidence: 0.8,
-        observation_method: {
-          type: "mechanical",
-          source: "test",
-          schedule: null,
-          endpoint: null,
-          confidence_tier: "mechanical",
-        },
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-        dimension_mapping: null,
-      },
-      {
-        name: "dim2",
-        label: "Dimension 2",
-        current_value: 3,
-        threshold: { type: "min", value: 8 },
-        confidence: 0.7,
-        observation_method: {
-          type: "mechanical",
-          source: "test",
-          schedule: null,
-          endpoint: null,
-          confidence_tier: "mechanical",
-        },
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-        dimension_mapping: null,
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    decomposition_depth: 0,
-    specificity_score: null,
-    loop_status: "idle",
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+import { makeGoal, makeDimension } from "./helpers/fixtures.js";
 
 function makeGapVector(goalId = "goal-1"): GapVector {
   return {
@@ -411,7 +339,12 @@ describe("CoreLoop", () => {
 
   describe("buildDriveContext", () => {
     it("builds context from goal with dimensions", () => {
-      const goal = makeGoal();
+      const goal = makeGoal({
+        dimensions: [
+          makeDimension({ name: "dim1", label: "Dimension 1" }),
+          makeDimension({ name: "dim2", label: "Dimension 2", current_value: 3, threshold: { type: "min", value: 8 }, confidence: 0.7, observation_method: { type: "mechanical", source: "test", schedule: null, endpoint: null, confidence_tier: "mechanical" } }),
+        ],
+      });
       const ctx = buildDriveContext(goal);
 
       expect(ctx.time_since_last_attempt).toHaveProperty("dim1");
@@ -1331,7 +1264,12 @@ describe("CoreLoop", () => {
   describe("report generation", () => {
     it("calls reportingEngine.generateExecutionSummary", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
-      mocks.stateManager.saveGoal(makeGoal());
+      mocks.stateManager.saveGoal(makeGoal({
+        dimensions: [
+          makeDimension({ name: "dim1", label: "Dimension 1" }),
+          makeDimension({ name: "dim2", label: "Dimension 2", current_value: 3, threshold: { type: "min", value: 8 }, confidence: 0.7, observation_method: { type: "mechanical", source: "test", schedule: null, endpoint: null, confidence_tier: "mechanical" } }),
+        ],
+      }));
 
       const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
       await loop.runOneIteration("goal-1", 0);
@@ -1634,7 +1572,13 @@ describe("CoreLoop", () => {
     it("passes correctly built DriveContext to task cycle", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       const deadline = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
-      mocks.stateManager.saveGoal(makeGoal({ deadline }));
+      mocks.stateManager.saveGoal(makeGoal({
+        deadline,
+        dimensions: [
+          makeDimension({ name: "dim1", label: "Dimension 1" }),
+          makeDimension({ name: "dim2", label: "Dimension 2", current_value: 3, threshold: { type: "min", value: 8 }, confidence: 0.7 }),
+        ],
+      }));
 
       const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
       await loop.runOneIteration("goal-1", 0);

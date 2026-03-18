@@ -10,6 +10,7 @@ import type { KnowledgeGapSignal } from "../src/types/knowledge.js";
 import type { IDataSourceAdapter } from "../src/observation/data-source-adapter.js";
 import type { DataSourceConfig } from "../src/types/data-source.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal } from "./helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -21,47 +22,20 @@ const defaultMethod: ObservationMethod = {
   confidence_tier: "mechanical",
 };
 
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: "",
-    status: "active",
-    dimensions: overrides.dimensions ?? [
-      {
-        name: "test_dim",
-        label: "Test Dimension",
-        current_value: 50,
-        threshold: { type: "min", value: 100 },
-        confidence: 0.9,
-        observation_method: defaultMethod,
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
+const testDimension = {
+  name: "test_dim",
+  label: "Test Dimension",
+  current_value: 50,
+  threshold: { type: "min" as const, value: 100 },
+  confidence: 0.9,
+  observation_method: defaultMethod,
+  last_updated: new Date().toISOString(),
+  history: [],
+  weight: 1.0,
+  uncertainty_weight: null,
+  state_integrity: "ok" as const,
+  dimension_mapping: null,
+};
 
 function makeEntry(overrides: Partial<ObservationLogEntry> = {}): ObservationLogEntry {
   return {
@@ -430,7 +404,7 @@ describe("ObservationEngine", () => {
     });
 
     it("updates dimension current_value after applying observation", () => {
-      const goal = makeGoal({ id: "goal-1" });
+      const goal = makeGoal({ id: "goal-1", dimensions: [testDimension] });
       stateManager.saveGoal(goal);
 
       const entry = engine.createObservationEntry({
@@ -454,7 +428,7 @@ describe("ObservationEngine", () => {
     });
 
     it("updates dimension confidence after applying observation", () => {
-      const goal = makeGoal({ id: "goal-1" });
+      const goal = makeGoal({ id: "goal-1", dimensions: [testDimension] });
       stateManager.saveGoal(goal);
 
       const entry = engine.createObservationEntry({
@@ -476,7 +450,7 @@ describe("ObservationEngine", () => {
     });
 
     it("appends entry to dimension history with correct source_observation_id", () => {
-      const goal = makeGoal({ id: "goal-1" });
+      const goal = makeGoal({ id: "goal-1", dimensions: [testDimension] });
       stateManager.saveGoal(goal);
 
       const entry = engine.createObservationEntry({
@@ -500,7 +474,7 @@ describe("ObservationEngine", () => {
     });
 
     it("persists the observation entry in the observation log", () => {
-      const goal = makeGoal({ id: "goal-1" });
+      const goal = makeGoal({ id: "goal-1", dimensions: [testDimension] });
       stateManager.saveGoal(goal);
 
       const entry = engine.createObservationEntry({
@@ -523,7 +497,7 @@ describe("ObservationEngine", () => {
     });
 
     it("accumulates multiple observations in history", () => {
-      const goal = makeGoal({ id: "goal-1" });
+      const goal = makeGoal({ id: "goal-1", dimensions: [testDimension] });
       stateManager.saveGoal(goal);
 
       for (let i = 0; i < 3; i++) {
@@ -557,7 +531,7 @@ describe("ObservationEngine", () => {
     });
 
     it("returns existing log after entries are appended", () => {
-      const goal = makeGoal({ id: "goal-2" });
+      const goal = makeGoal({ id: "goal-2", dimensions: [testDimension] });
       stateManager.saveGoal(goal);
 
       const entry = engine.createObservationEntry({

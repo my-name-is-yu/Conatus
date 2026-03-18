@@ -10,6 +10,7 @@ import type { ILLMClient } from "../src/llm/llm-client.js";
 import type { IDataSourceAdapter } from "../src/observation/data-source-adapter.js";
 import type { DataSourceConfig } from "../src/types/data-source.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { makeGoal } from "./helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -28,48 +29,6 @@ const selfReportMethod: ObservationMethod = {
   endpoint: null,
   confidence_tier: "self_report",
 };
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  const now = new Date().toISOString();
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    parent_id: null,
-    node_type: "goal",
-    title: "Test Goal",
-    description: overrides.description ?? "Improve code quality to 80%",
-    status: "active",
-    dimensions: overrides.dimensions ?? [
-      {
-        name: "code_quality",
-        label: "Code Quality",
-        current_value: 0.5,
-        threshold: { type: "min", value: 0.8 },
-        confidence: 0.3,
-        observation_method: defaultMethod,
-        last_updated: now,
-        history: [],
-        weight: 1.0,
-        uncertainty_weight: null,
-        state_integrity: "ok",
-      },
-    ],
-    gap_aggregation: "max",
-    dimension_mapping: null,
-    constraints: [],
-    children_ids: [],
-    target_date: null,
-    origin: null,
-    pace_snapshot: null,
-    deadline: null,
-    confidence_flag: null,
-    user_override: false,
-    feasibility_note: null,
-    uncertainty_weight: 1.0,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
-  };
-}
 
 function makeDsConfig(overrides: Partial<DataSourceConfig> = {}): DataSourceConfig {
   return {
@@ -146,7 +105,7 @@ describe("ObservationEngine LLM observation", () => {
 
       const entry = await engine.observeWithLLM(
         "goal-llm-1",
-        "code_quality",
+        "dim1",
         "Improve code quality to 80%",
         "Code Quality",
         "min 0.8 (80%)"
@@ -169,7 +128,7 @@ describe("ObservationEngine LLM observation", () => {
 
       const entryHigh = await engineHigh.observeWithLLM(
         "goal-clamp-high",
-        "code_quality",
+        "dim1",
         "Test goal",
         "Code Quality",
         "min 0.8"
@@ -186,7 +145,7 @@ describe("ObservationEngine LLM observation", () => {
 
       const entry = await engine.observeWithLLM(
         "goal-tier",
-        "code_quality",
+        "dim1",
         "Improve quality",
         "Code Quality",
         "min 0.8"
@@ -238,7 +197,7 @@ describe("ObservationEngine LLM observation", () => {
   describe("observe() uses DataSource over LLM when DataSource available", () => {
     it("DataSource is queried when it supports the dimension", async () => {
       const mockLLMClient = createMockLLMClient(0.5, "LLM result");
-      const mockDs = makeMockDataSource({}, ["code_quality"]);
+      const mockDs = makeMockDataSource({}, ["dim1"]);
       const engine = new ObservationEngine(stateManager, [mockDs], mockLLMClient);
 
       const goal = makeGoal({ id: "goal-ds-priority" });
@@ -252,7 +211,7 @@ describe("ObservationEngine LLM observation", () => {
 
     it("LLM is NOT called when DataSource handles the dimension", async () => {
       const mockLLMClient = createMockLLMClient(0.5, "LLM result");
-      const mockDs = makeMockDataSource({}, ["code_quality"]);
+      const mockDs = makeMockDataSource({}, ["dim1"]);
       const engine = new ObservationEngine(stateManager, [mockDs], mockLLMClient);
 
       const goal = makeGoal({ id: "goal-ds-no-llm" });
@@ -266,7 +225,7 @@ describe("ObservationEngine LLM observation", () => {
 
     it("observation layer is mechanical when DataSource is used", async () => {
       const mockLLMClient = createMockLLMClient(0.5, "LLM result");
-      const mockDs = makeMockDataSource({}, ["code_quality"]);
+      const mockDs = makeMockDataSource({}, ["dim1"]);
       const engine = new ObservationEngine(stateManager, [mockDs], mockLLMClient);
 
       const goal = makeGoal({ id: "goal-mechanical-layer" });
@@ -449,7 +408,7 @@ describe("ObservationEngine LLM observation", () => {
       // Call observeWithLLM with the context already provided (simulates observe() flow)
       await engine.observeWithLLM(
         "goal-ctx-provider",
-        "code_quality",
+        "dim1",
         "Improve code quality",
         "Code Quality",
         JSON.stringify({ type: "min", value: 0.8 }),
@@ -486,7 +445,7 @@ describe("ObservationEngine LLM observation", () => {
       // Call with no workspaceContext — should trigger git diff fallback
       await engine.observeWithLLM(
         "goal-git-fallback",
-        "code_quality",
+        "dim1",
         "Improve code quality",
         "Code Quality",
         JSON.stringify({ type: "min", value: 0.8 })
@@ -515,7 +474,7 @@ describe("ObservationEngine LLM observation", () => {
 
       await engine.observeWithLLM(
         "goal-truncate",
-        "code_quality",
+        "dim1",
         "Improve code quality",
         "Code Quality",
         JSON.stringify({ type: "min", value: 0.8 }),
@@ -551,7 +510,7 @@ describe("ObservationEngine LLM observation", () => {
       // Should NOT throw — falls back gracefully and calls LLM with warning in prompt
       const entry = await engine.observeWithLLM(
         "goal-no-context",
-        "code_quality",
+        "dim1",
         "Improve code quality",
         "Code Quality",
         JSON.stringify({ type: "min", value: 0.8 })
