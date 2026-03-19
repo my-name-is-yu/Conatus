@@ -388,6 +388,26 @@ describe("DaemonRunner", () => {
       const entry = DaemonRunner.generateCronEntry("g", 1);
       expect(entry).toBe("*/1 * * * * /usr/bin/env motiva run --goal g");
     });
+
+    it("should throw for goalId containing spaces", () => {
+      expect(() => DaemonRunner.generateCronEntry("bad goal", 60)).toThrow(/Invalid goalId/);
+    });
+
+    it("should throw for goalId containing semicolons", () => {
+      expect(() => DaemonRunner.generateCronEntry("goal;rm -rf /", 60)).toThrow(/Invalid goalId/);
+    });
+
+    it("should throw for goalId containing newlines", () => {
+      expect(() => DaemonRunner.generateCronEntry("goal\nmalicious", 60)).toThrow(/Invalid goalId/);
+    });
+
+    it("should throw for goalId containing shell special characters", () => {
+      expect(() => DaemonRunner.generateCronEntry("goal$(evil)", 60)).toThrow(/Invalid goalId/);
+    });
+
+    it("should accept goalId with only alphanumeric, underscore, and hyphen", () => {
+      expect(() => DaemonRunner.generateCronEntry("goal-abc_123", 60)).not.toThrow();
+    });
   });
 
   // ─── Daemon State Persistence ───

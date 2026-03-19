@@ -654,6 +654,9 @@ export class DaemonRunner {
    *   intervalMinutes >= 1440 → once per day:   0 0 * * *
    */
   static generateCronEntry(goalId: string, intervalMinutes: number = 60): string {
+    if (!/^[a-zA-Z0-9_-]+$/.test(goalId)) {
+      throw new Error(`Invalid goalId for cron entry: "${goalId}" (only alphanumeric, underscore, hyphen allowed)`);
+    }
     if (intervalMinutes <= 0) intervalMinutes = 60;
 
     if (intervalMinutes < 60) {
