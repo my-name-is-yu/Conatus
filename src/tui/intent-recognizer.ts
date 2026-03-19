@@ -38,7 +38,7 @@ const KEYWORD_RULES: KeywordRule[] = [
     intent: "loop_stop",
   },
   {
-    pattern: /^\/(run|start)/i,
+    pattern: /^\/(run|start)(\s+.*)?$/i,
     intent: "loop_start",
   },
   {
@@ -110,6 +110,17 @@ export class IntentRecognizer {
     const trimmed = input.trim();
     for (const rule of KEYWORD_RULES) {
       if (rule.pattern.test(trimmed)) {
+        // For loop_start, extract optional goal argument (number or name)
+        if (rule.intent === "loop_start") {
+          const match = trimmed.match(/^\/(run|start)\s+(.+)$/i);
+          const goalArg = match ? match[2].trim() : undefined;
+          const params: Record<string, string> = goalArg ? { goalArg } : {};
+          return {
+            intent: rule.intent,
+            params: Object.keys(params).length > 0 ? params : undefined,
+            raw: input,
+          };
+        }
         return { intent: rule.intent, raw: input };
       }
     }

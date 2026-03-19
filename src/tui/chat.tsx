@@ -5,7 +5,7 @@
 // styled user/AI distinction, spinner, timestamps, and color-coded message types.
 
 import React, { useState } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { renderMarkdownLines, type MarkdownLine } from "./markdown-renderer.js";
@@ -90,8 +90,37 @@ function getMatchingCommands(input: string): typeof COMMANDS {
 
 export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
   const [input, setInput] = useState("");
+  const [selectedIdx, setSelectedIdx] = useState(0);
+
+  const matches = getMatchingCommands(input);
+  const hasMatches = matches.length > 0;
+
+  useInput((_, key) => {
+    if (!hasMatches) return;
+
+    if (key.upArrow) {
+      setSelectedIdx((prev) => (prev <= 0 ? matches.length - 1 : prev - 1));
+    } else if (key.downArrow) {
+      setSelectedIdx((prev) => (prev >= matches.length - 1 ? 0 : prev + 1));
+    } else if (key.tab || key.return) {
+      const selected = matches[selectedIdx];
+      if (selected) {
+        setInput(selected.name + " ");
+        setSelectedIdx(0);
+      }
+    } else if (key.escape) {
+      setSelectedIdx(0);
+      setInput("");
+    }
+  });
+
+  // Reset selected index when matches change
+  React.useEffect(() => {
+    setSelectedIdx(0);
+  }, [matches.length]);
 
   const handleSubmit = (value: string) => {
+    if (hasMatches) return; // let useInput handle enter when suggestions are shown
     if (!value.trim() || isProcessing) return;
     onSubmit(value.trim());
     setInput("");
@@ -170,7 +199,6 @@ export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
       {(() => {
         const termCols = process.stdout.columns || 80;
         const borderLine = "\u2500".repeat(termCols);
-        const matches = getMatchingCommands(input);
         return (
           <Box flexDirection="column">
             <Text dimColor>{borderLine}</Text>
@@ -180,21 +208,23 @@ export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
               </Text>
               <TextInput
                 value={input}
-                onChange={setInput}
+                onChange={(val) => { setInput(val); }}
                 onSubmit={handleSubmit}
               />
             </Box>
             <Text dimColor>{borderLine}</Text>
-            {matches.length > 0 && (
+            {hasMatches && (
               <Box flexDirection="column">
                 {matches.map((cmd, idx) => {
+                  const isSelected = idx === selectedIdx;
                   const label = `  ${cmd.name.padEnd(20)}${cmd.description}`;
-                  return idx === 0 ? (
+                  return isSelected ? (
                     <Text key={cmd.name} bold color="blue">{label}</Text>
                   ) : (
                     <Text key={cmd.name} dimColor>{label}</Text>
                   );
                 })}
+                <Text dimColor>  arrows to navigate, tab/enter to select, esc to dismiss</Text>
               </Box>
             )}
           </Box>
