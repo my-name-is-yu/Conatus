@@ -148,6 +148,46 @@ describe("ShellDataSourceAdapter", () => {
     expect(result["todo_count"]).toBe(3);
   });
 
+  // shell binary blocklist tests
+  describe("shell binary blocklist", () => {
+    it("throws when argv[0] is 'bash'", () => {
+      expect(() => new ShellDataSourceAdapter("ds_test", {
+        count: { argv: ["bash", "-c", "echo 1"], output_type: "number" },
+      })).toThrow(/Shell binary "bash" is not allowed/);
+    });
+
+    it("throws when argv[0] is 'sh'", () => {
+      expect(() => new ShellDataSourceAdapter("ds_test", {
+        count: { argv: ["sh", "-c", "echo 1"], output_type: "number" },
+      })).toThrow(/Shell binary "sh" is not allowed/);
+    });
+
+    it("throws when argv[0] is 'zsh'", () => {
+      expect(() => new ShellDataSourceAdapter("ds_test", {
+        count: { argv: ["zsh", "-c", "echo 1"], output_type: "number" },
+      })).toThrow(/Shell binary "zsh" is not allowed/);
+    });
+
+    it("throws when argv[0] is 'powershell'", () => {
+      expect(() => new ShellDataSourceAdapter("ds_test", {
+        count: { argv: ["powershell", "-Command", "Write-Output 1"], output_type: "number" },
+      })).toThrow(/Shell binary "powershell" is not allowed/);
+    });
+
+    it("throws when argv[0] is '/bin/bash' (full path blocked via basename)", () => {
+      expect(() => new ShellDataSourceAdapter("ds_test", {
+        count: { argv: ["/bin/bash", "-c", "echo 1"], output_type: "number" },
+      })).toThrow(/Shell binary "\/bin\/bash" is not allowed/);
+    });
+
+    it("does NOT throw for safe binaries like 'grep' or 'echo'", () => {
+      expect(() => new ShellDataSourceAdapter("ds_test", {
+        count: { argv: ["grep", "-rc", "TODO", "src/"], output_type: "number" },
+        flag: { argv: ["echo", "1"], output_type: "boolean" },
+      })).not.toThrow();
+    });
+  });
+
   // 8. Integration: ShellDataSourceAdapter registered with ObservationEngine triggers mechanical layer
   it("registered with ObservationEngine, observe() records a mechanical-layer entry", async () => {
     const stateDir = makeTempDir();
