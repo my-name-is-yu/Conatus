@@ -55,12 +55,8 @@ import type { CheckpointManager } from './checkpoint-manager.js';
 
 // ─── Internal types ───
 
-export interface TaskCycleResult {
-  task: Task;
-  verificationResult: VerificationResult;
-  action: "completed" | "keep" | "discard" | "escalate" | "approval_denied" | "capability_acquiring";
-  acquisition_task?: CapabilityAcquisitionTask;
-}
+export type { TaskCycleResult } from "./task-execution-types.js";
+import type { TaskCycleResult } from "./task-execution-types.js";
 
 // ─── TaskLifecycle ───
 

@@ -3,7 +3,7 @@ import type { Task, VerificationResult } from "../types/task.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
 import type { CapabilityDetector } from "../observation/capability-detector.js";
 import type { CapabilityAcquisitionTask } from "../types/capability.js";
-import type { TaskCycleResult } from "./task-lifecycle.js";
+import type { TaskCycleResult } from "./task-execution-types.js";
 
 // ─── PreExecutionCheckDeps ───
 
