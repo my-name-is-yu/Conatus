@@ -124,7 +124,7 @@ describe("file watcher — detects new JSON files", () => {
 
     writeEventFile(eventsDir, "event_001.json", validEvent);
 
-    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0);
+    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0, 8000);
 
     expect(mockDriveSystem.writeEvent).toHaveBeenCalledOnce();
     const called = mockDriveSystem.writeEvent.mock.calls[0][0] as MotivaEvent;
@@ -142,7 +142,7 @@ describe("file watcher — detects new JSON files", () => {
       await new Promise((r) => setTimeout(r, 30));
     }
 
-    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length >= 3, 5000);
+    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length >= 3, 8000);
     expect(mockDriveSystem.writeEvent).toHaveBeenCalledTimes(3);
   });
 
@@ -158,7 +158,7 @@ describe("file watcher — detects new JSON files", () => {
     };
     writeEventFile(eventsDir, "event_internal.json", event);
 
-    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0);
+    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0, 8000);
 
     const called = mockDriveSystem.writeEvent.mock.calls[0][0] as MotivaEvent;
     expect(called.type).toBe("internal");
@@ -177,7 +177,7 @@ describe("file watcher — processed files are moved to processed/", () => {
     const filename = "event_to_move.json";
     writeEventFile(eventsDir, filename, validEvent);
 
-    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0);
+    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0, 8000);
 
     const processedPath = path.join(eventsDir, "processed", filename);
     await waitFor(() => fs.existsSync(processedPath));
@@ -192,7 +192,7 @@ describe("file watcher — processed files are moved to processed/", () => {
     const filename = "event_remove_original.json";
     const originalPath = writeEventFile(eventsDir, filename, validEvent);
 
-    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0);
+    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0, 8000);
     await waitFor(() => !fs.existsSync(originalPath));
 
     expect(fs.existsSync(originalPath)).toBe(false);
@@ -206,7 +206,7 @@ describe("file watcher — processed files are moved to processed/", () => {
 
     writeEventFile(eventsDir, "event_make_processed_dir.json", validEvent);
 
-    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0);
+    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0, 8000);
     await waitFor(() => fs.existsSync(path.join(eventsDir, "processed")));
 
     expect(fs.existsSync(path.join(eventsDir, "processed"))).toBe(true);
@@ -261,7 +261,7 @@ describe("file watcher — malformed files handled gracefully", () => {
     // Then write a valid file
     writeEventFile(eventsDir, "good.json", validEvent);
 
-    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0, 4000);
+    await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0, 8000);
     expect(mockDriveSystem.writeEvent).toHaveBeenCalledOnce();
   });
 

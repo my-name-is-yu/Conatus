@@ -78,7 +78,7 @@ export class EventServer {
     fs.mkdirSync(this.eventsDir, { recursive: true });
 
     this.fileWatcher = fs.watch(this.eventsDir, (eventType, filename) => {
-      if (eventType !== "rename" || !filename) return;
+      if ((eventType !== "rename" && eventType !== "change") || !filename) return;
       if (!filename.endsWith(".json") || filename.endsWith(".tmp")) return;
 
       const filePath = path.join(this.eventsDir, filename);
