@@ -1,7 +1,5 @@
 // ─── motiva daemon commands (start, stop, cron) ───
 
-import * as os from "node:os";
-import * as path from "node:path";
 import { parseArgs } from "node:util";
 
 import { StateManager } from "../../state-manager.js";
@@ -12,6 +10,7 @@ import { PIDManager } from "../../runtime/pid-manager.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
+import { getMotivaDirPath, getLogsDir } from "../../utils/paths.js";
 
 export async function cmdStart(
   stateManager: StateManager,
@@ -46,7 +45,7 @@ export async function cmdStart(
 
   const pidManager = new PIDManager(deps.stateManager.getBaseDir());
   const logger = new Logger({
-    dir: path.join(deps.stateManager.getBaseDir(), "logs"),
+    dir: getLogsDir(deps.stateManager.getBaseDir()),
   });
 
   if (await pidManager.isRunning()) {
@@ -68,8 +67,7 @@ export async function cmdStart(
 }
 
 export async function cmdStop(_args: string[]): Promise<void> {
-  const baseDir = path.join(os.homedir(), ".motiva");
-  const pidManager = new PIDManager(baseDir);
+  const pidManager = new PIDManager(getMotivaDirPath());
 
   if (!(await pidManager.isRunning())) {
     console.log("No running daemon found");

@@ -3,7 +3,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { getArchiveDir, getReportsDir } from "../../utils/paths.js";
+import { getArchiveDir, getGoalsDir, getReportsDir } from "../../utils/paths.js";
 import { readJsonFile } from "../../utils/json-io.js";
 
 import { StateManager } from "../../state-manager.js";
@@ -144,7 +144,7 @@ export async function cmdGoalList(
   stateManager: StateManager,
   opts: { archived?: boolean } = {}
 ): Promise<number> {
-  const goalsDir = path.join(stateManager.getBaseDir(), "goals");
+  const goalsDir = getGoalsDir(stateManager.getBaseDir());
 
   let goalsDirEntries: string[] = [];
   try {

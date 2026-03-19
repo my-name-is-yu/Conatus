@@ -1,13 +1,13 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import * as os from "node:os";
 import yaml from "js-yaml";
 import { PluginManifestSchema } from "../../types/plugin.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
+import { getPluginsDir } from "../../utils/paths.js";
 
 function defaultPluginsDir(): string {
-  return path.join(os.homedir(), ".motiva", "plugins");
+  return getPluginsDir();
 }
 
 async function pathExists(p: string): Promise<boolean> {
