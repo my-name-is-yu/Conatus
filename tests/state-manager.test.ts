@@ -12,9 +12,10 @@ describe("StateManager", async () => {
   let tmpDir: string;
   let manager: StateManager;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = makeTempDir();
     manager = new StateManager(tmpDir);
+    await manager.init();
   });
 
   afterEach(() => {
@@ -22,7 +23,7 @@ describe("StateManager", async () => {
   });
 
   describe("directory structure", () => {
-    it("creates base directories on construction", () => {
+    it("creates base directories on init()", () => {
       expect(fs.existsSync(path.join(tmpDir, "goals"))).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, "goal-trees"))).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, "events"))).toBe(true);

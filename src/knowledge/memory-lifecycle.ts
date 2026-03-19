@@ -24,7 +24,6 @@ export type { IDriveScorer } from "./drive-score-adapter.js";
 export { DriveScoreAdapter } from "./drive-score-adapter.js";
 import {
   atomicWriteAsync,
-  readJsonFile,
   readJsonFileAsync,
   getDataFile,
   generateId,
@@ -568,14 +567,14 @@ export class MemoryLifecycleManager {
   /**
    * Read and return the statistical summary for a goal.
    */
-  getStatistics(goalId: string): StatisticalSummary | null {
+  async getStatistics(goalId: string): Promise<StatisticalSummary | null> {
     const statsPath = path.join(
       this.memoryDir,
       "long-term",
       "statistics",
       `${goalId}.json`
     );
-    return readJsonFile<StatisticalSummary>(
+    return readJsonFileAsync<StatisticalSummary>(
       statsPath,
       StatisticalSummarySchema
     );

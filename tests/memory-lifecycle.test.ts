@@ -605,7 +605,7 @@ describe("getStatistics", () => {
     const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     await mgr.initializeDirectories();
 
-    const stats = mgr.getStatistics("nonexistent-goal");
+    const stats = await mgr.getStatistics("nonexistent-goal");
     expect(stats).toBeNull();
   });
 
@@ -628,7 +628,7 @@ describe("getStatistics", () => {
 
     await mgr.compressToLongTerm("goal-1", "task");
 
-    const stats = mgr.getStatistics("goal-1");
+    const stats = await mgr.getStatistics("goal-1");
     expect(stats).not.toBeNull();
     expect(stats!.goal_id).toBe("goal-1");
     expect(typeof stats!.overall.total_loops).toBe("number");

@@ -1,4 +1,6 @@
-import * as fs from "node:fs";
+import { watch } from "node:fs";
+import type { FSWatcher } from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { MotivaEventSchema, GoalScheduleSchema } from "../types/drive.js";
 import type { MotivaEvent, GoalSchedule } from "../types/drive.js";
@@ -21,9 +23,10 @@ export class DriveSystem {
   private readonly baseDir: string;
   private readonly stateManager: StateManager;
   private readonly logger?: Logger;
-  private watcher: fs.FSWatcher | null = null;
+  private watcher: FSWatcher | null = null;
   private inMemoryQueue: MotivaEvent[] = [];
   private onEventCallback: ((event: MotivaEvent) => void) | null = null;
+  private readonly initPromise: Promise<void>;
 
   constructor(stateManager: StateManager, options?: { baseDir?: string; logger?: Logger }) {
     this.stateManager = stateManager;
@@ -32,28 +35,30 @@ export class DriveSystem {
     this.watcher = null;
     this.inMemoryQueue = [];
     this.onEventCallback = null;
-    this.ensureDirectories();
+    this.initPromise = this.ensureDirectories().catch((err) => {
+      this.logger?.warn?.(`DriveSystem: failed to create directories: ${err}`);
+    });
   }
 
   // ─── Directory Management ───
 
-  private ensureDirectories(): void {
+  private async ensureDirectories(): Promise<void> {
     const dirs = [
       path.join(this.baseDir, "events"),
       path.join(this.baseDir, "events", "archive"),
       path.join(this.baseDir, "schedule"),
     ];
     for (const dir of dirs) {
-      fs.mkdirSync(dir, { recursive: true });
+      await fsp.mkdir(dir, { recursive: true });
     }
   }
 
   // ─── Atomic Write ───
 
-  private atomicWrite(filePath: string, data: unknown): void {
+  private async atomicWrite(filePath: string, data: unknown): Promise<void> {
     const tmpPath = filePath + ".tmp";
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-    fs.renameSync(tmpPath, filePath);
+    await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+    await fsp.rename(tmpPath, filePath);
   }
 
   // ─── Activation Check ───
@@ -78,7 +83,7 @@ export class DriveSystem {
     }
 
     // Check event queue for events targeting this goal
-    const events = this.readEventQueue();
+    const events = await this.readEventQueue();
     if (events.length > 0) {
       const hasGoalEvent = events.some(
         (e) => e.data["goal_id"] === goalId || e.data["target_goal_id"] === goalId
@@ -89,7 +94,7 @@ export class DriveSystem {
     }
 
     // Check if schedule is due
-    if (this.isScheduleDue(goalId)) {
+    if (await this.isScheduleDue(goalId)) {
       return true;
     }
 
@@ -103,15 +108,13 @@ export class DriveSystem {
    * Parse each as MotivaEvent. Return sorted by timestamp (oldest first).
    * Skips files that fail to parse (logs a warning).
    */
-  readEventQueue(): MotivaEvent[] {
+  async readEventQueue(): Promise<MotivaEvent[]> {
+    await this.initPromise;
     const eventsDir = path.join(this.baseDir, "events");
-    if (!fs.existsSync(eventsDir)) {
-      return [];
-    }
 
     let fileNames: string[];
     try {
-      fileNames = fs.readdirSync(eventsDir).filter((f) => f.endsWith(".json"));
+      fileNames = (await fsp.readdir(eventsDir)).filter((f) => f.endsWith(".json"));
     } catch {
       return [];
     }
@@ -122,14 +125,14 @@ export class DriveSystem {
 
       // Skip directories (e.g., the archive subdirectory)
       try {
-        const stat = fs.statSync(filePath);
+        const stat = await fsp.stat(filePath);
         if (!stat.isFile()) continue;
       } catch {
         continue;
       }
 
       try {
-        const content = fs.readFileSync(filePath, "utf-8");
+        const content = await fsp.readFile(filePath, "utf-8");
         const raw = JSON.parse(content) as unknown;
         const event = MotivaEventSchema.parse(raw);
         events.push(event);
@@ -152,26 +155,24 @@ export class DriveSystem {
    * Move an event file from {baseDir}/events/{fileName} to
    * {baseDir}/events/archive/{fileName}. Creates the archive dir if needed.
    */
-  archiveEvent(eventFileName: string): void {
+  async archiveEvent(eventFileName: string): Promise<void> {
     const srcPath = path.join(this.baseDir, "events", eventFileName);
     const archiveDir = path.join(this.baseDir, "events", "archive");
-    fs.mkdirSync(archiveDir, { recursive: true });
+    await fsp.mkdir(archiveDir, { recursive: true });
     const dstPath = path.join(archiveDir, eventFileName);
-    fs.renameSync(srcPath, dstPath);
+    await fsp.rename(srcPath, dstPath);
   }
 
   /**
    * Read queue, archive each processed event, return the events.
    */
-  processEvents(): MotivaEvent[] {
+  async processEvents(): Promise<MotivaEvent[]> {
+    await this.initPromise;
     const eventsDir = path.join(this.baseDir, "events");
-    if (!fs.existsSync(eventsDir)) {
-      return [];
-    }
 
     let fileNames: string[];
     try {
-      fileNames = fs.readdirSync(eventsDir).filter((f) => f.endsWith(".json"));
+      fileNames = (await fsp.readdir(eventsDir)).filter((f) => f.endsWith(".json"));
     } catch {
       return [];
     }
@@ -181,17 +182,17 @@ export class DriveSystem {
       const filePath = path.join(eventsDir, fileName);
 
       try {
-        const stat = fs.statSync(filePath);
+        const stat = await fsp.stat(filePath);
         if (!stat.isFile()) continue;
       } catch {
         continue;
       }
 
       try {
-        const content = fs.readFileSync(filePath, "utf-8");
+        const content = await fsp.readFile(filePath, "utf-8");
         const raw = JSON.parse(content) as unknown;
         const event = MotivaEventSchema.parse(raw);
-        this.archiveEvent(fileName);
+        await this.archiveEvent(fileName);
         events.push(event);
       } catch (err) {
         this.logger?.warn(`DriveSystem: skipping invalid event file "${fileName}" during processEvents: ${err}`);
@@ -214,10 +215,11 @@ export class DriveSystem {
    * Load schedule from {baseDir}/schedule/{goalId}.json.
    * Returns null if no schedule exists or parsing fails.
    */
-  getSchedule(goalId: string): GoalSchedule | null {
+  async getSchedule(goalId: string): Promise<GoalSchedule | null> {
+    await this.initPromise;
     const filePath = path.join(this.baseDir, "schedule", `${goalId}.json`);
     try {
-      const content = fs.readFileSync(filePath, "utf-8");
+      const content = await fsp.readFile(filePath, "utf-8");
       const raw = JSON.parse(content) as unknown;
       return GoalScheduleSchema.parse(raw);
     } catch (err: unknown) {
@@ -232,20 +234,21 @@ export class DriveSystem {
   /**
    * Save schedule atomically to {baseDir}/schedule/{goalId}.json.
    */
-  updateSchedule(goalId: string, schedule: GoalSchedule): void {
+  async updateSchedule(goalId: string, schedule: GoalSchedule): Promise<void> {
+    await this.initPromise;
     const scheduleDir = path.join(this.baseDir, "schedule");
-    fs.mkdirSync(scheduleDir, { recursive: true });
+    await fsp.mkdir(scheduleDir, { recursive: true });
     const validated = GoalScheduleSchema.parse(schedule);
     const filePath = path.join(scheduleDir, `${goalId}.json`);
-    this.atomicWrite(filePath, validated);
+    await this.atomicWrite(filePath, validated);
   }
 
   /**
    * Check if the schedule for a goal is due (next_check_at <= now).
    * If no schedule exists, returns true (needs initial check).
    */
-  isScheduleDue(goalId: string): boolean {
-    const schedule = this.getSchedule(goalId);
+  async isScheduleDue(goalId: string): Promise<boolean> {
+    const schedule = await this.getSchedule(goalId);
     if (schedule === null) {
       return true;
     }
@@ -301,14 +304,15 @@ export class DriveSystem {
    * Write an event file to the events directory.
    * Public method used by EventServer to enqueue events via HTTP.
    */
-  writeEvent(event: MotivaEvent): void {
+  async writeEvent(event: MotivaEvent): Promise<void> {
+    await this.initPromise;
     const eventsDir = path.join(this.baseDir, "events");
-    fs.mkdirSync(eventsDir, { recursive: true });
+    await fsp.mkdir(eventsDir, { recursive: true });
     const filename = `event_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`;
     const filePath = path.join(eventsDir, filename);
     const tmpPath = filePath + ".tmp";
-    fs.writeFileSync(tmpPath, JSON.stringify(event, null, 2), "utf-8");
-    fs.renameSync(tmpPath, filePath);
+    await fsp.writeFile(tmpPath, JSON.stringify(event, null, 2), "utf-8");
+    await fsp.rename(tmpPath, filePath);
   }
 
   /**
@@ -319,31 +323,46 @@ export class DriveSystem {
   startWatcher(onEvent?: (event: MotivaEvent) => void): void {
     this.onEventCallback = onEvent ?? null;
     const eventsDir = path.join(this.baseDir, "events");
-    fs.mkdirSync(eventsDir, { recursive: true });
 
-    this.watcher = fs.watch(eventsDir, (eventType, filename) => {
-      if (eventType !== "rename" || !filename?.endsWith(".json")) return;
-      if (filename.endsWith(".tmp")) return;
+    // initPromise ensures the directory exists; if not yet resolved,
+    // the watcher will be started after it completes.
+    void this.initPromise.then(() => {
+      // Guard: if stopWatcher was called before initPromise resolved
+      if (this.onEventCallback === null && onEvent !== undefined) return;
 
-      const filePath = path.join(eventsDir, filename);
-      let content: string;
-      try {
-        content = fs.readFileSync(filePath, "utf-8");
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // file deleted — expected
-        this.logger?.warn(`[DriveSystem] watcher read error: ${String(err)}`);
-        return;
-      }
-      try {
-        const event = MotivaEventSchema.parse(JSON.parse(content) as unknown);
-        this.inMemoryQueue.push(event);
-        if (this.onEventCallback) {
-          this.onEventCallback(event);
-        }
-      } catch (err) {
-        this.logger?.warn(`[DriveSystem] watcher parse error in ${filename}: ${String(err)}`);
-      }
+      this.watcher = watch(eventsDir, (eventType, filename) => {
+        if (eventType !== "rename" || !filename?.endsWith(".json")) return;
+        if (filename.endsWith(".tmp")) return;
+
+        const filePath = path.join(eventsDir, filename);
+        void this.handleWatchEvent(filePath).catch((err) => {
+          this.logger?.warn(`[DriveSystem] watcher async error: ${String(err)}`);
+        });
+      });
     });
+  }
+
+  /**
+   * Handle a file event from the watcher asynchronously.
+   */
+  private async handleWatchEvent(filePath: string): Promise<void> {
+    let content: string;
+    try {
+      content = await fsp.readFile(filePath, "utf-8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // file deleted — expected
+      this.logger?.warn(`[DriveSystem] watcher read error: ${String(err)}`);
+      return;
+    }
+    try {
+      const event = MotivaEventSchema.parse(JSON.parse(content) as unknown);
+      this.inMemoryQueue.push(event);
+      if (this.onEventCallback) {
+        this.onEventCallback(event);
+      }
+    } catch (err) {
+      this.logger?.warn(`[DriveSystem] watcher parse error in ${path.basename(filePath)}: ${String(err)}`);
+    }
   }
 
   /**

@@ -2,16 +2,16 @@ import * as path from "node:path";
 import { z } from "zod";
 import { LessonEntrySchema } from "../types/memory-lifecycle.js";
 import type { LessonEntry } from "../types/memory-lifecycle.js";
-import { readJsonFile } from "./memory-persistence.js";
+import { readJsonFileAsync } from "./memory-persistence.js";
 
 // ─── Lesson query ───
 
-export function queryLessons(
+export async function queryLessons(
   memoryDir: string,
   tags: string[],
   dimensions: string[],
   maxCount: number
-): LessonEntry[] {
+): Promise<LessonEntry[]> {
   const results: LessonEntry[] = [];
   const seen = new Set<string>();
 
@@ -25,7 +25,7 @@ export function queryLessons(
       `${dim}.json`
     );
     const lessons =
-      readJsonFile<LessonEntry[]>(byDimPath, z.array(LessonEntrySchema)) ?? [];
+      (await readJsonFileAsync<LessonEntry[]>(byDimPath, z.array(LessonEntrySchema))) ?? [];
     for (const l of lessons) {
       if (
         !seen.has(l.lesson_id) &&
@@ -47,7 +47,7 @@ export function queryLessons(
       "global.json"
     );
     const globalLessons =
-      readJsonFile<LessonEntry[]>(globalPath, z.array(LessonEntrySchema)) ?? [];
+      (await readJsonFileAsync<LessonEntry[]>(globalPath, z.array(LessonEntrySchema))) ?? [];
     const matching = globalLessons.filter(
       (l) =>
         !seen.has(l.lesson_id) &&
@@ -70,13 +70,13 @@ export function queryLessons(
   return results;
 }
 
-export function queryCrossGoalLessons(
+export async function queryCrossGoalLessons(
   memoryDir: string,
   tags: string[],
   dimensions: string[],
   excludeGoalId: string,
   maxCount: number
-): LessonEntry[] {
+): Promise<LessonEntry[]> {
   const results: LessonEntry[] = [];
   const seen = new Set<string>();
 
@@ -88,7 +88,7 @@ export function queryCrossGoalLessons(
     "global.json"
   );
   const globalLessons =
-    readJsonFile<LessonEntry[]>(globalPath, z.array(LessonEntrySchema)) ?? [];
+    (await readJsonFileAsync<LessonEntry[]>(globalPath, z.array(LessonEntrySchema))) ?? [];
 
   // Filter to lessons from other goals that match tags or dimensions
   const crossGoalLessons = globalLessons.filter(

@@ -317,7 +317,7 @@ describe("Milestone 4 — Group 1: Daemon Mode Integration", () => {
 
   // ── Test 4: Log rotation — date-based rotation writes dated log file ──
 
-  it("Logger rotates log file when date changes (date-based rotation)", () => {
+  it("Logger rotates log file when date changes (date-based rotation)", async () => {
     const logDir = path.join(tempDir, "logs");
     const logger = new Logger({
       dir: logDir,
@@ -340,6 +340,9 @@ describe("Milestone 4 — Group 1: Daemon Mode Integration", () => {
     logger.info("Entry from today");
 
     vi.useRealTimers();
+
+    // Wait for async rotation (WriteStream flush + rename) to complete
+    await logger.close();
 
     // After date change, the old log should have been rotated to motiva.YYYY-MM-DD.log
     const rotatedFile = path.join(logDir, `motiva.${yesterday}.log`);
@@ -435,6 +438,8 @@ describe("Milestone 4 — Group 2: Event-Driven Integration", () => {
     expect(body.status).toBe("accepted");
     expect(body.event_type).toBe("external");
 
+    // writeEvent is fire-and-forget in the HTTP handler, so wait briefly
+    await new Promise((r) => setTimeout(r, 100));
     // Verify the event was written to the file queue
     const eventsDir = path.join(tempDir, "events");
     const eventFiles = fs.readdirSync(eventsDir).filter((f) => f.endsWith(".json"));
@@ -464,7 +469,7 @@ describe("Milestone 4 — Group 2: Event-Driven Integration", () => {
       timestamp: new Date().toISOString(),
       data: { goal_id: "watcher-goal", target_goal_id: "watcher-goal" },
     };
-    driveSystem.writeEvent(event);
+    await driveSystem.writeEvent(event);
 
     // Wait briefly for the fs.watch event to fire
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
@@ -472,7 +477,7 @@ describe("Milestone 4 — Group 2: Event-Driven Integration", () => {
     driveSystem.stopWatcher();
 
     // Verify the event queue on disk is readable
-    const queuedEvents = driveSystem.readEventQueue();
+    const queuedEvents = await driveSystem.readEventQueue();
     expect(queuedEvents.length).toBeGreaterThanOrEqual(1);
     expect(queuedEvents[0]!.type).toBe("internal");
     expect(queuedEvents[0]!.data["goal_id"]).toBe("watcher-goal");
@@ -514,7 +519,7 @@ describe("Milestone 4 — Group 2: Event-Driven Integration", () => {
 
     // Set a future schedule so the time-based check won't trigger
     const futureSchedule = driveSystem.createDefaultSchedule("event-goal", 999);
-    driveSystem.updateSchedule("event-goal", {
+    await driveSystem.updateSchedule("event-goal", {
       ...futureSchedule,
       next_check_at: new Date(Date.now() + 999 * 3600_000).toISOString(),
     });
@@ -526,7 +531,7 @@ describe("Milestone 4 — Group 2: Event-Driven Integration", () => {
     expect(beforeEvent).toBe(false);
 
     // Write a targeted event
-    driveSystem.writeEvent({
+    await driveSystem.writeEvent({
       type: "external",
       source: "test",
       timestamp: new Date().toISOString(),
@@ -548,7 +553,7 @@ describe("Milestone 4 — Group 2: Event-Driven Integration", () => {
 
     // Write multiple events
     for (let i = 0; i < 3; i++) {
-      driveSystem.writeEvent({
+      await driveSystem.writeEvent({
         type: "external",
         source: `source-${i}`,
         timestamp: new Date().toISOString(),
@@ -565,7 +570,7 @@ describe("Milestone 4 — Group 2: Event-Driven Integration", () => {
     const drained = driveSystem.drainInMemoryQueue();
 
     // Verify events are in the file queue too
-    const fileQueue = driveSystem.readEventQueue();
+    const fileQueue = await driveSystem.readEventQueue();
     expect(fileQueue.length).toBe(3);
 
     // In-memory queue should have received the events via watcher

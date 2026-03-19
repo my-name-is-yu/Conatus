@@ -6,7 +6,8 @@ import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
 
-function readLogFile(dir: string, filename = "motiva.log"): string {
+async function readLogFile(logger: Logger, dir: string, filename = "motiva.log"): Promise<string> {
+  await logger.close();
   const filePath = path.join(dir, filename);
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : "";
 }
@@ -21,7 +22,7 @@ beforeEach(() => {
   tmpDir = makeTempDir();
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -52,65 +53,65 @@ describe("constructor", () => {
 // ═══════════════════════════════════════════════════════
 
 describe("log levels — file output", () => {
-  it("writes info messages to motiva.log", () => {
+  it("writes info messages to motiva.log", async () => {
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
     logger.info("hello from info");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).toContain("hello from info");
     expect(content).toContain("[INFO ]");
   });
 
-  it("writes warn messages with [WARN ] label", () => {
+  it("writes warn messages with [WARN ] label", async () => {
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
     logger.warn("something is off");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).toContain("[WARN ]");
     expect(content).toContain("something is off");
   });
 
-  it("writes error messages with [ERROR] label", () => {
+  it("writes error messages with [ERROR] label", async () => {
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
     logger.error("critical failure");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).toContain("[ERROR]");
     expect(content).toContain("critical failure");
   });
 
-  it("writes debug messages with [DEBUG] label when level is debug", () => {
+  it("writes debug messages with [DEBUG] label when level is debug", async () => {
     const logger = new Logger({ dir: tmpDir, level: "debug", consoleOutput: false });
     logger.debug("debug trace");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).toContain("[DEBUG]");
     expect(content).toContain("debug trace");
   });
 
-  it("includes an ISO-8601 timestamp in each log line", () => {
+  it("includes an ISO-8601 timestamp in each log line", async () => {
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
     logger.info("check timestamp");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     // ISO-8601: 2026-03-14T... pattern
     expect(content).toMatch(/\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\]/);
   });
 
-  it("serializes context object as JSON appended to the line", () => {
+  it("serializes context object as JSON appended to the line", async () => {
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
     logger.info("with context", { goalId: "g-1", loop: 5 });
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).toContain('"goalId":"g-1"');
     expect(content).toContain('"loop":5');
   });
 
-  it("does not include context JSON when context is not provided", () => {
+  it("does not include context JSON when context is not provided", async () => {
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
     logger.info("no context here");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     // Should not end line with a JSON object — just message and newline
     const line = content.trim();
     expect(line.endsWith("}")).toBe(false);
@@ -122,7 +123,7 @@ describe("log levels — file output", () => {
 // ═══════════════════════════════════════════════════════
 
 describe("level filtering", () => {
-  it("filters out debug and info when level is warn", () => {
+  it("filters out debug and info when level is warn", async () => {
     const logger = new Logger({ dir: tmpDir, level: "warn", consoleOutput: false });
 
     logger.debug("this is debug");
@@ -130,24 +131,24 @@ describe("level filtering", () => {
     logger.warn("this is warn");
     logger.error("this is error");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).not.toContain("this is debug");
     expect(content).not.toContain("this is info");
     expect(content).toContain("this is warn");
     expect(content).toContain("this is error");
   });
 
-  it("filters out debug when level is info (default)", () => {
+  it("filters out debug when level is info (default)", async () => {
     const logger = new Logger({ dir: tmpDir, consoleOutput: false }); // default level=info
     logger.debug("hidden debug");
     logger.info("visible info");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).not.toContain("hidden debug");
     expect(content).toContain("visible info");
   });
 
-  it("filters out everything below error when level is error", () => {
+  it("filters out everything below error when level is error", async () => {
     const logger = new Logger({ dir: tmpDir, level: "error", consoleOutput: false });
 
     logger.debug("d");
@@ -155,14 +156,14 @@ describe("level filtering", () => {
     logger.warn("w");
     logger.error("e");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).not.toContain("[DEBUG]");
     expect(content).not.toContain("[INFO ]");
     expect(content).not.toContain("[WARN ]");
     expect(content).toContain("[ERROR]");
   });
 
-  it("writes all levels when level is debug", () => {
+  it("writes all levels when level is debug", async () => {
     const logger = new Logger({ dir: tmpDir, level: "debug", consoleOutput: false });
 
     logger.debug("d");
@@ -170,7 +171,7 @@ describe("level filtering", () => {
     logger.warn("w");
     logger.error("e");
 
-    const content = readLogFile(tmpDir);
+    const content = await readLogFile(logger, tmpDir);
     expect(content).toContain("[DEBUG]");
     expect(content).toContain("[INFO ]");
     expect(content).toContain("[WARN ]");
@@ -183,32 +184,35 @@ describe("level filtering", () => {
 // ═══════════════════════════════════════════════════════
 
 describe("console output", () => {
-  it("calls console.log when consoleOutput is true for info messages", () => {
+  it("calls console.log when consoleOutput is true for info messages", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const logger = new Logger({ dir: tmpDir, consoleOutput: true });
     logger.info("should appear in console");
+    await logger.close();
 
     expect(consoleSpy).toHaveBeenCalledOnce();
     expect(consoleSpy.mock.calls[0]![0]).toContain("should appear in console");
   });
 
-  it("calls console.warn for warn messages", () => {
+  it("calls console.warn for warn messages", async () => {
     const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const logger = new Logger({ dir: tmpDir, consoleOutput: true });
     logger.warn("warn to console");
+    await logger.close();
 
     expect(consoleSpy).toHaveBeenCalledOnce();
   });
 
-  it("calls console.error for error messages", () => {
+  it("calls console.error for error messages", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const logger = new Logger({ dir: tmpDir, consoleOutput: true });
     logger.error("error to console");
+    await logger.close();
 
     expect(consoleSpy).toHaveBeenCalledOnce();
   });
 
-  it("does not call any console method when consoleOutput is false", () => {
+  it("does not call any console method when consoleOutput is false", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -217,6 +221,7 @@ describe("console output", () => {
     logger.info("no console");
     logger.warn("no console");
     logger.error("no console");
+    await logger.close();
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
@@ -229,7 +234,7 @@ describe("console output", () => {
 // ═══════════════════════════════════════════════════════
 
 describe("log rotation", () => {
-  it("rotates when file exceeds maxSizeMB — creates motiva.1.log", () => {
+  it("rotates when file exceeds maxSizeMB — creates motiva.1.log", async () => {
     const logger = new Logger({
       dir: tmpDir,
       maxSizeMB: 0.001, // ~1 KB
@@ -242,12 +247,13 @@ describe("log rotation", () => {
       logger.info("A".repeat(100));
     }
 
+    await logger.close();
     const files = logFiles(tmpDir);
     expect(files.length).toBeGreaterThan(1);
     expect(files).toContain("motiva.1.log");
   });
 
-  it("keeps writing to motiva.log after rotation", () => {
+  it("keeps writing to motiva.log after rotation", async () => {
     const logger = new Logger({
       dir: tmpDir,
       maxSizeMB: 0.001,
@@ -259,11 +265,12 @@ describe("log rotation", () => {
       logger.info("B".repeat(100));
     }
 
+    await logger.close();
     // motiva.log should still exist with new data after rotation
     expect(fs.existsSync(path.join(tmpDir, "motiva.log"))).toBe(true);
   });
 
-  it("does not exceed maxFiles rotated files", () => {
+  it("does not exceed maxFiles rotated files", async () => {
     const maxFiles = 3;
     const logger = new Logger({
       dir: tmpDir,
@@ -277,13 +284,14 @@ describe("log rotation", () => {
       logger.info("C".repeat(100));
     }
 
+    await logger.close();
     const rotatedFiles = logFiles(tmpDir).filter((f) => f !== "motiva.log");
     // Rotation shifts up to motiva.maxFiles.log, then deletes it on the next cycle.
     // Total rotated files can be at most maxFiles (motiva.1.log … motiva.maxFiles.log).
     expect(rotatedFiles.length).toBeLessThanOrEqual(maxFiles);
   });
 
-  it("deletes the oldest rotated file when rotation limit is reached", () => {
+  it("deletes the oldest rotated file when rotation limit is reached", async () => {
     const maxFiles = 3;
     const logger = new Logger({
       dir: tmpDir,
@@ -297,12 +305,13 @@ describe("log rotation", () => {
       logger.info("D".repeat(200));
     }
 
+    await logger.close();
     // Files beyond maxFiles should not exist — motiva.(maxFiles+1).log must be absent
     const tooOld = path.join(tmpDir, `motiva.${maxFiles + 1}.log`);
     expect(fs.existsSync(tooOld)).toBe(false);
   });
 
-  it("single log file does not rotate when under limit", () => {
+  it("single log file does not rotate when under limit", async () => {
     const logger = new Logger({
       dir: tmpDir,
       maxSizeMB: 100, // Very large limit
@@ -313,6 +322,7 @@ describe("log rotation", () => {
     logger.info("small entry");
     logger.warn("another small entry");
 
+    await logger.close();
     const files = logFiles(tmpDir);
     expect(files).toHaveLength(1);
     expect(files[0]).toBe("motiva.log");
@@ -332,19 +342,20 @@ describe("date-based rotation", () => {
     vi.useRealTimers();
   });
 
-  it("should not rotate on first write (just record date)", () => {
+  it("should not rotate on first write (just record date)", async () => {
     vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
 
     logger.info("first write");
 
+    await logger.close();
     // Only motiva.log should exist; no date-suffixed file
     const files = logFiles(tmpDir);
     expect(files).toHaveLength(1);
     expect(files[0]).toBe("motiva.log");
   });
 
-  it("should rotate log file when date changes", () => {
+  it("should rotate log file when date changes", async () => {
     vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
 
@@ -354,6 +365,7 @@ describe("date-based rotation", () => {
     vi.setSystemTime(new Date("2026-03-17T02:00:00Z"));
     logger.info("day two message");
 
+    await logger.close();
     const files = logFiles(tmpDir);
     // Both motiva.log (new day) and a rotated file should exist
     expect(files).toContain("motiva.log");
@@ -361,7 +373,7 @@ describe("date-based rotation", () => {
     expect(files.length).toBeGreaterThan(1);
   });
 
-  it("should name rotated file with date suffix (motiva.YYYY-MM-DD.log)", () => {
+  it("should name rotated file with date suffix (motiva.YYYY-MM-DD.log)", async () => {
     vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
 
@@ -371,11 +383,12 @@ describe("date-based rotation", () => {
     vi.setSystemTime(new Date("2026-03-17T02:00:00Z"));
     logger.info("day two message");
 
+    await logger.close();
     const files = logFiles(tmpDir);
     expect(files).toContain("motiva.2026-03-16.log");
   });
 
-  it("should work together with size-based rotation", () => {
+  it("should work together with size-based rotation", async () => {
     vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
     const logger = new Logger({
       dir: tmpDir,
@@ -392,6 +405,7 @@ describe("date-based rotation", () => {
     vi.setSystemTime(new Date("2026-03-17T02:00:00Z"));
     logger.info("day two first message");
 
+    await logger.close();
     const files = logFiles(tmpDir);
     // Size-based rotated files (motiva.1.log, ...) and date-rotated file should all exist
     const hasDateRotated = files.some((f) => /motiva\.\d{4}-\d{2}-\d{2}\.log/.test(f));
@@ -400,7 +414,7 @@ describe("date-based rotation", () => {
     expect(hasSizeRotated).toBe(true);
   });
 
-  it("should not rotate by date when rotateByDate is false", () => {
+  it("should not rotate by date when rotateByDate is false", async () => {
     vi.setSystemTime(new Date("2026-03-16T10:00:00Z"));
     const logger = new Logger({
       dir: tmpDir,
@@ -415,6 +429,7 @@ describe("date-based rotation", () => {
     vi.setSystemTime(new Date("2026-03-17T02:00:00Z"));
     logger.info("day two message");
 
+    await logger.close();
     const files = logFiles(tmpDir);
     // No date-suffixed file should exist
     const hasDateRotated = files.some((f) => /motiva\.\d{4}-\d{2}-\d{2}\.log/.test(f));
@@ -422,5 +437,33 @@ describe("date-based rotation", () => {
     // Only motiva.log
     expect(files).toHaveLength(1);
     expect(files[0]).toBe("motiva.log");
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// close() method
+// ═══════════════════════════════════════════════════════
+
+describe("close()", () => {
+  it("flushes buffered data to disk", async () => {
+    const logger = new Logger({ dir: tmpDir, consoleOutput: false });
+    logger.info("before close");
+    await logger.close();
+
+    const content = fs.readFileSync(path.join(tmpDir, "motiva.log"), "utf-8");
+    expect(content).toContain("before close");
+  });
+
+  it("resolves immediately when no stream is open", async () => {
+    const logger = new Logger({ dir: tmpDir, consoleOutput: false });
+    // No writes — stream never opened
+    await expect(logger.close()).resolves.toBeUndefined();
+  });
+
+  it("can be called multiple times without error", async () => {
+    const logger = new Logger({ dir: tmpDir, consoleOutput: false });
+    logger.info("once");
+    await logger.close();
+    await expect(logger.close()).resolves.toBeUndefined();
   });
 });

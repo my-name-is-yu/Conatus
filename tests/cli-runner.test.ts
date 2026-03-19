@@ -1015,11 +1015,12 @@ describe("ANTHROPIC_API_KEY", async () => {
 // ─── Directory initialisation ─────────────────────────────────────────────────
 
 describe("directory initialisation", () => {
-  it("creates base sub-directories on construction", () => {
+  it("creates base sub-directories after init()", async () => {
     // Use a fresh temp dir to verify CLIRunner triggers StateManager directory creation
     const freshDir = makeTempDir();
     try {
-      new CLIRunner(freshDir);
+      const runner = new CLIRunner(freshDir);
+      await runner.init();
       expect(fs.existsSync(path.join(freshDir, "goals"))).toBe(true);
       expect(fs.existsSync(path.join(freshDir, "reports"))).toBe(true);
       expect(fs.existsSync(path.join(freshDir, "events"))).toBe(true);

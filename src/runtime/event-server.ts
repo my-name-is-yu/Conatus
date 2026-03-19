@@ -82,7 +82,11 @@ export class EventServer {
       if (!filename.endsWith(".json") || filename.endsWith(".tmp")) return;
 
       const filePath = path.join(this.eventsDir, filename);
-      this.processEventFile(filePath, filename);
+      void this.processEventFile(filePath, filename).catch((err) => {
+        this.logger?.error(
+          `EventServer: unhandled error processing event file "${filename}": ${String(err)}`
+        );
+      });
     });
   }
 
@@ -98,24 +102,28 @@ export class EventServer {
    * Read, validate, dispatch, and move a single event file.
    * Errors are logged but never propagated (caller must not crash).
    */
-  private processEventFile(filePath: string, filename: string): void {
+  private async processEventFile(filePath: string, filename: string): Promise<void> {
     try {
-      if (!fs.existsSync(filePath)) return; // file already removed
-      const stat = fs.statSync(filePath);
+      let stat;
+      try {
+        stat = await fsp.stat(filePath);
+      } catch {
+        return; // file already removed
+      }
       if (!stat.isFile()) return;
 
-      const content = fs.readFileSync(filePath, "utf-8");
+      const content = await fsp.readFile(filePath, "utf-8");
       const raw = JSON.parse(content) as unknown;
       const event = MotivaEventSchema.parse(raw);
 
       // Dispatch to DriveSystem
-      this.driveSystem.writeEvent(event);
+      await this.driveSystem.writeEvent(event);
 
       // Move to processed/
       const processedDir = path.join(this.eventsDir, "processed");
-      fs.mkdirSync(processedDir, { recursive: true });
+      await fsp.mkdir(processedDir, { recursive: true });
       const dstPath = path.join(processedDir, filename);
-      fs.renameSync(filePath, dstPath);
+      await fsp.rename(filePath, dstPath);
     } catch (err) {
       this.logger?.error(
         `EventServer: failed to process event file "${filename}": ${String(err)}`
@@ -151,7 +159,10 @@ export class EventServer {
         const data = JSON.parse(body) as unknown;
         const event = MotivaEventSchema.parse(data);
         // Write event to file queue (DriveSystem will pick it up)
-        this.driveSystem.writeEvent(event);
+        // Fire-and-forget: writeEvent is now async but HTTP handler responds immediately
+        void this.driveSystem.writeEvent(event).catch((err) => {
+          this.logger?.error(`EventServer: writeEvent failed: ${String(err)}`);
+        });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "accepted", event_type: event.type }));
       } catch (err) {

@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { type KnowledgeEdge, KnowledgeEdgeSchema } from "../types/knowledge.js";
@@ -26,7 +25,17 @@ export class KnowledgeGraph {
   private edges: KnowledgeEdge[] = [];
 
   constructor(private readonly graphPath: string) {
-    this._loadSync();
+    // Sync loading removed. Use KnowledgeGraph.create() for async load on construction,
+    // or call _load() manually after construction.
+  }
+
+  /**
+   * Factory method: constructs a KnowledgeGraph and loads existing data from disk.
+   */
+  static async create(graphPath: string): Promise<KnowledgeGraph> {
+    const graph = new KnowledgeGraph(graphPath);
+    await graph._load();
+    return graph;
   }
 
   // ─── Node CRUD ───
@@ -213,10 +222,14 @@ export class KnowledgeGraph {
     await fsp.rename(tmpPath, this.graphPath);
   }
 
-  private _loadSync(): void {
-    if (!fs.existsSync(this.graphPath)) return;
+  async _load(): Promise<void> {
     try {
-      const raw = fs.readFileSync(this.graphPath, "utf-8");
+      await fsp.access(this.graphPath);
+    } catch {
+      return;
+    }
+    try {
+      const raw = await fsp.readFile(this.graphPath, "utf-8");
       const parsed = JSON.parse(raw) as GraphData;
 
       this.nodes.clear();

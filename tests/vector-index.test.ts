@@ -165,7 +165,7 @@ describe("VectorIndex", () => {
     const idx1 = new VectorIndex(indexPath, client);
     await idx1.add("p1", "persist across instances");
 
-    const idx2 = new VectorIndex(indexPath, client);
+    const idx2 = await VectorIndex.create(indexPath, client);
     expect(idx2.size).toBe(1);
     const entry = idx2.getEntry("p1");
     expect(entry).toBeDefined();

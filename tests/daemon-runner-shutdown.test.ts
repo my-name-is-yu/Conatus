@@ -36,7 +36,7 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
 
   const mockDriveSystem = {
     shouldActivate: vi.fn().mockReturnValue(true),
-    getSchedule: vi.fn().mockReturnValue(null),
+    getSchedule: vi.fn().mockResolvedValue(null),
     prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),
     startWatcher: vi.fn(),
     stopWatcher: vi.fn(),

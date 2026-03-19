@@ -298,7 +298,7 @@ export class DaemonRunner {
         eligibleIds.push(goalId);
         // Load goal to get a rough priority signal (gap or drive score not available here)
         // Use schedule consecutive_actions as a tiebreaker — more urgent goals first
-        const schedule = this.driveSystem.getSchedule(goalId);
+        const schedule = await this.driveSystem.getSchedule(goalId);
         // Higher consecutive_actions = more urgent (stalled goal). Use inverse of next_check_at
         // as a proxy: goals that are most overdue rank highest.
         const nextCheckAt = schedule

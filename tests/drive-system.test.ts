@@ -31,10 +31,12 @@ describe("DriveSystem", () => {
   let stateManager: StateManager;
   let driveSystem: DriveSystem;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = makeTempDir();
     stateManager = new StateManager(tmpDir);
     driveSystem = new DriveSystem(stateManager, { baseDir: tmpDir });
+    // Wait for async directory initialization to complete
+    await new Promise((resolve) => setTimeout(resolve, 50));
   });
 
   afterEach(() => {
@@ -44,7 +46,9 @@ describe("DriveSystem", () => {
   // ─── directory creation ───
 
   describe("constructor", () => {
-    it("creates required directories", () => {
+    it("creates required directories", async () => {
+      // Wait for init to complete
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(fs.existsSync(path.join(tmpDir, "events"))).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, "events", "archive"))).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, "schedule"))).toBe(true);
@@ -74,7 +78,7 @@ describe("DriveSystem", () => {
       const futureTime = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString();
       const schedule = driveSystem.createDefaultSchedule(goalId, 10);
       // Override next_check_at to future
-      driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
+      await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
 
       expect(await driveSystem.shouldActivate(goalId)).toBe(false);
     });
@@ -86,7 +90,7 @@ describe("DriveSystem", () => {
 
       const pastTime = new Date(Date.now() - 1000).toISOString();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
-      driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: pastTime });
+      await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: pastTime });
 
       expect(await driveSystem.shouldActivate(goalId)).toBe(true);
     });
@@ -122,7 +126,7 @@ describe("DriveSystem", () => {
       // Set schedule to future so schedule check would be false
       const futureTime = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString();
       const schedule = driveSystem.createDefaultSchedule(goalId, 10);
-      driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
+      await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
 
       // Write an event file that targets this specific goal
       const eventsDir = path.join(tmpDir, "events");
@@ -140,7 +144,7 @@ describe("DriveSystem", () => {
       // Set schedule to future so schedule check would be false
       const futureTime = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString();
       const schedule = driveSystem.createDefaultSchedule(goalId, 10);
-      driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
+      await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
 
       // Write an event file that targets a different goal
       const eventsDir = path.join(tmpDir, "events");
@@ -159,21 +163,21 @@ describe("DriveSystem", () => {
   // ─── readEventQueue ───
 
   describe("readEventQueue", () => {
-    it("returns empty array when events directory is empty", () => {
-      expect(driveSystem.readEventQueue()).toEqual([]);
+    it("returns empty array when events directory is empty", async () => {
+      expect(await driveSystem.readEventQueue()).toEqual([]);
     });
 
-    it("reads and parses event files", () => {
+    it("reads and parses event files", async () => {
       const eventsDir = path.join(tmpDir, "events");
       const event = makeEvent({ source: "test", timestamp: "2025-01-01T00:00:00.000Z" });
       writeEventFile(eventsDir, "evt-001.json", event);
 
-      const result = driveSystem.readEventQueue();
+      const result = await driveSystem.readEventQueue();
       expect(result).toHaveLength(1);
       expect(result[0]?.source).toBe("test");
     });
 
-    it("sorts events by timestamp oldest first", () => {
+    it("sorts events by timestamp oldest first", async () => {
       const eventsDir = path.join(tmpDir, "events");
       const older = makeEvent({ timestamp: "2025-01-01T00:00:00.000Z", source: "older" });
       const newer = makeEvent({ timestamp: "2025-06-01T00:00:00.000Z", source: "newer" });
@@ -181,24 +185,24 @@ describe("DriveSystem", () => {
       writeEventFile(eventsDir, "evt-b.json", newer);
       writeEventFile(eventsDir, "evt-a.json", older);
 
-      const result = driveSystem.readEventQueue();
+      const result = await driveSystem.readEventQueue();
       expect(result).toHaveLength(2);
       expect(result[0]?.source).toBe("older");
       expect(result[1]?.source).toBe("newer");
     });
 
-    it("skips files that fail JSON parsing", () => {
+    it("skips files that fail JSON parsing", async () => {
       const eventsDir = path.join(tmpDir, "events");
       fs.writeFileSync(path.join(eventsDir, "corrupted.json"), "{ not valid json", "utf-8");
       const valid = makeEvent({ source: "valid" });
       writeEventFile(eventsDir, "valid.json", valid);
 
-      const result = driveSystem.readEventQueue();
+      const result = await driveSystem.readEventQueue();
       expect(result).toHaveLength(1);
       expect(result[0]?.source).toBe("valid");
     });
 
-    it("skips files that fail Zod validation", () => {
+    it("skips files that fail Zod validation", async () => {
       const eventsDir = path.join(tmpDir, "events");
       fs.writeFileSync(
         path.join(eventsDir, "invalid-schema.json"),
@@ -208,11 +212,11 @@ describe("DriveSystem", () => {
       const valid = makeEvent({ source: "valid" });
       writeEventFile(eventsDir, "valid.json", valid);
 
-      const result = driveSystem.readEventQueue();
+      const result = await driveSystem.readEventQueue();
       expect(result).toHaveLength(1);
     });
 
-    it("ignores archive subdirectory", () => {
+    it("ignores archive subdirectory", async () => {
       const eventsDir = path.join(tmpDir, "events");
       const archiveDir = path.join(eventsDir, "archive");
       fs.mkdirSync(archiveDir, { recursive: true });
@@ -221,20 +225,21 @@ describe("DriveSystem", () => {
       // Write a valid event in queue
       writeEventFile(eventsDir, "active.json", makeEvent({ source: "active" }));
 
-      const result = driveSystem.readEventQueue();
+      const result = await driveSystem.readEventQueue();
       expect(result).toHaveLength(1);
       expect(result[0]?.source).toBe("active");
     });
 
-    it("returns empty array when events directory does not exist", () => {
+    it("returns empty array when events directory does not exist", async () => {
       // Create DriveSystem pointing to a dir that has no events subdir
       const anotherTmp = fs.mkdtempSync(path.join(os.tmpdir(), "motiva-noevents-"));
       try {
         const anotherSm = new StateManager(anotherTmp);
         const anotherDs = new DriveSystem(anotherSm, { baseDir: anotherTmp });
-        // DriveSystem constructor creates the dirs, so remove to simulate absence
+        // DriveSystem constructor creates the dirs async, so wait then remove to simulate absence
+        await new Promise((resolve) => setTimeout(resolve, 50));
         fs.rmSync(path.join(anotherTmp, "events"), { recursive: true, force: true });
-        const result = anotherDs.readEventQueue();
+        const result = await anotherDs.readEventQueue();
         expect(result).toEqual([]);
       } finally {
         fs.rmSync(anotherTmp, { recursive: true, force: true });
@@ -245,27 +250,27 @@ describe("DriveSystem", () => {
   // ─── archiveEvent ───
 
   describe("archiveEvent", () => {
-    it("moves event file to archive directory", () => {
+    it("moves event file to archive directory", async () => {
       const eventsDir = path.join(tmpDir, "events");
       const archiveDir = path.join(eventsDir, "archive");
       const event = makeEvent();
       writeEventFile(eventsDir, "to-archive.json", event);
 
       expect(fs.existsSync(path.join(eventsDir, "to-archive.json"))).toBe(true);
-      driveSystem.archiveEvent("to-archive.json");
+      await driveSystem.archiveEvent("to-archive.json");
 
       expect(fs.existsSync(path.join(eventsDir, "to-archive.json"))).toBe(false);
       expect(fs.existsSync(path.join(archiveDir, "to-archive.json"))).toBe(true);
     });
 
-    it("creates archive directory if it does not exist", () => {
+    it("creates archive directory if it does not exist", async () => {
       const eventsDir = path.join(tmpDir, "events");
       const archiveDir = path.join(eventsDir, "archive");
       // Remove archive dir
       fs.rmSync(archiveDir, { recursive: true, force: true });
 
       writeEventFile(eventsDir, "evt.json", makeEvent());
-      driveSystem.archiveEvent("evt.json");
+      await driveSystem.archiveEvent("evt.json");
 
       expect(fs.existsSync(archiveDir)).toBe(true);
       expect(fs.existsSync(path.join(archiveDir, "evt.json"))).toBe(true);
@@ -275,11 +280,11 @@ describe("DriveSystem", () => {
   // ─── processEvents ───
 
   describe("processEvents", () => {
-    it("returns empty array when no events", () => {
-      expect(driveSystem.processEvents()).toEqual([]);
+    it("returns empty array when no events", async () => {
+      expect(await driveSystem.processEvents()).toEqual([]);
     });
 
-    it("reads and archives all events, returns sorted events", () => {
+    it("reads and archives all events, returns sorted events", async () => {
       const eventsDir = path.join(tmpDir, "events");
       const archiveDir = path.join(eventsDir, "archive");
       const older = makeEvent({ timestamp: "2025-01-01T00:00:00.000Z", source: "older" });
@@ -287,7 +292,7 @@ describe("DriveSystem", () => {
       writeEventFile(eventsDir, "evt-b.json", newer);
       writeEventFile(eventsDir, "evt-a.json", older);
 
-      const result = driveSystem.processEvents();
+      const result = await driveSystem.processEvents();
 
       expect(result).toHaveLength(2);
       expect(result[0]?.source).toBe("older");
@@ -300,12 +305,12 @@ describe("DriveSystem", () => {
       expect(fs.existsSync(path.join(archiveDir, "evt-b.json"))).toBe(true);
     });
 
-    it("skips corrupted files during processEvents", () => {
+    it("skips corrupted files during processEvents", async () => {
       const eventsDir = path.join(tmpDir, "events");
       fs.writeFileSync(path.join(eventsDir, "corrupted.json"), "not json", "utf-8");
       writeEventFile(eventsDir, "valid.json", makeEvent({ source: "valid" }));
 
-      const result = driveSystem.processEvents();
+      const result = await driveSystem.processEvents();
       expect(result).toHaveLength(1);
       expect(result[0]?.source).toBe("valid");
     });
@@ -314,47 +319,47 @@ describe("DriveSystem", () => {
   // ─── isScheduleDue ───
 
   describe("isScheduleDue", () => {
-    it("returns true when no schedule exists (needs initial check)", () => {
-      expect(driveSystem.isScheduleDue("unknown-goal")).toBe(true);
+    it("returns true when no schedule exists (needs initial check)", async () => {
+      expect(await driveSystem.isScheduleDue("unknown-goal")).toBe(true);
     });
 
-    it("returns true when next_check_at is in the past", () => {
+    it("returns true when next_check_at is in the past", async () => {
       const goalId = crypto.randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       const pastTime = new Date(Date.now() - 5000).toISOString();
-      driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: pastTime });
+      await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: pastTime });
 
-      expect(driveSystem.isScheduleDue(goalId)).toBe(true);
+      expect(await driveSystem.isScheduleDue(goalId)).toBe(true);
     });
 
-    it("returns true when next_check_at equals now (boundary — due)", () => {
+    it("returns true when next_check_at equals now (boundary — due)", async () => {
       const goalId = crypto.randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       // Use a time slightly in the past to ensure <= comparison passes
       const justNow = new Date(Date.now() - 1).toISOString();
-      driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: justNow });
+      await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: justNow });
 
-      expect(driveSystem.isScheduleDue(goalId)).toBe(true);
+      expect(await driveSystem.isScheduleDue(goalId)).toBe(true);
     });
 
-    it("returns false when next_check_at is in the future", () => {
+    it("returns false when next_check_at is in the future", async () => {
       const goalId = crypto.randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       const futureTime = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString();
-      driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
+      await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
 
-      expect(driveSystem.isScheduleDue(goalId)).toBe(false);
+      expect(await driveSystem.isScheduleDue(goalId)).toBe(false);
     });
   });
 
   // ─── getSchedule / updateSchedule ───
 
   describe("getSchedule / updateSchedule", () => {
-    it("returns null when no schedule file exists", () => {
-      expect(driveSystem.getSchedule("no-such-goal")).toBeNull();
+    it("returns null when no schedule file exists", async () => {
+      expect(await driveSystem.getSchedule("no-such-goal")).toBeNull();
     });
 
-    it("round-trips schedule persistence correctly", () => {
+    it("round-trips schedule persistence correctly", async () => {
       const goalId = crypto.randomUUID();
       const schedule: GoalSchedule = {
         goal_id: goalId,
@@ -366,8 +371,8 @@ describe("DriveSystem", () => {
         current_interval_hours: 4,
       };
 
-      driveSystem.updateSchedule(goalId, schedule);
-      const loaded = driveSystem.getSchedule(goalId);
+      await driveSystem.updateSchedule(goalId, schedule);
+      const loaded = await driveSystem.getSchedule(goalId);
 
       expect(loaded).not.toBeNull();
       expect(loaded?.goal_id).toBe(goalId);
@@ -378,37 +383,37 @@ describe("DriveSystem", () => {
       expect(loaded?.current_interval_hours).toBe(4);
     });
 
-    it("updates an existing schedule", () => {
+    it("updates an existing schedule", async () => {
       const goalId = crypto.randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 2);
-      driveSystem.updateSchedule(goalId, schedule);
+      await driveSystem.updateSchedule(goalId, schedule);
 
       const updated = { ...schedule, check_interval_hours: 8, current_interval_hours: 8 };
-      driveSystem.updateSchedule(goalId, updated);
+      await driveSystem.updateSchedule(goalId, updated);
 
-      const loaded = driveSystem.getSchedule(goalId);
+      const loaded = await driveSystem.getSchedule(goalId);
       expect(loaded?.check_interval_hours).toBe(8);
     });
 
-    it("creates schedule directory if it does not exist", () => {
+    it("creates schedule directory if it does not exist", async () => {
       const scheduleDir = path.join(tmpDir, "schedule");
       fs.rmSync(scheduleDir, { recursive: true, force: true });
 
       const goalId = crypto.randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
-      driveSystem.updateSchedule(goalId, schedule);
+      await driveSystem.updateSchedule(goalId, schedule);
 
       expect(fs.existsSync(scheduleDir)).toBe(true);
-      expect(driveSystem.getSchedule(goalId)).not.toBeNull();
+      expect(await driveSystem.getSchedule(goalId)).not.toBeNull();
     });
 
-    it("returns null for corrupted schedule file", () => {
+    it("returns null for corrupted schedule file", async () => {
       const goalId = "corrupted-goal";
       const scheduleDir = path.join(tmpDir, "schedule");
       fs.mkdirSync(scheduleDir, { recursive: true });
       fs.writeFileSync(path.join(scheduleDir, `${goalId}.json`), "not valid json", "utf-8");
 
-      expect(driveSystem.getSchedule(goalId)).toBeNull();
+      expect(await driveSystem.getSchedule(goalId)).toBeNull();
     });
   });
 
@@ -523,29 +528,29 @@ describe("DriveSystem", () => {
   // ─── Edge cases: missing directories ───
 
   describe("edge cases", () => {
-    it("processEvents returns empty array when events dir is missing", () => {
+    it("processEvents returns empty array when events dir is missing", async () => {
       fs.rmSync(path.join(tmpDir, "events"), { recursive: true, force: true });
-      expect(driveSystem.processEvents()).toEqual([]);
+      expect(await driveSystem.processEvents()).toEqual([]);
     });
 
-    it("readEventQueue handles non-.json files gracefully", () => {
+    it("readEventQueue handles non-.json files gracefully", async () => {
       const eventsDir = path.join(tmpDir, "events");
       fs.writeFileSync(path.join(eventsDir, "readme.txt"), "ignore me", "utf-8");
       writeEventFile(eventsDir, "valid.json", makeEvent({ source: "valid" }));
 
-      const result = driveSystem.readEventQueue();
+      const result = await driveSystem.readEventQueue();
       expect(result).toHaveLength(1);
     });
 
-    it("getSchedule handles schedule dir missing gracefully", () => {
+    it("getSchedule handles schedule dir missing gracefully", async () => {
       fs.rmSync(path.join(tmpDir, "schedule"), { recursive: true, force: true });
-      expect(driveSystem.getSchedule("any-goal")).toBeNull();
+      expect(await driveSystem.getSchedule("any-goal")).toBeNull();
     });
 
-    it("atomic write creates .tmp then renames (file is not corrupt after write)", () => {
+    it("atomic write creates .tmp then renames (file is not corrupt after write)", async () => {
       const goalId = crypto.randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
-      driveSystem.updateSchedule(goalId, schedule);
+      await driveSystem.updateSchedule(goalId, schedule);
 
       const scheduleFile = path.join(tmpDir, "schedule", `${goalId}.json`);
       const tmpFile = scheduleFile + ".tmp";

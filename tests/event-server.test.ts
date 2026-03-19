@@ -9,7 +9,7 @@ import { makeTempDir } from "./helpers/temp-dir.js";
 // ─── Helpers ───
 
 const createMockDriveSystem = (tmpDir: string) => ({
-  writeEvent: vi.fn().mockImplementation((event: MotivaEvent) => {
+  writeEvent: vi.fn().mockImplementation(async (event: MotivaEvent) => {
     const eventsDir = path.join(tmpDir, "events");
     fs.mkdirSync(eventsDir, { recursive: true });
     const file = path.join(eventsDir, `test_${Date.now()}_${Math.random().toString(36).slice(2)}.json`);
@@ -196,6 +196,8 @@ describe("POST /events — valid event", () => {
 
   it("writes event file to temp events dir", async () => {
     await postEvent(port, validEvent);
+    // writeEvent is fire-and-forget in the HTTP handler, so wait briefly
+    await new Promise((r) => setTimeout(r, 50));
     const eventsDir = path.join(tmpDir, "events");
     expect(fs.existsSync(eventsDir)).toBe(true);
     const files = fs.readdirSync(eventsDir);

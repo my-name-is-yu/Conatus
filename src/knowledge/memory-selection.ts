@@ -10,7 +10,7 @@ import type {
 } from "../types/memory-lifecycle.js";
 import type { IDriveScorer } from "./drive-score-adapter.js";
 import {
-  readJsonFile,
+  readJsonFileAsync,
 } from "./memory-persistence.js";
 import {
   loadIndex,
@@ -116,10 +116,10 @@ export async function selectForWorkingMemory(
       idxEntry.data_file
     );
     const allEntries =
-      readJsonFile<ShortTermEntry[]>(
+      (await readJsonFileAsync<ShortTermEntry[]>(
         dataFilePath,
         z.array(ShortTermEntrySchema)
-      ) ?? [];
+      )) ?? [];
     const found = allEntries.find((e) => e.id === idxEntry.entry_id);
     if (found) {
       shortTermEntries.push(found);
@@ -156,10 +156,10 @@ export async function selectForWorkingMemory(
         idxEntry.data_file
       );
       const allEntries =
-        readJsonFile<ShortTermEntry[]>(
+        (await readJsonFileAsync<ShortTermEntry[]>(
           dataFilePath,
           z.array(ShortTermEntrySchema)
-        ) ?? [];
+        )) ?? [];
       const found = allEntries.find((e) => e.id === idxEntry.entry_id);
       if (found) {
         shortTermEntries.push(found);
@@ -178,11 +178,11 @@ export async function selectForWorkingMemory(
   }
 
   // 2. Query long-term lessons matching tags (cross-goal OK for lessons)
-  const goalLessons = queryLessons(deps.memoryDir, tags, dimensions, Math.ceil(maxEntries * 0.75));
+  const goalLessons = await queryLessons(deps.memoryDir, tags, dimensions, Math.ceil(maxEntries * 0.75));
 
   // Phase 2 (5.2c): Include cross-goal lessons (up to 25% of budget)
   const crossGoalBudget = Math.max(1, Math.floor(maxEntries * 0.25));
-  const crossGoalLessonList = queryCrossGoalLessons(
+  const crossGoalLessonList = await queryCrossGoalLessons(
     deps.memoryDir,
     tags,
     dimensions,
@@ -232,10 +232,10 @@ export async function searchCrossGoalLessons(
       "global.json"
     );
     const globalLessons =
-      readJsonFile<LessonEntry[]>(
+      (await readJsonFileAsync<LessonEntry[]>(
         globalPath,
         z.array(LessonEntrySchema)
-      ) ?? [];
+      )) ?? [];
 
     const lessonMap = new Map(globalLessons.map((l) => [l.lesson_id, l]));
     const matched: LessonEntry[] = [];
@@ -262,10 +262,10 @@ export async function searchCrossGoalLessons(
     "global.json"
   );
   const globalLessons =
-    readJsonFile<LessonEntry[]>(
+    (await readJsonFileAsync<LessonEntry[]>(
       globalPath,
       z.array(LessonSchema)
-    ) ?? [];
+    )) ?? [];
 
   // Simple text match on lesson content
   const queryLower = query.toLowerCase();
@@ -356,10 +356,10 @@ export async function selectForWorkingMemorySemantic(
       idxEntry.data_file
     );
     const allEntries =
-      readJsonFile<ShortTermEntry[]>(
+      (await readJsonFileAsync<ShortTermEntry[]>(
         dataFilePath,
         z.array(ShortTermEntrySchema)
-      ) ?? [];
+      )) ?? [];
     const found = allEntries.find((e) => e.id === idxEntry.entry_id);
     if (found) {
       scoredEntries.push({ entry: found, combinedScore });
@@ -375,7 +375,7 @@ export async function selectForWorkingMemorySemantic(
     .map((s) => s.entry);
 
   // Still use tag/dimension-based lesson query for long-term
-  const lessons = queryLessons(deps.memoryDir, tags, dimensions, maxEntries);
+  const lessons = await queryLessons(deps.memoryDir, tags, dimensions, maxEntries);
 
   return { shortTerm: shortTermEntries, lessons };
 }

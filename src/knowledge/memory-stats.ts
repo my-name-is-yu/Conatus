@@ -4,15 +4,15 @@ import type {
   ShortTermEntry,
   StatisticalSummary,
 } from "../types/memory-lifecycle.js";
-import { atomicWrite, readJsonFile } from "./memory-persistence.js";
+import { atomicWriteAsync, readJsonFileAsync } from "./memory-persistence.js";
 
 // ─── Statistics ───
 
-export function updateStatistics(
+export async function updateStatistics(
   memoryDir: string,
   goalId: string,
   entries: ShortTermEntry[]
-): void {
+): Promise<void> {
   const statsPath = path.join(
     memoryDir,
     "long-term",
@@ -22,7 +22,7 @@ export function updateStatistics(
   const now = new Date().toISOString();
 
   // Load existing or create fresh
-  const existing = readJsonFile<StatisticalSummary>(
+  const existing = await readJsonFileAsync<StatisticalSummary>(
     statsPath,
     StatisticalSummarySchema
   );
@@ -157,7 +157,7 @@ export function updateStatistics(
     updated_at: now,
   });
 
-  atomicWrite(statsPath, summary);
+  await atomicWriteAsync(statsPath, summary);
 }
 
 export function mergeTaskStats(

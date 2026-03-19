@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { IEmbeddingClient } from "./embedding-client.js";
@@ -13,7 +12,20 @@ export class VectorIndex {
     private readonly indexPath: string,
     private readonly embeddingClient: IEmbeddingClient
   ) {
-    this._loadSync();
+    // Sync loading removed. Use VectorIndex.create() for async load on construction,
+    // or call _load() manually after construction.
+  }
+
+  /**
+   * Factory method: constructs a VectorIndex and loads existing data from disk.
+   */
+  static async create(
+    indexPath: string,
+    embeddingClient: IEmbeddingClient
+  ): Promise<VectorIndex> {
+    const index = new VectorIndex(indexPath, embeddingClient);
+    await index._load();
+    return index;
   }
 
   /**
@@ -110,10 +122,14 @@ export class VectorIndex {
     await this._save();
   }
 
-  private _loadSync(): void {
-    if (!fs.existsSync(this.indexPath)) return;
+  async _load(): Promise<void> {
     try {
-      const raw = fs.readFileSync(this.indexPath, "utf-8");
+      await fsp.access(this.indexPath);
+    } catch {
+      return;
+    }
+    try {
+      const raw = await fsp.readFile(this.indexPath, "utf-8");
       const parsed = JSON.parse(raw) as Array<EmbeddingEntry>;
       for (const item of parsed) {
         const entry = EmbeddingEntrySchema.parse(item);

@@ -79,6 +79,14 @@ export class CLIRunner {
   }
 
   /**
+   * @description Initialises the state directory structure. Must be awaited before issuing any subcommands.
+   * @returns {Promise<void>}
+   */
+  async init(): Promise<void> {
+    await this.stateManager.init();
+  }
+
+  /**
    * @description Stops the active core loop if one is currently running. Safe to call before `run()` or when no loop is active.
    * @returns {void} Does not return a value.
    */
@@ -96,6 +104,8 @@ export class CLIRunner {
    * @returns {Promise<number>} A promise that resolves to `0` for success, `1` for errors, or `2` for stall escalation.
    */
   async run(argv: string[]): Promise<number> {
+    await this.init();
+
     if (argv.length === 0) {
       printUsage();
       return 1;

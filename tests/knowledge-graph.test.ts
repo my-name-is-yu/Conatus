@@ -310,7 +310,7 @@ describe("Persistence", () => {
     await graph.addEdge({ from_id: "e1", to_id: "e2", relation: "refines", confidence: 0.85 });
 
     // Load fresh instance from the same path
-    const graph2 = new KnowledgeGraph(path.join(tempDir, "graph.json"));
+    const graph2 = await KnowledgeGraph.create(path.join(tempDir, "graph.json"));
     expect(graph2.nodeCount).toBe(2);
     expect(graph2.edgeCount).toBe(1);
 
@@ -361,7 +361,7 @@ describe("clear", () => {
     await graph.addNode("e1", "goal-A", []);
     await graph.clear();
 
-    const graph2 = new KnowledgeGraph(path.join(tempDir, "graph.json"));
+    const graph2 = await KnowledgeGraph.create(path.join(tempDir, "graph.json"));
     expect(graph2.nodeCount).toBe(0);
   });
 });

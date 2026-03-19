@@ -1,5 +1,5 @@
-import * as _fs from "node:fs";
 import * as _path from "node:path";
+import { access, readFile } from "node:fs/promises";
 import type { StateManager } from "../state-manager.js";
 
 /**
@@ -99,8 +99,12 @@ Constraints:
   let projectDescription = "";
   try {
     const pkgPath = _path.join(process.cwd(), "package.json");
-    if (_fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(_fs.readFileSync(pkgPath, "utf-8")) as {
+    const exists = await access(pkgPath)
+      .then(() => true)
+      .catch(() => false);
+    if (exists) {
+      const content = await readFile(pkgPath, "utf-8");
+      const pkg = JSON.parse(content) as {
         name?: string;
         description?: string;
       };

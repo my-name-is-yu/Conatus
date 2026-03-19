@@ -1,39 +1,8 @@
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import type { MemoryDataType, RetentionConfig } from "../types/memory-lifecycle.js";
-
-// ─── Atomic file write ───
-
-/**
- * Write data to a file atomically (write to .tmp, then rename).
- */
-export function atomicWrite(filePath: string, data: unknown): void {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = filePath + ".tmp";
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-  fs.renameSync(tmpPath, filePath);
-}
-
-// ─── JSON file read ───
-
-/**
- * Read and parse a JSON file using the provided Zod schema.
- * Returns null if the file doesn't exist or parsing fails.
- */
-export function readJsonFile<T>(filePath: string, schema: z.ZodTypeAny): T | null {
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const raw = JSON.parse(content) as unknown;
-    return schema.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
 
 // ─── Data file path resolution ───
 
@@ -131,30 +100,6 @@ export async function getDirectorySizeAsync(dirPath: string): Promise<number> {
     } else {
       try {
         total += (await fsp.stat(entryPath)).size;
-      } catch {
-        // Ignore stat errors
-      }
-    }
-  }
-  return total;
-}
-
-// ─── Directory size ───
-
-/**
- * Compute total size of a directory recursively in bytes.
- */
-export function getDirectorySize(dirPath: string): number {
-  if (!fs.existsSync(dirPath)) return 0;
-  let total = 0;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const entryPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      total += getDirectorySize(entryPath);
-    } else {
-      try {
-        total += fs.statSync(entryPath).size;
       } catch {
         // Ignore stat errors
       }

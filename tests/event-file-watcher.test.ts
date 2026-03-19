@@ -26,7 +26,7 @@ const validEvent: MotivaEvent = {
 };
 
 const createMockDriveSystem = () => ({
-  writeEvent: vi.fn(),
+  writeEvent: vi.fn().mockResolvedValue(undefined),
 });
 
 /**

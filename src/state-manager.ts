@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { getMotivaDirPath } from "./utils/paths.js";
@@ -34,17 +33,10 @@ export class StateManager {
   constructor(baseDir?: string, logger?: Logger) {
     this.baseDir = baseDir ?? getMotivaDirPath();
     this.logger = logger;
-    this.ensureDirectories();
   }
 
-  /** Returns the base directory path */
-  getBaseDir(): string {
-    return this.baseDir;
-  }
-
-  // ─── Directory Management ───
-
-  private ensureDirectories(): void {
+  /** Create required subdirectories. Must be called after construction before first use. */
+  async init(): Promise<void> {
     const dirs = [
       this.baseDir,
       path.join(this.baseDir, "goals"),
@@ -57,8 +49,13 @@ export class StateManager {
       path.join(this.baseDir, "reports", "notifications"),
     ];
     for (const dir of dirs) {
-      fs.mkdirSync(dir, { recursive: true });
+      await fsp.mkdir(dir, { recursive: true });
     }
+  }
+
+  /** Returns the base directory path */
+  getBaseDir(): string {
+    return this.baseDir;
   }
 
   private async goalDir(goalId: string): Promise<string> {
