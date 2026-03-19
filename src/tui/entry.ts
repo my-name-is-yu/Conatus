@@ -9,6 +9,7 @@ import React from "react";
 
 import { StateManager } from "../state-manager.js";
 import { buildLLMClient, buildAdapterRegistry } from "../llm/provider-factory.js";
+import { createWorkspaceContextProvider } from "../observation/workspace-context.js";
 import { TrustManager } from "../traits/trust-manager.js";
 import { DriveSystem } from "../drive/drive-system.js";
 import { ObservationEngine } from "../observation/observation-engine.js";
@@ -21,6 +22,13 @@ import { GoalNegotiator } from "../goal/goal-negotiator.js";
 import { TaskLifecycle } from "../execution/task-lifecycle.js";
 import { ReportingEngine } from "../reporting-engine.js";
 import { CoreLoop } from "../core-loop.js";
+import { GoalTreeManager } from "../goal/goal-tree-manager.js";
+import { StateAggregator } from "../goal/state-aggregator.js";
+import { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
+import { TreeLoopOrchestrator } from "../goal/tree-loop-orchestrator.js";
+import { MemoryLifecycleManager, DriveScoreAdapter } from "../knowledge/memory-lifecycle.js";
+import { CharacterConfigManager } from "../traits/character-config.js";
+import { getMotivaDirPath } from "../utils/paths.js";
 import * as GapCalculator from "../drive/gap-calculator.js";
 import * as DriveScorer from "../drive/drive-scorer.js";
 import type { GapCalculatorModule, DriveScorerModule } from "../core-loop.js";
@@ -35,14 +43,31 @@ import type { Task } from "../types/task.js";
 
 async function buildDeps() {
   const stateManager = new StateManager();
+  const characterConfigManager = new CharacterConfigManager(stateManager);
+  const characterConfig = await characterConfigManager.load();
   const llmClient = await buildLLMClient();
   const trustManager = new TrustManager(stateManager);
   const driveSystem = new DriveSystem(stateManager);
-  const observationEngine = new ObservationEngine(stateManager);
-  const stallDetector = new StallDetector(stateManager);
+
+  const contextProvider = createWorkspaceContextProvider(
+    { workDir: process.cwd() },
+    async (goalId: string) => {
+      try {
+        const goal = await stateManager.loadGoal(goalId);
+        return goal?.description;
+      } catch (err) {
+        getCliLogger().error(`[motiva] Failed to resolve goal description for "${goalId}": ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }
+    }
+  );
+
+  const observationEngine = new ObservationEngine(stateManager, [], llmClient, contextProvider);
+  const stallDetector = new StallDetector(stateManager, characterConfig);
   const satisficingJudge = new SatisficingJudge(stateManager);
   const ethicsGate = new EthicsGate(stateManager, llmClient);
-  const sessionManager = new SessionManager(stateManager);
+  const goalDependencyGraph = new GoalDependencyGraph(stateManager, llmClient);
+  const sessionManager = new SessionManager(stateManager, goalDependencyGraph);
   const strategyManager = new StrategyManager(stateManager, llmClient);
   const adapterRegistry = buildAdapterRegistry(llmClient);
 
@@ -74,7 +99,35 @@ async function buildDeps() {
     { approvalFn }
   );
 
-  const reportingEngine = new ReportingEngine(stateManager);
+  const reportingEngine = new ReportingEngine(stateManager, undefined, characterConfig);
+
+  const goalTreeManager = new GoalTreeManager(
+    stateManager, llmClient, ethicsGate, goalDependencyGraph
+  );
+  const stateAggregator = new StateAggregator(stateManager, satisficingJudge);
+  const treeLoopOrchestrator = new TreeLoopOrchestrator(
+    stateManager, goalTreeManager, stateAggregator, satisficingJudge
+  );
+
+  const motivaBaseDir = getMotivaDirPath();
+  let memoryLifecycleManager: MemoryLifecycleManager | undefined;
+  let driveScoreAdapter: DriveScoreAdapter | undefined;
+  try {
+    driveScoreAdapter = new DriveScoreAdapter();
+    memoryLifecycleManager = new MemoryLifecycleManager(
+      motivaBaseDir,
+      llmClient,
+      undefined,
+      undefined,
+      undefined,
+      driveScoreAdapter
+    );
+    memoryLifecycleManager.initializeDirectories();
+  } catch (err) {
+    getCliLogger().warn(`[motiva] MemoryLifecycleManager init failed — memory features disabled: ${err instanceof Error ? err.message : String(err)}`);
+    memoryLifecycleManager = undefined;
+    driveScoreAdapter = undefined;
+  }
 
   // Wrap pure-function modules to satisfy GapCalculatorModule / DriveScorerModule
   const gapCalculator: GapCalculatorModule = {
@@ -100,6 +153,13 @@ async function buildDeps() {
     reportingEngine,
     driveSystem,
     adapterRegistry,
+    goalTreeManager,
+    stateAggregator,
+    treeLoopOrchestrator,
+    goalDependencyGraph,
+    memoryLifecycleManager,
+    driveScoreAdapter,
+    contextProvider,
   });
 
   const goalNegotiator = new GoalNegotiator(
@@ -107,9 +167,9 @@ async function buildDeps() {
     llmClient,
     ethicsGate,
     observationEngine,
-    undefined,
-    undefined,
-    undefined,
+    characterConfig,
+    satisficingJudge,
+    goalTreeManager,
     adapterRegistry.getAdapterCapabilities()
   );
 
