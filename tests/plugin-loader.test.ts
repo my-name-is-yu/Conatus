@@ -228,7 +228,7 @@ describe("PluginLoader.loadManifest (mocked fs)", () => {
   it("throws when neither plugin.yaml nor plugin.json exists", async () => {
     // Both readFileSafe calls will fail — we rely on the real fs not finding the file
     await expect(loader.loadManifest("/tmp/nonexistent-plugin-dir-xyz")).rejects.toThrow(
-      /マニフェストファイルが見つかりません/
+      /Manifest file not found/
     );
   });
 });

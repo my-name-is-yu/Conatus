@@ -89,13 +89,13 @@ export class PluginLoader {
       module = (await import(pathToFileURL(entryPath).href)) as { default?: unknown };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`エントリポイントのインポートに失敗: ${entryPath} — ${msg}`);
+      throw new Error(`Failed to import plugin entry point: ${entryPath} — ${msg}`);
     }
 
     const impl = module.default;
     if (impl === undefined || impl === null) {
       throw new Error(
-        `プラグインのエントリポイントにdefaultエクスポートがありません: ${entryPath}`
+        `Plugin entry point has no default export: ${entryPath}`
       );
     }
 
@@ -157,7 +157,7 @@ export class PluginLoader {
         raw = yaml.load(yamlContent);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`plugin.yaml の解析に失敗: ${yamlPath} — ${msg}`);
+        throw new Error(`Failed to parse plugin.yaml: ${yamlPath} — ${msg}`);
       }
     } else {
       // Attempt JSON
@@ -167,11 +167,11 @@ export class PluginLoader {
           raw = JSON.parse(jsonContent);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          throw new Error(`plugin.json の解析に失敗: ${jsonPath} — ${msg}`);
+          throw new Error(`Failed to parse plugin.json: ${jsonPath} — ${msg}`);
         }
       } else {
         throw new Error(
-          `マニフェストファイルが見つかりません (plugin.yaml / plugin.json): ${pluginDir}`
+          `Manifest file not found (plugin.yaml / plugin.json): ${pluginDir}`
         );
       }
     }
@@ -181,7 +181,7 @@ export class PluginLoader {
       const issues = result.error.issues
         .map((i) => `  ${i.path.join(".")}: ${i.message}`)
         .join("\n");
-      throw new Error(`マニフェストのスキーマ検証に失敗:\n${issues}`);
+      throw new Error(`Plugin manifest schema validation failed:\n${issues}`);
     }
 
     return result.data;
@@ -201,7 +201,7 @@ export class PluginLoader {
     for (const method of required) {
       if (!(method in (impl as object))) {
         throw new Error(
-          `プラグインに必須メソッド "${method}" がありません (type: ${type})`
+          `Plugin is missing required method "${method}" (type: ${type})`
         );
       }
     }
@@ -250,7 +250,7 @@ export class PluginLoader {
       reason instanceof Error ? reason.message : String(reason);
     const dirName = path.basename(pluginDir);
 
-    this.logger?.error(`[PluginLoader] プラグインのロードに失敗: ${pluginDir}\n  ${errorMessage}`);
+    this.logger?.error(`[PluginLoader] Failed to load plugin: ${pluginDir}\n  ${errorMessage}`);
 
     // Build a minimal manifest for the error state
     const fallbackManifest: PluginManifest = PluginManifestSchema.parse({
