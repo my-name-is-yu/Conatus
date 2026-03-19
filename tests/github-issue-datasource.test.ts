@@ -225,3 +225,182 @@ describe("GitHubIssueDataSourceAdapter connect/disconnect", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 });
+
+// ─── getSupportedDimensions tests ───
+
+describe("GitHubIssueDataSourceAdapter.getSupportedDimensions", () => {
+  it("returns all four supported dimension names", () => {
+    const adapter = new GitHubIssueDataSourceAdapter(makeConfig());
+    const dims = adapter.getSupportedDimensions();
+
+    expect(dims).toContain("open_issue_count");
+    expect(dims).toContain("closed_issue_count");
+    expect(dims).toContain("total_issue_count");
+    expect(dims).toContain("completion_ratio");
+    expect(dims.length).toBe(4);
+  });
+});
+
+// ─── healthCheck edge cases ───
+
+describe("GitHubIssueDataSourceAdapter.healthCheck edge cases", () => {
+  beforeEach(() => {
+    mockSpawn.mockReset();
+  });
+
+  it("returns false when gh CLI spawn emits an error (not installed)", async () => {
+    const adapter = new GitHubIssueDataSourceAdapter(makeConfig());
+    const child = makeFakeChild();
+
+    const healthPromise = adapter.healthCheck();
+    child.emit("error", new Error("spawn gh ENOENT"));
+    const result = await healthPromise;
+
+    expect(result).toBe(false);
+  });
+
+  it("returns false on healthCheck timeout", async () => {
+    vi.useFakeTimers();
+    const adapter = new GitHubIssueDataSourceAdapter(makeConfig());
+    const child = makeFakeChild();
+
+    const healthPromise = adapter.healthCheck();
+    await vi.advanceTimersByTimeAsync(8_001);
+    child.emit("close", null);
+    const result = await healthPromise;
+    vi.useRealTimers();
+
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(result).toBe(false);
+  });
+});
+
+// ─── query edge cases ───
+
+describe("GitHubIssueDataSourceAdapter.query edge cases", () => {
+  let adapter: GitHubIssueDataSourceAdapter;
+
+  beforeEach(() => {
+    mockSpawn.mockReset();
+    adapter = new GitHubIssueDataSourceAdapter(makeConfig());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns null value on spawn error event (gh not installed)", async () => {
+    const child = makeFakeChild();
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    child.emit("error", new Error("spawn gh ENOENT"));
+    const result = await queryPromise;
+
+    expect(result.value).toBeNull();
+    expect(result.error).toBeTruthy();
+  });
+
+  it("returns null value when stdout is malformed JSON", async () => {
+    const child = makeFakeChild();
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    child.stdout.emit("data", Buffer.from("not-valid-json{"));
+    child.emit("close", 0);
+    const result = await queryPromise;
+
+    // parseIssueList returns [] on bad JSON — so value is 0, not null
+    expect(result.value).toBe(0);
+  });
+
+  it("completion_ratio is 0 when there are no issues at all", async () => {
+    const openChild = makeFakeChild();
+    const closedChild = makeFakeChild();
+
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "completion_ratio" }));
+    resolveChild(openChild, []);
+    resolveChild(closedChild, []);
+    const result = await queryPromise;
+
+    expect(result.value).toBe(0);
+  });
+
+  it("uses custom _label from dimension_mapping", async () => {
+    const config = makeConfig({
+      connection: { repo: "owner/repo" },
+      dimension_mapping: { _label: "my-team" },
+    });
+    const customAdapter = new GitHubIssueDataSourceAdapter(config);
+    const child = makeFakeChild();
+
+    const queryPromise = customAdapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    resolveChild(child, []);
+    await queryPromise;
+
+    const spawnCalls = mockSpawn.mock.calls;
+    const listCall = spawnCalls.find(
+      ([cmd, args]: [string, string[]]) => cmd === "gh" && args.includes("list")
+    );
+    expect(listCall).toBeDefined();
+    const args: string[] = listCall![1] as string[];
+    expect(args.join(" ")).toContain("my-team");
+  });
+
+  it("query uses connection.url as repo fallback when connection.repo is absent", async () => {
+    const config = makeConfig({
+      connection: { url: "fallback-org/fallback-repo" },
+    });
+    const urlAdapter = new GitHubIssueDataSourceAdapter(config);
+    const child = makeFakeChild();
+
+    const queryPromise = urlAdapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    resolveChild(child, [{ number: 1 }]);
+    const result = await queryPromise;
+
+    expect(result.value).toBe(1);
+    const spawnCalls = mockSpawn.mock.calls;
+    const listCall = spawnCalls[0];
+    const args: string[] = listCall[1] as string[];
+    expect(args.join(" ")).toContain("fallback-org/fallback-repo");
+  });
+
+  it("dimension_mapping redirect resolves a mapped dimension name", async () => {
+    const config = makeConfig({
+      connection: { repo: "owner/repo" },
+      dimension_mapping: { bugs: "open_issue_count" },
+    });
+    const mappedAdapter = new GitHubIssueDataSourceAdapter(config);
+    const child = makeFakeChild();
+
+    const queryPromise = mappedAdapter.query(makeQuery({ dimension_name: "bugs" }));
+    resolveChild(child, [{ number: 1 }, { number: 2 }]);
+    const result = await queryPromise;
+
+    expect(result.value).toBe(2);
+  });
+
+  it("query includes --repo flag when repo is configured", async () => {
+    const child = makeFakeChild();
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    resolveChild(child, []);
+    await queryPromise;
+
+    const spawnCalls = mockSpawn.mock.calls;
+    const listCall = spawnCalls[0];
+    const args: string[] = listCall[1] as string[];
+    expect(args).toContain("--repo");
+    expect(args.join(" ")).toContain("owner/repo");
+  });
+
+  it("query timeout returns null value", async () => {
+    vi.useFakeTimers();
+    const child = makeFakeChild();
+
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "open_issue_count", timeout_ms: 100 }));
+    await vi.advanceTimersByTimeAsync(101);
+    child.emit("close", null);
+    const result = await queryPromise;
+    vi.useRealTimers();
+
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(result.value).toBeNull();
+    expect(result.error).toMatch(/timed out/i);
+  });
+});

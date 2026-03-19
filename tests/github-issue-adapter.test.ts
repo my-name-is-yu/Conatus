@@ -556,3 +556,217 @@ describe("GitHubIssueAdapter.checkDuplicate", () => {
     expect(result).toBe(false);
   });
 });
+
+// ─── listExistingTasks tests ───
+
+describe("GitHubIssueAdapter.listExistingTasks", () => {
+  beforeEach(() => {
+    mockSpawn.mockReset();
+  });
+
+  it("returns list of titles from open issues", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/repo" });
+    const child = makeFakeChild();
+
+    const promise = adapter.listExistingTasks();
+    child.stdout.emit(
+      "data",
+      Buffer.from(JSON.stringify([{ title: "Fix bug" }, { title: "Add feature" }]))
+    );
+    child.emit("close", 0);
+
+    const result = await promise;
+    expect(result).toEqual(["Fix bug", "Add feature"]);
+  });
+
+  it("returns empty array when no issues exist", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/repo" });
+    const child = makeFakeChild();
+
+    const promise = adapter.listExistingTasks();
+    child.stdout.emit("data", Buffer.from("[]"));
+    child.emit("close", 0);
+
+    const result = await promise;
+    expect(result).toEqual([]);
+  });
+
+  it("returns empty array on gh CLI error (fail-open)", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/repo" });
+    const child = makeFakeChild();
+
+    const promise = adapter.listExistingTasks();
+    child.emit("error", new Error("gh not found"));
+
+    const result = await promise;
+    expect(result).toEqual([]);
+  });
+
+  it("returns empty array when gh exits with non-zero code", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/repo" });
+    const child = makeFakeChild();
+
+    const promise = adapter.listExistingTasks();
+    child.stderr.emit("data", Buffer.from("authentication required"));
+    child.emit("close", 1);
+
+    const result = await promise;
+    expect(result).toEqual([]);
+  });
+
+  it("returns empty array when stdout is malformed JSON", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/repo" });
+    const child = makeFakeChild();
+
+    const promise = adapter.listExistingTasks();
+    child.stdout.emit("data", Buffer.from("not-json"));
+    child.emit("close", 0);
+
+    const result = await promise;
+    expect(result).toEqual([]);
+  });
+
+  it("uses configured label in list command", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/repo", defaultLabels: ["custom-label"] });
+    const child = makeFakeChild();
+
+    const promise = adapter.listExistingTasks();
+    child.stdout.emit("data", Buffer.from("[]"));
+    child.emit("close", 0);
+    await promise;
+
+    const spawnCalls = mockSpawn.mock.calls;
+    const listCall = spawnCalls.find(
+      ([cmd, args]: [string, string[]]) => cmd === "gh" && args.includes("list")
+    );
+    expect(listCall).toBeDefined();
+    const args: string[] = listCall![1] as string[];
+    expect(args.join(" ")).toContain("custom-label");
+  });
+});
+
+// ─── execute error classification tests ───
+
+describe("GitHubIssueAdapter.execute error classification", () => {
+  beforeEach(() => {
+    mockSpawn.mockReset();
+  });
+
+  afterEach(() => {
+    delete process.env["MOTIVA_GITHUB_REPO"];
+  });
+
+  it("classifies 'gh not found' spawn error with helpful message", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/repo" });
+    const dedupChild = makeDedupChild();
+    const child = makeFakeChild();
+
+    const executePromise = adapter.execute(makeTask());
+    await resolveDedupChildNoMatch(dedupChild);
+    child.emit("error", new Error("spawn gh ENOENT"));
+    const result = await executePromise;
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/gh CLI not found/i);
+  });
+
+  it("classifies authentication error with helpful message", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/repo" });
+    const dedupChild = makeDedupChild();
+    const child = makeFakeChild();
+
+    const executePromise = adapter.execute(makeTask());
+    await resolveDedupChildNoMatch(dedupChild);
+    child.stderr.emit("data", Buffer.from("not logged into any GitHub hosts"));
+    child.emit("close", 1);
+    const result = await executePromise;
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not authenticated/i);
+  });
+
+  it("classifies repository not found error with helpful message", async () => {
+    const adapter = new GitHubIssueAdapter({ repo: "owner/nonexistent-repo" });
+    const dedupChild = makeDedupChild();
+    const child = makeFakeChild();
+
+    const executePromise = adapter.execute(makeTask());
+    await resolveDedupChildNoMatch(dedupChild);
+    child.stderr.emit("data", Buffer.from("repository not found"));
+    child.emit("close", 1);
+    const result = await executePromise;
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Repository not found/i);
+  });
+
+  it("returns error when repo auto-detection fails completely", async () => {
+    delete process.env["MOTIVA_GITHUB_REPO"];
+    const adapter = new GitHubIssueAdapter();
+
+    // dedup child, then detect child (gh repo view), then git remote — both fail
+    const dedupChild = makeDedupChild();
+    const detectChild = makeFakeChild();
+    const gitRemoteChild = makeFakeChild();
+
+    const executePromise = adapter.execute(makeTask());
+    await resolveDedupChildNoMatch(dedupChild);
+
+    // gh repo view fails
+    detectChild.stderr.emit("data", Buffer.from("not a github repo"));
+    detectChild.emit("close", 1);
+
+    // git remote also fails
+    gitRemoteChild.emit("error", new Error("git not found"));
+
+    const result = await executePromise;
+
+    expect(result.success).toBe(false);
+    expect(result.stopped_reason).toBe("error");
+    expect(result.error).toBeTruthy();
+  });
+});
+
+// ─── parsePrompt edge cases ───
+
+describe("GitHubIssueAdapter.parsePrompt edge cases", () => {
+  let adapter: GitHubIssueAdapter;
+
+  beforeEach(() => {
+    adapter = new GitHubIssueAdapter();
+  });
+
+  it("falls back to plain text when JSON block is malformed", () => {
+    const prompt = "```github-issue\n{invalid json here\n```\nFallback title\nBody text";
+    const result = adapter.parsePrompt(prompt);
+
+    // Should fall back to first non-empty line as title
+    expect(result.title).toBeTruthy();
+    expect(typeof result.title).toBe("string");
+    expect(Array.isArray(result.labels)).toBe(true);
+  });
+
+  it("JSON block with empty title falls back to (no title)", () => {
+    const prompt = "```github-issue\n{\"title\":\"\",\"body\":\"Some body\"}\n```";
+    const result = adapter.parsePrompt(prompt);
+
+    expect(result.title).toBe("(no title)");
+    expect(result.body).toBe("Some body");
+  });
+
+  it("JSON block with non-string title falls back to (no title)", () => {
+    const prompt = "```github-issue\n{\"title\":123,\"body\":\"Body\"}\n```";
+    const result = adapter.parsePrompt(prompt);
+
+    expect(result.title).toBe("(no title)");
+  });
+
+  it("non-string labels in JSON block are filtered out", () => {
+    const prompt = "```github-issue\n{\"title\":\"T\",\"labels\":[\"valid\",42,null,\"also-valid\"]}\n```";
+    const result = adapter.parsePrompt(prompt);
+
+    expect(result.labels).toContain("valid");
+    expect(result.labels).toContain("also-valid");
+    expect(result.labels.every((l) => typeof l === "string")).toBe(true);
+  });
+});
