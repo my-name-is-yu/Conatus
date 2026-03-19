@@ -1,6 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { getMotivaDirPath } from "./utils/paths.js";
+import { writeJsonFileAtomic } from "./utils/json-io.js";
 import type { Logger } from "./runtime/logger.js";
 import { GoalSchema, GoalTreeSchema } from "./types/goal.js";
 import { ObservationLogSchema, ObservationLogEntrySchema } from "./types/state.js";
@@ -74,23 +75,9 @@ export class StateManager {
 
   private async atomicWrite(filePath: string, data: unknown): Promise<void> {
     try {
-      await fsp.mkdir(path.dirname(filePath), { recursive: true });
+      await writeJsonFileAtomic(filePath, data);
     } catch (err: unknown) {
       // Base dir removed (e.g. test cleanup) — silently skip write
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw err;
-    }
-    const tmpPath = filePath + ".tmp";
-    try {
-      await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw err;
-    }
-    try {
-      await fsp.rename(tmpPath, filePath);
-    } catch (err: unknown) {
-      // Base dir removed between write and rename — silently skip
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }

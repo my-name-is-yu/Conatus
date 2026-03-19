@@ -2,6 +2,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import yaml from "js-yaml";
 import { getPluginsDir } from "../utils/paths.js";
+import { writeJsonFileAtomic } from "../utils/json-io.js";
 import type { Logger } from "./logger.js";
 import {
   PluginManifestSchema,
@@ -297,8 +298,7 @@ export class PluginLoader {
 
     // Persist to disk: ~/.motiva/plugins/<name>/state.json
     const statePath = path.join(this.pluginsDir, pluginName, "state.json");
-    await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(statePath, JSON.stringify(updated, null, 2), "utf-8");
+    await writeJsonFileAtomic(statePath, updated);
   }
 
   // ─── Private helpers ───

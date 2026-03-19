@@ -6,6 +6,7 @@ import { MotivaEventSchema, GoalScheduleSchema } from "../types/drive.js";
 import type { MotivaEvent, GoalSchedule } from "../types/drive.js";
 import type { StateManager } from "../state-manager.js";
 import type { Logger } from "../runtime/logger.js";
+import { writeJsonFileAtomic } from "../utils/json-io.js";
 
 /**
  * DriveSystem handles lightweight activation checks (no LLM calls), event queue
@@ -51,14 +52,6 @@ export class DriveSystem {
     for (const dir of dirs) {
       await fsp.mkdir(dir, { recursive: true });
     }
-  }
-
-  // ─── Atomic Write ───
-
-  private async atomicWrite(filePath: string, data: unknown): Promise<void> {
-    const tmpPath = filePath + ".tmp";
-    await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-    await fsp.rename(tmpPath, filePath);
   }
 
   // ─── Activation Check ───
@@ -240,7 +233,7 @@ export class DriveSystem {
     await fsp.mkdir(scheduleDir, { recursive: true });
     const validated = GoalScheduleSchema.parse(schedule);
     const filePath = path.join(scheduleDir, `${goalId}.json`);
-    await this.atomicWrite(filePath, validated);
+    await writeJsonFileAtomic(filePath, validated);
   }
 
   /**
@@ -310,9 +303,7 @@ export class DriveSystem {
     await fsp.mkdir(eventsDir, { recursive: true });
     const filename = `event_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`;
     const filePath = path.join(eventsDir, filename);
-    const tmpPath = filePath + ".tmp";
-    await fsp.writeFile(tmpPath, JSON.stringify(event, null, 2), "utf-8");
-    await fsp.rename(tmpPath, filePath);
+    await writeJsonFileAtomic(filePath, event);
   }
 
   /**

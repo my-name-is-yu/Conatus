@@ -5,6 +5,7 @@ import { DecisionRecordSchema } from "../types/knowledge.js";
 import type { DecisionRecord } from "../types/knowledge.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { StateManager } from "../state-manager.js";
+import { writeJsonFileAtomic } from "../utils/json-io.js";
 
 // ─── LLM response schema ───
 
@@ -37,10 +38,9 @@ export async function recordDecision(
     toSave = await enrichDecisionRecord(deps, toSave);
   }
   const decisionsDir = path.join(deps.stateManager.getBaseDir(), "decisions");
-  await fsp.mkdir(decisionsDir, { recursive: true });
   const filename = `${toSave.goal_id}-${toSave.timestamp.replace(/[:.]/g, "-")}.json`;
   const filePath = path.join(decisionsDir, filename);
-  await fsp.writeFile(filePath, JSON.stringify(toSave, null, 2), "utf-8");
+  await writeJsonFileAtomic(filePath, toSave);
 }
 
 /**
@@ -163,7 +163,7 @@ export async function updateDecisionOutcome(
   );
   const { filePath, record } = matches[0]!;
   const updated = DecisionRecordSchema.parse({ ...record, outcome });
-  await fsp.writeFile(filePath, JSON.stringify(updated, null, 2), "utf-8");
+  await writeJsonFileAtomic(filePath, updated);
 }
 
 /**

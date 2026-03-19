@@ -7,6 +7,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { getMotivaDirPath } from "../utils/paths.js";
+import { writeJsonFileAtomic } from "../utils/json-io.js";
 
 // ─── Types ───
 
@@ -171,9 +172,7 @@ export async function loadProviderConfig(): Promise<ProviderConfig> {
  * Creates the ~/.motiva directory if it does not exist.
  */
 export async function saveProviderConfig(config: ProviderConfig): Promise<void> {
-  const motivaDir = getMotivaDirPath();
-  await fsp.mkdir(motivaDir, { recursive: true });
-  await fsp.writeFile(PROVIDER_CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  await writeJsonFileAtomic(PROVIDER_CONFIG_PATH, config);
 }
 
 // Re-export default for tests that need it

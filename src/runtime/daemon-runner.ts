@@ -2,6 +2,7 @@ import * as fsp from "node:fs/promises";
 import type { Stats } from "node:fs";
 import * as path from "node:path";
 import { CoreLoop } from "../core-loop.js";
+import { writeJsonFileAtomic, readJsonFileOrNull } from "../utils/json-io.js";
 import type { LoopResult } from "../core-loop.js";
 import { DriveSystem } from "../drive/drive-system.js";
 import { StateManager } from "../state-manager.js";
@@ -385,10 +386,8 @@ export class DaemonRunner {
    */
   private async saveDaemonState(): Promise<void> {
     const statePath = path.join(this.baseDir, "daemon-state.json");
-    const tmpPath = statePath + ".tmp";
     try {
-      await fsp.writeFile(tmpPath, JSON.stringify(this.state, null, 2), "utf-8");
-      await fsp.rename(tmpPath, statePath);
+      await writeJsonFileAtomic(statePath, this.state);
     } catch (err) {
       // Non-fatal — log but don't crash the daemon
       this.logger.warn("Failed to save daemon state", {
@@ -403,9 +402,9 @@ export class DaemonRunner {
    */
   private async loadDaemonState(): Promise<DaemonState | null> {
     const statePath = path.join(this.baseDir, "daemon-state.json");
+    const data = await readJsonFileOrNull(statePath);
+    if (data === null) return null;
     try {
-      const content = await fsp.readFile(statePath, "utf-8");
-      const data = JSON.parse(content);
       return DaemonStateSchema.parse(data);
     } catch {
       return null;
@@ -458,9 +457,7 @@ export class DaemonRunner {
       state: wasCrashed ? "running" : "clean_shutdown",
     };
     try {
-      const tmp = markerPath + ".tmp";
-      await fsp.writeFile(tmp, JSON.stringify(marker, null, 2), "utf-8");
-      await fsp.rename(tmp, markerPath);
+      await writeJsonFileAtomic(markerPath, marker);
     } catch {
       // Non-fatal
     }
@@ -511,10 +508,8 @@ export class DaemonRunner {
    */
   private async writeShutdownMarker(marker: ShutdownMarker): Promise<void> {
     const markerPath = path.join(this.baseDir, "shutdown-state.json");
-    const tmpPath = markerPath + ".tmp";
     try {
-      await fsp.writeFile(tmpPath, JSON.stringify(marker, null, 2), "utf-8");
-      await fsp.rename(tmpPath, markerPath);
+      await writeJsonFileAtomic(markerPath, marker);
     } catch {
       // Non-fatal — log but don't crash
     }
@@ -526,12 +521,7 @@ export class DaemonRunner {
    */
   async readShutdownMarker(): Promise<ShutdownMarker | null> {
     const markerPath = path.join(this.baseDir, "shutdown-state.json");
-    try {
-      const data = await fsp.readFile(markerPath, "utf-8");
-      return JSON.parse(data) as ShutdownMarker;
-    } catch {
-      return null;
-    }
+    return readJsonFileOrNull<ShutdownMarker>(markerPath);
   }
 
   /**
