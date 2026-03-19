@@ -2,9 +2,8 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import type { ZodSchema } from "zod";
+import { BaseLLMClient } from "./base-llm-client.js";
 import {
-  extractJSON,
   type ILLMClient,
   type LLMMessage,
   type LLMRequestOptions,
@@ -68,13 +67,14 @@ export interface CodexLLMClientConfig {
  *
  * Set MOTIVA_LLM_PROVIDER=codex to activate via CLIRunner / provider-factory.
  */
-export class CodexLLMClient implements ILLMClient {
+export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
   private readonly cliPath: string;
   private readonly model: string | undefined;
   private readonly repoPath: string;
   private readonly timeoutMs: number;
 
   constructor(config: CodexLLMClientConfig = {}) {
+    super();
     this.cliPath = config.cliPath ?? "codex";
     this.model = config.model ?? process.env["OPENAI_MODEL"];
     this.repoPath = config.repoPath?.trim() || ".";
@@ -226,24 +226,6 @@ export class CodexLLMClient implements ILLMClient {
           });
       });
     });
-  }
-
-  /**
-   * Extract JSON from LLM response text (handles markdown code blocks)
-   * and validate against the given Zod schema.
-   * Throws on parse failure or schema validation failure.
-   */
-  parseJSON<T>(content: string, schema: ZodSchema<T>): T {
-    const jsonText = extractJSON(content);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(jsonText);
-    } catch (err) {
-      throw new Error(
-        `CodexLLMClient.parseJSON: failed to parse JSON — ${String(err)}\nContent: ${content}`
-      );
-    }
-    return schema.parse(raw);
   }
 }
 

@@ -25,6 +25,7 @@ export { StallDetector } from "./drive/stall-detector.js";
 export { SatisficingJudge, aggregateValues } from "./drive/satisficing-judge.js";
 export type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "./llm/llm-client.js";
 export { LLMClient, MockLLMClient, extractJSON } from "./llm/llm-client.js";
+export { BaseLLMClient, DEFAULT_MAX_TOKENS } from "./llm/base-llm-client.js";
 export { OllamaLLMClient } from "./llm/ollama-client.js";
 export type { OllamaClientConfig } from "./llm/ollama-client.js";
 export { OpenAILLMClient } from "./llm/openai-client.js";

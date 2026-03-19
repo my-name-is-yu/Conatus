@@ -1,11 +1,10 @@
-import type { ZodSchema } from "zod";
-import { extractJSON, type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse } from "./llm-client.js";
+import { BaseLLMClient, DEFAULT_MAX_TOKENS } from "./base-llm-client.js";
+import { type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse } from "./llm-client.js";
 import { sleep } from "../utils/sleep.js";
 
 // ─── Constants ───
 
 const DEFAULT_MODEL = "qwen3:4b";
-const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0;
 const MAX_RETRY_ATTEMPTS = 3;
 
@@ -26,11 +25,12 @@ export interface OllamaClientConfig {
  * Set MOTIVA_LLM_PROVIDER=ollama to activate via CLIRunner.
  * Optionally set OLLAMA_BASE_URL and OLLAMA_MODEL to configure.
  */
-export class OllamaLLMClient implements ILLMClient {
+export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
   private readonly baseUrl: string;
   private readonly model: string;
 
   constructor(config: OllamaClientConfig) {
+    super();
     this.baseUrl = config.baseUrl.replace(/\/$/, ""); // strip trailing slash
     this.model = config.model ?? DEFAULT_MODEL;
   }
@@ -125,23 +125,5 @@ export class OllamaLLMClient implements ILLMClient {
     }
 
     throw lastError;
-  }
-
-  /**
-   * Extract JSON from LLM response text (handles markdown code blocks)
-   * and validate against the given Zod schema.
-   * Throws on parse failure or schema validation failure.
-   */
-  parseJSON<T>(content: string, schema: ZodSchema<T>): T {
-    const jsonText = extractJSON(content);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(jsonText);
-    } catch (err) {
-      throw new Error(
-        `OllamaLLMClient.parseJSON: failed to parse JSON — ${String(err)}\nContent: ${content}`
-      );
-    }
-    return schema.parse(raw);
   }
 }

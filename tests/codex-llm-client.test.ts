@@ -402,7 +402,7 @@ describe("CodexLLMClient", () => {
     it("throws on invalid JSON", () => {
       const client = new CodexLLMClient();
       expect(() => client.parseJSON("not json", schema)).toThrow(
-        "CodexLLMClient.parseJSON: failed to parse JSON"
+        "LLM response JSON parse failed"
       );
     });
 

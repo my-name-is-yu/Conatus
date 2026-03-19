@@ -1,12 +1,11 @@
 import OpenAI from "openai";
-import type { ZodSchema } from "zod";
-import { extractJSON, type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse } from "./llm-client.js";
+import { BaseLLMClient, DEFAULT_MAX_TOKENS } from "./base-llm-client.js";
+import { type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse } from "./llm-client.js";
 import { sleep } from "../utils/sleep.js";
 
 // ─── Constants ───
 
 const DEFAULT_MODEL = "gpt-4o";
-const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.2;
 const MAX_RETRY_ATTEMPTS = 3;
 
@@ -41,11 +40,12 @@ export interface OpenAIClientConfig {
  * Set MOTIVA_LLM_PROVIDER=openai to activate via CLIRunner.
  * Optionally set OPENAI_API_KEY, OPENAI_MODEL, and OPENAI_BASE_URL to configure.
  */
-export class OpenAILLMClient implements ILLMClient {
+export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
   private readonly client: OpenAI;
   private readonly model: string;
 
   constructor(config: OpenAIClientConfig = {}) {
+    super();
     const apiKey = config.apiKey ?? process.env["OPENAI_API_KEY"];
     if (!apiKey) {
       throw new Error(
@@ -172,23 +172,5 @@ export class OpenAILLMClient implements ILLMClient {
     }
 
     throw lastError;
-  }
-
-  /**
-   * Extract JSON from LLM response text (handles markdown code blocks)
-   * and validate against the given Zod schema.
-   * Throws on parse failure or schema validation failure.
-   */
-  parseJSON<T>(content: string, schema: ZodSchema<T>): T {
-    const jsonText = extractJSON(content);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(jsonText);
-    } catch (err) {
-      throw new Error(
-        `OpenAILLMClient.parseJSON: failed to parse JSON — ${String(err)}\nContent: ${content}`
-      );
-    }
-    return schema.parse(raw);
   }
 }

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ZodSchema } from "zod";
 import { sleep } from "../utils/sleep.js";
+import { BaseLLMClient, DEFAULT_MAX_TOKENS, extractJSON } from "./base-llm-client.js";
 
 // ─── Inline Types ───
 
@@ -38,33 +39,14 @@ export interface ILLMClient {
 // ─── Constants ───
 
 const DEFAULT_MODEL = "claude-sonnet-4-20250514";
-const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0;
 const MAX_RETRY_ATTEMPTS = 3;
 
 /** Exponential backoff delays in milliseconds: 1s, 2s, 4s */
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
-/**
- * Extract JSON from a string that may contain markdown code blocks.
- * Tries ```json ... ``` first, then ``` ... ```, then bare JSON.
- */
-export function extractJSON(text: string): string {
-  // Try ```json ... ``` block
-  const jsonBlock = text.match(/```json\s*([\s\S]*?)```/);
-  if (jsonBlock) {
-    return jsonBlock[1].trim();
-  }
-
-  // Try generic ``` ... ``` block
-  const genericBlock = text.match(/```\s*([\s\S]*?)```/);
-  if (genericBlock) {
-    return genericBlock[1].trim();
-  }
-
-  // Return as-is (bare JSON)
-  return text.trim();
-}
+// Re-export shared utilities for consumers that import from this module
+export { extractJSON, DEFAULT_MAX_TOKENS };
 
 // ─── LLMClient ───
 
@@ -74,10 +56,11 @@ export function extractJSON(text: string): string {
  *
  * Constructor throws if no API key is available (no param, no env var).
  */
-export class LLMClient implements ILLMClient {
+export class LLMClient extends BaseLLMClient implements ILLMClient {
   private readonly client: Anthropic;
 
   constructor(apiKey?: string) {
+    super();
     const key = apiKey ?? process.env["ANTHROPIC_API_KEY"];
     if (!key) {
       throw new Error(
@@ -136,24 +119,6 @@ export class LLMClient implements ILLMClient {
 
     throw lastError;
   }
-
-  /**
-   * Extract JSON from LLM response text (handles markdown code blocks)
-   * and validate against the given Zod schema.
-   * Throws on parse failure or schema validation failure.
-   */
-  parseJSON<T>(content: string, schema: ZodSchema<T>): T {
-    const jsonText = extractJSON(content);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(jsonText);
-    } catch (err) {
-      throw new Error(
-        `LLMClient.parseJSON: failed to parse JSON — ${String(err)}\nContent: ${content}`
-      );
-    }
-    return schema.parse(raw);
-  }
 }
 
 // ─── MockLLMClient ───
@@ -162,11 +127,12 @@ export class LLMClient implements ILLMClient {
  * Mock implementation for testing.
  * Returns provided responses in order, tracking call count.
  */
-export class MockLLMClient implements ILLMClient {
+export class MockLLMClient extends BaseLLMClient implements ILLMClient {
   private readonly responses: string[];
   private _callCount: number = 0;
 
   constructor(responses: string[]) {
+    super();
     this.responses = responses;
   }
 
@@ -197,21 +163,5 @@ export class MockLLMClient implements ILLMClient {
       },
       stop_reason: "end_turn",
     };
-  }
-
-  /**
-   * Delegates to real JSON extraction and Zod validation.
-   */
-  parseJSON<T>(content: string, schema: ZodSchema<T>): T {
-    const jsonText = extractJSON(content);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(jsonText);
-    } catch (err) {
-      throw new Error(
-        `MockLLMClient.parseJSON: failed to parse JSON — ${String(err)}\nContent: ${content}`
-      );
-    }
-    return schema.parse(raw);
   }
 }

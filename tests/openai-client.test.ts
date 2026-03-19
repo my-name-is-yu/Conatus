@@ -307,7 +307,7 @@ describe("OpenAILLMClient", () => {
     it("throws on invalid JSON", () => {
       const client = new OpenAILLMClient({ apiKey: "sk-test" });
       expect(() => client.parseJSON("not json at all", schema)).toThrow(
-        "OpenAILLMClient.parseJSON: failed to parse JSON"
+        "LLM response JSON parse failed"
       );
     });
 

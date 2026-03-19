@@ -311,7 +311,7 @@ describe("OllamaLLMClient", () => {
     it("throws on invalid JSON", () => {
       const client = new OllamaLLMClient({ baseUrl: "http://localhost:11434" });
       expect(() => client.parseJSON("not json at all", schema)).toThrow(
-        "OllamaLLMClient.parseJSON: failed to parse JSON"
+        "LLM response JSON parse failed"
       );
     });
 
