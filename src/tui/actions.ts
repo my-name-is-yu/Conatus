@@ -123,8 +123,10 @@ export class ActionHandler {
           dim.current_value !== null && dim.current_value !== undefined
             ? String(dim.current_value)
             : "not measured";
+        const isCountType =
+          dim.threshold.type === "min" || dim.threshold.type === "max";
         const pct =
-          typeof dim.current_value === "number"
+          typeof dim.current_value === "number" && !isCountType
             ? ` (${(dim.current_value * 100).toFixed(1)}%)`
             : "";
         const conf = `confidence: ${(dim.confidence * 100).toFixed(0)}%`;
