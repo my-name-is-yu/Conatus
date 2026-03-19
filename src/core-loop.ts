@@ -209,8 +209,9 @@ export class CoreLoop {
           try {
             await this.deps.learningPipeline.onPeriodicReview(goalId);
             this.lastLearningReviewAt = now;
-          } catch {
+          } catch (err) {
             // non-fatal: learning pipeline failure should not block main loop
+            this.logger?.warn("CoreLoop: learningPipeline.onPeriodicReview failed", { goalId, error: err instanceof Error ? err.message : String(err) });
           }
         }
       }
@@ -245,8 +246,9 @@ export class CoreLoop {
     if (this.deps.learningPipeline && finalStatus === "completed") {
       try {
         await this.deps.learningPipeline.onGoalCompleted(goalId);
-      } catch {
+      } catch (err) {
         // non-fatal
+        this.logger?.warn("CoreLoop: learningPipeline.onGoalCompleted failed", { goalId, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -254,8 +256,9 @@ export class CoreLoop {
     if (this.deps.memoryLifecycleManager && finalStatus === "completed") {
       try {
         await this.deps.memoryLifecycleManager.onGoalClose(goalId, "completed");
-      } catch {
+      } catch (err) {
         // non-fatal
+        this.logger?.warn("CoreLoop: memoryLifecycleManager.onGoalClose failed", { goalId, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -263,8 +266,9 @@ export class CoreLoop {
     if (finalStatus === "completed" && this.config.autoArchive) {
       try {
         await this.deps.stateManager.archiveGoal(goalId);
-      } catch {
+      } catch (err) {
         // non-fatal
+        this.logger?.warn("CoreLoop: stateManager.archiveGoal failed", { goalId, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -478,8 +482,9 @@ export class CoreLoop {
     try {
       const activeStrategy = await this.deps.strategyManager.getActiveStrategy(goalId);
       strategyId = activeStrategy?.id;
-    } catch {
+    } catch (err) {
       // non-fatal
+      this.logger?.warn("CoreLoop: strategyManager.getActiveStrategy failed", { goalId, error: err instanceof Error ? err.message : String(err) });
     }
 
     let parallelResult: ParallelExecutionResult;
@@ -573,8 +578,9 @@ export class CoreLoop {
         elapsedMs: iterationResult.elapsedMs,
       });
       await this.deps.reportingEngine.saveReport(report);
-    } catch {
+    } catch (err) {
       // Report generation failure is non-fatal
+      this.logger?.warn("CoreLoop: report generation failed", { goalId, error: err instanceof Error ? err.message : String(err) });
     }
   }
 }
