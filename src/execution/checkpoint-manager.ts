@@ -151,7 +151,9 @@ export class CheckpointManager {
       this.deps.stateManager.getBaseDir(),
       this.checkpointPath(goalId, checkpointId),
     );
-    await fsp.unlink(filePath).catch(() => {});
+    await fsp.unlink(filePath).catch((err) => {
+      console.error("[CheckpointManager] failed to delete checkpoint file:", err instanceof Error ? err.message : err);
+    });
     const index = await this.readIndex(goalId);
     index.checkpoints = index.checkpoints.filter((e) => e.checkpoint_id !== checkpointId);
     await this.writeIndex(index);
@@ -170,7 +172,9 @@ export class CheckpointManager {
         this.deps.stateManager.getBaseDir(),
         this.checkpointPath(goalId, entry.checkpoint_id),
       );
-      await fsp.unlink(filePath).catch(() => {});
+      await fsp.unlink(filePath).catch((err) => {
+        console.error("[CheckpointManager] failed to delete checkpoint file during GC:", err instanceof Error ? err.message : err);
+      });
     }
 
     const deletedIds = new Set(toDelete.map((e) => e.checkpoint_id));
