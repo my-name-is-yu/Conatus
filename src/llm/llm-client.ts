@@ -110,6 +110,9 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
           stop_reason: response.stop_reason ?? "unknown",
         };
       } catch (err) {
+        if (err instanceof Error && 'status' in err && (err as any).status >= 400 && (err as any).status < 500) {
+          throw err; // client error, no retry
+        }
         lastError = err;
         if (attempt < MAX_RETRY_ATTEMPTS - 1) {
           await sleep(RETRY_DELAYS_MS[attempt] ?? 1000);

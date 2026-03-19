@@ -129,6 +129,16 @@ describe("LLMClient.sendMessage", () => {
     expect(response.content).toBe("recovered");
   });
 
+  it("does not retry 4xx client errors and throws immediately", async () => {
+    const { LLMClient } = await import("../src/llm/llm-client.js");
+    const clientError = Object.assign(new Error("Unauthorized"), { status: 401 });
+    createMock.mockImplementationOnce(() => Promise.reject(clientError));
+
+    const client = new LLMClient("sk-ant-test");
+    await expect(client.sendMessage([{ role: "user", content: "bad key" }])).rejects.toThrow("Unauthorized");
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
   it("throws the last error after exhausting retries", async () => {
     const { LLMClient } = await import("../src/llm/llm-client.js");
     createMock
