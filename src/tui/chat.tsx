@@ -114,10 +114,11 @@ export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
       <Box flexDirection="column" flexGrow={1}>
         {visibleMessages.map((msg, i) => {
           const timeStr = formatTime(msg.timestamp ?? new Date());
+          const absoluteIdx = startIdx + i;
 
           if (msg.role === "user") {
             return (
-              <Box key={i} flexDirection="column" marginBottom={2}>
+              <Box key={absoluteIdx} flexDirection="column" marginBottom={2}>
                 <Box>
                   <Text color="cyan" bold>
                     {"\u276F "}
@@ -134,7 +135,7 @@ export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
           const mdLines = renderMarkdownLines(msg.text);
 
           return (
-            <Box key={i} flexDirection="column" marginBottom={1} marginLeft={2}>
+            <Box key={absoluteIdx} flexDirection="column" marginBottom={1} marginLeft={2}>
               <Box justifyContent="space-between">
                 <Text color="magenta" bold>
                   Motiva
