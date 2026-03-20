@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   ShortTermEntry,
   MemoryIndexEntry,
@@ -32,11 +33,17 @@ function isShortTermEntry(
  * - core:     active goal + core data type + recent (last 5 loops / 5 hours)
  * - recall:   active goal (other data types, or older)
  * - archival: completed goal OR not in any tracked goal
+ *
+ * Optional promotion/demotion params:
+ * - satisfiedDimensions: if all entry dimensions are satisfied, demote core→recall
+ * - highDissatisfactionDimensions: if any entry dimension is highly dissatisfied, promote recall→core
  */
 export function classifyTier(
   entry: ShortTermEntry | MemoryIndexEntry,
   activeGoalIds: string[],
-  completedGoalIds: string[]
+  completedGoalIds: string[],
+  satisfiedDimensions?: string[],
+  highDissatisfactionDimensions?: string[]
 ): MemoryTier {
   const activeSet = new Set(activeGoalIds);
   const completedSet = new Set(completedGoalIds);
@@ -48,11 +55,33 @@ export function classifyTier(
   }
 
   // entry.goal_id is in activeGoalIds → at least recall
+  let tier: MemoryTier;
   if (isShortTermEntry(entry)) {
-    return classifyShortTermTier(entry, completedSet);
+    tier = classifyShortTermTier(entry, completedSet);
   } else {
-    return classifyIndexEntryTier(entry);
+    tier = classifyIndexEntryTier(entry);
   }
+
+  // Sub-stage 2.1: core→recall demotion when all dimensions are satisfied
+  if (tier === "core" && satisfiedDimensions && satisfiedDimensions.length > 0) {
+    const entryDims = entry.dimensions;
+    if (
+      entryDims.length > 0 &&
+      entryDims.every((d) => satisfiedDimensions.includes(d))
+    ) {
+      tier = "recall";
+    }
+  }
+
+  // Sub-stage 2.2: recall→core promotion when any dimension has high dissatisfaction
+  if (tier === "recall" && highDissatisfactionDimensions && highDissatisfactionDimensions.length > 0) {
+    const entryDims = entry.dimensions;
+    if (entryDims.some((d) => highDissatisfactionDimensions.includes(d))) {
+      tier = "core";
+    }
+  }
+
+  return tier;
 }
 
 function classifyShortTermTier(
@@ -115,6 +144,18 @@ export function sortByTier(entries: MemoryIndexEntry[]): MemoryIndexEntry[] {
     .map(({ e }) => e);
 }
 
+// ─── computeDynamicBudget ───
+
+/**
+ * Compute tier budget based on max dissatisfaction score.
+ * Higher dissatisfaction → more budget for core tier.
+ */
+export function computeDynamicBudget(maxDissatisfaction: number): TierBudget {
+  if (maxDissatisfaction > 0.7) return { core: 0.70, recall: 0.25, archival: 0.05 };
+  if (maxDissatisfaction > 0.4) return { core: 0.60, recall: 0.30, archival: 0.10 };
+  return { core: 0.50, recall: 0.35, archival: 0.15 };
+}
+
 // ─── filterByTierBudget ───
 
 /**
@@ -159,4 +200,67 @@ export function filterByTierBudget(
   }
 
   return result;
+}
+
+// ─── llmClassifyTier ───
+
+const LLMTierResponseSchema = z.object({
+  classifications: z.array(
+    z.object({
+      entry_id: z.string(),
+      tier: z.string(), // will be sanitized
+    })
+  ),
+});
+
+/**
+ * Use an LLM to classify entry tiers based on active goal context.
+ * Falls back to rule-based classifyTier on any error.
+ */
+export async function llmClassifyTier(
+  entries: MemoryIndexEntry[],
+  activeGoalContext: { goalId: string; dimensions: string[]; gap?: number },
+  llmClient: { generateStructured: (...args: any[]) => Promise<any> }
+): Promise<Map<string, MemoryTier>> {
+  if (entries.length === 0) return new Map();
+
+  const validTiers: MemoryTier[] = ["core", "recall", "archival"];
+
+  const prompt = `You are classifying memory entries for an AI agent into tiers.
+
+Active goal: ${activeGoalContext.goalId}
+Goal dimensions: ${activeGoalContext.dimensions.join(", ")}
+${activeGoalContext.gap !== undefined ? `Current gap: ${activeGoalContext.gap}` : ""}
+
+Entries to classify:
+${entries.map((e) => `- id: ${e.entry_id}, dimensions: [${e.dimensions.join(", ")}], tags: [${e.tags.join(", ")}], last_accessed: ${e.last_accessed}`).join("\n")}
+
+Classify each entry into one of: core (actively needed now), recall (may be needed soon), archival (background reference).
+
+Respond with JSON: {"classifications": [{"entry_id": "<id>", "tier": "core|recall|archival"}, ...]}`;
+
+  try {
+    const raw = await llmClient.generateStructured(prompt);
+    const parsed = LLMTierResponseSchema.parse(raw);
+
+    const result = new Map<string, MemoryTier>();
+    for (const item of parsed.classifications) {
+      const tier = validTiers.includes(item.tier as MemoryTier)
+        ? (item.tier as MemoryTier)
+        : "archival"; // sanitize out-of-enum values
+      result.set(item.entry_id, tier);
+    }
+    return result;
+  } catch (err) {
+    console.error("[llmClassifyTier] error, falling back to rule-based:", err);
+    // Fallback: rule-based classification using active goal
+    const result = new Map<string, MemoryTier>();
+    for (const entry of entries) {
+      result.set(
+        entry.entry_id,
+        classifyTier(entry, [activeGoalContext.goalId], [])
+      );
+    }
+    return result;
+  }
 }

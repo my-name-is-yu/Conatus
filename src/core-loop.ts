@@ -405,11 +405,12 @@ export class CoreLoop {
     const { gapVector, gapAggregate } = gapResult;
 
     // 4. Drive scoring + knowledge gap check
-    const driveScores = await scoreDrivesAndCheckKnowledge(
+    const driveResult = await scoreDrivesAndCheckKnowledge(
       ctx, goalId, goal, gapVector, loopIndex, result, startTime,
       (id, idx, r, g) => this.tryGenerateReport(id, idx, r, g)
     );
-    if (!driveScores) return result;
+    if (!driveResult) return result;
+    const { driveScores, highDissatisfactionDimensions } = driveResult;
 
     // 5. Completion check + milestones
     await checkCompletionAndMilestones(ctx, goalId, goal, result, startTime);
@@ -440,7 +441,7 @@ export class CoreLoop {
 
     // 7. Task cycle with context
     const taskCycleOk = await runTaskCycleWithContext(
-      ctx, goalId, goal, gapVector, driveScores, loopIndex, result, startTime,
+      ctx, goalId, goal, gapVector, driveScores, highDissatisfactionDimensions, loopIndex, result, startTime,
       (task, gId, adapter) => handleCapabilityAcquisition(
         task as Parameters<typeof handleCapabilityAcquisition>[0],
         gId,

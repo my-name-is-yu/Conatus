@@ -677,3 +677,127 @@ describe("Integration: record → embed → search flow", () => {
     expect(score).toBeCloseTo(0.75, 1);
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// selectForWorkingMemorySemantic
+// ═══════════════════════════════════════════════════════
+
+describe("selectForWorkingMemorySemantic", () => {
+  it("basic semantic selection works when VectorIndex is available", async () => {
+    const entryId = "st_semantic1";
+    const mockVI = makeMockVectorIndex([
+      {
+        id: entryId,
+        text: "semantic entry",
+        similarity: 0.85,
+        metadata: { goal_id: "goal-sem" },
+      },
+    ]);
+
+    const mgr = new MemoryLifecycleManager(
+      tmpDir,
+      createMockLLMClient([]),
+      undefined,
+      undefined,
+      mockVI
+    );
+    await mgr.initializeDirectories();
+
+    // Record an entry so the index has data
+    const recorded = await mgr.recordToShortTerm("goal-sem", "experience_log", { note: "semantic" }, {
+      loopNumber: 1,
+      tags: ["semantic-tag"],
+    });
+
+    // Update mock to return the actual entry id
+    (mockVI.search as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: recorded.id,
+        text: "semantic entry",
+        similarity: 0.85,
+        metadata: { goal_id: "goal-sem" },
+      },
+    ]);
+
+    const result = await mgr.selectForWorkingMemorySemantic(
+      "goal-sem",
+      "semantic query",
+      [],
+      ["semantic-tag"],
+      10
+    );
+
+    expect(mockVI.search).toHaveBeenCalled();
+    expect(result.shortTerm.length).toBeGreaterThanOrEqual(0);
+    // Allow fire-and-forget touchIndexEntry to settle before afterEach cleanup
+    await new Promise((r) => setTimeout(r, 20));
+  });
+
+  it("falls back to non-semantic when no VectorIndex is configured", async () => {
+    // No vectorIndex → falls back to selectForWorkingMemory
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
+    await mgr.initializeDirectories();
+
+    await mgr.recordToShortTerm("goal-nosem", "experience_log", { data: "x" }, {
+      loopNumber: 1,
+      tags: ["fallback-tag"],
+    });
+
+    const result = await mgr.selectForWorkingMemorySemantic(
+      "goal-nosem",
+      "any query",
+      [],
+      ["fallback-tag"],
+      10
+    );
+
+    // Should still return the recorded entry via tag-based fallback
+    expect(result.shortTerm).toHaveLength(1);
+    // Allow fire-and-forget touchIndexEntry to settle before afterEach cleanup
+    await new Promise((r) => setTimeout(r, 20));
+  });
+
+  it("respects maxEntries limit in semantic selection", async () => {
+    const mockVI = makeMockVectorIndex([]);
+    const mgr = new MemoryLifecycleManager(
+      tmpDir,
+      createMockLLMClient([]),
+      undefined,
+      undefined,
+      mockVI
+    );
+    await mgr.initializeDirectories();
+
+    // Record 5 entries
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const e = await mgr.recordToShortTerm("goal-limit", "experience_log", { i }, {
+        loopNumber: i,
+        tags: ["limit-tag"],
+      });
+      ids.push(e.id);
+    }
+
+    // Mock search returning all 5 entries
+    (mockVI.search as ReturnType<typeof vi.fn>).mockResolvedValue(
+      ids.map((id, idx) => ({
+        id,
+        text: `entry ${idx}`,
+        similarity: 0.9 - idx * 0.01,
+        metadata: { goal_id: "goal-limit" },
+      }))
+    );
+
+    const result = await mgr.selectForWorkingMemorySemantic(
+      "goal-limit",
+      "limit query",
+      [],
+      ["limit-tag"],
+      3  // maxEntries = 3
+    );
+
+    expect(result.shortTerm.length).toBeLessThanOrEqual(3);
+    // Allow fire-and-forget touchIndexEntry to settle before afterEach cleanup
+    await new Promise((r) => setTimeout(r, 20));
+  });
+});

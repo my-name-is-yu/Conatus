@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { selectForWorkingMemory } from "../src/knowledge/memory-selection.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 import type { MemoryIndexEntry, ShortTermEntry } from "../src/types/memory-lifecycle.js";
+import type { VectorIndex } from "../src/knowledge/vector-index.js";
 
 // ─── Helpers ───
 
@@ -274,5 +275,169 @@ describe("selectForWorkingMemory — tier-aware mode", () => {
     const result = await selectForWorkingMemory(deps, goalId, ["dim-a"], ["tag-b"]);
     expect(result.shortTerm).toHaveLength(1);
     expect(result.shortTerm[0]!.id).toBe("e-no-tier");
+  });
+});
+
+// ─── Archival semantic search ───
+
+function makeMockVectorIndexWithMetadata(
+  matchingIds: string[]
+): VectorIndex {
+  return {
+    searchMetadata: vi.fn(async () =>
+      matchingIds.map((id) => ({ id, similarity: 0.9, metadata: {} }))
+    ),
+    search: vi.fn(async () => []),
+    searchByVector: vi.fn(() => []),
+    searchMetadataByVector: vi.fn(() => []),
+    add: vi.fn(async () => ({
+      id: "mock",
+      text: "mock",
+      vector: [0.1],
+      model: "mock",
+      created_at: new Date().toISOString(),
+      metadata: {},
+    })),
+    remove: vi.fn(async () => true),
+    size: 0,
+    clear: vi.fn(async () => {}),
+    getEntry: vi.fn(() => undefined),
+    getEntryById: vi.fn(() => undefined),
+    _load: vi.fn(async () => {}),
+  } as unknown as VectorIndex;
+}
+
+describe("archival semantic search", () => {
+  it("with VectorIndex: archival entries are selected by semantic relevance", async () => {
+    // To get archival tier: the goalId must NOT be in activeGoalIds
+    // (classifyTier returns "archival" when goal is not in activeGoalIds)
+    const goalId = "goal-completed";
+    const activeGoalId = "goal-current";
+
+    const entries: ShortTermEntry[] = [
+      {
+        id: "e-archival",
+        goal_id: goalId,
+        data_type: "observation",
+        loop_number: 1,
+        timestamp: makeTimestamp(200),
+        dimensions: ["dim-x"],
+        tags: ["tag-y"],
+        data: {},
+        embedding_id: "e-archival",
+        memory_tier: "archival",
+      },
+    ];
+    await setupShortTermData(memoryDir, entries);
+
+    // VectorIndex returns "e-archival" as a semantic match
+    const mockVI = makeMockVectorIndexWithMetadata(["e-archival"]);
+
+    const deps = { memoryDir, vectorIndex: mockVI };
+    const result = await selectForWorkingMemory(
+      deps,
+      goalId,
+      ["dim-x"],
+      ["tag-y"],
+      10,
+      [activeGoalId],  // goalId is NOT in activeGoalIds → entries become archival
+      []
+    );
+
+    // The archival entry should be returned
+    const ids = result.shortTerm.map((e) => e.id);
+    expect(ids).toContain("e-archival");
+    // searchMetadata was called for archival pass
+    expect(mockVI.searchMetadata).toHaveBeenCalled();
+  });
+
+  it("without VectorIndex: falls back to existing behavior for archival entries", async () => {
+    // goalId is NOT in activeGoalIds so entries get classified as archival
+    const goalId = "goal-fallback-old";
+    const activeGoalId = "goal-fallback-active";
+    const entries: ShortTermEntry[] = [
+      {
+        id: "e-archival-fb",
+        goal_id: goalId,
+        data_type: "observation",
+        loop_number: 1,
+        timestamp: makeTimestamp(100),
+        dimensions: ["dim-a"],
+        tags: ["tag-a"],
+        data: {},
+        embedding_id: null,
+        memory_tier: "archival",
+      },
+    ];
+    await setupShortTermData(memoryDir, entries);
+
+    const deps = { memoryDir }; // no vectorIndex
+    const result = await selectForWorkingMemory(
+      deps,
+      goalId,
+      ["dim-a"],
+      ["tag-a"],
+      10,
+      [activeGoalId],  // goalId not in activeGoalIds → archival
+      []
+    );
+
+    // Archival entry is still returned in fallback mode
+    const ids = result.shortTerm.map((e) => e.id);
+    expect(ids).toContain("e-archival-fb");
+  });
+
+  it("VectorIndex error: gracefully falls back to sequential archival selection", async () => {
+    // goalId NOT in activeGoalIds → entries classified as archival
+    const goalId = "goal-error-old";
+    const activeGoalId = "goal-error-active";
+    const entries: ShortTermEntry[] = [
+      {
+        id: "e-arch-err",
+        goal_id: goalId,
+        data_type: "observation",
+        loop_number: 1,
+        timestamp: makeTimestamp(50),
+        dimensions: ["dim-b"],
+        tags: ["tag-b"],
+        data: {},
+        embedding_id: null,
+        memory_tier: "archival",
+      },
+    ];
+    await setupShortTermData(memoryDir, entries);
+
+    // VectorIndex that throws on searchMetadata
+    const errorVI = {
+      searchMetadata: vi.fn(async () => { throw new Error("embed fail"); }),
+      search: vi.fn(async () => []),
+      searchByVector: vi.fn(() => []),
+      searchMetadataByVector: vi.fn(() => []),
+      add: vi.fn(async () => ({
+        id: "mock", text: "mock", vector: [0.1], model: "mock",
+        created_at: new Date().toISOString(), metadata: {},
+      })),
+      remove: vi.fn(async () => true),
+      size: 0,
+      clear: vi.fn(async () => {}),
+      getEntry: vi.fn(() => undefined),
+      getEntryById: vi.fn(() => undefined),
+      _load: vi.fn(async () => {}),
+    } as unknown as VectorIndex;
+
+    const deps = { memoryDir, vectorIndex: errorVI };
+    // Should not throw and should still return the archival entry
+    const result = await selectForWorkingMemory(
+      deps,
+      goalId,
+      ["dim-b"],
+      ["tag-b"],
+      10,
+      [activeGoalId],  // goalId not in activeGoalIds → archival
+      []
+    );
+
+    const ids = result.shortTerm.map((e) => e.id);
+    expect(ids).toContain("e-arch-err");
   });
 });

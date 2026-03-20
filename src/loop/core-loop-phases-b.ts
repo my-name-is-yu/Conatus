@@ -7,7 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { Goal } from "../types/goal.js";
-import type { GapVector } from "../types/gap.js";
+import type { GapVector, GapHistoryEntry } from "../types/gap.js";
 import type { DriveScore } from "../types/drive.js";
 import {
   buildDriveContext,
@@ -32,6 +32,16 @@ export async function checkCompletionAndMilestones(
       ? await ctx.deps.satisficingJudge.judgeTreeCompletion(goalId)
       : ctx.deps.satisficingJudge.isGoalComplete(goal);
     result.completionJudgment = judgment;
+
+    // Wire satisficing callback to MemoryLifecycleManager
+    // SatisficingJudge fires (goalId, satisfiedDimensions[]) but MLM expects per-dimension calls
+    if (ctx.deps.memoryLifecycleManager) {
+      const blockingSet = new Set(judgment.blocking_dimensions);
+      for (const dim of goal.dimensions) {
+        const isSatisfied = !blockingSet.has(dim.name);
+        ctx.deps.memoryLifecycleManager.onSatisficingJudgment(goalId, dim.name, isSatisfied);
+      }
+    }
   } catch (err) {
     result.error = `Completion check failed: ${err instanceof Error ? err.message : String(err)}`;
     ctx.logger?.error(`CoreLoop: ${result.error}`, { goalId });
@@ -225,156 +235,170 @@ export async function detectStallsAndRebalance(
 
     // Global stall check
     if (!result.stallDetected) {
-      const allDimGaps = new Map<string, Array<{ normalized_gap: number }>>();
-      for (const dim of goal.dimensions) {
-        const dimGapHistory = gapHistory
-          .filter((entry) =>
-            entry.gap_vector.some((g) => g.dimension_name === dim.name)
-          )
-          .map((entry) => {
-            const g = entry.gap_vector.find((g) => g.dimension_name === dim.name);
-            return { normalized_gap: g?.normalized_weighted_gap ?? 1 };
-          });
-        allDimGaps.set(dim.name, dimGapHistory);
-      }
-
-      const globalStall = ctx.deps.stallDetector.checkGlobalStall(goalId, allDimGaps);
-      if (globalStall) {
-        result.stallDetected = true;
-        result.stallReport = globalStall;
-
-        if (ctx.deps.learningPipeline) {
-          try {
-            await ctx.deps.learningPipeline.onStallDetected(goalId, globalStall);
-          } catch {
-            // non-fatal
-          }
-        }
-
-        // Capture active strategy id for decision recording
-        const globalActiveStrategyForRecord = await Promise.resolve(ctx.deps.strategyManager.getActiveStrategy(goalId)).catch(() => null);
-        const globalStrategyIdForRecord = globalActiveStrategyForRecord?.id ?? "unknown";
-
-        // M14-S2: for global stall, use the first dimension's history for cause analysis
-        // Falls back to PIVOT behavior when analyzeStallCause is unavailable
-        const firstDimHistory = allDimGaps.values().next().value ?? [];
-        const globalAnalysis = ctx.deps.stallDetector.analyzeStallCause?.(firstDimHistory);
-        result.stallAnalysis = globalAnalysis;
-
-        if (globalAnalysis?.recommended_action === "refine") {
-          ctx.logger?.info("CoreLoop: global stall REFINE — parameter_issue, keeping strategy", {
-            goalId,
-            evidence: globalAnalysis.evidence,
-          });
-        } else if (globalAnalysis?.recommended_action === "escalate") {
-          ctx.logger?.warn("CoreLoop: global stall ESCALATE — goal_unreachable", {
-            goalId,
-            evidence: globalAnalysis.evidence,
-          });
-          await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
-          result.pivotOccurred = true;
-        } else {
-          // PIVOT: switch strategy, but check pivot count limit first
-          const globalPortfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
-          const globalActiveStrategy = globalPortfolio?.strategies.find((s) => s.state === "active");
-          const globalPivotCount = globalActiveStrategy?.pivot_count ?? 0;
-          const globalMaxPivotCount = globalActiveStrategy?.max_pivot_count ?? 2;
-
-          if (globalPivotCount >= globalMaxPivotCount) {
-            // Auto-escalate when pivot limit reached
-            ctx.logger?.warn("CoreLoop: global stall auto-ESCALATE — pivot_count limit reached", {
-              goalId,
-              pivotCount: globalPivotCount,
-              maxPivotCount: globalMaxPivotCount,
-            });
-            await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
-            result.pivotOccurred = true;
-          } else {
-            const newStrategy = await ctx.deps.strategyManager.onStallDetected(goalId, 2, goal.origin ?? "general");
-            if (newStrategy) {
-              result.pivotOccurred = true;
-              if (globalActiveStrategy?.id) {
-                try {
-                  await ctx.deps.strategyManager.incrementPivotCount(goalId, globalActiveStrategy.id);
-                } catch {
-                  // non-fatal
-                }
-              }
-            }
-          }
-        }
-
-        // M14-S3: Record decision (non-fatal)
-        if (ctx.deps.knowledgeManager) {
-          try {
-            const goalType = goal.origin ?? "general";
-            const latestGap = firstDimHistory[firstDimHistory.length - 1]?.normalized_gap ?? 1;
-            await ctx.deps.knowledgeManager.recordDecision({
-              id: randomUUID(),
-              goal_id: goalId,
-              goal_type: goalType,
-              strategy_id: globalStrategyIdForRecord,
-              hypothesis: globalActiveStrategyForRecord?.hypothesis,
-              decision: globalAnalysis?.recommended_action ?? "pivot",
-              context: {
-                gap_value: latestGap,
-                stall_count: globalStall.escalation_level,
-                cycle_count: firstDimHistory.length,
-                trust_score: 0,
-              },
-              outcome: "pending",
-              timestamp: new Date().toISOString(),
-              what_worked: [],
-              what_failed: [],
-              suggested_next: [],
-            });
-          } catch {
-            // non-fatal: never block the loop for decision recording
-          }
-        }
-
-        const firstDimName = goal.dimensions[0]?.name;
-        if (firstDimName) {
-          await ctx.deps.stallDetector.incrementEscalation(goalId, firstDimName);
-        }
-      }
+      await checkGlobalStall(ctx, goalId, goal, result, gapHistory);
     }
 
     // Portfolio: check rebalance after stall detection
     if (ctx.deps.portfolioManager) {
-      try {
-        const rebalanceTrigger = await ctx.deps.portfolioManager.shouldRebalance(goalId);
-        if (rebalanceTrigger) {
-          const rebalanceResult = await ctx.deps.portfolioManager.rebalance(goalId, rebalanceTrigger);
-          if (rebalanceResult.new_generation_needed) {
-            await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
-          }
-        }
-      } catch {
-        // Portfolio rebalance errors are non-fatal
-      }
-
-      try {
-        const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
-        if (portfolio) {
-          for (const strategy of portfolio.strategies) {
-            if (ctx.deps.portfolioManager.isWaitStrategy(strategy)) {
-              const waitTrigger = await ctx.deps.portfolioManager.handleWaitStrategyExpiry(
-                goalId,
-                strategy.id
-              );
-              if (waitTrigger) {
-                await ctx.deps.portfolioManager.rebalance(goalId, waitTrigger);
-              }
-            }
-          }
-        }
-      } catch {
-        // WaitStrategy expiry errors are non-fatal
-      }
+      await rebalancePortfolio(ctx, goalId, goal);
     }
   } catch (err) {
     ctx.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/** Global stall detection: check all dimensions together, handle REFINE/PIVOT/ESCALATE. */
+async function checkGlobalStall(
+  ctx: PhaseCtx,
+  goalId: string,
+  goal: Goal,
+  result: LoopIterationResult,
+  gapHistory: GapHistoryEntry[]
+): Promise<void> {
+  const allDimGaps = new Map<string, Array<{ normalized_gap: number }>>();
+  for (const dim of goal.dimensions) {
+    const dimGapHistory = gapHistory
+      .filter((entry) =>
+        entry.gap_vector.some((g) => g.dimension_name === dim.name)
+      )
+      .map((entry) => {
+        const g = entry.gap_vector.find((g) => g.dimension_name === dim.name);
+        return { normalized_gap: g?.normalized_weighted_gap ?? 1 };
+      });
+    allDimGaps.set(dim.name, dimGapHistory);
+  }
+
+  const globalStall = ctx.deps.stallDetector.checkGlobalStall(goalId, allDimGaps);
+  if (!globalStall) return;
+
+  result.stallDetected = true;
+  result.stallReport = globalStall;
+
+  if (ctx.deps.learningPipeline) {
+    try {
+      await ctx.deps.learningPipeline.onStallDetected(goalId, globalStall);
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const globalActiveStrategyForRecord = await Promise.resolve(ctx.deps.strategyManager.getActiveStrategy(goalId)).catch(() => null);
+  const globalStrategyIdForRecord = globalActiveStrategyForRecord?.id ?? "unknown";
+
+  const firstDimHistory = allDimGaps.values().next().value ?? [];
+  const globalAnalysis = ctx.deps.stallDetector.analyzeStallCause?.(firstDimHistory);
+  result.stallAnalysis = globalAnalysis;
+
+  if (globalAnalysis?.recommended_action === "refine") {
+    ctx.logger?.info("CoreLoop: global stall REFINE — parameter_issue, keeping strategy", {
+      goalId,
+      evidence: globalAnalysis.evidence,
+    });
+  } else if (globalAnalysis?.recommended_action === "escalate") {
+    ctx.logger?.warn("CoreLoop: global stall ESCALATE — goal_unreachable", {
+      goalId,
+      evidence: globalAnalysis.evidence,
+    });
+    await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+    result.pivotOccurred = true;
+  } else {
+    const globalPortfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
+    const globalActiveStrategy = globalPortfolio?.strategies.find((s) => s.state === "active");
+    const globalPivotCount = globalActiveStrategy?.pivot_count ?? 0;
+    const globalMaxPivotCount = globalActiveStrategy?.max_pivot_count ?? 2;
+
+    if (globalPivotCount >= globalMaxPivotCount) {
+      ctx.logger?.warn("CoreLoop: global stall auto-ESCALATE — pivot_count limit reached", {
+        goalId,
+        pivotCount: globalPivotCount,
+        maxPivotCount: globalMaxPivotCount,
+      });
+      await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+      result.pivotOccurred = true;
+    } else {
+      const newStrategy = await ctx.deps.strategyManager.onStallDetected(goalId, 2, goal.origin ?? "general");
+      if (newStrategy) {
+        result.pivotOccurred = true;
+        if (globalActiveStrategy?.id) {
+          try {
+            await ctx.deps.strategyManager.incrementPivotCount(goalId, globalActiveStrategy.id);
+          } catch {
+            // non-fatal
+          }
+        }
+      }
+    }
+  }
+
+  if (ctx.deps.knowledgeManager) {
+    try {
+      const latestGap = firstDimHistory[firstDimHistory.length - 1]?.normalized_gap ?? 1;
+      await ctx.deps.knowledgeManager.recordDecision({
+        id: randomUUID(),
+        goal_id: goalId,
+        goal_type: goal.origin ?? "general",
+        strategy_id: globalStrategyIdForRecord,
+        hypothesis: globalActiveStrategyForRecord?.hypothesis,
+        decision: globalAnalysis?.recommended_action ?? "pivot",
+        context: {
+          gap_value: latestGap,
+          stall_count: globalStall.escalation_level,
+          cycle_count: firstDimHistory.length,
+          trust_score: 0,
+        },
+        outcome: "pending",
+        timestamp: new Date().toISOString(),
+        what_worked: [],
+        what_failed: [],
+        suggested_next: [],
+      });
+    } catch {
+      // non-fatal: never block the loop for decision recording
+    }
+  }
+
+  const firstDimName = goal.dimensions[0]?.name;
+  if (firstDimName) {
+    await ctx.deps.stallDetector.incrementEscalation(goalId, firstDimName);
+  }
+}
+
+/** Portfolio rebalance: check for rebalance triggers and handle wait strategy expiry. */
+async function rebalancePortfolio(
+  ctx: PhaseCtx,
+  goalId: string,
+  goal: Goal
+): Promise<void> {
+  if (!ctx.deps.portfolioManager) return;
+  try {
+    const rebalanceTrigger = await ctx.deps.portfolioManager.shouldRebalance(goalId);
+    if (rebalanceTrigger) {
+      const rebalanceResult = await ctx.deps.portfolioManager.rebalance(goalId, rebalanceTrigger);
+      if (rebalanceResult.new_generation_needed) {
+        await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+      }
+    }
+  } catch {
+    // Portfolio rebalance errors are non-fatal
+  }
+
+  try {
+    const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
+    if (portfolio) {
+      for (const strategy of portfolio.strategies) {
+        if (ctx.deps.portfolioManager.isWaitStrategy(strategy)) {
+          const waitTrigger = await ctx.deps.portfolioManager.handleWaitStrategyExpiry(
+            goalId,
+            strategy.id
+          );
+          if (waitTrigger) {
+            await ctx.deps.portfolioManager.rebalance(goalId, waitTrigger);
+          }
+        }
+      }
+    }
+  } catch {
+    // WaitStrategy expiry errors are non-fatal
   }
 }
 
@@ -413,6 +437,7 @@ export async function runTaskCycleWithContext(
   goal: Goal,
   gapVector: GapVector,
   driveScores: DriveScore[],
+  highDissatisfactionDimensions: string[],
   loopIndex: number,
   result: LoopIterationResult,
   startTime: number,
@@ -453,6 +478,32 @@ export async function runTaskCycleWithContext(
         }
       } catch {
         // Knowledge retrieval failure is non-fatal
+      }
+    }
+
+    // Tier-aware memory selection: use highDissatisfactionDimensions and dynamic budget
+    if (ctx.deps.memoryLifecycleManager) {
+      try {
+        const dimensions = goal.dimensions.map((d) => d.name);
+        const maxDissatisfaction = driveScores.length > 0
+          ? Math.max(...driveScores.map((s) => s.dissatisfaction))
+          : 0;
+        const satisfiedDimensions = goal.dimensions
+          .filter((d) => !result.completionJudgment?.blocking_dimensions.includes(d.name))
+          .map((d) => d.name);
+        await ctx.deps.memoryLifecycleManager.selectForWorkingMemoryTierAware(
+          goalId,
+          dimensions,
+          [],
+          10,
+          [goalId],
+          [],
+          satisfiedDimensions,
+          highDissatisfactionDimensions,
+          maxDissatisfaction
+        );
+      } catch {
+        // Memory selection failure is non-fatal
       }
     }
 

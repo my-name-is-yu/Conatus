@@ -65,6 +65,10 @@ import {
 } from "./memory-selection.js";
 
 // ─── MemoryLifecycleManager ───
+// NOTE: This file is ~666 lines. Most methods are thin wrappers delegating to
+// memory-compression.ts, memory-selection.ts, and memory-phases.ts.
+// Further size reduction requires splitting the re-export section into a
+// dedicated barrel file — deferred to avoid circular dependency risk.
 
 /**
  * MemoryLifecycleManager handles the 3-tier memory model:
@@ -272,6 +276,36 @@ export class MemoryLifecycleManager {
     maxEntries: number = 10
   ): Promise<{ shortTerm: ShortTermEntry[]; lessons: LessonEntry[] }> {
     return _selectForWorkingMemory(this.selectionDeps, goalId, dimensions, tags, maxEntries);
+  }
+
+  /**
+   * Tier-aware variant of selectForWorkingMemory.
+   * Passes satisfiedDimensions, highDissatisfactionDimensions, and maxDissatisfaction
+   * to enable core↔recall promotion/demotion and dynamic budget allocation.
+   */
+  async selectForWorkingMemoryTierAware(
+    goalId: string,
+    dimensions: string[],
+    tags: string[],
+    maxEntries: number,
+    activeGoalIds: string[],
+    completedGoalIds: string[],
+    satisfiedDimensions: string[],
+    highDissatisfactionDimensions: string[],
+    maxDissatisfaction: number
+  ): Promise<{ shortTerm: ShortTermEntry[]; lessons: LessonEntry[] }> {
+    return _selectForWorkingMemory(
+      this.selectionDeps,
+      goalId,
+      dimensions,
+      tags,
+      maxEntries,
+      activeGoalIds,
+      completedGoalIds,
+      satisfiedDimensions,
+      highDissatisfactionDimensions,
+      maxDissatisfaction
+    );
   }
 
   // ─── Phase 2: Drive-based Memory Management ───

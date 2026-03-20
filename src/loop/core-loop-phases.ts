@@ -179,8 +179,8 @@ export async function calculateGapOrComplete(
 // ─── Phase 4 ───
 
 /** Score drives, update DriveScoreAdapter, check knowledge gap.
- * Returns ranked DriveScores, or null if the caller should return result early
- * (knowledge gap task generated or drive scoring failed). */
+ * Returns ranked DriveScores with highDissatisfactionDimensions, or null if the caller should
+ * return result early (knowledge gap task generated or drive scoring failed). */
 export async function scoreDrivesAndCheckKnowledge(
   ctx: PhaseCtx,
   goalId: string,
@@ -190,8 +190,9 @@ export async function scoreDrivesAndCheckKnowledge(
   result: LoopIterationResult,
   startTime: number,
   tryGenerateReport: (goalId: string, loopIndex: number, result: LoopIterationResult, goal: Goal) => void
-): Promise<DriveScore[] | null> {
+): Promise<{ driveScores: DriveScore[]; highDissatisfactionDimensions: string[] } | null> {
   let driveScores: DriveScore[];
+  let highDissatisfactionDimensions: string[] = [];
   try {
     const driveContext = buildDriveContext(goal);
     driveScores = ctx.deps.driveScorer.scoreAllDimensions(gapVector, driveContext);
@@ -202,6 +203,11 @@ export async function scoreDrivesAndCheckKnowledge(
     if (ctx.deps.driveScoreAdapter) {
       ctx.deps.driveScoreAdapter.update(driveScores);
     }
+
+    // Extract dimensions with high dissatisfaction (> 0.7) for memory tier promotion
+    highDissatisfactionDimensions = driveScores
+      .filter((s) => s.dissatisfaction > 0.7)
+      .map((s) => s.dimension_name);
 
     // Consolidated reward computation log (MOTIVA_REWARD_LOG=1 to enable)
     const confidenceAvg =
@@ -288,5 +294,5 @@ export async function scoreDrivesAndCheckKnowledge(
     }
   }
 
-  return driveScores;
+  return { driveScores, highDissatisfactionDimensions };
 }

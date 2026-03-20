@@ -18,7 +18,7 @@ import {
   queryCrossGoalLessons,
   touchIndexEntry,
 } from "./memory-phases.js";
-import { classifyTier, sortByTier } from "./memory-tier.js";
+import { classifyTier, sortByTier, computeDynamicBudget, filterByTierBudget, llmClassifyTier } from "./memory-tier.js";
 
 // ─── Deps interface ───
 
@@ -90,7 +90,12 @@ export async function selectForWorkingMemory(
   tags: string[],
   maxEntries: number = 10,
   activeGoalIds?: string[],
-  completedGoalIds?: string[]
+  completedGoalIds?: string[],
+  satisfiedDimensions?: string[],
+  highDissatisfactionDimensions?: string[],
+  maxDissatisfaction?: number,
+  useLLMClassification?: boolean,
+  llmClient?: { generateStructured: (...args: any[]) => Promise<any> }
 ): Promise<{ shortTerm: ShortTermEntry[]; lessons: LessonEntry[] }> {
   // 1. Tag-based query: short-term entries for this goal matching dimensions/tags
   const stIndex = await loadIndex(deps.memoryDir, "short-term");
@@ -112,14 +117,41 @@ export async function selectForWorkingMemory(
   if (activeGoalIds !== undefined) {
     const resolvedCompleted = completedGoalIds ?? [];
     for (const ie of matchingIndexEntries) {
-      ie.memory_tier = classifyTier(ie, activeGoalIds, resolvedCompleted);
+      ie.memory_tier = classifyTier(
+        ie,
+        activeGoalIds,
+        resolvedCompleted,
+        satisfiedDimensions,
+        highDissatisfactionDimensions
+      );
     }
+
+    // Sub-stage 2.5: LLM classification override (after rule-based)
+    if (useLLMClassification && llmClient) {
+      const llmTiers = await llmClassifyTier(
+        matchingIndexEntries,
+        { goalId, dimensions, gap: maxDissatisfaction },
+        llmClient
+      );
+      for (const ie of matchingIndexEntries) {
+        const llmTier = llmTiers.get(ie.entry_id);
+        if (llmTier !== undefined) {
+          ie.memory_tier = llmTier;
+        }
+      }
+    }
+
     matchingIndexEntries = sortByTier(matchingIndexEntries);
   }
 
-  // Load the actual entries — core gets guaranteed inclusion (up to half of budget)
+  // Sub-stage 2.3: dynamic budget determines core guarantee ratio
+  // Budget filtering is applied to the loaded entries (not index), so small sets still work
+  const dynamicBudget = activeGoalIds !== undefined
+    ? computeDynamicBudget(maxDissatisfaction ?? 0)
+    : { core: 1.0, recall: 0.0, archival: 0.0 };
+
   const coreGuarantee = activeGoalIds !== undefined
-    ? Math.ceil(maxEntries / 2)
+    ? Math.ceil(maxEntries * dynamicBudget.core)
     : maxEntries;
 
   const shortTermEntries: ShortTermEntry[] = [];
@@ -144,16 +176,11 @@ export async function selectForWorkingMemory(
   }
 
   // Pass 2: fill remaining budget (recall first, then archival if space)
-  const nonCoreOrder: Array<"recall" | "archival"> = ["recall", "archival"];
-  const tierCandidates = activeGoalIds !== undefined
-    ? [
-        ...matchingIndexEntries.filter((ie) => ie.memory_tier === "recall"),
-        ...matchingIndexEntries.filter((ie) => ie.memory_tier === "archival"),
-      ]
+  const recallCandidates = activeGoalIds !== undefined
+    ? matchingIndexEntries.filter((ie) => ie.memory_tier === "recall")
     : matchingIndexEntries;
 
-  void nonCoreOrder; // used implicitly via tierCandidates ordering
-  for (const idxEntry of tierCandidates) {
+  for (const idxEntry of recallCandidates) {
     if (shortTermEntries.length >= maxEntries) break;
     if (seenEntryIds.has(idxEntry.entry_id)) continue;
 
@@ -163,6 +190,47 @@ export async function selectForWorkingMemory(
       seenEntryIds.add(idxEntry.entry_id);
       void touchIndexEntry(deps.memoryDir, "short-term", idxEntry.id);
     }
+  }
+
+  // Pass 2b: archival entries — use semantic search if VectorIndex available
+  if (activeGoalIds !== undefined && shortTermEntries.length < maxEntries) {
+    const archivalCandidates = matchingIndexEntries.filter(
+      (ie) => ie.memory_tier === "archival" && !seenEntryIds.has(ie.entry_id)
+    );
+
+    if (archivalCandidates.length > 0) {
+      let orderedArchival = archivalCandidates;
+
+      if (deps.vectorIndex) {
+        // Derive query from dimensions and tags for semantic ranking
+        const query = [...dimensions, ...tags].join(" ");
+        const archivalLimit = maxEntries - shortTermEntries.length;
+        try {
+          const metaResults = await deps.vectorIndex.searchMetadata(query, archivalLimit * 2);
+          const metaIds = new Set(metaResults.map((r) => r.id));
+          // Put semantically matched entries first, then remaining by recency
+          const semantic = archivalCandidates.filter((ie) => metaIds.has(ie.entry_id));
+          const rest = archivalCandidates.filter((ie) => !metaIds.has(ie.entry_id));
+          orderedArchival = [...semantic, ...rest];
+        } catch {
+          // Graceful fallback to existing order on error
+        }
+      }
+
+      for (const idxEntry of orderedArchival) {
+        if (shortTermEntries.length >= maxEntries) break;
+        if (seenEntryIds.has(idxEntry.entry_id)) continue;
+
+        const found = await loadShortTermEntry(deps, idxEntry);
+        if (found) {
+          shortTermEntries.push(found);
+          seenEntryIds.add(idxEntry.entry_id);
+          void touchIndexEntry(deps.memoryDir, "short-term", idxEntry.id);
+        }
+      }
+    }
+  } else if (activeGoalIds === undefined) {
+    // Non-tier-aware: already handled by recallCandidates = matchingIndexEntries above
   }
 
   // Phase 2 (5.2b): If results are fewer than needed and VectorIndex available, do sync lookup
