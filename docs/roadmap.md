@@ -2,8 +2,8 @@
 
 ## 現在地
 
-Stage 1-14 + Milestone 1-17 + Phase 3 完了（4061テスト、179テストファイル）。
-OSS最適化 #112-#146 全35件完了。次: Milestone 14以降。
+Stage 1-14 + Milestone 1-18 + Phase 3 完了（4061テスト、179テストファイル）。
+OSS最適化 #112-#146 全35件完了。
 
 ---
 
@@ -122,17 +122,19 @@ OSS最適化 #112-#146 全35件完了。次: Milestone 14以降。
 
 **Status**: done (2026-03-20) — jira-datasource, pagerduty-notifier 参照実装追加 + プラグイン開発ガイド作成
 
-### M18: ユーザーインターフェース拡張
+### M18: Web UI
 
-**テーマ**: TUIを補完するWeb UIと、チーム利用に向けたマルチユーザー対応。
+**テーマ**: TUIを補完するWeb UIで、ゴール・セッション・知識・設定を一覧管理できる状態にする。
 
-- Web UI（React、TUIと並行動作可能）
-- マルチユーザー対応（ゴール・状態の分離、認証）
-- Agent Sessions統合ビュー（複数エージェントの実行状態を一覧表示）
-- 前提: M15（マルチエージェント）完了
+- Web UI（Next.js、TUIと並行動作可能）
+- Goals / Sessions / Knowledge / Settings ページ
+- API routes（goals, sessions, strategies, knowledge, reports, events, settings）
+
+**Status**: done (2026-03-20) — web/ ディレクトリにNext.jsベースのWeb UI実装済み
 
 ### 将来検討
 
+- マルチユーザー対応（ゴール・状態の分離、認証）— 利用者数増加時に着手
 - DimensionMapping意味的自動提案（観測次元の名前からZodスキーマを自動生成）
 - プラグインマーケットプレイス / レジストリ
 - サーキットブレーカー（アダプタ連続失敗時の自動切り離し）

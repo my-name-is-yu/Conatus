@@ -2,7 +2,7 @@
 
 Current repository state as of 2026-03-20.
 
-- Implementation scope: source modules for Stage 1-14 and Milestone 1-17 are present in `src/`; Phase 3 refactoring complete; OSS最適化 #112-#146 全35件完了
+- Implementation scope: source modules for Stage 1-14 and Milestone 1-18 are present in `src/` and `web/`; Phase 3 refactoring complete; OSS最適化 #112-#146 全35件完了
 - Source inventory: 184 `.ts` / `.tsx` implementation files under `src/`
 - Test inventory: 179 test files
 - Current test result: 4061 tests passing (excludes e2e tests)
