@@ -9,6 +9,7 @@ import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { renderMarkdownLines, type MarkdownLine, type MarkdownSegment } from "./markdown-renderer.js";
+import { fuzzyMatch, fuzzyFilter } from "./fuzzy.js";
 
 export interface ChatMessage {
   role: "user" | "motiva";
@@ -21,6 +22,7 @@ interface ChatProps {
   messages: ChatMessage[];
   onSubmit: (input: string) => void;
   isProcessing: boolean; // show "thinking..." indicator
+  goalNames?: string[];
 }
 
 function getMessageTypeColor(
@@ -100,30 +102,78 @@ function MarkdownLineComponent({
   return <Text {...props}>{line.text}</Text>;
 }
 
-const COMMANDS = [
-  { name: '/run', aliases: ['/start'], description: 'Start the goal loop' },
-  { name: '/stop', aliases: ['/quit'], description: 'Stop the running loop' },
-  { name: '/status', aliases: [] as string[], description: 'Show current progress' },
-  { name: '/report', aliases: [] as string[], description: 'Generate a summary report' },
-  { name: '/goals', aliases: [] as string[], description: 'List all goals' },
-  { name: '/help', aliases: ['?'], description: 'Show help overlay' },
+type Suggestion = {
+  name: string;
+  description: string;
+  aliases: string[];
+  type: 'command' | 'goal';
+};
+
+const COMMANDS: Suggestion[] = [
+  { name: '/run', aliases: ['/start'], description: 'Start the goal loop', type: 'command' },
+  { name: '/stop', aliases: ['/quit'], description: 'Stop the running loop', type: 'command' },
+  { name: '/status', aliases: [], description: 'Show current progress', type: 'command' },
+  { name: '/report', aliases: [], description: 'Generate a summary report', type: 'command' },
+  { name: '/goals', aliases: [], description: 'List all goals', type: 'command' },
+  { name: '/help', aliases: ['?'], description: 'Show help overlay', type: 'command' },
 ];
 
-function getMatchingCommands(input: string): typeof COMMANDS {
+/** Commands that accept a goal name as argument */
+const GOAL_ARG_COMMANDS = ['/run ', '/start '];
+
+function getMatchingSuggestions(input: string, goalNames: string[]): Suggestion[] {
   if (!input.startsWith('/')) return [];
-  const query = input.toLowerCase();
-  return COMMANDS.filter(
-    (cmd) =>
-      cmd.name.startsWith(query) ||
-      cmd.aliases.some((a) => a.startsWith(query))
-  ).slice(0, 6);
+
+  // Check if user typed a command that expects a goal name argument
+  for (const prefix of GOAL_ARG_COMMANDS) {
+    if (input.startsWith(prefix)) {
+      const goalQuery = input.slice(prefix.length);
+      const matchedGoals = fuzzyFilter(goalQuery, goalNames, (g) => g, 6);
+      return matchedGoals.map((g) => ({
+        name: prefix.trimEnd(),
+        description: g,
+        aliases: [],
+        type: 'goal' as const,
+      }));
+    }
+  }
+
+  // Fuzzy match against command names and aliases
+  const query = input.slice(1); // strip leading '/'
+  const scored: Array<{ cmd: Suggestion; score: number }> = [];
+
+  for (const cmd of COMMANDS) {
+    // Try matching against name (without leading '/')
+    const nameScore = fuzzyMatch(query, cmd.name.slice(1));
+    // Try matching against aliases
+    const aliasScores = cmd.aliases.map((a) =>
+      a.startsWith('/') ? fuzzyMatch(query, a.slice(1)) : fuzzyMatch(query, a)
+    );
+    const bestAlias = aliasScores.reduce<number | null>(
+      (best, s) => (s !== null && (best === null || s > best) ? s : best),
+      null
+    );
+    const best = nameScore !== null && (bestAlias === null || nameScore >= bestAlias)
+      ? nameScore
+      : bestAlias;
+
+    if (best !== null) {
+      scored.push({ cmd, score: best });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 6).map((s) => s.cmd);
 }
 
-export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
+export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatProps) {
   const [input, setInput] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
+  // Tracks whether a suggestion was just selected so getMatchingSuggestions
+  // returns [] for one render cycle, allowing Enter to submit unblocked.
+  const justSelected = React.useRef(false);
 
-  const matches = getMatchingCommands(input);
+  const matches = justSelected.current ? [] : getMatchingSuggestions(input, goalNames);
   const hasMatches = matches.length > 0;
 
   useInput((_, key) => {
@@ -136,8 +186,17 @@ export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
     } else if (key.tab || key.return) {
       const selected = matches[selectedIdx];
       if (selected) {
-        setInput(selected.name + " ");
-        setSelectedIdx(0);
+        if (selected.type === 'goal') {
+          // Auto-submit the completed command so the user is not trapped
+          const value = `${selected.name} ${selected.description}`;
+          setInput("");
+          setSelectedIdx(0);
+          onSubmit(value.trim());
+        } else {
+          justSelected.current = true;
+          setInput(selected.name + " ");
+          setSelectedIdx(0);
+        }
       }
     } else if (key.escape) {
       setSelectedIdx(0);
@@ -148,7 +207,7 @@ export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
   // Reset selected index when matches change
   React.useEffect(() => {
     setSelectedIdx(0);
-  }, [matches.length]);
+  }, [matches.map(m => m.name).join(',')]);
 
   const handleSubmit = (value: string) => {
     if (hasMatches) return; // let useInput handle enter when suggestions are shown
@@ -239,7 +298,7 @@ export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
               </Text>
               <TextInput
                 value={input}
-                onChange={(val) => { setInput(val); }}
+                onChange={(val) => { justSelected.current = false; setInput(val); }}
                 onSubmit={handleSubmit}
                 placeholder="/ でコマンド一覧"
               />
@@ -247,13 +306,16 @@ export function Chat({ messages, onSubmit, isProcessing }: ChatProps) {
             <Text dimColor>{borderLine}</Text>
             {hasMatches && (
               <Box flexDirection="column">
-                {matches.map((cmd, idx) => {
+                {matches.map((suggestion, idx) => {
                   const isSelected = idx === selectedIdx;
-                  const label = `  ${cmd.name.padEnd(20)}${cmd.description}`;
+                  const label = suggestion.type === 'goal'
+                    ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
+                    : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
+                  const key = `${suggestion.type}-${suggestion.name}-${suggestion.description}`;
                   return isSelected ? (
-                    <Text key={cmd.name} bold color="blue">{label}</Text>
+                    <Text key={key} bold color="blue">{label}</Text>
                   ) : (
-                    <Text key={cmd.name} dimColor>{label}</Text>
+                    <Text key={key} dimColor>{label}</Text>
                   );
                 })}
                 <Text dimColor>  arrows to navigate, tab/enter to select, esc to dismiss</Text>

@@ -90,6 +90,7 @@ export function App({
   ]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [goalNames, setGoalNames] = useState<string[]>([]);
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const approvalRequestRef = useRef<ApprovalRequest | null>(null);
@@ -103,6 +104,25 @@ export function App({
       });
     }
   }, [onApprovalReady]);
+
+  // Pre-load active/waiting goal names for fuzzy completion in Chat
+  useEffect(() => {
+    (async () => {
+      try {
+        const ids = await stateManager.listGoalIds();
+        const names: string[] = [];
+        for (const id of ids) {
+          const goal = await stateManager.loadGoal(id);
+          if (goal && (goal.status === 'active' || goal.status === 'waiting')) {
+            names.push(goal.title);
+          }
+        }
+        setGoalNames(names);
+      } catch {
+        // Non-critical — goal completion simply won't show suggestions
+      }
+    })();
+  }, [stateManager]);
 
   // F1 key toggles help overlay (in addition to '?' shortcut via chat).
   // F1 sends escape sequences: "\u001bOP" (xterm) or "\u001b[11~" (vt100).
@@ -249,7 +269,7 @@ export function App({
           ) : showHelp ? (
             <HelpOverlay onDismiss={() => setShowHelp(false)} />
           ) : (
-            <Chat messages={messages} onSubmit={handleInput} isProcessing={isProcessing} />
+            <Chat messages={messages} onSubmit={handleInput} isProcessing={isProcessing} goalNames={goalNames} />
           )}
         </Box>
       </Box>
