@@ -23,7 +23,6 @@ import type { Logger } from "../runtime/logger.js";
 import type { AgentTask, AgentResult, IAdapter } from "./adapter-layer.js";
 import { AdapterRegistry } from "./adapter-layer.js";
 import { wrapXmlTag, formatKnowledge } from "../prompt/formatters.js";
-import { wrapXmlTag, formatKnowledge } from "../prompt/formatters.js";
 
 // ─── Re-exported types used by consumers ───
 
@@ -741,6 +740,8 @@ async function runLLMReview(
     )
     .join("\n");
 
+  const enrichmentBlocks = [knowledgeBlock, stateBlock].filter(Boolean).join("\n");
+
   const prompt = `Evaluate task execution against success criteria.
 
 Task: ${task.work_description}
@@ -748,7 +749,7 @@ Approach: ${task.approach}
 
 Criteria:
 ${criteriaList}
-
+${enrichmentBlocks ? `\n${enrichmentBlocks}\n` : ""}
 Output (first 2000 chars):
 ${executionResult.output.slice(0, 2000)}
 
