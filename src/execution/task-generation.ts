@@ -10,6 +10,9 @@ import type { Task } from "../types/task.js";
 import { TaskGroupSchema } from "../types/index.js";
 import type { TaskGroup } from "../types/index.js";
 import type { TaskPipeline } from "../types/pipeline.js";
+import { wrapXmlTag, formatReflections, formatLessons } from "../prompt/formatters.js";
+import { getReflectionsForGoal } from "./reflection-generator.js";
+import type { KnowledgeManager } from "../knowledge/knowledge-manager.js";
 
 // ─── Schema for LLM-generated task fields ───
 
@@ -48,6 +51,15 @@ export interface TaskGenerationDeps {
   llmClient: ILLMClient;
   strategyManager: StrategyManager;
   logger?: Logger;
+  knowledgeManager?: KnowledgeManager;
+  memoryLifecycle?: {
+    selectForWorkingMemory(
+      goalId: string,
+      dims: string[],
+      tags: string[],
+      max?: number
+    ): Promise<{ shortTerm: unknown[]; lessons: Array<{ type?: string; lesson?: string; content?: string; relevance_tags?: string[] }> }>;
+  };
 }
 
 // ─── evaluateTaskComplexity ───
@@ -199,6 +211,60 @@ export async function generateTask(
   existingTasks?: string[],
   workspaceContext?: string
 ): Promise<Task | null> {
+  // Build optional reflections and lessons XML blocks
+  let reflectionsBlock = "";
+  let lessonsBlock = "";
+
+  if (deps.knowledgeManager) {
+    try {
+      const reflections = await getReflectionsForGoal(deps.knowledgeManager, goalId, 5);
+      if (reflections.length > 0) {
+        reflectionsBlock = wrapXmlTag(
+          "past_reflections",
+          formatReflections(
+            reflections.map((r) => ({
+              what_failed: r.why_it_worked_or_failed,
+              suggestion: r.what_to_do_differently,
+              content: r.what_was_attempted,
+            }))
+          )
+        );
+      }
+    } catch {
+      // non-fatal: proceed without reflections
+    }
+  }
+
+  if (deps.memoryLifecycle) {
+    try {
+      const memory = await deps.memoryLifecycle.selectForWorkingMemory(
+        goalId,
+        [targetDimension],
+        [],
+        5
+      );
+      if (memory.lessons.length > 0) {
+        lessonsBlock = wrapXmlTag(
+          "lessons_learned",
+          formatLessons(
+            memory.lessons.map((l) => ({
+              importance: l.relevance_tags?.includes("HIGH")
+                ? "HIGH"
+                : l.relevance_tags?.includes("LOW")
+                ? "LOW"
+                : l.type === "failure_pattern"
+                ? "HIGH"
+                : "MEDIUM",
+              content: l.lesson ?? l.content ?? "",
+            }))
+          )
+        );
+      }
+    } catch {
+      // non-fatal: proceed without lessons
+    }
+  }
+
   const prompt = await buildTaskGenerationPrompt(
     deps.stateManager,
     goalId,
@@ -206,7 +272,9 @@ export async function generateTask(
     knowledgeContext,
     adapterType,
     existingTasks,
-    workspaceContext
+    workspaceContext,
+    reflectionsBlock || undefined,
+    lessonsBlock || undefined
   );
 
   const response = await deps.llmClient.sendMessage(

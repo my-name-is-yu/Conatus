@@ -43,6 +43,8 @@ export class StrategyManagerBase {
   /**
    * Generate 1–2 strategy candidates via LLM.
    * Validates each with StrategySchema, sets state="candidate", stores in portfolio.
+   *
+   * Optional `enrichment` injects strategy templates and lessons into the prompt.
    */
   async generateCandidates(
     goalId: string,
@@ -51,13 +53,15 @@ export class StrategyManagerBase {
     context: {
       currentGap: number;
       pastStrategies: Strategy[];
-    }
+    },
+    enrichment?: { templatesBlock?: string; lessonsBlock?: string }
   ): Promise<Strategy[]> {
     const prompt = buildGenerationPrompt(
       goalId,
       primaryDimension,
       targetDimensions,
-      context
+      context,
+      enrichment
     );
 
     const response = await this.llmClient.sendMessage(

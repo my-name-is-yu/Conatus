@@ -9,6 +9,8 @@ import type { ILLMClient } from "../llm/llm-client.js";
 import { LLMObservationResponseSchema } from "./observation-helpers.js";
 import type { ObservationEngineOptions } from "./observation-helpers.js";
 import type { Logger } from "../runtime/logger.js";
+import { wrapXmlTag, formatObservationHistory } from "../prompt/formatters.js";
+import { OBSERVATION_SYSTEM_PROMPT } from "../prompt/purposes/observation.js";
 
 /**
  * Fetch a concise workspace context via git diff when no contextProvider is available.
@@ -55,6 +57,18 @@ export async function fetchGitDiffContext(options: ObservationEngineOptions, max
 }
 
 /**
+ * Infer the direction of change from a history of score values.
+ */
+function inferDirection(history: Array<{ value: number }>): string {
+  if (history.length < 2) return "insufficient_data";
+  const last = history[history.length - 1]!.value;
+  const prev = history[history.length - 2]!.value;
+  if (last > prev) return "improving";
+  if (last < prev) return "declining";
+  return "stable";
+}
+
+/**
  * Observe a goal dimension using the LLM client.
  *
  * The LLM is asked to score the dimension from 0.0 to 1.0.
@@ -76,6 +90,8 @@ export async function fetchGitDiffContext(options: ObservationEngineOptions, max
  * @param workspaceContext   Optional pre-fetched workspace context.
  * @param previousScore      Previous observed score for trend context.
  * @param dryRun             If true, do not write to state.
+ * @param logger             Optional logger.
+ * @param dimensionHistory   Optional history of prior observations for this dimension.
  */
 export async function observeWithLLM(
   goalId: string,
@@ -89,7 +105,8 @@ export async function observeWithLLM(
   workspaceContext?: string,
   previousScore?: number | null,
   dryRun?: boolean,
-  logger?: Logger
+  logger?: Logger,
+  dimensionHistory?: Array<{ value: number; timestamp?: string; date?: string }>
 ): Promise<ObservationLogEntry> {
   logger?.info(
     `[ObservationEngine] LLM observation for dimension "${dimensionLabel}" (goal: ${goalId})`
@@ -124,6 +141,22 @@ export async function observeWithLLM(
     ? resolvedContext!
     : "WARNING: No workspace content was provided. Score MUST be 0.0 per Rule 2.";
 
+  // Build optional observation history block
+  let historyBlock = "";
+  if (dimensionHistory && dimensionHistory.length > 0) {
+    const direction = inferDirection(dimensionHistory);
+    historyBlock = wrapXmlTag(
+      "observation_history",
+      formatObservationHistory(
+        dimensionHistory.map((h) => ({
+          timestamp: h.timestamp ?? h.date ?? "",
+          score: h.value,
+        })),
+        direction
+      )
+    );
+  }
+
   const prompt =
     `Score a goal dimension 0.0 (not achieved) to 1.0 (fully achieved).\n\n` +
     `CRITICAL RULES:\n` +
@@ -134,6 +167,7 @@ export async function observeWithLLM(
     `Dimension: ${dimensionLabel}\n` +
     `Target: ${thresholdDescription}\n` +
     `Previous score: ${previousScoreText}\n\n` +
+    (historyBlock ? `${historyBlock}\n\n` : "") +
     `FEW-SHOT CALIBRATION:\n` +
     `- Context: grep shows 0 TODO matches → {"score": 1.0, "reason": "No TODOs; target achieved"}\n` +
     `- Context: grep shows 3 matches: src/foo.ts:42: TODO fix this → {"score": 0.0, "reason": "3 TODOs remain"}\n\n` +
@@ -141,9 +175,10 @@ export async function observeWithLLM(
     `${contextContent}\n\n` +
     `Score now based strictly on the above content.`;
 
-  const response = await llmClient.sendMessage([
-    { role: "user", content: prompt },
-  ]);
+  const response = await llmClient.sendMessage(
+    [{ role: "user", content: prompt }],
+    { system: OBSERVATION_SYSTEM_PROMPT, max_tokens: 512, temperature: 0 }
+  );
 
   const parsed = llmClient.parseJSON(response.content, LLMObservationResponseSchema);
 

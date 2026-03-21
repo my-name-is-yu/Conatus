@@ -22,6 +22,8 @@ import type { Task, VerificationResult } from "../types/task.js";
 import type { Logger } from "../runtime/logger.js";
 import type { AgentTask, AgentResult, IAdapter } from "./adapter-layer.js";
 import { AdapterRegistry } from "./adapter-layer.js";
+import { wrapXmlTag, formatKnowledge } from "../prompt/formatters.js";
+import { wrapXmlTag, formatKnowledge } from "../prompt/formatters.js";
 
 // ─── Re-exported types used by consumers ───
 
@@ -77,6 +79,10 @@ export interface VerifierDeps {
   onTaskComplete?: (strategyId: string) => void;
   durationToMs: (duration: { value: number; unit: string }) => number;
   completionJudgerConfig?: CompletionJudgerConfig;
+  /** Optional knowledge manager for enriching LLM review prompts */
+  knowledgeManager?: {
+    getRelevantKnowledge?(goalId: string): Promise<Array<{ question: string; answer: string; confidence: number }>>;
+  };
 }
 
 // ─── verifyTask ───
@@ -131,8 +137,43 @@ export async function verifyTask(
   // ─── Layer 1: Mechanical verification ───
   const l1Result = await runMechanicalVerification(deps, task);
 
+  // ─── Build optional enrichment blocks for LLM review ───
+  let knowledgeBlock = "";
+  if (deps.knowledgeManager?.getRelevantKnowledge) {
+    try {
+      const entries = await deps.knowledgeManager.getRelevantKnowledge(task.goal_id);
+      if (entries.length > 0) {
+        knowledgeBlock = wrapXmlTag(
+          "relevant_knowledge",
+          formatKnowledge(
+            entries.map((e) => ({ question: e.question, answer: e.answer, confidence: e.confidence }))
+          )
+        );
+      }
+    } catch { /* knowledge enrichment is optional */ }
+  }
+
+  let stateBlock = "";
+  try {
+    const goalDataForState = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
+    if (goalDataForState && typeof goalDataForState === "object") {
+      const dims = (goalDataForState as Record<string, unknown>).dimensions as Array<Record<string, unknown>> | undefined;
+      const primaryDim = dims?.find((d) => d.name === task.primary_dimension);
+      if (primaryDim) {
+        const currentValue = typeof primaryDim.current_value === "number" ? primaryDim.current_value : undefined;
+        const threshold = primaryDim.threshold;
+        if (currentValue !== undefined) {
+          stateBlock = wrapXmlTag(
+            "current_state",
+            `Dimension: ${task.primary_dimension}, current value: ${currentValue}${threshold !== undefined ? `, target: ${JSON.stringify(threshold)}` : ""}`
+          );
+        }
+      }
+    }
+  } catch { /* state enrichment is optional */ }
+
   // ─── Layer 2: LLM task reviewer (independent) ───
-  const l2Result = await runLLMReview(deps, task, executionResult);
+  const l2Result = await runLLMReview(deps, task, executionResult, knowledgeBlock, stateBlock);
 
   // ─── Layer 3: Executor self-report (reference only) ───
   const executorReport = parseExecutorReport(executionResult);
@@ -152,7 +193,7 @@ export async function verifyTask(
       confidence = 0.7;
     } else if (l1Result.passed && !l2Result.passed && !l2Result.partial) {
       // L1 pass + L2 fail → re-review
-      l2Retry = await runLLMReview(deps, task, executionResult);
+      l2Retry = await runLLMReview(deps, task, executionResult, knowledgeBlock, stateBlock);
       if (l2Retry.passed) {
         verdict = "pass";
         confidence = 0.75;
@@ -672,7 +713,9 @@ async function runMechanicalVerification(
 async function runLLMReview(
   deps: VerifierDeps,
   task: Task,
-  executionResult: AgentResult
+  executionResult: AgentResult,
+  knowledgeBlock = "",
+  stateBlock = ""
 ): Promise<{ passed: boolean; partial: boolean; description: string; confidence: number; criteria_met?: number; criteria_total?: number }> {
   const timeoutMs = deps.completionJudgerConfig?.timeoutMs ?? 30_000;
   const maxRetries = deps.completionJudgerConfig?.maxRetries ?? 2;

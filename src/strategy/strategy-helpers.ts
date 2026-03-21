@@ -47,7 +47,8 @@ export function buildGenerationPrompt(
   goalId: string,
   primaryDimension: string,
   targetDimensions: string[],
-  context: { currentGap: number; pastStrategies: Strategy[] }
+  context: { currentGap: number; pastStrategies: Strategy[] },
+  enrichment?: { templatesBlock?: string; lessonsBlock?: string }
 ): string {
   const pastSummary =
     context.pastStrategies.length > 0
@@ -59,6 +60,13 @@ export function buildGenerationPrompt(
           .join("\n")
       : "None";
 
+  const enrichmentSection = [
+    enrichment?.templatesBlock ?? "",
+    enrichment?.lessonsBlock ?? "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
   return `Generate 1-2 strategic approaches to close the gap for goal "${goalId}".
 
 Primary dimension to improve: ${primaryDimension}
@@ -67,7 +75,7 @@ Current gap score: ${context.currentGap} (0=closed, 1=fully open)
 
 Past strategies tried:
 ${pastSummary}
-
+${enrichmentSection ? `\n${enrichmentSection}\n` : ""}
 Return a JSON array of strategies. Each strategy must follow this schema:
 {
   "hypothesis": "string - the core bet/approach",

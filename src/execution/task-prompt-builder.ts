@@ -15,7 +15,9 @@ export async function buildTaskGenerationPrompt(
   knowledgeContext?: string,
   adapterType?: string,
   existingTasks?: string[],
-  workspaceContext?: string
+  workspaceContext?: string,
+  reflections?: string,
+  lessons?: string
 ): Promise<string> {
   // Load goal context to enrich the prompt
   const goal = await stateManager.loadGoal(goalId);
@@ -147,9 +149,12 @@ Constraints:
     // no failure context — skip injection
   }
 
+  const reflectionsSection = reflections ? `\n${reflections}\n` : "";
+  const lessonsSection = lessons ? `\n${lessons}\n` : "";
+
   return `${goalSection}
 ${dimensionSection}
-${repoSection}${adapterSection}${knowledgeSection}${workspaceSection}${existingTasksSection}${failureContextSection}
+${repoSection}${adapterSection}${knowledgeSection}${workspaceSection}${existingTasksSection}${failureContextSection}${reflectionsSection}${lessonsSection}
 Requirements:
 - Specific to actual project (goal, description, repo context)
 - No generic improvements unless in goal description
