@@ -14,6 +14,9 @@
   "license": "MIT",
   "author": "yuyoshimuta",
   "homepage": "https://github.com/my-name-is-yu/Motiva#readme",
+  "bugs": {
+    "url": "https://github.com/my-name-is-yu/Motiva/issues"
+  },
   "bin": {
     "motiva": "dist/cli-runner.js"
   },

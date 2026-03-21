@@ -4,6 +4,66 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - 2026-03-21
+
+Phase 3 development infrastructure, OSS optimization (#112-#146, 35 items), hierarchical memory Phase 2, and Node.js 18 end-of-life drop. Test suite: 4315 tests, 196 test files.
+
+### Added
+
+- Added hierarchical memory Phase 2: three-tier storage (core / recall / archival), LLM-driven page-in/out, cross-tier promotion and demotion, dynamic context budgeting, and archival semantic search.
+- Added Browser Use CLI adapter for browser-automation task delegation.
+- Added A2A protocol adapter for agent interoperability.
+- Added structured Reflexion-style reflection with task-lifecycle split.
+- Added 4-point guardrail callbacks (before/after execution and before/after LLM call).
+- Added LLM fault-tolerance guards (10 guards across 6 modules) covering enum sanitization, direction-check on `dimension_updates`, and Zod validation of `autoDetectDependencies` responses.
+- Added custom Error class hierarchy for better error classification and stack filtering (closes #123).
+- Added LLM provider enhancements with an `ensure-api-key` CLI helper for interactive key setup.
+- Added `SECURITY.md`, competitor comparison table, and OSS-quality README badges.
+- Added hypothesis verification mechanism (Milestone 14 follow-up).
+- Added convergence detection to `SatisficingJudge`.
+- Added consolidated reward-computation JSON log and completion-judger timeout/retry config.
+
+### Changed
+
+- Dropped Node.js 18 support (EOL April 2025); minimum runtime is now Node.js 20.
+- Phase 3 file-splitting: 11 large files (700–1400 lines) split into 30+ focused modules; all modules are now under 500 lines.
+- Migrated all synchronous `fs.*` calls to `fs/promises` across 28+ modules for consistent async I/O.
+- Centralized environment-variable references to `provider-config.ts` and JSON I/O to `json-io.ts` (closes #120, #125).
+- Replaced Markdown regex re-parsing with structured metadata in `ReportingEngine` (closes #142).
+- Extracted `BaseLLMClient` with shared `safeParse` logic from four LLM clients (closes #112, #119).
+- Skipped retry on 4xx client errors in `LLMClient` to avoid wasting quota on permanent failures (closes #134).
+- Translated plugin-loader error messages to English (closes #143).
+- Reorganized `src/` root (48 files) into 9 subdirectories; 45 files relocated.
+- Test suite run time reduced from ~565 s to ~8 s through async-mock fixes and slow-test elimination.
+- `docs/status.md` translated to English for OSS readability.
+
+### Fixed
+
+- Fixed Critical OSS issues: URL inconsistency across docs (#159), remaining Node.js 18 references (#160), duplicate Node.js 18 CI matrix entries (#161), and missing `.gitignore` entries for generated artifacts (#166).
+- Fixed path traversal vulnerability in `StateManager.readRaw/writeRaw` (closes #126).
+- Fixed shell-binary denylist enforcement in `ShellDataSourceAdapter` argv[0] (closes #145).
+- Fixed sensitive-directory denylist in `workspace-context` to prevent credential leakage (closes #140).
+- Fixed goalId sanitization in `DaemonRunner.generateCronEntry` (closes #146).
+- Fixed `execFileSync` replaced with async `execFile` in observation-llm to avoid blocking the event loop (closes #130).
+- Fixed infinite stream-reopen loop in Logger (closes #139).
+- Fixed `activateMultiple` partial mutation on validation failure (closes #141).
+- Fixed broken `addEdge` call in goal-dependency graph so cycle detection works correctly (closes #129).
+- Fixed `mkdtempSync` replaced with async `mkdtemp` in `CodexLLMClient` (closes #144).
+- Fixed unawaited `saveReport` call in `ReportingEngine.generateNotification` (closes #128).
+- Fixed unawaited `recordRebalance` in `PortfolioManager` early-return path (closes #127).
+- Fixed `TrustManager` wiring in core-loop reward logging (closes #115).
+- Fixed silent error swallowing in 6 core-loop catch blocks and 3 other modules with proper Logger calls (closes #116, #117, #132).
+- Fixed strategy ranking to use the correct `hypothesis` key in `StrategyManagerBase` (closes #131).
+- Fixed `ENOTEMPTY` race condition in `TreeLoopOrchestrator` cleanup on test teardown.
+- Fixed `node:crypto` import for Node.js compatibility in test files.
+
+### Removed
+
+- Removed duplicate wildcard re-exports from `index.ts` (closes #118).
+- Removed redundant `observeForTask` duplicate; delegated to `_observeForTask` (closes #136).
+- Removed redundant embedding call in `StrategyTemplateRegistry` (closes #137).
+- Removed unused `goalDescription` parameter from `matchPluginsForGoal` (closes #121).
+
 ## [0.3.0] - 2026-03-16
 
 Milestone 7 delivery: recursive Goal Tree phase 2, cross-goal portfolio phase 2, and learning pipeline phase 2. 163 new tests (3105 → 3268, 89 test files).
