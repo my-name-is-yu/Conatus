@@ -49,7 +49,12 @@ export async function saveIndex(
   index: MemoryIndex
 ): Promise<void> {
   const indexPath = path.join(memoryDir, layer, "index.json");
-  await fsp.mkdir(path.dirname(indexPath), { recursive: true });
+  try {
+    await fsp.mkdir(path.dirname(indexPath), { recursive: true });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
   const updated = MemoryIndexSchema.parse({
     ...index,
     last_updated: new Date().toISOString(),
