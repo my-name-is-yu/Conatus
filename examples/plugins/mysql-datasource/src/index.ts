@@ -1,6 +1,6 @@
 // ─── MysqlDataSourceAdapter ───
 //
-// A Motiva data source plugin that queries a MySQL database.
+// A Moxen data source plugin that queries a MySQL database.
 // Only SELECT statements are permitted; mutating SQL is rejected.
 
 import mysql from "mysql2/promise";

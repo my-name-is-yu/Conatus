@@ -23,11 +23,11 @@ ollama pull qwen3:4b
 ollama list  # qwen3:4b should appear in the list
 ```
 
-### Conatus Repository
+### Moxen Repository
 
 ```bash
-git clone <repository-url> Conatus
-cd Conatus
+git clone <repository-url> Moxen
+cd Moxen
 npm install
 npm run build
 ```
@@ -35,19 +35,19 @@ npm run build
 ## 2. Starting Ollama
 
 ```bash
-# Local only (when running Conatus on the same machine)
+# Local only (when running Moxen on the same machine)
 ollama serve
 
 # Allow external access (when accessing from another machine)
 OLLAMA_HOST=0.0.0.0 ollama serve
 ```
 
-## 3. Running Conatus
+## 3. Running Moxen
 
 ### Common Environment Variables
 
 ```bash
-export MOTIVA_LLM_PROVIDER=ollama
+export MOXEN_LLM_PROVIDER=ollama
 export ANTHROPIC_API_KEY=dummy
 ```
 
@@ -55,10 +55,10 @@ export ANTHROPIC_API_KEY=dummy
 
 ### Entry Point
 
-Use `npx motiva` or run directly:
+Use `npx moxen` or run directly:
 
 ```bash
-npx motiva <subcommand>
+npx moxen <subcommand>
 # or
 node dist/cli-runner.js <subcommand>
 ```
@@ -72,7 +72,7 @@ node dist/cli-runner.js --help
 ### Add a Goal
 
 ```bash
-node dist/cli-runner.js goal add "Create a readme for Conatus"
+node dist/cli-runner.js goal add "Create a readme for Moxen"
 ```
 
 ### List Goals
@@ -117,7 +117,7 @@ TUI controls:
 
 ## 4. Connecting to Ollama from Another Machine
 
-Run Ollama on the older MacBook and run Conatus from your development machine:
+Run Ollama on the older MacBook and run Moxen from your development machine:
 
 ```bash
 # Find the IP address of the older MacBook
@@ -126,8 +126,8 @@ ifconfig | grep "inet "
 # Test the connection from your development machine
 curl http://<older-mac-ip>:11434/v1/models
 
-# Run Conatus from your development machine
-MOTIVA_LLM_PROVIDER=ollama \
+# Run Moxen from your development machine
+MOXEN_LLM_PROVIDER=ollama \
 OLLAMA_BASE_URL=http://<older-mac-ip>:11434 \
 node dist/cli-runner.js run
 ```
@@ -165,7 +165,7 @@ node dist/cli-runner.js tui
 ### C. Error Handling Check
 
 ```bash
-# Run Conatus while Ollama is stopped → verify retry and error output
+# Run Moxen while Ollama is stopped → verify retry and error output
 # (stop ollama in another terminal first, then run)
 node dist/cli-runner.js run
 ```
@@ -174,7 +174,7 @@ node dist/cli-runner.js run
 
 | Issue | Cause | Workaround |
 |-------|-------|------------|
-| ~~`npx motiva` produces no output~~ | ~~Fixed~~ Updated to use `import.meta.url` + `realpathSync` check | Both `npx motiva` and `node dist/cli-runner.js` work |
+| ~~`npx moxen` produces no output~~ | ~~Fixed~~ Updated to use `import.meta.url` + `realpathSync` check | Both `npx moxen` and `node dist/cli-runner.js` work |
 | TUI display garbled | Insufficient terminal width over SSH + tmux | Zoom the pane with `Ctrl-b z` |
 | TUI chat says "I didn't understand" | Chat is command-based (free-form input not supported) | Check available commands with `/help` |
 | TUI frozen | Ink rendering issue | `Ctrl-C` or `pkill -f "node dist/cli-runner.js"` |
@@ -185,5 +185,5 @@ node dist/cli-runner.js run
 To clear test data and start fresh:
 
 ```bash
-rm -rf ~/.motiva
+rm -rf ~/.moxen
 ```

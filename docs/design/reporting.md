@@ -1,21 +1,21 @@
 # Reporting Design
 
-> Conatus reports to the user proactively — without being asked. It delivers the status of goal pursuit at the right time and at the right level of detail.
+> Moxen reports to the user proactively — without being asked. It delivers the status of goal pursuit at the right time and at the right level of detail.
 > This document defines the types of reports, triggers, content, delivery channels, and verbosity control.
 
 ---
 
 ## 1. The Role of Reporting
 
-Conatus autonomously pursues user goals. But being autonomous does not mean operating in silence. As defined in vision.md, "Conatus reports proactively, at the right time, at the right level of detail" — this is the essential behavior of an autonomous partner.
+Moxen autonomously pursues user goals. But being autonomous does not mean operating in silence. As defined in vision.md, "Moxen reports proactively, at the right time, at the right level of detail" — this is the essential behavior of an autonomous partner.
 
-Reporting is a core function of Conatus, not an optional one. Whether the user can trust Conatus depends on transparency (see trust-and-safety.md §8). Trust is built on transparency, and reporting is the implementation of transparency.
+Reporting is a core function of Moxen, not an optional one. Whether the user can trust Moxen depends on transparency (see trust-and-safety.md §8). Trust is built on transparency, and reporting is the implementation of transparency.
 
 ### Reporting and the Execution Boundary
 
-Generating reports (deciding on content and structure) is done directly by Conatus. This is part of Conatus's reasoning process and corresponds to LLM calls for analyzing and summarizing goal state.
+Generating reports (deciding on content and structure) is done directly by Moxen. This is part of Moxen's reasoning process and corresponds to LLM calls for analyzing and summarizing goal state.
 
-Delivering reports (writing to files, sending notifications) is delegated (see execution-boundary.md §3). Conatus decides "what to report," and "how to deliver it" is left to existing systems.
+Delivering reports (writing to files, sending notifications) is delegated (see execution-boundary.md §3). Moxen decides "what to report," and "how to deliver it" is left to existing systems.
 
 ---
 
@@ -25,7 +25,7 @@ Reporting is divided into three categories. Each has different triggers, differe
 
 ### 2.1 Periodic Report
 
-**Purpose**: Regularly convey the overall picture of goal pursuit. This is the foundational information for users to get a bird's-eye view of Conatus's activity.
+**Purpose**: Regularly convey the overall picture of goal pursuit. This is the foundational information for users to get a bird's-eye view of Moxen's activity.
 
 **Content**:
 
@@ -36,7 +36,7 @@ Reporting is divided into three categories. Each has different triggers, differe
 | Execution summary | Number of tasks executed during the period, breakdown by success/failure/pending |
 | Strategy evaluation | Effectiveness of the current strategy (Gap reduction rate), rationale for continuing or changing strategy |
 | Risks and concerns | Dimensions trending toward stall, low-confidence observations, deadline risks |
-| Next actions | Tasks Conatus plans to work on in the next period |
+| Next actions | Tasks Moxen plans to work on in the next period |
 
 **Default report frequency**:
 
@@ -60,16 +60,16 @@ Immediate notifications are alerts, not reports. They are concise, action-orient
 | Notification Type | Trigger Condition | Information Included |
 |-------------------|-------------------|----------------------|
 | Urgent alert | Sensor threshold exceeded, external system failure, sudden change in health metric | What happened, scope of impact, recommended action |
-| Approval request | Before executing an irreversible action (see trust-and-safety.md §4) | Action content, trust/confidence levels, Conatus's assessment, approval button |
+| Approval request | Before executing an irreversible action (see trust-and-safety.md §4) | Action content, trust/confidence levels, Moxen's assessment, approval button |
 | Stall escalation | Stage 3 of stall detection (see stall-detection.md §4) | Description of the stall, list of strategies attempted, available options |
 | Goal completion notification | When all dimensions of a goal exceed their thresholds and completion is confirmed | Summary of the achieved state, observation evidence, recommended next steps |
 | Capability deficit escalation | Required capability (permission, tool, data source) is missing | What is needed, alternatives, scope of impact |
 
 ### 2.3 Strategy Change Report
 
-**Purpose**: When Conatus changes strategy, convey the rationale for that decision to the user.
+**Purpose**: When Moxen changes strategy, convey the rationale for that decision to the user.
 
-Strategy changes happen autonomously, but "explaining why" is directly tied to user trust. Conatus does not pivot silently.
+Strategy changes happen autonomously, but "explaining why" is directly tied to user trust. Moxen does not pivot silently.
 
 **Content**:
 
@@ -133,7 +133,7 @@ notification_thresholds: {
 
 ### 3.3 Event-Based Trigger (for Strategy Change Reports)
 
-Triggered by Conatus's internal decisions. Not by external input, but fired when a strategy change is determined in the strategy selection step of the core loop (`mechanism.md §2.3`).
+Triggered by Moxen's internal decisions. Not by external input, but fired when a strategy change is determined in the strategy selection step of the core loop (`mechanism.md §2.3`).
 
 ```
 strategy_change_trigger: {
@@ -189,7 +189,7 @@ Stall detection (`stall-detection.md`) stages and reporting are integrated as fo
 
 | Stall Stage | Reporting Behavior |
 |-------------|-------------------|
-| 1st detection | No report (Conatus handles autonomously) |
+| 1st detection | No report (Moxen handles autonomously) |
 | 2nd detection | Include stall status in the next periodic report |
 | 3rd detection | Generate immediate notification (escalation) |
 
@@ -206,7 +206,7 @@ The MVP uses delivery methods with no infrastructure dependencies.
 **Report files**:
 
 ```
-~/.conatus/
+~/.moxen/
 ├── reports/
 │   ├── daily/
 │   │   ├── 2026-03-10.md
@@ -226,24 +226,24 @@ The MVP uses delivery methods with no infrastructure dependencies.
 
 **CLI log**:
 
-When running `conatus run`, unread reports and unprocessed notifications are displayed in the console.
+When running `moxen run`, unread reports and unprocessed notifications are displayed in the console.
 
 ```
-$ conatus run
+$ moxen run
 
 [Report] Daily Summary (2026-03-10)
   Goal "Revenue 2x": Progress 42% → 45% (+3%)
   Goal "Dog health": Progress 88% (stable)
-  Details: ~/.conatus/reports/daily/2026-03-10.md
+  Details: ~/.moxen/reports/daily/2026-03-10.md
 
 [Notification] Strategy Change (2026-03-10 14:30)
   Goal "Revenue 2x": Pivoted from "UI improvements" → "Support enhancement"
-  Details: ~/.conatus/reports/notifications/20260310-143022-strategy-change.md
+  Details: ~/.moxen/reports/notifications/20260310-143022-strategy-change.md
 ```
 
 ### 5.2 Phase 2: External Notification Channels
 
-Phase 2 adds push notifications. Information reaches the user without them having to check in on Conatus.
+Phase 2 adds push notifications. Information reaches the user without them having to check in on Moxen.
 
 | Channel | Purpose | Configuration |
 |---------|---------|---------------|
@@ -257,7 +257,7 @@ Phase 2 adds push notifications. Information reaches the user without them havin
 delivery_channels: [
   {
     type: "file",          // MVP: always enabled
-    path: "~/.conatus/reports/"
+    path: "~/.moxen/reports/"
   },
   {
     type: "slack",         // Phase 2
@@ -411,7 +411,7 @@ Dimension: Respiration rate
 Observed value: 42 breaths/min (normal range: 15–30 breaths/min)
 Confidence: 0.95 (direct sensor measurement)
 
-## Conatus's Assessment
+## Moxen's Assessment
 Sharp rise from 28 breaths/min at the previous observation (12:00).
 Based on past patterns, this level warrants consulting a veterinarian.
 
@@ -461,13 +461,13 @@ Notification ID: notif_a1b2c3
 |------|------------------|
 | Report types | Daily summary, weekly report, immediate notifications (all types), strategy change reports |
 | Delivery channels | File output (Markdown) + CLI log |
-| Triggers | Time-based (evaluated when `conatus run` is executed), threshold-based, event-based |
+| Triggers | Time-based (evaluated when `moxen run` is executed), threshold-based, event-based |
 | Verbosity control | Verbosity levels (3 tiers), notification cooldown |
 | LLM involvement | Narrative generation, strategy evaluation in prose |
-| Report storage | Saved as Markdown files in `~/.conatus/reports/` |
-| Unread management | File-based (unread reports displayed when `conatus run` is executed) |
+| Report storage | Saved as Markdown files in `~/.moxen/reports/` |
+| Unread management | File-based (unread reports displayed when `moxen run` is executed) |
 
-MVP constraint: Report delivery is pull-only (only when `conatus run` is executed). There are no real-time push notifications. Even urgent alerts are displayed the next time `conatus run` is executed. This is a constraint of the MVP process model (CLI-based), not of the reporting design itself.
+MVP constraint: Report delivery is pull-only (only when `moxen run` is executed). There are no real-time push notifications. Even urgent alerts are displayed the next time `moxen run` is executed. This is a constraint of the MVP process model (CLI-based), not of the reporting design itself.
 
 ### Phase 2
 
@@ -487,11 +487,11 @@ Phase 2 priorities: Slack integration > Email > Webhook > Custom templates. Star
 
 ## 10. Design Decisions and Boundaries
 
-**Too many vs. too few reports**: Too many reports and users start ignoring them. Too few and users lose sight of what Conatus is doing. The default configuration uses a conservative setup — "daily summary + immediate notifications for urgent events" — with users able to increase or decrease as needed.
+**Too many vs. too few reports**: Too many reports and users start ignoring them. Too few and users lose sight of what Moxen is doing. The default configuration uses a conservative setup — "daily summary + immediate notifications for urgent events" — with users able to increase or decrease as needed.
 
 **Managing LLM costs**: Using LLM for every report would make costs non-negligible. The `minimal` level of the daily summary can be generated using only template embedding (no LLM required); LLM is used for `standard` and above. The weekly report always uses LLM (acceptable cost due to low frequency).
 
-**Report persistence**: Reports are also part of Conatus's activity log. "When and what was reported" is the foundation of Conatus's transparency and auditability. Therefore, report files are archived rather than deleted.
+**Report persistence**: Reports are also part of Moxen's activity log. "When and what was reported" is the foundation of Moxen's transparency and auditability. Therefore, report files are archived rather than deleted.
 
 **Relationship between periodic reports and observation cycles**: Periodic report generation is independent of the observation cycle (`observation.md §3`). Reports are generated using the latest observation results, but no additional observations are performed specifically for report generation. A report is a snapshot of "what is currently known," not "what was newly investigated."
 

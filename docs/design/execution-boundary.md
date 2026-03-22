@@ -1,22 +1,22 @@
-# Conatus --- Defining the Execution Boundary
+# Moxen --- Defining the Execution Boundary
 
 ---
 
 ## 1. Core Principle
 
-**Conatus does not execute on its own. Conatus always delegates to agents.**
+**Moxen does not execute on its own. Moxen always delegates to agents.**
 
-"Conatus wrote the code," "Conatus collected the data," "Conatus built the system" — none of these are accurate. The precise statements are: "Conatus instructed an agent to implement the code," "Conatus asked an agent to collect the data," "Conatus delegated system construction to an agent."
+"Moxen wrote the code," "Moxen collected the data," "Moxen built the system" — none of these are accurate. The precise statements are: "Moxen instructed an agent to implement the code," "Moxen asked an agent to collect the data," "Moxen delegated system construction to an agent."
 
-Conatus is the brain, not the body. It decides; it does not act.
+Moxen is the brain, not the body. It decides; it does not act.
 
 ---
 
-## 2. What Conatus Is Responsible For
+## 2. What Moxen Is Responsible For
 
-The only thing Conatus does directly is **LLM calls for its own thinking process**.
+The only thing Moxen does directly is **LLM calls for its own thinking process**.
 
-| What Conatus does directly | Purpose |
+| What Moxen does directly | Purpose |
 |---------------------------|---------|
 | LLM calls for goal decomposition | Convert ambiguous goals into a tree of sub-goals |
 | LLM calls for observation analysis | Interpret results received from agents and recognize gaps |
@@ -29,9 +29,9 @@ Everything else is delegated to agents.
 
 ---
 
-## 3. What Conatus Delegates
+## 3. What Moxen Delegates
 
-Anything related to execution is outside Conatus's scope.
+Anything related to execution is outside Moxen's scope.
 
 | Delegation category | Examples | Delegate targets |
 |--------------------|---------|-----------------|
@@ -44,13 +44,13 @@ Anything related to execution is outside Conatus's scope.
 | Communication and notifications | Sending reports, firing alerts, approval requests | Messaging systems |
 | Human confirmation | Approval requests for irreversible actions | Humans (directly) |
 
-Think of it this way: "Conatus has no body." Conatus observes, thinks, and instructs. It is always another entity that moves its hands.
+Think of it this way: "Moxen has no body." Moxen observes, thinks, and instructs. It is always another entity that moves its hands.
 
 ---
 
 ## 4. The Delegation Model
 
-Conatus's delegation to agents consists of four steps.
+Moxen's delegation to agents consists of four steps.
 
 ```
 1. Adapter selection
@@ -78,15 +78,15 @@ Conatus's delegation to agents consists of four steps.
    - Provide feedback for the next loop
 ```
 
-Through these four steps, Conatus controls "what to ask for" while leaving "how to execute it" to the agent.
+Through these four steps, Moxen controls "what to ask for" while leaving "how to execute it" to the agent.
 
 ---
 
 ## 5. Capability Registry
 
-Conatus knows "what agents can do," but it does not do those things itself.
+Moxen knows "what agents can do," but it does not do those things itself.
 
-The Capability Registry is a catalog of capabilities Conatus can delegate to.
+The Capability Registry is a catalog of capabilities Moxen can delegate to.
 
 ```
 Capability Registry
@@ -109,15 +109,15 @@ Capability Registry
       └── Judgment and approval (irreversible actions, escalations)
 ```
 
-The capability catalog changes dynamically. When a user provides an API key, data sources expand; when permissions are granted, available actions expand. Conatus consults the catalog's current state when designing tasks.
+The capability catalog changes dynamically. When a user provides an API key, data sources expand; when permissions are granted, available actions expand. Moxen consults the catalog's current state when designing tasks.
 
-However, Conatus does not "use" the capability catalog — it "references" it. The actual exercise of a capability is performed by the delegated agent or system.
+However, Moxen does not "use" the capability catalog — it "references" it. The actual exercise of a capability is performed by the delegated agent or system.
 
 ---
 
 ## 5.1 Detecting Capability Gaps
 
-Conatus determines it "cannot handle this with the current capabilities" when any of the following signals occur.
+Moxen determines it "cannot handle this with the current capabilities" when any of the following signals occur.
 
 **Signal 1: A required capability is missing from the registry at task generation time**
 
@@ -156,7 +156,7 @@ Example:
 
 ## 5.2 Dynamic Acquisition Flow
 
-Once a capability gap is confirmed, Conatus acquires the capability through the following flow.
+Once a capability gap is confirmed, Moxen acquires the capability through the following flow.
 
 ```
 1. Confirm the capability gap
@@ -207,7 +207,7 @@ The default delegate target is a code implementation agent (Claude Code CLI, Ope
 
 ### Requesting Permissions/API Keys from the User
 
-**Applicable case**: The capability gap is caused by missing credentials, permissions, or access to an external service. This is a type of capability that Conatus can request but cannot acquire autonomously.
+**Applicable case**: The capability gap is caused by missing credentials, permissions, or access to an external service. This is a type of capability that Moxen can request but cannot acquire autonomously.
 
 ```
 Example:
@@ -232,7 +232,7 @@ Example:
   Acquisition method: Propose Slack Webhook configuration to the user
   Proposal content:
     - Service to integrate: Slack
-    - Capability gained: Send notifications to the #conatus-alerts channel
+    - Capability gained: Send notifications to the #moxen-alerts channel
     - Setup steps: Generate and provide an Incoming Webhook URL
 ```
 
@@ -288,19 +288,19 @@ Autonomously acquired capabilities are registered in the registry in a form reus
 
 ---
 
-## 6. What "Conatus Did X" Actually Means
+## 6. What "Moxen Did X" Actually Means
 
 An explicit mapping of expressions:
 
 | Shorthand (imprecise) | Precise meaning |
 |----------------------|----------------|
-| Conatus wrote the code | Conatus instructed a code implementation agent to implement the code and confirmed the result |
-| Conatus collected the data | Conatus delegated a data collection task to an agent and received the result |
-| Conatus built the system | Conatus sequentially delegated construction tasks to multiple agents and verified the integration |
-| Conatus called the API | Conatus instructed an agent to perform that action and observed the response |
-| Conatus sent the notification | Conatus delegated message delivery to the notification system |
-| Conatus built the tool | Conatus instructed a code implementation agent to create the tool and verified its operation |
-| Conatus investigated | Conatus delegated an investigation task to an agent and analyzed the result |
+| Moxen wrote the code | Moxen instructed a code implementation agent to implement the code and confirmed the result |
+| Moxen collected the data | Moxen delegated a data collection task to an agent and received the result |
+| Moxen built the system | Moxen sequentially delegated construction tasks to multiple agents and verified the integration |
+| Moxen called the API | Moxen instructed an agent to perform that action and observed the response |
+| Moxen sent the notification | Moxen delegated message delivery to the notification system |
+| Moxen built the tool | Moxen instructed a code implementation agent to create the tool and verified its operation |
+| Moxen investigated | Moxen delegated an investigation task to an agent and analyzed the result |
 
 The shorthand is convenient in conversation, but use the precise form when discussing design.
 
@@ -316,7 +316,7 @@ A special case during delegation is irreversible actions.
 - Sending mass emails to customers
 - Modifying or destroying existing infrastructure
 
-Actions in this category **always require human approval**, regardless of trust level or goal confidence. Even if Conatus judges something to be "sufficiently certain," it must not delegate without human confirmation.
+Actions in this category **always require human approval**, regardless of trust level or goal confidence. Even if Moxen judges something to be "sufficiently certain," it must not delegate without human confirmation.
 
 The approval flow is itself a form of delegation. The question "is it okay to perform this action?" is handed to the human, and the delegation to the agent takes place only after a "yes" is received.
 
@@ -324,10 +324,10 @@ The approval flow is itself a form of delegation. The question "is it okay to pe
 
 ## 8. Summary
 
-Conatus's execution boundary in one sentence:
+Moxen's execution boundary in one sentence:
 
-> **Conatus thinks. Agents act.**
+> **Moxen thinks. Agents act.**
 
-Conatus's value lies in continuously discovering "what should be done next" from the gap between goals and reality. It is always agents, humans, or existing systems that carry out the results of that discovery.
+Moxen's value lies in continuously discovering "what should be done next" from the gap between goals and reality. It is always agents, humans, or existing systems that carry out the results of that discovery.
 
-This separation makes Conatus scalable. No matter how complex the goal, Conatus keeps deciding "what should be done." "How to execute it" is handled by whichever agent is best suited at that moment.
+This separation makes Moxen scalable. No matter how complex the goal, Moxen keeps deciding "what should be done." "How to execute it" is handled by whichever agent is best suited at that moment.

@@ -1,7 +1,7 @@
 // ─── A2AAdapter ───
 //
 // IAdapter implementation for the Google A2A (Agent-to-Agent) Protocol v0.3.
-// Wraps A2AClient for network I/O and maps between Motiva's AgentTask/AgentResult
+// Wraps A2AClient for network I/O and maps between Moxen's AgentTask/AgentResult
 // and A2A's Message/Task types. Supports both polling and SSE streaming.
 
 import { randomUUID } from "node:crypto";
@@ -91,7 +91,7 @@ export class A2AAdapter implements IAdapter {
       await this.discoverCapabilities();
     }
 
-    // Build A2A message from Motiva's prompt
+    // Build A2A message from Moxen's prompt
     const message: A2AMessage = {
       role: "user",
       parts: [{ kind: "text", text: task.prompt }],
@@ -167,7 +167,7 @@ export class A2AAdapter implements IAdapter {
     }
   }
 
-  // ─── Private: map A2A Task to Motiva AgentResult ───
+  // ─── Private: map A2A Task to Moxen AgentResult ───
 
   private mapTaskToResult(task: A2ATask, startedAt: number): AgentResult {
     const elapsed = Date.now() - startedAt;
@@ -225,7 +225,7 @@ export class A2AAdapter implements IAdapter {
           output,
           error:
             `A2A task requires ${task.status.state}: ${task.status.message ?? "no details"}. ` +
-            "Motiva does not support interactive input through adapters.",
+            "Moxen does not support interactive input through adapters.",
           exit_code: null,
           elapsed_ms: elapsed,
           stopped_reason: "error",

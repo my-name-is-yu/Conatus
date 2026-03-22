@@ -282,8 +282,8 @@ After`;
   it("creates deterministic unit-length mock embeddings", async () => {
     const client = new MockEmbeddingClient(8);
 
-    const a = await client.embed("motiva");
-    const b = await client.embed("motiva");
+    const a = await client.embed("moxen");
+    const b = await client.embed("moxen");
 
     expect(a).toEqual(b);
     expect(client.cosineSimilarity(a, b)).toBeCloseTo(1, 10);

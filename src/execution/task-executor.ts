@@ -5,7 +5,7 @@ import type { AgentTask, AgentResult, IAdapter } from "./adapter-layer.js";
 import type { Task } from "../types/task.js";
 import { TaskSchema } from "../types/task.js";
 
-const DEBUG = process.env.MOTIVA_DEBUG === "true";
+const DEBUG = process.env.MOXEN_DEBUG === "true";
 
 // ─── Deps interface ───
 

@@ -1,8 +1,8 @@
 /**
  * CLIRunner — plugin subcommand tests
  *
- * Verifies that `conatus plugin list`, `conatus plugin install`, and
- * `conatus plugin remove` work correctly.
+ * Verifies that `moxen plugin list`, `moxen plugin install`, and
+ * `moxen plugin remove` work correctly.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -135,7 +135,7 @@ let consoleLogs: string[];
 let consoleErrors: string[];
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "conatus-plugin-test-"));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "moxen-plugin-test-"));
   pluginsDir = path.join(tmpDir, "plugins");
   fs.mkdirSync(pluginsDir, { recursive: true });
   consoleLogs = [];
@@ -304,11 +304,11 @@ describe("cmdPluginInstall — path detection", () => {
     const mockExecFile = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
 
     // npm install will succeed but manifest won't be found (no actual package installed)
-    const exitCode = await cmdPluginInstall(pluginsDir, ["@conatus-plugins/test"], undefined, mockExecFile as never);
+    const exitCode = await cmdPluginInstall(pluginsDir, ["@moxen-plugins/test"], undefined, mockExecFile as never);
 
     expect(mockExecFile).toHaveBeenCalledWith(
       "npm",
-      expect.arrayContaining(["install", "--prefix", expect.any(String), "@conatus-plugins/test"])
+      expect.arrayContaining(["install", "--prefix", expect.any(String), "@moxen-plugins/test"])
     );
     // fails at manifest read since nothing was actually installed
     expect(exitCode).toBe(1);
@@ -317,11 +317,11 @@ describe("cmdPluginInstall — path detection", () => {
   it("treats bare package name as npm install", async () => {
     const mockExecFile = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
 
-    const exitCode = await cmdPluginInstall(pluginsDir, ["my-conatus-plugin"], undefined, mockExecFile as never);
+    const exitCode = await cmdPluginInstall(pluginsDir, ["my-moxen-plugin"], undefined, mockExecFile as never);
 
     expect(mockExecFile).toHaveBeenCalledWith(
       "npm",
-      expect.arrayContaining(["install", "--prefix", expect.any(String), "my-conatus-plugin"])
+      expect.arrayContaining(["install", "--prefix", expect.any(String), "my-moxen-plugin"])
     );
     expect(exitCode).toBe(1);
   });
@@ -377,7 +377,7 @@ describe("cmdPluginInstall — npm flow", () => {
     expect(allOutput).toContain("mock-npm-plugin");
   });
 
-  it("returns 1 when plugin requires higher Motiva version", async () => {
+  it("returns 1 when plugin requires higher Moxen version", async () => {
     const mockExecFile = vi.fn().mockImplementation(async (_cmd: string, args: string[]) => {
       const prefixIndex = args.indexOf("--prefix");
       if (prefixIndex !== -1) {
@@ -390,9 +390,9 @@ describe("cmdPluginInstall — npm flow", () => {
           version: "1.0.0",
           type: "notifier",
           capabilities: ["notify"],
-          description: "Requires future Conatus",
+          description: "Requires future Moxen",
           permissions: {},
-          min_motiva_version: "99.0.0",
+          min_moxen_version: "99.0.0",
         };
         fs.writeFileSync(path.join(nodeModulesDir, "plugin.yaml"), yaml.dump(manifest), "utf-8");
       }
@@ -466,8 +466,8 @@ describe("cmdPluginSearch", () => {
 
   it("runs npm search and displays results in table format", async () => {
     const mockResults = [
-      { name: "@conatus-plugins/slack", version: "1.0.0", description: "Slack notifications" },
-      { name: "@conatus-plugins/discord", version: "2.1.0", description: "Discord notifications" },
+      { name: "@moxen-plugins/slack", version: "1.0.0", description: "Slack notifications" },
+      { name: "@moxen-plugins/discord", version: "2.1.0", description: "Discord notifications" },
     ];
     const mockExecFile = vi.fn().mockResolvedValue({
       stdout: JSON.stringify(mockResults),
@@ -477,10 +477,10 @@ describe("cmdPluginSearch", () => {
     const exitCode = await cmdPluginSearch(pluginsDir, ["slack"], mockExecFile as never);
 
     expect(exitCode).toBe(0);
-    expect(mockExecFile).toHaveBeenCalledWith("npm", ["search", "@conatus-plugins/slack", "--json"]);
+    expect(mockExecFile).toHaveBeenCalledWith("npm", ["search", "@moxen-plugins/slack", "--json"]);
     const allOutput = consoleLogs.join("\n");
-    expect(allOutput).toContain("@conatus-plugins/slack");
-    expect(allOutput).toContain("@conatus-plugins/discord");
+    expect(allOutput).toContain("@moxen-plugins/slack");
+    expect(allOutput).toContain("@moxen-plugins/discord");
     expect(allOutput).toContain("1.0.0");
   });
 

@@ -1,4 +1,4 @@
-// ─── motiva suggest and improve commands ───
+// ─── moxen suggest and improve commands ───
 
 import { parseArgs } from "node:util";
 
@@ -430,7 +430,7 @@ export async function cmdSuggest(
 
   const context = positionals[0];
   if (!context) {
-    logger.error('Usage: motiva suggest "<context>" [--max N] [--path <dir>]');
+    logger.error('Usage: moxen suggest "<context>" [--max N] [--path <dir>]');
     return 1;
   }
 
@@ -529,7 +529,7 @@ export async function cmdImprove(
   }
 
   const targetPath = positionals[0] || ".";
-  console.log(`\n[Motiva Improve] Analyzing ${targetPath}...\n`);
+  console.log(`\n[Moxen Improve] Analyzing ${targetPath}...\n`);
 
   try {
     await ensureProviderConfig();
@@ -604,7 +604,7 @@ export async function cmdImprove(
   }
 
   // Step 4: Negotiate the selected goal
-  console.log(`[Motiva Improve] Negotiating goal: "${selected.title}"...`);
+  console.log(`[Moxen Improve] Negotiating goal: "${selected.title}"...`);
   let goal: Awaited<ReturnType<typeof deps.goalNegotiator.negotiate>>["goal"];
   let response: Awaited<ReturnType<typeof deps.goalNegotiator.negotiate>>["response"];
   try {
@@ -622,21 +622,21 @@ export async function cmdImprove(
     return 1;
   }
 
-  console.log(`[Motiva Improve] Goal registered: ${goal.id}`);
+  console.log(`[Moxen Improve] Goal registered: ${goal.id}`);
   console.log(`  Response: ${responseType} — ${response.message}\n`);
 
   // Step 5: Run the loop (if --auto or --yes)
   if (values.auto || values.yes) {
-    console.log(`[Motiva Improve] Starting improvement loop for goal ${goal.id}...`);
+    console.log(`[Moxen Improve] Starting improvement loop for goal ${goal.id}...`);
     try {
       await deps.coreLoop.run(goal.id);
     } catch (err) {
       logger.error(formatOperationError(`run improvement loop for goal "${goal.id}"`, err));
       return 1;
     }
-    console.log(`[Motiva Improve] Loop completed for goal ${goal.id}`);
+    console.log(`[Moxen Improve] Loop completed for goal ${goal.id}`);
   } else {
-    console.log(`Goal created. Run with: motiva run --goal ${goal.id}`);
+    console.log(`Goal created. Run with: moxen run --goal ${goal.id}`);
   }
 
   return 0;

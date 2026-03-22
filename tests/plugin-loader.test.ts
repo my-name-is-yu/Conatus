@@ -228,7 +228,7 @@ describe("PluginLoader version compatibility", () => {
   });
 
   it("returns incompatible state when plugin requires a higher min version", async () => {
-    const manifest = makeValidManifest({ min_motiva_version: "999.0.0" });
+    const manifest = makeValidManifest({ min_moxen_version: "999.0.0" });
     vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
 
     const state = await loader.loadOne("/tmp/plugins/test-plugin");
@@ -237,7 +237,7 @@ describe("PluginLoader version compatibility", () => {
   });
 
   it("returns incompatible state when plugin requires a lower max version", async () => {
-    const manifest = makeValidManifest({ max_motiva_version: "0.0.1" });
+    const manifest = makeValidManifest({ max_moxen_version: "0.0.1" });
     vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
 
     const state = await loader.loadOne("/tmp/plugins/test-plugin");
@@ -392,7 +392,7 @@ describe("PluginLoader.loadAll", () => {
       makeAdapterRegistry(),
       makeDataSourceRegistry(),
       makeNotifierRegistry(),
-      "/tmp/motiva-plugins-nonexistent-dir"
+      "/tmp/moxen-plugins-nonexistent-dir"
     );
 
     const states = await loader.loadAll();
@@ -404,7 +404,7 @@ describe("PluginLoader.loadAll", () => {
       makeAdapterRegistry(),
       makeDataSourceRegistry(),
       makeNotifierRegistry(),
-      "/tmp/motiva-plugins-nonexistent-dir"
+      "/tmp/moxen-plugins-nonexistent-dir"
     );
 
     // Override discoverPluginDirs to return two fake dirs
@@ -456,7 +456,7 @@ describe("PluginLoader.discoverPluginDirs", () => {
       makeAdapterRegistry(),
       makeDataSourceRegistry(),
       makeNotifierRegistry(),
-      "/tmp/motiva-definitely-not-a-real-dir-abc123"
+      "/tmp/moxen-definitely-not-a-real-dir-abc123"
     );
 
     const dirs = await loader.discoverPluginDirs();
@@ -474,7 +474,7 @@ describe("PluginLoader.getPluginState and updatePluginState", () => {
   let loader: PluginLoader;
 
   beforeEach(() => {
-    tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "motiva-plugin-state-test-"));
+    tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "moxen-plugin-state-test-"));
     loader = new PluginLoader(
       makeAdapterRegistry(),
       makeDataSourceRegistry(),

@@ -47,7 +47,7 @@ export async function cmdPluginList(pluginsDir?: string): Promise<number> {
   const dir = pluginsDir ?? defaultPluginsDir();
 
   if (!(await pathExists(dir))) {
-    console.log("No plugins installed. Use `conatus plugin install <path>` to install one.");
+    console.log("No plugins installed. Use `moxen plugin install <path>` to install one.");
     return 0;
   }
 
@@ -84,7 +84,7 @@ export async function cmdPluginList(pluginsDir?: string): Promise<number> {
   }
 
   if (rows.length === 0) {
-    console.log("No plugins installed. Use `conatus plugin install <path>` to install one.");
+    console.log("No plugins installed. Use `moxen plugin install <path>` to install one.");
     return 0;
   }
 
@@ -143,27 +143,27 @@ function satisfiesRange(version: string, min?: string, max?: string): boolean {
   return true;
 }
 
-/** Check Conatus version compatibility, log a warning if incompatible, return false to abort. */
+/** Check Moxen version compatibility, log a warning if incompatible, return false to abort. */
 function checkVersionCompat(
-  manifest: { name: string; version: string; min_motiva_version?: string; max_motiva_version?: string },
-  motivaVersion: string
+  manifest: { name: string; version: string; min_moxen_version?: string; max_moxen_version?: string },
+  moxenVersion: string
 ): boolean {
-  if (!satisfiesRange(motivaVersion, manifest.min_motiva_version, manifest.max_motiva_version)) {
+  if (!satisfiesRange(moxenVersion, manifest.min_moxen_version, manifest.max_moxen_version)) {
     const range = [
-      manifest.min_motiva_version ? `>=${manifest.min_motiva_version}` : "",
-      manifest.max_motiva_version ? `<=${manifest.max_motiva_version}` : "",
+      manifest.min_moxen_version ? `>=${manifest.min_moxen_version}` : "",
+      manifest.max_moxen_version ? `<=${manifest.max_moxen_version}` : "",
     ]
       .filter(Boolean)
       .join(", ");
     getCliLogger().warn(
-      `Plugin "${manifest.name}" requires Conatus ${range}, but current version is ${motivaVersion}. Aborting install.`
+      `Plugin "${manifest.name}" requires Moxen ${range}, but current version is ${moxenVersion}. Aborting install.`
     );
     return false;
   }
   return true;
 }
 
-function getMotivaVersion(): string {
+function getMoxenVersion(): string {
   try {
     const pkgPath = path.resolve(new URL(".", import.meta.url).pathname, "../../../package.json");
     const pkg = JSON.parse(fsSync.readFileSync(pkgPath, "utf-8")) as { version?: string };
@@ -176,7 +176,7 @@ function getMotivaVersion(): string {
 export async function cmdPluginInstall(
   pluginsDir: string | undefined,
   argv: string[],
-  _getMotivaVersion?: () => string,
+  _getMoxenVersion?: () => string,
   _execFileFn?: typeof execFile
 ): Promise<number> {
   const logger = getCliLogger();
@@ -185,7 +185,7 @@ export async function cmdPluginInstall(
   const force = argv.includes("--force");
 
   if (!source) {
-    logger.error("Error: source path or package name is required. Usage: conatus plugin install <path|package> [--force]");
+    logger.error("Error: source path or package name is required. Usage: moxen plugin install <path|package> [--force]");
     return 1;
   }
 
@@ -225,8 +225,8 @@ export async function cmdPluginInstall(
     }
 
     const manifest = result.data;
-    const motivaVer = _getMotivaVersion ? _getMotivaVersion() : getMotivaVersion();
-    if (!checkVersionCompat(manifest, motivaVer)) return 1;
+    const moxenVer = _getMoxenVersion ? _getMoxenVersion() : getMoxenVersion();
+    if (!checkVersionCompat(manifest, moxenVer)) return 1;
 
     if (manifest.permissions.shell) {
       logger.warn(`Plugin "${manifest.name}" requests shell execution permission.`);
@@ -277,8 +277,8 @@ export async function cmdPluginInstall(
     return 1;
   }
 
-  const motivaVer = _getMotivaVersion ? _getMotivaVersion() : getMotivaVersion();
-  if (!checkVersionCompat(manifest, motivaVer)) return 1;
+  const moxenVer = _getMoxenVersion ? _getMoxenVersion() : getMoxenVersion();
+  if (!checkVersionCompat(manifest, moxenVer)) return 1;
 
   if (manifest.permissions.shell) {
     getCliLogger().warn(`Plugin "${manifest.name}" requests shell execution permission.`);
@@ -298,7 +298,7 @@ export async function cmdPluginUpdate(
   const name = argv[0];
 
   if (!name) {
-    logger.error("Error: plugin name is required. Usage: conatus plugin update <name>");
+    logger.error("Error: plugin name is required. Usage: moxen plugin update <name>");
     return 1;
   }
 
@@ -329,14 +329,14 @@ export async function cmdPluginSearch(
   const keyword = argv[0];
 
   if (!keyword) {
-    logger.error("Error: keyword is required. Usage: conatus plugin search <keyword>");
+    logger.error("Error: keyword is required. Usage: moxen plugin search <keyword>");
     return 1;
   }
 
   const execFn = _execFileFn ?? execFile;
   let stdout: string;
   try {
-    const result = await execFn("npm", ["search", `@conatus-plugins/${keyword}`, "--json"]);
+    const result = await execFn("npm", ["search", `@moxen-plugins/${keyword}`, "--json"]);
     stdout = result.stdout;
   } catch (err) {
     logger.error(formatOperationError("npm search", err));
@@ -373,7 +373,7 @@ export async function cmdPluginRemove(pluginsDir: string | undefined, argv: stri
   const name = argv[0];
 
   if (!name) {
-    logger.error("Error: plugin name is required. Usage: conatus plugin remove <name>");
+    logger.error("Error: plugin name is required. Usage: moxen plugin remove <name>");
     return 1;
   }
 

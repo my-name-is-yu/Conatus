@@ -1,6 +1,6 @@
 // ─── SseDataSourceAdapter ───
 //
-// A Motiva data source plugin that subscribes to a Server-Sent Events stream.
+// A Moxen data source plugin that subscribes to a Server-Sent Events stream.
 // SSE event type is used as the dimension_name key for the latest-value cache.
 // Reconnection is handled natively by the EventSource spec / eventsource package.
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // ─── TUI Entry Point ───
 //
-// Wires all Conatus dependencies (mirrors CLIRunner.buildDeps pattern) and
-// renders the Ink-based TUI. Use `conatus tui` or `npm run tui` to launch.
+// Wires all Moxen dependencies (mirrors CLIRunner.buildDeps pattern) and
+// renders the Ink-based TUI. Use `moxen tui` or `npm run tui` to launch.
 
 import { render } from "ink";
 import React from "react";
@@ -31,7 +31,7 @@ import { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
 import { TreeLoopOrchestrator } from "../goal/tree-loop-orchestrator.js";
 import { MemoryLifecycleManager, DriveScoreAdapter } from "../knowledge/memory-lifecycle.js";
 import { CharacterConfigManager } from "../traits/character-config.js";
-import { getMotivaDirPath } from "../utils/paths.js";
+import { getMoxenDirPath } from "../utils/paths.js";
 import * as GapCalculator from "../drive/gap-calculator.js";
 import * as DriveScorer from "../drive/drive-scorer.js";
 import type { GapCalculatorModule, DriveScorerModule } from "../core-loop.js";
@@ -60,7 +60,7 @@ async function buildDeps() {
         const goal = await stateManager.loadGoal(goalId);
         return goal?.description;
       } catch (err) {
-        getCliLogger().error(`[conatus] Failed to resolve goal description for "${goalId}": ${err instanceof Error ? err.message : String(err)}`);
+        getCliLogger().error(`[moxen] Failed to resolve goal description for "${goalId}": ${err instanceof Error ? err.message : String(err)}`);
         return undefined;
       }
     }
@@ -113,13 +113,13 @@ async function buildDeps() {
     stateManager, goalTreeManager, stateAggregator, satisficingJudge
   );
 
-  const conatusBaseDir = getMotivaDirPath();
+  const moxenBaseDir = getMoxenDirPath();
   let memoryLifecycleManager: MemoryLifecycleManager | undefined;
   let driveScoreAdapter: DriveScoreAdapter | undefined;
   try {
     driveScoreAdapter = new DriveScoreAdapter();
     memoryLifecycleManager = new MemoryLifecycleManager(
-      conatusBaseDir,
+      moxenBaseDir,
       llmClient,
       undefined,
       undefined,
@@ -128,7 +128,7 @@ async function buildDeps() {
     );
     memoryLifecycleManager.initializeDirectories();
   } catch (err) {
-    getCliLogger().warn(`[conatus] MemoryLifecycleManager init failed — memory features disabled: ${err instanceof Error ? err.message : String(err)}`);
+    getCliLogger().warn(`[moxen] MemoryLifecycleManager init failed — memory features disabled: ${err instanceof Error ? err.message : String(err)}`);
     memoryLifecycleManager = undefined;
     driveScoreAdapter = undefined;
   }

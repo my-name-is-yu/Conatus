@@ -7,7 +7,7 @@ Status: Design proposal (not yet implemented)
 
 ## 1. Executive Summary
 
-Conatus already has a rich memory infrastructure — four-tier hierarchical memory (hot/warm/cold/archival), context budget management, semantic search, reflection notes, and lesson distillation. However, there is a "last mile" gap between this infrastructure and LLM prompts. This design introduces a new component called **PromptGateway** and defines a pipeline that systematically injects purpose-optimized context into each LLM call. This improves task generation accuracy, prevents repeated failure patterns, and stabilizes observations.
+Moxen already has a rich memory infrastructure — four-tier hierarchical memory (hot/warm/cold/archival), context budget management, semantic search, reflection notes, and lesson distillation. However, there is a "last mile" gap between this infrastructure and LLM prompts. This design introduces a new component called **PromptGateway** and defines a pipeline that systematically injects purpose-optimized context into each LLM call. This improves task generation accuracy, prevents repeated failure patterns, and stabilizes observations.
 
 ---
 
@@ -40,7 +40,7 @@ Analysis of internal LLM calls (31 total) has identified the following disconnec
 
 ## 3. Lessons from Prior Art
 
-A survey of 10 agent frameworks identified 5 applicable patterns for Conatus.
+A survey of 10 agent frameworks identified 5 applicable patterns for Moxen.
 
 ### 3.1 Four-Layer Prompt Structure (Common across all frameworks)
 
@@ -53,9 +53,9 @@ Nearly all frameworks adopt the following hierarchy:
 [Current Input/Task]  -- Immediate input
 ```
 
-Current state of Conatus: Most LLM calls use user-only messages with no system prompt, and the Memory/Context layer injection is insufficient.
+Current state of Moxen: Most LLM calls use user-only messages with no system prompt, and the Memory/Context layer injection is insufficient.
 
-**Adoption plan**: Unify all LLM calls into the 4-layer structure. Since Conatus is not a chat-type agent, the History layer is replaced with "dimension observation history" and "recent task results."
+**Adoption plan**: Unify all LLM calls into the 4-layer structure. Since Moxen is not a chat-type agent, the History layer is replaced with "dimension observation history" and "recent task results."
 
 ### 3.2 Composite Scoring (Generative Agents / CrewAI)
 
@@ -69,7 +69,7 @@ score = w_r * recency_decay + w_i * importance + w_s * semantic_similarity
 - **Importance**: Entry importance score (0–1)
 - **Relevance**: Cosine similarity between query and memory
 
-**Adoption plan**: Conatus's `memory-selection.ts` already has `computeRelevanceScore()`. This will be extended to add weighting for `recency` and `importance`. The scoring logic in the existing `selectForWorkingMemory()` will be improved.
+**Adoption plan**: Moxen's `memory-selection.ts` already has `computeRelevanceScore()`. This will be extended to add weighting for `recency` and `importance`. The scoring logic in the existing `selectForWorkingMemory()` will be improved.
 
 ### 3.3 MemGPT's Page-In/Page-Out
 
@@ -79,9 +79,9 @@ The core of MemGPT is the clear separation between "core memory (always in conte
 - **Recall Storage**: Full conversation history (paged in via text search)
 - **Archival Storage**: Unlimited-capacity knowledge (paged in via embedding search)
 
-**Adoption plan**: Map Conatus's 4-tier memory as follows:
+**Adoption plan**: Map Moxen's 4-tier memory as follows:
 
-| MemGPT | Conatus | Prompt Injection Method |
+| MemGPT | Moxen | Prompt Injection Method |
 |--------|---------|-------------------------|
 | Core Memory | hot tier (Goal definition, current state, active strategy) | Always injected (mandatory slot) |
 | Recall Storage | warm tier (recent observations, task results, reflections) | Selectively injected by purpose |
@@ -97,11 +97,11 @@ Failure → Generate reflection ("what went wrong / what to try next")
         → Include in prompt at next task generation
 ```
 
-**Adoption plan**: Conatus's `reflection-generator.ts` and `formatReflectionsForPrompt()` are already implemented. Simply connecting them realizes the Reflexion pattern.
+**Adoption plan**: Moxen's `reflection-generator.ts` and `formatReflectionsForPrompt()` are already implemented. Simply connecting them realizes the Reflexion pattern.
 
 ### 3.5 DSPy's Programmatic Optimization (Future Vision)
 
-DSPy's approach treats "prompts as variable parameters to be auto-optimized." Applicable to Conatus after sufficient goal execution data has been accumulated:
+DSPy's approach treats "prompts as variable parameters to be auto-optimized." Applicable to Moxen after sufficient goal execution data has been accumulated:
 
 - Define goal achievement rate as the metric
 - Define each LLM call as a Signature
@@ -252,7 +252,7 @@ For each purpose, define which slots to use and which memory tier to retrieve fr
 
 ### 5.4 Role of Each Memory Tier
 
-| Tier | Conatus Equivalent | Prompt Injection Method | Retrieval Cost |
+| Tier | Moxen Equivalent | Prompt Injection Method | Retrieval Cost |
 |------|--------------------|------------------------|----------------|
 | **hot** | Goal definition, current state, active strategy | Always injected (required for all purposes) | O(1) file read |
 | **warm** | Last 5 observation history entries, recent task results, reflection notes, workspace state | Selectively injected by purpose | O(1) in-memory or file |
@@ -261,7 +261,7 @@ For each purpose, define which slots to use and which memory tier to retrieve fr
 
 ### 5.5 Token Budget Management
 
-The budget is configurable via `llm.contextBudgetTokens` in `~/.conatus/config.json`. When not set, the default is 4000. For model context window information, refer to `provider-config.ts`.
+The budget is configurable via `llm.contextBudgetTokens` in `~/.moxen/config.json`. When not set, the default is 4000. For model context window information, refer to `provider-config.ts`.
 
 ```
 totalBudget (default: 4000 tokens, configurable in config.json)
@@ -559,7 +559,7 @@ Phase D is a mechanical migration of functionally working code and should begin 
 |---------------|--------|
 | DSPy-style automatic prompt optimization | Ineffective until sufficient execution data is accumulated. To be reconsidered in Phase C and beyond |
 | YAML externalization of prompt templates | Code-internal templates are sufficient at this stage |
-| LLM-autonomous memory management (MemGPT-style) | Conatus is an orchestrator; having the system control memory management is more predictable |
+| LLM-autonomous memory management (MemGPT-style) | Moxen is an orchestrator; having the system control memory management is more predictable |
 | Model-specific prompt format switching (XML/Markdown) | Unnecessary. XML works across all supported models |
 
 ### Risks and Mitigations

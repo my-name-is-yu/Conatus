@@ -1,12 +1,12 @@
 // ─── Provider Configuration ───
 //
-// Pluggable provider configuration system for Conatus.
-// Reads/writes ~/.conatus/provider.json to configure which LLM provider
+// Pluggable provider configuration system for Moxen.
+// Reads/writes ~/.moxen/provider.json to configure which LLM provider
 // and default adapter to use. Env vars always take precedence over config file.
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { getMotivaDirPath } from "../utils/paths.js";
+import { getMoxenDirPath } from "../utils/paths.js";
 import { writeJsonFileAtomic } from "../utils/json-io.js";
 
 // ─── Types ───
@@ -53,7 +53,7 @@ export interface ProviderConfig {
 
 // ─── Constants ───
 
-const PROVIDER_CONFIG_PATH = path.join(getMotivaDirPath(), "provider.json");
+const PROVIDER_CONFIG_PATH = path.join(getMoxenDirPath(), "provider.json");
 
 const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
   llm_provider: "codex",
@@ -68,7 +68,7 @@ const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
 function resolveProvider(
   fileProvider: ProviderConfig["llm_provider"] | undefined
 ): ProviderConfig["llm_provider"] {
-  const envProvider = process.env["CONATUS_LLM_PROVIDER"];
+  const envProvider = process.env["MOXEN_LLM_PROVIDER"];
   if (envProvider === "anthropic" || envProvider === "openai" || envProvider === "ollama" || envProvider === "codex") {
     return envProvider;
   }
@@ -81,7 +81,7 @@ function resolveProvider(
 function resolveAdapter(
   fileAdapter: ProviderConfig["default_adapter"] | undefined
 ): ProviderConfig["default_adapter"] {
-  const envAdapter = process.env["CONATUS_DEFAULT_ADAPTER"];
+  const envAdapter = process.env["MOXEN_DEFAULT_ADAPTER"];
   if (
     envAdapter === "claude_code_cli" ||
     envAdapter === "claude_api" ||
@@ -99,8 +99,8 @@ function resolveAdapter(
  * Load provider configuration.
  *
  * Priority (highest to lowest):
- *   1. Environment variables (CONATUS_LLM_PROVIDER, CONATUS_DEFAULT_ADAPTER, etc.)
- *   2. ~/.conatus/provider.json
+ *   1. Environment variables (MOXEN_LLM_PROVIDER, MOXEN_DEFAULT_ADAPTER, etc.)
+ *   2. ~/.moxen/provider.json
  *   3. Defaults (codex + openai_codex_cli)
  *
  * If no provider.json exists, falls back to env vars and defaults (current behavior).
@@ -186,8 +186,8 @@ export async function loadProviderConfig(): Promise<ProviderConfig> {
 }
 
 /**
- * Save provider configuration to ~/.conatus/provider.json.
- * Creates the ~/.conatus directory if it does not exist.
+ * Save provider configuration to ~/.moxen/provider.json.
+ * Creates the ~/.moxen directory if it does not exist.
  */
 export async function saveProviderConfig(config: ProviderConfig): Promise<void> {
   await writeJsonFileAtomic(PROVIDER_CONFIG_PATH, config);

@@ -48,7 +48,7 @@ const EMPTY_SUGGESTION_LIST = JSON.stringify([]);
 // ─── Test setup helpers ───
 
 function makeDeps(llmResponses: string[]) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "motiva-suggest-test-"));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "moxen-suggest-test-"));
   const stateManager = new StateManager(tmpDir);
   const llmClient = createMockLLMClient(llmResponses);
   const ethicsGate = new EthicsGate(stateManager, llmClient);

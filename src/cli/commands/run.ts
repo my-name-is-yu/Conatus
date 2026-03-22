@@ -1,4 +1,4 @@
-// ─── conatus run command ───
+// ─── moxen run command ───
 
 import * as readline from "node:readline";
 import { getLogsDir } from "../../utils/paths.js";
@@ -118,7 +118,7 @@ export async function cmdRun(
     return 1;
   }
 
-  console.log(`Running Conatus loop for goal: ${goalId}`);
+  console.log(`Running Moxen loop for goal: ${goalId}`);
   console.log(`Goal: ${goal.title}`);
   if (loopConfig?.treeMode) {
     console.log("Tree mode enabled — iterating across all tree nodes");
@@ -141,7 +141,7 @@ export async function cmdRun(
     result = await coreLoop.run(goalId);
   } catch (err) {
     logger.error(formatOperationError(`run core loop for goal "${goalId}"`, err));
-    logger.error(`Hint: Check ~/.conatus/logs/ for details or re-run with DEBUG=1 for stack traces.`);
+    logger.error(`Hint: Check ~/.moxen/logs/ for details or re-run with DEBUG=1 for stack traces.`);
     if (verbose || process.env.DEBUG) {
       logger.error(err instanceof Error ? err.stack ?? String(err) : String(err));
     }

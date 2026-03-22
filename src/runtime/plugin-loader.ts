@@ -22,10 +22,10 @@ import type { NotifierRegistry } from "./notifier-registry.js";
 // ─── PluginLoader ───
 
 /**
- * Discovers, loads, validates, and registers plugins from ~/.conatus/plugins/.
+ * Discovers, loads, validates, and registers plugins from ~/.moxen/plugins/.
  *
  * Design principles:
- *  - Plugin load failures never crash Conatus. Every error is caught, logged,
+ *  - Plugin load failures never crash Moxen. Every error is caught, logged,
  *    and returned as an error-state PluginState.
  *  - Supports both plugin.yaml and plugin.json manifest formats.
  *  - Routes each plugin to the correct registry based on manifest.type.
@@ -82,18 +82,18 @@ export class PluginLoader {
     const manifest = await this.loadManifest(pluginDir);
 
     // 1b. Semver compatibility check
-    const motivaVersion = getMotivaVersion();
-    if (!satisfiesRange(motivaVersion, manifest.min_motiva_version, manifest.max_motiva_version)) {
+    const moxenVersion = getMoxenVersion();
+    if (!satisfiesRange(moxenVersion, manifest.min_moxen_version, manifest.max_moxen_version)) {
       const range = [
-        manifest.min_motiva_version ? `>=${manifest.min_motiva_version}` : "",
-        manifest.max_motiva_version ? `<=${manifest.max_motiva_version}` : "",
+        manifest.min_moxen_version ? `>=${manifest.min_moxen_version}` : "",
+        manifest.max_moxen_version ? `<=${manifest.max_moxen_version}` : "",
       ]
         .filter(Boolean)
         .join(", ");
       this.logger?.warn(
-        `[PluginLoader] Skipping incompatible plugin "${manifest.name}": requires Conatus ${range}, got ${motivaVersion}`
+        `[PluginLoader] Skipping incompatible plugin "${manifest.name}": requires Moxen ${range}, got ${moxenVersion}`
       );
-      return this.buildIncompatibleState(manifest, motivaVersion, range);
+      return this.buildIncompatibleState(manifest, moxenVersion, range);
     }
 
     // 2. Dynamically import the entry point
@@ -264,12 +264,12 @@ export class PluginLoader {
     return state;
   }
 
-  buildIncompatibleState(manifest: PluginManifest, motivaVersion: string, range: string): PluginState {
+  buildIncompatibleState(manifest: PluginManifest, moxenVersion: string, range: string): PluginState {
     const state = PluginStateSchema.parse({
       name: manifest.name,
       manifest,
       status: "incompatible",
-      error_message: `Requires Conatus ${range}, got ${motivaVersion}`,
+      error_message: `Requires Moxen ${range}, got ${moxenVersion}`,
       loaded_at: new Date().toISOString(),
       trust_score: 0,
       usage_count: 0,
@@ -330,7 +330,7 @@ export class PluginLoader {
     const updated = PluginStateSchema.parse({ ...existing, ...updates });
     this.pluginStates.set(pluginName, updated);
 
-    // Persist to disk: ~/.conatus/plugins/<name>/state.json
+    // Persist to disk: ~/.moxen/plugins/<name>/state.json
     const statePath = path.join(this.pluginsDir, pluginName, "state.json");
     await writeJsonFileAtomic(statePath, updated);
   }
@@ -352,23 +352,23 @@ export class PluginLoader {
 
 // ─── Module-level helpers ───
 
-// ─── Conatus version (read once from package.json) ───
+// ─── Moxen version (read once from package.json) ───
 
-let _motivaVersion: string | undefined;
+let _moxenVersion: string | undefined;
 
-function getMotivaVersion(): string {
-  if (_motivaVersion !== undefined) return _motivaVersion;
+function getMoxenVersion(): string {
+  if (_moxenVersion !== undefined) return _moxenVersion;
   try {
     const pkgPath = path.resolve(
       path.dirname(url.fileURLToPath(import.meta.url)),
       "../../package.json"
     );
     const pkg = JSON.parse(fsSync.readFileSync(pkgPath, "utf-8")) as { version: string };
-    _motivaVersion = pkg.version;
+    _moxenVersion = pkg.version;
   } catch {
-    _motivaVersion = "0.0.0";
+    _moxenVersion = "0.0.0";
   }
-  return _motivaVersion;
+  return _moxenVersion;
 }
 
 // ─── Semver utilities (no external deps) ───

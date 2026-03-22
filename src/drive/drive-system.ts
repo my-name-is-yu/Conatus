@@ -2,8 +2,8 @@ import { watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { MotivaEventSchema, GoalScheduleSchema } from "../types/drive.js";
-import type { MotivaEvent, GoalSchedule } from "../types/drive.js";
+import { MoxenEventSchema, GoalScheduleSchema } from "../types/drive.js";
+import type { MoxenEvent, GoalSchedule } from "../types/drive.js";
 import type { StateManager } from "../state-manager.js";
 import type { Logger } from "../runtime/logger.js";
 import { writeJsonFileAtomic } from "../utils/json-io.js";
@@ -25,8 +25,8 @@ export class DriveSystem {
   private readonly stateManager: StateManager;
   private readonly logger?: Logger;
   private watcher: FSWatcher | null = null;
-  private inMemoryQueue: MotivaEvent[] = [];
-  private onEventCallback: ((event: MotivaEvent) => void) | null = null;
+  private inMemoryQueue: MoxenEvent[] = [];
+  private onEventCallback: ((event: MoxenEvent) => void) | null = null;
   private readonly initPromise: Promise<void>;
 
   constructor(stateManager: StateManager, options?: { baseDir?: string; logger?: Logger }) {
@@ -98,10 +98,10 @@ export class DriveSystem {
 
   /**
    * Read all JSON files from {baseDir}/events/ directory.
-   * Parse each as MotivaEvent. Return sorted by timestamp (oldest first).
+   * Parse each as MoxenEvent. Return sorted by timestamp (oldest first).
    * Skips files that fail to parse (logs a warning).
    */
-  async readEventQueue(): Promise<MotivaEvent[]> {
+  async readEventQueue(): Promise<MoxenEvent[]> {
     await this.initPromise;
     const eventsDir = path.join(this.baseDir, "events");
 
@@ -112,7 +112,7 @@ export class DriveSystem {
       return [];
     }
 
-    const events: MotivaEvent[] = [];
+    const events: MoxenEvent[] = [];
     for (const fileName of fileNames) {
       const filePath = path.join(eventsDir, fileName);
 
@@ -127,7 +127,7 @@ export class DriveSystem {
       try {
         const content = await fsp.readFile(filePath, "utf-8");
         const raw = JSON.parse(content) as unknown;
-        const event = MotivaEventSchema.parse(raw);
+        const event = MoxenEventSchema.parse(raw);
         events.push(event);
       } catch (err) {
         this.logger?.warn(`DriveSystem: skipping invalid event file "${fileName}": ${err}`);
@@ -159,7 +159,7 @@ export class DriveSystem {
   /**
    * Read queue, archive each processed event, return the events.
    */
-  async processEvents(): Promise<MotivaEvent[]> {
+  async processEvents(): Promise<MoxenEvent[]> {
     await this.initPromise;
     const eventsDir = path.join(this.baseDir, "events");
 
@@ -170,7 +170,7 @@ export class DriveSystem {
       return [];
     }
 
-    const events: MotivaEvent[] = [];
+    const events: MoxenEvent[] = [];
     for (const fileName of fileNames) {
       const filePath = path.join(eventsDir, fileName);
 
@@ -184,7 +184,7 @@ export class DriveSystem {
       try {
         const content = await fsp.readFile(filePath, "utf-8");
         const raw = JSON.parse(content) as unknown;
-        const event = MotivaEventSchema.parse(raw);
+        const event = MoxenEventSchema.parse(raw);
         await this.archiveEvent(fileName);
         events.push(event);
       } catch (err) {
@@ -297,7 +297,7 @@ export class DriveSystem {
    * Write an event file to the events directory.
    * Public method used by EventServer to enqueue events via HTTP.
    */
-  async writeEvent(event: MotivaEvent): Promise<void> {
+  async writeEvent(event: MoxenEvent): Promise<void> {
     await this.initPromise;
     const eventsDir = path.join(this.baseDir, "events");
     await fsp.mkdir(eventsDir, { recursive: true });
@@ -311,7 +311,7 @@ export class DriveSystem {
    * When a new .json file appears, parse it and push it to the in-memory queue.
    * Optionally calls onEvent callback immediately on each new event.
    */
-  startWatcher(onEvent?: (event: MotivaEvent) => void): void {
+  startWatcher(onEvent?: (event: MoxenEvent) => void): void {
     this.onEventCallback = onEvent ?? null;
     const eventsDir = path.join(this.baseDir, "events");
 
@@ -346,7 +346,7 @@ export class DriveSystem {
       return;
     }
     try {
-      const event = MotivaEventSchema.parse(JSON.parse(content) as unknown);
+      const event = MoxenEventSchema.parse(JSON.parse(content) as unknown);
       this.inMemoryQueue.push(event);
       if (this.onEventCallback) {
         this.onEventCallback(event);
@@ -371,7 +371,7 @@ export class DriveSystem {
    * Return all events accumulated in the in-memory queue since the last drain,
    * and clear the queue.
    */
-  drainInMemoryQueue(): MotivaEvent[] {
+  drainInMemoryQueue(): MoxenEvent[] {
     const events = [...this.inMemoryQueue];
     this.inMemoryQueue = [];
     return events;

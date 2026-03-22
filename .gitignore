@@ -1,8 +1,8 @@
 node_modules/
 dist/
 coverage-c8/
-.motiva/
-.conatus/
+.moxen/
+.moxen/
 .claire/
 .claude/
 memory/

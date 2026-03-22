@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug in Motiva
+about: Report a bug in Moxen
 labels: bug
 ---
 
@@ -18,7 +18,7 @@ What you expected to happen.
 ## Environment
 - OS: [e.g., macOS, Ubuntu]
 - Node.js version: [e.g., 20.x]
-- Motiva version: [e.g., 0.4.0]
+- Moxen version: [e.g., 0.4.0]
 
 ## Additional context
 Any other context about the problem.

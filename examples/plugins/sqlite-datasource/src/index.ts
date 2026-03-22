@@ -1,6 +1,6 @@
 // ─── SqliteDataSourceAdapter ───
 //
-// A Motiva data source plugin that queries a SQLite database.
+// A Moxen data source plugin that queries a SQLite database.
 // Only SELECT statements are permitted; mutating SQL is rejected.
 
 import Database from "better-sqlite3";

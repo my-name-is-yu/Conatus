@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-export function makeTempDir(prefix = "conatus-test-"): string {
+export function makeTempDir(prefix = "moxen-test-"): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 

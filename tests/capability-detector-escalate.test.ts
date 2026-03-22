@@ -84,7 +84,7 @@ let stateManager: StateManager;
 let reportingEngine: ReportingEngine;
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "motiva-capability-test-"));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "moxen-capability-test-"));
   stateManager = new StateManager(tempDir);
   reportingEngine = new ReportingEngine(stateManager);
 });

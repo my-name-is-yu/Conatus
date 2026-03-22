@@ -1,5 +1,5 @@
 /**
- * Zustand global store for Motiva dashboard.
+ * Zustand global store for Moxen dashboard.
  * Holds goals, sessions, decisions and SSE connection state.
  */
 import { create } from 'zustand';
@@ -8,7 +8,7 @@ import type { GoalSummary, SessionSummary, DecisionRecord, SSEEvent } from './ss
 
 export type { GoalSummary, SessionSummary, DecisionRecord };
 
-interface MotivaStore {
+interface MoxenStore {
   // State
   goals: GoalSummary[];
   sessions: SessionSummary[];
@@ -34,7 +34,7 @@ interface MotivaStore {
   setConnected: (connected: boolean) => void;
 }
 
-export const useMotivaStore = create<MotivaStore>((set, get) => ({
+export const useMoxenStore = create<MoxenStore>((set, get) => ({
   goals: [],
   sessions: [],
   decisions: [],
@@ -132,8 +132,8 @@ export const useMotivaStore = create<MotivaStore>((set, get) => ({
 
 function handleSSEEvent(
   event: SSEEvent,
-  get: () => MotivaStore,
-  set: (partial: Partial<MotivaStore>) => void
+  get: () => MoxenStore,
+  set: (partial: Partial<MoxenStore>) => void
 ) {
   const store = get();
 

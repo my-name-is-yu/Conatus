@@ -100,7 +100,7 @@ describe.skipIf(!CODEX_AVAILABLE)(
     let tmpDir: string;
 
     beforeAll(() => {
-      tmpDir = mkdtempSync(join(tmpdir(), "motiva-codex-e2e-"));
+      tmpDir = mkdtempSync(join(tmpdir(), "moxen-codex-e2e-"));
     });
 
     afterAll(() => {

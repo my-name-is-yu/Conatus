@@ -15,7 +15,7 @@ let mockSm: {
   loadGoal: (id: string) => Promise<unknown>;
 };
 
-vi.mock('../../web/src/lib/motiva-client', () => ({
+vi.mock('../../web/src/lib/moxen-client', () => ({
   getStateManager: () => mockSm,
 }));
 

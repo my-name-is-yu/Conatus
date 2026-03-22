@@ -57,7 +57,7 @@ let goalTreeManager: GoalTreeManager;
 let orchestrator: TreeLoopOrchestrator;
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "conatus-tlo-test-"));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "moxen-tlo-test-"));
   stateManager = new StateManager(tempDir);
   satisficingJudge = new SatisficingJudge(stateManager);
   stateAggregator = new StateAggregator(stateManager, satisficingJudge);

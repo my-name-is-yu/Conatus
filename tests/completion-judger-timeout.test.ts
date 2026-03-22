@@ -134,7 +134,7 @@ describe("completion_judger timeout + retry", () => {
   let stallDetector: StallDetector;
 
   beforeEach(() => {
-    tmpDir = makeTempDir("conatus-cjt-");
+    tmpDir = makeTempDir("moxen-cjt-");
     stateManager = new StateManager(tmpDir);
     sessionManager = new SessionManager(stateManager);
     trustManager = new TrustManager(stateManager);

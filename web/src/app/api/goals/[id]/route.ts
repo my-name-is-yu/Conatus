@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getStateManager } from '../../../../lib/motiva-client';
+import { getStateManager } from '../../../../lib/moxen-client';
 
 export async function GET(
   _req: NextRequest,

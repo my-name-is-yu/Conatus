@@ -38,7 +38,7 @@ describe("Guard 3: Score-evidence consistency check (§4.3)", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = makeTempDir("conatus-guard3-");
+    tmpDir = makeTempDir("moxen-guard3-");
     noopApply.mockReset();
   });
 

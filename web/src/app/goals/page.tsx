@@ -1,10 +1,10 @@
 'use client';
 
-import { useMotivaStore } from '../../lib/store';
+import { useMoxenStore } from '../../lib/store';
 import { GoalTable, type GoalRow } from '../../components/dashboard/goal-table';
 
 export default function GoalsPage() {
-  const goals = useMotivaStore((state) => state.goals) as GoalRow[];
+  const goals = useMoxenStore((state) => state.goals) as GoalRow[];
 
   return (
     <div>

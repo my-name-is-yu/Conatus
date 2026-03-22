@@ -8,7 +8,7 @@ memory/
 tsconfig.json
 vitest.config.*
 .gitignore
-motiva-workspace/
+moxen-workspace/
 .DS_Store
 *.md
 !README.md

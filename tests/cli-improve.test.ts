@@ -1,5 +1,5 @@
 /**
- * CLIRunner — `motiva improve` subcommand tests (M10.3)
+ * CLIRunner — `moxen improve` subcommand tests (M10.3)
  *
  * Strategy:
  * - All heavy dependencies (CoreLoop, GoalNegotiator, LLM clients, etc.) are mocked.
@@ -175,7 +175,7 @@ beforeEach(() => {
 
   origApiKey = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = "test-api-key";
-  process.env.CONATUS_LLM_PROVIDER = "anthropic";
+  process.env.MOXEN_LLM_PROVIDER = "anthropic";
 });
 
 afterEach(() => {
@@ -184,7 +184,7 @@ afterEach(() => {
   } else {
     process.env.ANTHROPIC_API_KEY = origApiKey;
   }
-  delete process.env.CONATUS_LLM_PROVIDER;
+  delete process.env.MOXEN_LLM_PROVIDER;
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
   vi.clearAllMocks();
@@ -222,7 +222,7 @@ describe("improve subcommand — basic routing", () => {
 
   it("exits with code 1 when ANTHROPIC_API_KEY is not set (and no alternative provider)", async () => {
     delete process.env.ANTHROPIC_API_KEY;
-    process.env.CONATUS_LLM_PROVIDER = "anthropic";
+    process.env.MOXEN_LLM_PROVIDER = "anthropic";
 
     const code = await runCLI("improve", ".");
     expect(code).toBe(1);
@@ -391,7 +391,7 @@ describe("improve subcommand — loop execution", () => {
     expect(mockRun).not.toHaveBeenCalled();
   });
 
-  it("prints 'Run with: motiva run' message when no --auto/--yes", async () => {
+  it("prints 'Run with: moxen run' message when no --auto/--yes", async () => {
     const goal = makeGoal({ id: "goal-show-hint" });
     const mockSuggest = vi.fn().mockResolvedValue([makeSuggestion()]);
     const mockNegotiate = vi.fn().mockResolvedValue(makeNegotiationResult(goal));
@@ -411,7 +411,7 @@ describe("improve subcommand — loop execution", () => {
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
     consoleSpy.mockRestore();
 
-    expect(output).toContain("motiva run");
+    expect(output).toContain("moxen run");
     expect(output).toContain("goal-show-hint");
   });
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMotivaStore } from '../lib/store';
+import { useMoxenStore } from '../lib/store';
 import { GoalTable, type GoalRow } from '../components/dashboard/goal-table';
 import { ActiveSessions } from '../components/dashboard/active-sessions';
 import { DecisionTimeline } from '../components/dashboard/decision-timeline';
@@ -22,9 +22,9 @@ function ConnectionDot({ connected }: { connected: boolean }) {
 }
 
 export default function DashboardPage() {
-  const goals = useMotivaStore((state) => state.goals) as GoalRow[];
-  const connected = useMotivaStore((state) => state.connected);
-  const lastUpdate = useMotivaStore((state) => state.lastUpdate);
+  const goals = useMoxenStore((state) => state.goals) as GoalRow[];
+  const connected = useMoxenStore((state) => state.connected);
+  const lastUpdate = useMoxenStore((state) => state.lastUpdate);
 
   const lastUpdatedText = lastUpdate
     ? new Date(lastUpdate).toLocaleTimeString()

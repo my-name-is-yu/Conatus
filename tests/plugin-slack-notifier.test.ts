@@ -247,14 +247,14 @@ describe("SlackNotifier — channel override", () => {
   it("includes the channel field when channel is configured", async () => {
     const notifier = new SlackNotifier({
       webhook_url: "https://hooks.slack.com/test",
-      channel: "#motiva-alerts",
+      channel: "#moxen-alerts",
     });
 
     await notifier.notify(makeEvent());
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const payload = JSON.parse(init.body as string) as { channel?: string };
-    expect(payload.channel).toBe("#motiva-alerts");
+    expect(payload.channel).toBe("#moxen-alerts");
   });
 
   it("omits the channel field when no channel override is configured", async () => {

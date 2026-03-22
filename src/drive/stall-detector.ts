@@ -44,7 +44,7 @@ const RECOVERY_SCHEDULE: Array<{ loops: number; factor: number }> = [
 ];
 
 /**
- * StallDetector detects stalls (circuit breaker) in the Motiva orchestrator loop.
+ * StallDetector detects stalls (circuit breaker) in the Moxen orchestrator loop.
  * Supports 4 stall types: dimension_stall, time_exceeded, consecutive_failure, global_stall.
  */
 export class StallDetector {

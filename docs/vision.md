@@ -1,4 +1,4 @@
-# Conatus — Vision Document
+# Moxen — Vision Document
 
 ---
 
@@ -6,7 +6,7 @@
 
 An AI partner that autonomously and persistently pursues your goals.
 
-Tell Conatus your goal, and it will keep chasing it — for days, months, or years. Conatus is not an "assistant waiting for instructions." It takes ownership of your objectives and keeps moving toward them.
+Tell Moxen your goal, and it will keep chasing it — for days, months, or years. Moxen is not an "assistant waiting for instructions." It takes ownership of your objectives and keeps moving toward them.
 
 ---
 
@@ -22,35 +22,35 @@ What's missing isn't AI intelligence. It's **something that carries your goals a
 
 ---
 
-## 3. The World Conatus Enables
+## 3. The World Moxen Enables
 
 ### Tell It Your Goal, Then Let Go
 
-"I want to live happily with my dog." "I want to double revenue." — Just tell it your goal. Conatus takes it on, figures out what needs to be done, delegates to agents, observes the results, and decides the next action. When a session ends, when a day passes, when a month passes — it keeps moving until the goal is achieved.
+"I want to live happily with my dog." "I want to double revenue." — Just tell it your goal. Moxen takes it on, figures out what needs to be done, delegates to agents, observes the results, and decides the next action. When a session ends, when a day passes, when a month passes — it keeps moving until the goal is achieved.
 
 ### Operating for Years
 
-Conatus is not a one-time task runner. If a dog owner who has a chronically ill elderly dog says, "I want to live happily with this dog," Conatus works as a dedicated partner for three years until that dog's life comes to an end. Daily health reports, urgent notifications, stage-appropriate care recommendations. As long as the goal continues, so does Conatus.
+Moxen is not a one-time task runner. If a dog owner who has a chronically ill elderly dog says, "I want to live happily with this dog," Moxen works as a dedicated partner for three years until that dog's life comes to an end. Daily health reports, urgent notifications, stage-appropriate care recommendations. As long as the goal continues, so does Moxen.
 
 ### Reporting Proactively, Asking When Needed
 
-Conatus doesn't just work silently. Morning reports, instant notifications of important changes, proposals for strategy shifts. Users don't need to check in on the situation. Conatus reaches out at the right time with the right level of detail. In emergencies, it sends alerts immediately.
+Moxen doesn't just work silently. Morning reports, instant notifications of important changes, proposals for strategy shifts. Users don't need to check in on the situation. Moxen reaches out at the right time with the right level of detail. In emergencies, it sends alerts immediately.
 
 ### Negotiating Honestly
 
-When the CEO of a SaaS company says, "I want to 10x revenue in six months," Conatus responds: "10x will be difficult, but 2x is achievable." Rather than following blindly, it evaluates feasibility and proposes a realistic target. Once a target is agreed upon, it pursues it with full effort.
+When the CEO of a SaaS company says, "I want to 10x revenue in six months," Moxen responds: "10x will be difficult, but 2x is achievable." Rather than following blindly, it evaluates feasibility and proposes a realistic target. Once a target is agreed upon, it pursues it with full effort.
 
 ### Connecting to the Real World
 
-Conatus's activity is not confined to codebases. It reads data from wearable sensors, monitors business metrics, and integrates with external APIs. A dog's breathing pattern, a SaaS company's churn rate, conversion numbers — the metrics Conatus tracks are not "did the tests pass?" but "are we getting closer to the goal?"
+Moxen's activity is not confined to codebases. It reads data from wearable sensors, monitors business metrics, and integrates with external APIs. A dog's breathing pattern, a SaaS company's churn rate, conversion numbers — the metrics Moxen tracks are not "did the tests pass?" but "are we getting closer to the goal?"
 
 ### Acquiring Knowledge Autonomously
 
-Conatus doesn't start with all the knowledge needed to achieve a goal. But it researches, learns, and builds understanding. About care for dogs with respiratory disease. About techniques for reducing SaaS churn. Acquiring domain knowledge is part of pursuing the goal.
+Moxen doesn't start with all the knowledge needed to achieve a goal. But it researches, learns, and builds understanding. About care for dogs with respiratory disease. About techniques for reducing SaaS churn. Acquiring domain knowledge is part of pursuing the goal.
 
 ### Sourcing Needed Tools Autonomously
 
-If existing tools are insufficient, Conatus instructs agents to build them. Health monitoring code for dogs, data analysis pipelines, alert notification systems. Whatever is needed to achieve the goal is built through agents. Conatus's role is to judge what is needed and to verify when the build is complete.
+If existing tools are insufficient, Moxen instructs agents to build them. Health monitoring code for dogs, data analysis pipelines, alert notification systems. Whatever is needed to achieve the goal is built through agents. Moxen's role is to judge what is needed and to verify when the build is complete.
 
 ### The Human Role Changes
 
@@ -58,7 +58,7 @@ From "implement this" and "look into that" to "I want things to be in this state
 
 ---
 
-## 4. How Conatus Differs from Existing Approaches
+## 4. How Moxen Differs from Existing Approaches
 
 | Approach | What It Can Do | What It Lacks |
 |----------|---------------|---------------|
@@ -67,9 +67,9 @@ From "implement this" and "look into that" to "I want things to be in this state
 | Autonomous agents (AutoGPT, BabyAGI) | Decompose goals into tasks and execute them | Can't determine completion and diverges. Doesn't know what "good enough" is |
 | Business automation (Zapier, n8n) | Auto-execute predefined workflows | Doesn't work backward from goals. Can't adjust strategy based on situation |
 | Project management AI (Linear, Asana) | Assist with task management | Doesn't execute tasks. Optimizes management, not goal pursuit |
-| **Conatus** | **Takes on goals and pursues them autonomously and persistently** | **Completion via satisficing, honest goal negotiation, multi-year sustained operation** |
+| **Moxen** | **Takes on goals and pursues them autonomously and persistently** | **Completion via satisficing, honest goal negotiation, multi-year sustained operation** |
 
-Conatus differs in two fundamental ways. First, **persistent goal pursuit**: it operates in units of goals, not sessions or tasks. Second, **satisficing**: rather than diverging in pursuit of perfection, it judges "good enough" and moves forward realistically. This combination exists in no other approach.
+Moxen differs in two fundamental ways. First, **persistent goal pursuit**: it operates in units of goals, not sessions or tasks. Second, **satisficing**: rather than diverging in pursuit of perfection, it judges "good enough" and moves forward realistically. This combination exists in no other approach.
 
 ---
 
@@ -77,9 +77,9 @@ Conatus differs in two fundamental ways. First, **persistent goal pursuit**: it 
 
 ### 5.1 The Scale of Goals
 
-Goals given to Conatus are ambiguous, long-term, and require multi-stage decomposition — like "live happily with my dog" or "double revenue."
+Goals given to Moxen are ambiguous, long-term, and require multi-stage decomposition — like "live happily with my dog" or "double revenue."
 
-"Implement feature X" is not a goal. It's one task that emerges along the path to achieving a goal. Conatus's job is to discover the path from an ambiguous high-level goal down to that task, build it, and realize it through agents.
+"Implement feature X" is not a goal. It's one task that emerges along the path to achieving a goal. Moxen's job is to discover the path from an ambiguous high-level goal down to that task, build it, and realize it through agents.
 
 ### 5.2 Recursive Goal Tree
 
@@ -94,15 +94,15 @@ Example: 2x revenue → halve churn rate → improve onboarding → implement tu
 
 ### 5.3 Capability Registry (Dynamic Capability Management)
 
-Conatus doesn't start with all capabilities. Each time a user grants permissions, tools, or data sources, what it can do expands.
+Moxen doesn't start with all capabilities. Each time a user grants permissions, tools, or data sources, what it can do expands.
 
-Sensor data from a dog's collar, a SaaS database, the Stripe API, IoT devices, business dashboards — Conatus understands these as "capabilities" and incorporates them into goal decomposition. When a new kind of capability is added, the architecture doesn't change.
+Sensor data from a dog's collar, a SaaS database, the Stripe API, IoT devices, business dashboards — Moxen understands these as "capabilities" and incorporates them into goal decomposition. When a new kind of capability is added, the architecture doesn't change.
 
-Furthermore, Conatus extends its own capabilities. It instructs agents to create needed code, delegates the building of needed tools, and keeps acquiring the means needed to achieve goals. Conatus doesn't "build" — Conatus "has things built."
+Furthermore, Moxen extends its own capabilities. It instructs agents to create needed code, delegates the building of needed tools, and keeps acquiring the means needed to achieve goals. Moxen doesn't "build" — Moxen "has things built."
 
 ### 5.4 Strategy Engine (Discovering and Executing Strategies)
 
-"What should be done" is not given to Conatus. Conatus discovers it.
+"What should be done" is not given to Moxen. Moxen discovers it.
 
 It generates hypotheses, prioritizes them, experiments, measures effectiveness, and decides whether to continue, retreat, or pivot. The criterion is not "was the task completed?" but "did we get closer to the goal?"
 
@@ -118,19 +118,19 @@ Multiple strategies are run in parallel and managed as a portfolio. Focus on wha
 
 Goals have deadlines. For "2x revenue in 6 months," at the 3-month mark the pace is evaluated, and if insufficient, the strategy is changed. Make the best use of finite time.
 
-Some goals have no deadline. "Live happily with my dog" has no end. Conatus can handle this kind of goal too. Precisely because there's no end, operating at a sustainable pace becomes important.
+Some goals have no deadline. "Live happily with my dog" has no end. Moxen can handle this kind of goal too. Precisely because there's no end, operating at a sustainable pace becomes important.
 
 ### 5.7 Observing the External World
 
 State observation is not limited to codebases.
 
-Wearable sensors, databases, analytics, APIs, IoT devices, business metrics. The indicators Conatus tracks are "is the dog's breathing stable?" "has churn rate decreased?" "have conversions increased?" It observes changes in the real world and judges progress toward the goal.
+Wearable sensors, databases, analytics, APIs, IoT devices, business metrics. The indicators Moxen tracks are "is the dog's breathing stable?" "has churn rate decreased?" "have conversions increased?" It observes changes in the real world and judges progress toward the goal.
 
 ### 5.8 Delegation Layer
 
-To pursue goals, Conatus uses every available agent. Instructions to AI agents, delegation of API calls, requests for code execution, configuration of external service integrations. Conatus never does these itself. It instructs agents to implement, asks other agents to review, and delegates deployment to appropriate systems — these are all orchestrated by Conatus, not executed by Conatus itself.
+To pursue goals, Moxen uses every available agent. Instructions to AI agents, delegation of API calls, requests for code execution, configuration of external service integrations. Moxen never does these itself. It instructs agents to implement, asks other agents to review, and delegates deployment to appropriate systems — these are all orchestrated by Moxen, not executed by Moxen itself.
 
-Conatus is always the orchestrator. As a partner that keeps pursuing goals, it continually decides "what to delegate, to whom, and when." The execution itself is always carried out by the delegatee.
+Moxen is always the orchestrator. As a partner that keeps pursuing goals, it continually decides "what to delegate, to whom, and when." The execution itself is always carried out by the delegatee.
 
 ### 5.9 The Big Picture
 
@@ -141,7 +141,7 @@ User
   ├── Capabilities: sensor data, DB, API, agents, IoT, ...
   └── Constraints: "respect the vet's judgment" / "don't share customer data externally"
 
-Conatus (autonomous partner)
+Moxen (autonomous partner)
   │
   ├── Goal Tree (recursive goal hierarchy)
   │     Live happily with dog

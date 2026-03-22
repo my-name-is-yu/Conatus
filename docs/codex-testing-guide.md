@@ -1,13 +1,13 @@
 # OpenAI / Codex Testing Guide
 
-A guide for running Conatus with the OpenAI API and OpenAI Codex CLI.
+A guide for running Moxen with the OpenAI API and OpenAI Codex CLI.
 
 ## Prerequisites
 
 - ChatGPT Plus ($20/month) or a separate OpenAI API subscription
   - **Important**: ChatGPT Plus and the OpenAI API are billed completely separately. Calls made using an API key are pay-as-you-go. Codex CLI is available within the ChatGPT Plus subscription.
 - Node.js 20+
-- Conatus built (`npm run build`)
+- Moxen built (`npm run build`)
 - OpenAI Codex CLI installed (only required when running tasks via Codex)
 
 ### Obtaining an OpenAI API Key
@@ -40,7 +40,7 @@ The first time you run Codex CLI, it requires OAuth authentication via your brow
 ### Required
 
 ```bash
-export MOTIVA_LLM_PROVIDER=openai
+export MOXEN_LLM_PROVIDER=openai
 export OPENAI_API_KEY=sk-...
 ```
 
@@ -57,7 +57,7 @@ export OPENAI_MODEL=o4-mini         # reasoning model (lightweight)
 export OPENAI_BASE_URL=https://<your-endpoint>.openai.azure.com/
 ```
 
-> **Note**: The `o1` / `o3` / `o4` reasoning models do not support the `temperature` parameter. Conatus automatically omits temperature when calling these models.
+> **Note**: The `o1` / `o3` / `o4` reasoning models do not support the `temperature` parameter. Moxen automatically omits temperature when calling these models.
 
 ### Using a .env File
 
@@ -65,7 +65,7 @@ Create a `.env` file at the project root (**confirm it is in .gitignore**):
 
 ```bash
 # .env
-MOTIVA_LLM_PROVIDER=openai
+MOXEN_LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
 OPENAI_MODEL=gpt-4o
 
@@ -81,14 +81,14 @@ source .env  # or: set -a; source .env; set +a
 
 ---
 
-## 2. Conatus Entry Point
+## 2. Moxen Entry Point
 
 ```bash
 # Run the built binary directly
 node dist/cli-runner.js <subcommand>
 
 # Or via npx
-npx motiva <subcommand>
+npx moxen <subcommand>
 ```
 
 ---
@@ -98,7 +98,7 @@ npx motiva <subcommand>
 ### Step 1: Verify the Connection
 
 ```bash
-MOTIVA_LLM_PROVIDER=openai \
+MOXEN_LLM_PROVIDER=openai \
 OPENAI_API_KEY=sk-... \
 node dist/cli-runner.js status
 ```
@@ -108,9 +108,9 @@ If the command starts without errors and displays the goal list (even if empty),
 ### Step 2: Add a Goal
 
 ```bash
-MOTIVA_LLM_PROVIDER=openai \
+MOXEN_LLM_PROVIDER=openai \
 OPENAI_API_KEY=sk-... \
-node dist/cli-runner.js goal add "Create a file hello.txt and write 'Hello, Conatus!' in it"
+node dist/cli-runner.js goal add "Create a file hello.txt and write 'Hello, Moxen!' in it"
 ```
 
 GoalNegotiator will call the LLM to evaluate the goal's dimensions, thresholds, and feasibility.
@@ -123,7 +123,7 @@ node dist/cli-runner.js goal list
 ### Step 3: Run One Core Loop Cycle
 
 ```bash
-MOTIVA_LLM_PROVIDER=openai \
+MOXEN_LLM_PROVIDER=openai \
 OPENAI_API_KEY=sk-... \
 node dist/cli-runner.js run
 ```
@@ -138,7 +138,7 @@ Example goal JSON (`goal-codex-test.json`):
 
 ```json
 {
-  "description": "Create hello.txt and write 'Hello, Conatus!' in it",
+  "description": "Create hello.txt and write 'Hello, Moxen!' in it",
   "adapter_type": "openai_codex_cli",
   "dimensions": [
     {
@@ -152,7 +152,7 @@ Example goal JSON (`goal-codex-test.json`):
 Run:
 
 ```bash
-MOTIVA_LLM_PROVIDER=openai \
+MOXEN_LLM_PROVIDER=openai \
 OPENAI_API_KEY=sk-... \
 node dist/cli-runner.js run
 ```
@@ -172,7 +172,7 @@ To specify `--model`, pass it to the `OpenAICodexCLIAdapter` constructor (requir
 ### A. Simple File Creation Task (easy to run with Codex)
 
 ```bash
-node dist/cli-runner.js goal add "Create hello.txt in the current directory and write 'Hello from Conatus!'"
+node dist/cli-runner.js goal add "Create hello.txt in the current directory and write 'Hello from Moxen!'"
 ```
 
 ### B. Run Tests Task
@@ -219,8 +219,8 @@ If it still fails, wait a while before retrying, or upgrade to a higher-tier API
 ### Temperature Error with Reasoning Models
 
 The `o1` / `o3` / `o4` model families do not accept the temperature parameter.
-Conatus automatically omits temperature, so this is normally not an issue.
-Take care if you are passing parameters directly from outside Conatus.
+Moxen automatically omits temperature, so this is normally not an issue.
+Take care if you are passing parameters directly from outside Moxen.
 
 ### Incorrect Model Name
 
@@ -239,7 +239,7 @@ You can switch providers simply by changing environment variables.
 ### Use OpenAI
 
 ```bash
-export MOTIVA_LLM_PROVIDER=openai
+export MOXEN_LLM_PROVIDER=openai
 export OPENAI_API_KEY=sk-...
 # OPENAI_MODEL=gpt-4o  # omit to use default
 ```
@@ -247,7 +247,7 @@ export OPENAI_API_KEY=sk-...
 ### Switch Back to Anthropic (Default)
 
 ```bash
-unset MOTIVA_LLM_PROVIDER
+unset MOXEN_LLM_PROVIDER
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -257,12 +257,12 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # .env — uncomment the provider you want to use, then run: source .env
 
 # --- OpenAI ---
-MOTIVA_LLM_PROVIDER=openai
+MOXEN_LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
 OPENAI_MODEL=gpt-4o
 
 # --- Anthropic (default) ---
-# MOTIVA_LLM_PROVIDER=
+# MOXEN_LLM_PROVIDER=
 # ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxx
 ```
 
@@ -273,14 +273,14 @@ OPENAI_MODEL=gpt-4o
 To clear test data and start fresh:
 
 ```bash
-rm -rf ~/.motiva
+rm -rf ~/.moxen
 ```
 
 ---
 
 ## 8. Automated E2E Tests
 
-Conatus includes E2E tests for OpenAI/Codex. They are skipped automatically if an API key or Codex CLI is not configured.
+Moxen includes E2E tests for OpenAI/Codex. They are skipped automatically if an API key or Codex CLI is not configured.
 
 ### Test Files
 

@@ -105,12 +105,12 @@ describe("GitHubIssueAdapter.parsePrompt", () => {
   });
 
   it("deduplicates labels when JSON and defaults overlap", () => {
-    const adapter2 = new GitHubIssueAdapter({ defaultLabels: ["motiva"] });
-    const prompt = "```github-issue\n{\"title\":\"T\",\"body\":\"B\",\"labels\":[\"motiva\"]}\n```";
+    const adapter2 = new GitHubIssueAdapter({ defaultLabels: ["moxen"] });
+    const prompt = "```github-issue\n{\"title\":\"T\",\"body\":\"B\",\"labels\":[\"moxen\"]}\n```";
     const result = adapter2.parsePrompt(prompt);
 
-    const motivaCount = result.labels.filter((l) => l === "motiva").length;
-    expect(motivaCount).toBe(1);
+    const moxenCount = result.labels.filter((l) => l === "moxen").length;
+    expect(moxenCount).toBe(1);
   });
 });
 
@@ -172,7 +172,7 @@ describe("GitHubIssueAdapter.execute", () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    delete process.env["MOTIVA_GITHUB_REPO"];
+    delete process.env["MOXEN_GITHUB_REPO"];
   });
 
   it("returns success result with issue URL when gh CLI exits with code 0", async () => {
@@ -244,8 +244,8 @@ describe("GitHubIssueAdapter.execute", () => {
     expect(result.output).toMatch(/dry.?run/i);
   });
 
-  it("uses MOTIVA_GITHUB_REPO env var when config.repo is empty", async () => {
-    process.env["MOTIVA_GITHUB_REPO"] = "env-owner/env-repo";
+  it("uses MOXEN_GITHUB_REPO env var when config.repo is empty", async () => {
+    process.env["MOXEN_GITHUB_REPO"] = "env-owner/env-repo";
     const adapter = new GitHubIssueAdapter();
     const dedupChild = makeDedupChild();
     const child = makeFakeChild();
@@ -267,8 +267,8 @@ describe("GitHubIssueAdapter.execute", () => {
     expect(args.join(" ")).toContain("env-owner/env-repo");
   });
 
-  it("config.repo takes priority over MOTIVA_GITHUB_REPO env var", async () => {
-    process.env["MOTIVA_GITHUB_REPO"] = "env-owner/env-repo";
+  it("config.repo takes priority over MOXEN_GITHUB_REPO env var", async () => {
+    process.env["MOXEN_GITHUB_REPO"] = "env-owner/env-repo";
     const adapter = new GitHubIssueAdapter({ repo: "config-owner/config-repo" });
     const dedupChild = makeDedupChild();
     const child = makeFakeChild();
@@ -292,7 +292,7 @@ describe("GitHubIssueAdapter.execute", () => {
   it("passes labels as multiple --label args to gh", async () => {
     const adapter = new GitHubIssueAdapter({
       repo: "owner/repo",
-      defaultLabels: ["motiva", "automated"],
+      defaultLabels: ["moxen", "automated"],
     });
     const dedupChild = makeDedupChild();
     const child = makeFakeChild();
@@ -320,7 +320,7 @@ describe("GitHubIssueAdapter.execute", () => {
   });
 
   it("auto-detects repo when config.repo is empty and env var is unset", async () => {
-    delete process.env["MOTIVA_GITHUB_REPO"];
+    delete process.env["MOXEN_GITHUB_REPO"];
     const adapter = new GitHubIssueAdapter();
 
     // Spawn order: dedup check, then gh repo view (auto-detect), then gh issue create
@@ -458,7 +458,7 @@ describe("GitHubIssueAdapter.execute dedup", () => {
   });
 
   afterEach(() => {
-    delete process.env["MOTIVA_GITHUB_REPO"];
+    delete process.env["MOXEN_GITHUB_REPO"];
   });
 
   it("skips issue creation when a similar open issue exists", async () => {
@@ -653,7 +653,7 @@ describe("GitHubIssueAdapter.execute error classification", () => {
   });
 
   afterEach(() => {
-    delete process.env["MOTIVA_GITHUB_REPO"];
+    delete process.env["MOXEN_GITHUB_REPO"];
   });
 
   it("classifies 'gh not found' spawn error with helpful message", async () => {
@@ -701,7 +701,7 @@ describe("GitHubIssueAdapter.execute error classification", () => {
   });
 
   it("returns error when repo auto-detection fails completely", async () => {
-    delete process.env["MOTIVA_GITHUB_REPO"];
+    delete process.env["MOXEN_GITHUB_REPO"];
     const adapter = new GitHubIssueAdapter();
 
     // dedup child, then detect child (gh repo view), then git remote — both fail

@@ -1,7 +1,7 @@
 /**
  * R7 E2E verification: iterative improvement
  *
- * Tests that Motiva's CoreLoop correctly handles multi-iteration improvement:
+ * Tests that Moxen's CoreLoop correctly handles multi-iteration improvement:
  *
  *   R7-1: 3-iteration progressive improvement — goal with 2 dimensions converges
  *          after LLM reports score increases across iterations.

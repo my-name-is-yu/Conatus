@@ -1,10 +1,10 @@
-# Conatus — External Data Source Integration Design
+# Moxen — External Data Source Integration Design
 
 ---
 
 ## 1. Overview
 
-Conatus's observation system (`observation.md` §2 Layer 1) can retrieve data from files and HTTP APIs as a means of mechanical observation. This document designs the abstraction layer for external data sources.
+Moxen's observation system (`observation.md` §2 Layer 1) can retrieve data from files and HTTP APIs as a means of mechanical observation. This document designs the abstraction layer for external data sources.
 
 **MVP scope**: `file` and `http_api` only. `database` and IoT are deferred to a future phase.
 
@@ -66,7 +66,7 @@ DataSourceConfig {
   polling?: PollingConfig
   auth?: {
     type: "none" | "api_key" | "basic" | "bearer"
-    secret_ref?: string             // Key name in ~/.conatus/secrets/<source_id>.json
+    secret_ref?: string             // Key name in ~/.moxen/secrets/<source_id>.json
   }
   enabled: boolean                  // Default: true
   created_at: string                // ISO 8601
@@ -153,10 +153,10 @@ Data source observation belongs to `observation.md` §2 **Layer 1 (Mechanical Ob
 
 ## 9. Authentication Model
 
-Secret information is not included in the source configuration file. It is stored separately in `~/.conatus/secrets/<source_id>.json`.
+Secret information is not included in the source configuration file. It is stored separately in `~/.moxen/secrets/<source_id>.json`.
 
 ```
-~/.conatus/secrets/fitbit_steps.json
+~/.moxen/secrets/fitbit_steps.json
 {
   "api_key": "Bearer <token>"
 }
@@ -174,16 +174,16 @@ DataSourceRegistry {
 }
 ```
 
-Persistence location: `~/.conatus/data-sources.json`
+Persistence location: `~/.moxen/data-sources.json`
 
 ---
 
 ## 11. CLI Subcommands
 
 ```
-conatus datasource add    # Interactive configuration (with connection test)
-conatus datasource list   # List registered sources
-conatus datasource remove <id>
+moxen datasource add    # Interactive configuration (with connection test)
+moxen datasource list   # List registered sources
+moxen datasource remove <id>
 ```
 
 During `add`, `adapter.connect()` and `adapter.healthCheck()` are called in sequence. The source is registered only if both succeed.
@@ -212,7 +212,7 @@ During `add`, `adapter.connect()` and `adapter.healthCheck()` are called in sequ
 
 **Why read-only**
 
-Per Conatus's execution boundary principle (`execution-boundary.md` §1), Conatus only observes and judges. Writing to external services is executed as a delegated task to agents.
+Per Moxen's execution boundary principle (`execution-boundary.md` §1), Moxen only observes and judges. Writing to external services is executed as a delegated task to agents.
 
 **Why secrets are separated**
 

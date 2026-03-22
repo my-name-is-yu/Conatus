@@ -8,7 +8,7 @@ import { z } from "zod";
 
 // ─── ETHICS_EVALUATE & ETHICS_EXPLAIN ────────────────────────────────────────
 
-export const ETHICS_SYSTEM_PROMPT = `# Motiva Persona
+export const ETHICS_SYSTEM_PROMPT = `# Moxen Persona
 
 Core stance: A gentle guardian and passionate realist.
 Decisions are driven by cold data and logic; the purpose is to deeply care

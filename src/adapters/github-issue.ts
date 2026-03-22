@@ -5,7 +5,7 @@
 // is preferred, falling back to first-line-as-title / rest-as-body.
 //
 // Environment variables:
-//   MOTIVA_GITHUB_REPO — "owner/name", overrides auto-detection
+//   MOXEN_GITHUB_REPO — "owner/name", overrides auto-detection
 
 import { spawn } from "node:child_process";
 import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
@@ -14,9 +14,9 @@ import type { Logger } from "../runtime/logger.js";
 // ─── Config ───
 
 export interface GitHubIssueAdapterConfig {
-  /** "owner/name". Reads MOTIVA_GITHUB_REPO env var if not set; auto-detects via gh CLI otherwise. */
+  /** "owner/name". Reads MOXEN_GITHUB_REPO env var if not set; auto-detects via gh CLI otherwise. */
   repo?: string;
-  /** Labels always applied to every created issue. Default: ["motiva"] */
+  /** Labels always applied to every created issue. Default: ["moxen"] */
   defaultLabels?: string[];
   /** Path to the gh executable. Default: "gh" */
   ghPath?: string;
@@ -47,8 +47,8 @@ export class GitHubIssueAdapter implements IAdapter {
   private readonly logger?: Logger;
 
   constructor(config?: GitHubIssueAdapterConfig, logger?: Logger) {
-    this.repo = config?.repo ?? process.env["MOTIVA_GITHUB_REPO"];
-    this.defaultLabels = config?.defaultLabels ?? ["motiva"];
+    this.repo = config?.repo ?? process.env["MOXEN_GITHUB_REPO"];
+    this.defaultLabels = config?.defaultLabels ?? ["moxen"];
     this.ghPath = config?.ghPath ?? "gh";
     this.dryRun = config?.dryRun ?? false;
     this.logger = logger;
@@ -127,7 +127,7 @@ export class GitHubIssueAdapter implements IAdapter {
    * Returns null (not a match) on any error so the adapter stays functional when gh is unavailable.
    */
   async checkOpenIssueExists(title: string): Promise<number | null> {
-    const label = this.defaultLabels[0] ?? "motiva";
+    const label = this.defaultLabels[0] ?? "moxen";
     const args = [
       "issue",
       "list",
@@ -196,7 +196,7 @@ export class GitHubIssueAdapter implements IAdapter {
   }
 
   /**
-   * Return titles of all open issues labelled with the default label (e.g. "motiva").
+   * Return titles of all open issues labelled with the default label (e.g. "moxen").
    * Used by CoreLoop to inject existing task context into the prompt so the LLM can
    * avoid creating duplicates.
    *
@@ -204,7 +204,7 @@ export class GitHubIssueAdapter implements IAdapter {
    * Returns an empty array on any error (fail-open).
    */
   async listExistingTasks(): Promise<string[]> {
-    const label = this.defaultLabels[0] ?? "motiva";
+    const label = this.defaultLabels[0] ?? "moxen";
     const args = [
       "issue",
       "list",
@@ -449,7 +449,7 @@ export class GitHubIssueAdapter implements IAdapter {
       clearTimeout(timeoutHandle);
       cb(
         null,
-        "Could not detect GitHub repo. Set MOTIVA_GITHUB_REPO or run inside a GitHub-backed git repo. " +
+        "Could not detect GitHub repo. Set MOXEN_GITHUB_REPO or run inside a GitHub-backed git repo. " +
           `(git error: ${err.message})`
       );
     });
@@ -463,7 +463,7 @@ export class GitHubIssueAdapter implements IAdapter {
       if (timedOut || code !== 0 || !url) {
         cb(
           null,
-          "Could not detect GitHub repo. Set MOTIVA_GITHUB_REPO or run inside a GitHub-backed git repo."
+          "Could not detect GitHub repo. Set MOXEN_GITHUB_REPO or run inside a GitHub-backed git repo."
         );
         return;
       }
@@ -485,7 +485,7 @@ export class GitHubIssueAdapter implements IAdapter {
       cb(
         null,
         `Could not parse GitHub repo from git remote URL: ${url}. ` +
-          "Set MOTIVA_GITHUB_REPO to 'owner/name' explicitly."
+          "Set MOXEN_GITHUB_REPO to 'owner/name' explicitly."
       );
     });
   }
@@ -573,7 +573,7 @@ export class GitHubIssueAdapter implements IAdapter {
       return "gh CLI not authenticated. Run `gh auth login`.";
     }
     if (lower.includes("could not resolve") || lower.includes("repository not found")) {
-      return `Repository not found or no access. Check MOTIVA_GITHUB_REPO. Original: ${msg}`;
+      return `Repository not found or no access. Check MOXEN_GITHUB_REPO. Original: ${msg}`;
     }
     return msg;
   }

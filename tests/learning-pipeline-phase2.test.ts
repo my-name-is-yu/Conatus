@@ -61,7 +61,7 @@ describe("LearningPipeline Phase 2 — Structural Feedback", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "motiva-learning-p2-test-")
+      path.join(os.tmpdir(), "moxen-learning-p2-test-")
     );
     stateManager = new StateManager(tmpDir);
     const mockEmbeddingClient = new MockEmbeddingClient(4);

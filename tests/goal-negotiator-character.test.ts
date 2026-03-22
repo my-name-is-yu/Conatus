@@ -50,7 +50,7 @@ describe("GoalNegotiator CharacterConfig integration", () => {
   let observationEngine: ObservationEngine;
 
   beforeEach(() => {
-    tempDir = path.join(os.tmpdir(), `motiva-gn-char-test-${Math.random().toString(36).slice(2)}`);
+    tempDir = path.join(os.tmpdir(), `moxen-gn-char-test-${Math.random().toString(36).slice(2)}`);
     fs.mkdirSync(tempDir, { recursive: true });
     stateManager = new StateManager(tempDir);
     observationEngine = new ObservationEngine(stateManager);

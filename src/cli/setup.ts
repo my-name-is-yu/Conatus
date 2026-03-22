@@ -1,10 +1,10 @@
 // ─── CLI Dependency Setup ───
 //
-// buildDeps() wires all Conatus dependencies for CLI subcommands.
+// buildDeps() wires all Moxen dependencies for CLI subcommands.
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { getMotivaDirPath, getDatasourcesDir } from "../utils/paths.js";
+import { getMoxenDirPath, getDatasourcesDir } from "../utils/paths.js";
 import { readJsonFile } from "../utils/json-io.js";
 
 import { StateManager } from "../state-manager.js";
@@ -56,7 +56,7 @@ export async function buildDeps(
   const trustManager = new TrustManager(stateManager);
   const driveSystem = new DriveSystem(stateManager);
 
-  // Read datasource configs from ~/.conatus/datasources/
+  // Read datasource configs from ~/.moxen/datasources/
   const dsDir = getDatasourcesDir();
   const dataSources: IDataSourceAdapter[] = [];
   try {
@@ -133,13 +133,13 @@ export async function buildDeps(
   );
 
   // MemoryLifecycleManager — wires 3-tier memory model into CoreLoop.
-  const motivaBaseDir = getMotivaDirPath();
+  const moxenBaseDir = getMoxenDirPath();
   let memoryLifecycleManager: MemoryLifecycleManager | undefined;
   let driveScoreAdapter: DriveScoreAdapter | undefined;
   try {
     driveScoreAdapter = new DriveScoreAdapter();
     memoryLifecycleManager = new MemoryLifecycleManager(
-      motivaBaseDir,
+      moxenBaseDir,
       llmClient,
       undefined,
       undefined,
@@ -148,7 +148,7 @@ export async function buildDeps(
     );
     memoryLifecycleManager.initializeDirectories();
   } catch (err) {
-    getCliLogger().warn(`[conatus] MemoryLifecycleManager init failed — memory features disabled: ${err instanceof Error ? err.message : String(err)}`);
+    getCliLogger().warn(`[moxen] MemoryLifecycleManager init failed — memory features disabled: ${err instanceof Error ? err.message : String(err)}`);
     memoryLifecycleManager = undefined;
     driveScoreAdapter = undefined;
   }

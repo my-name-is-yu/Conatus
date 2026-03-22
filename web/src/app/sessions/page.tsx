@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useMotivaStore } from '../../lib/store';
+import { useMoxenStore } from '../../lib/store';
 import { relativeTime } from '../../lib/format-time';
 import { SkeletonTable } from '../../components/dashboard/skeleton';
 
@@ -332,8 +332,8 @@ const selectStyle: React.CSSProperties = {
 // ─── Main Page ───
 
 export default function SessionsPage() {
-  const rawSessions = useMotivaStore((state) => state.sessions);
-  const lastUpdate = useMotivaStore((state) => state.lastUpdate);
+  const rawSessions = useMoxenStore((state) => state.sessions);
+  const lastUpdate = useMoxenStore((state) => state.lastUpdate);
   const sessions: Session[] = rawSessions as unknown as Session[];
   const loading = lastUpdate === null && sessions.length === 0;
 

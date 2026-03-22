@@ -4,18 +4,18 @@
  * CLIRunner API (src/cli-runner.ts):
  *   class CLIRunner {
  *     constructor(baseDir?: string)
- *     run(argv: string[]): Promise<number>   // argv is pure subcommand args (no "node"/"motiva" prefix)
+ *     run(argv: string[]): Promise<number>   // argv is pure subcommand args (no "node"/"moxen" prefix)
  *     stop(): void
  *   }
  *
  * argv format: ["run", "--goal", "<id>"] (pure subcommand args)
  *
  * Subcommands:
- *   motiva run --goal <id>
- *   motiva goal add "<description>"
- *   motiva goal list
- *   motiva status --goal <id>
- *   motiva report --goal <id>
+ *   moxen run --goal <id>
+ *   moxen goal add "<description>"
+ *   moxen goal list
+ *   moxen status --goal <id>
+ *   moxen report --goal <id>
  *
  * Exit codes: 0 success, 1 error, 2 stall escalation
  *
@@ -189,7 +189,7 @@ beforeEach(() => {
   // Provide a dummy API key so requireApiKey() passes by default.
   origApiKey = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = "test-api-key";
-  process.env.CONATUS_LLM_PROVIDER = "anthropic";
+  process.env.MOXEN_LLM_PROVIDER = "anthropic";
 });
 
 afterEach(() => {
@@ -198,7 +198,7 @@ afterEach(() => {
   } else {
     process.env.ANTHROPIC_API_KEY = origApiKey;
   }
-  delete process.env.CONATUS_LLM_PROVIDER;
+  delete process.env.MOXEN_LLM_PROVIDER;
 
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ENOTEMPTY on Node 20 CI — ignore */ }
   vi.clearAllMocks();
@@ -407,7 +407,7 @@ describe("--yes flag position independence", async () => {
   //   (b) CoreLoop.run() is called with the correct goalId
   // This confirms --yes is correctly stripped before subcommand dispatch.
 
-  it("honours --yes placed before the subcommand (motiva --yes run --goal <id>)", async () => {
+  it("honours --yes placed before the subcommand (moxen --yes run --goal <id>)", async () => {
     await stateManager.saveGoal(makeGoal({ id: "g-yes-before" }));
 
     const mockRun = vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-yes-before" }));
@@ -423,7 +423,7 @@ describe("--yes flag position independence", async () => {
     expect(mockRun).toHaveBeenCalledWith("g-yes-before");
   });
 
-  it("honours --yes placed after --goal (motiva run --goal <id> --yes)", async () => {
+  it("honours --yes placed after --goal (moxen run --goal <id> --yes)", async () => {
     await stateManager.saveGoal(makeGoal({ id: "g-yes-after" }));
 
     const mockRun = vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-yes-after" }));
@@ -986,7 +986,7 @@ describe("report subcommand", async () => {
 describe("ANTHROPIC_API_KEY", async () => {
   it("exits with code 1 and prints error when key is missing for run", async () => {
     delete process.env.ANTHROPIC_API_KEY;
-    process.env.CONATUS_LLM_PROVIDER = "anthropic";
+    process.env.MOXEN_LLM_PROVIDER = "anthropic";
     await stateManager.saveGoal(makeGoal({ id: "g-nokey2" }));
 
     const code = await runCLI("run", "--goal", "g-nokey2");
@@ -995,7 +995,7 @@ describe("ANTHROPIC_API_KEY", async () => {
 
   it("exits with code 1 and prints error when key is missing for goal add", async () => {
     delete process.env.ANTHROPIC_API_KEY;
-    process.env.CONATUS_LLM_PROVIDER = "anthropic";
+    process.env.MOXEN_LLM_PROVIDER = "anthropic";
 
     const code = await runCLI("goal", "add", "Some goal");
     expect(code).toBe(1);

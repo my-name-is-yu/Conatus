@@ -1,7 +1,7 @@
 # Hypothesis Verification Mechanism Design
 
 > Three design improvements inspired by AutoResearchClaw's PIVOT/REFINE decision loop, self-learning, and convergence detection.
-> These make Conatus's orchestration loop more autonomous and adaptive.
+> These make Moxen's orchestration loop more autonomous and adaptive.
 
 ---
 
@@ -16,15 +16,15 @@
 - **Self-learning**: accumulates past decision outcomes as meta-knowledge and uses them in future decisions
 - **Convergence detection**: distinguishes convergence from stagnation based on transition patterns rather than simple threshold checks
 
-### Motivation for Applying This to Conatus
+### Moxention for Applying This to Moxen
 
-Conatus's core loop (observe → gap → score → task → execute → verify) is structurally sound, but has the following issues:
+Moxen's core loop (observe → gap → score → task → execute → verify) is structurally sound, but has the following issues:
 
 1. **No defined action after stall detection** — Even when StallDetector determines "it has stalled," CoreLoop has only limited branching
 2. **Zero meta-knowledge for strategy decisions** — There is no record of which strategies were effective for similar goals in the past, and no way to look that up
 3. **Cannot distinguish convergence from stagnation** — An absolute threshold check on `gap < threshold` alone cannot handle the case where progress is "close but not quite there"
 
-AutoResearchClaw's approach directly addresses these three issues. However, Conatus is fundamentally loop-based and should not adopt domain-specific logic such as paper generation.
+AutoResearchClaw's approach directly addresses these three issues. However, Moxen is fundamentally loop-based and should not adopt domain-specific logic such as paper generation.
 
 ---
 
@@ -219,9 +219,9 @@ type SatisficingResult =
 
 | Element | Reason |
 |---------|--------|
-| 23-stage linear pipeline | Conatus is fundamentally loop-based. Linear flow is an anti-pattern |
-| Domain-specific logic (LaTeX/papers) | Conatus is a domain-agnostic orchestrator |
-| Fixed loop count cap | Conatus judges via satisficing. A count cap undermines autonomy |
+| 23-stage linear pipeline | Moxen is fundamentally loop-based. Linear flow is an anti-pattern |
+| Domain-specific logic (LaTeX/papers) | Moxen is a domain-agnostic orchestrator |
+| Fixed loop count cap | Moxen judges via satisficing. A count cap undermines autonomy |
 | Automatic experiment design generation | This is the role of TaskLifecycle. No overlap needed |
 
 ---

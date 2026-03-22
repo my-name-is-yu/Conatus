@@ -1,8 +1,8 @@
 /**
- * SSE endpoint — polls Motiva state every 2s and pushes changes to the client.
+ * SSE endpoint — polls Moxen state every 2s and pushes changes to the client.
  * M18.4: real-time event stream for the dashboard.
  */
-import { getStateManager } from '../../../lib/motiva-client';
+import { getStateManager } from '../../../lib/moxen-client';
 
 const POLL_INTERVAL_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 30000;

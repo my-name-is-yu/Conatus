@@ -209,7 +209,7 @@ export async function scoreDrivesAndCheckKnowledge(
       .filter((s) => s.dissatisfaction > 0.7)
       .map((s) => s.dimension_name);
 
-    // Consolidated reward computation log (MOTIVA_REWARD_LOG=1 to enable)
+    // Consolidated reward computation log (MOXEN_REWARD_LOG=1 to enable)
     const confidenceAvg =
       gapVector.gaps.reduce((sum, g) => sum + g.confidence, 0) /
       Math.max(gapVector.gaps.length, 1);

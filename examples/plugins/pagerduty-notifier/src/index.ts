@@ -1,6 +1,6 @@
 // ─── PagerDutyNotifier ───
 //
-// A Motiva notifier plugin that sends events to PagerDuty via Events API v2.
+// A Moxen notifier plugin that sends events to PagerDuty via Events API v2.
 // Uses native fetch — no external dependencies required.
 
 import type {
@@ -59,7 +59,7 @@ export class PagerDutyNotifier implements INotifier {
       event_action: "trigger",
       payload: {
         summary: event.summary,
-        source: this.config.source ?? "motiva",
+        source: this.config.source ?? "moxen",
         severity: SEVERITY_MAP[event.severity],
         timestamp: event.timestamp,
         component: this.config.component,

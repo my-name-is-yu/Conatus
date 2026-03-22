@@ -1,6 +1,6 @@
 # Satisficing Design — Judging "Good Enough"
 
-> Conatus does not chase perfection. It judges "good enough" and stops.
+> Moxen does not chase perfection. It judges "good enough" and stops.
 > This document defines the logic for determining "when and what constitutes good enough."
 
 ---
@@ -13,13 +13,13 @@ Satisficing is a decision strategy of stopping at a state that is "good enough" 
 
 Systems that aim for perfection diverge. "More tests." "More refactoring." "More documentation." — they get stuck in an endless improvement cycle. As AutoGPT demonstrated, agents that keep running without a goal are harmful.
 
-Conatus solves this problem structurally. **Stop when the threshold is exceeded.** That is the rule.
+Moxen solves this problem structurally. **Stop when the threshold is exceeded.** That is the rule.
 
 ### When Satisficing Works
 
 Satisficing works when the definition of "good enough" is established in advance. Without a clear definition, satisficing cannot work — because there is no way to know when "enough" has been reached.
 
-In Conatus, when a goal is set, the advisor consults with the user to set thresholds. These thresholds become the definition of "good enough."
+In Moxen, when a goal is set, the advisor consults with the user to set thresholds. These thresholds become the definition of "good enough."
 
 ---
 
@@ -80,7 +80,7 @@ Satisficing is not just a goal-level concern. Individual tasks (iterations) also
 
 ### Do Not Attack All Gaps at Once
 
-Even when multiple Gaps exist, Conatus selects a **manageable subset** to address.
+Even when multiple Gaps exist, Moxen selects a **manageable subset** to address.
 
 There are three reasons.
 
@@ -118,7 +118,7 @@ Example: Suppose a single threshold of "progress: 90%" is used. Writing 20 files
 
 ### Setting Thresholds Across Multiple Dimensions
 
-Conatus manages multiple dimensions **each with independent thresholds**.
+Moxen manages multiple dimensions **each with independent thresholds**.
 
 ```
 example_goal_thresholds {
@@ -149,7 +149,7 @@ The advisor assesses feasibility. "Is this threshold realistic?" "Is it appropri
 
 ### User Adjustments
 
-The user can change thresholds at any time. However, Conatus makes the impact of the change explicit.
+The user can change thresholds at any time. However, Moxen makes the impact of the change explicit.
 
 ```
 Lowering a threshold (relaxing):
@@ -160,9 +160,9 @@ Raising a threshold (tightening):
   → Estimate and present the additional work needed to reach the new threshold
 ```
 
-### Conatus's Adjustment Proposals
+### Moxen's Adjustment Proposals
 
-If Conatus judges from observation that "this threshold is unrealistic" or "it's actually too low," it can propose an adjustment to the user.
+If Moxen judges from observation that "this threshold is unrealistic" or "it's actually too low," it can propose an adjustment to the user.
 
 It only proposes — it does not change thresholds autonomously. Threshold changes always require user approval.
 
@@ -279,7 +279,7 @@ In the MVP, when there is no explicit mapping definition, the overall completion
 
 ## Summary of Design Principles
 
-| Problem | Conatus's Solution |
+| Problem | Moxen's Solution |
 |---------|-------------------|
 | Divergence from perfectionism | Stop when the threshold is exceeded (completion ≠ perfection) |
 | Premature completion on insufficient evidence | Progress ceiling rule based on confidence level |

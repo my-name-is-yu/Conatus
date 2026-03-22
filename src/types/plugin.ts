@@ -38,8 +38,8 @@ export const PluginManifestSchema = z.object({
   entry_point: z.string().default("dist/index.js"),
 
   // 必要なConautsのバージョン（semver range）
-  min_motiva_version: z.string().optional(),
-  max_motiva_version: z.string().optional(),
+  min_moxen_version: z.string().optional(),
+  max_moxen_version: z.string().optional(),
 
   // 宣言するリソースアクセス（セキュリティ審査用）
   permissions: z

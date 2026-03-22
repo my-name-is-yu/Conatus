@@ -91,7 +91,7 @@ export function buildProposalPrompt(
     )
     .join("\n");
 
-  return `You are Motiva, an AI agent orchestrator analyzing curiosity triggers to propose new exploration goals.
+  return `You are Moxen, an AI agent orchestrator analyzing curiosity triggers to propose new exploration goals.
 
 ## Current Trigger
 Type: ${trigger.type}

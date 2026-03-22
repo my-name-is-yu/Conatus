@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a feature for Motiva
+about: Suggest a feature for Moxen
 labels: enhancement
 ---
 

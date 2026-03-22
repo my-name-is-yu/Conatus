@@ -93,7 +93,7 @@ export interface LoopConfig {
   /**
    * Whether to automatically archive a completed goal at the end of run().
    * Default: false — archiving is an irreversible action and should be triggered explicitly
-   * (e.g. via `motiva goal archive <id>` CLI command or by setting this flag intentionally).
+   * (e.g. via `moxen goal archive <id>` CLI command or by setting this flag intentionally).
    */
   autoArchive?: boolean;
 }
@@ -170,7 +170,7 @@ export interface CoreLoopDeps {
   /**
    * Optional TrustManager for including per-adapter trust balance in reward logs.
    * When provided, CoreLoop reads the balance for the configured adapterType and
-   * includes it in logRewardComputation calls (MOTIVA_REWARD_LOG=1).
+   * includes it in logRewardComputation calls (MOXEN_REWARD_LOG=1).
    */
   trustManager?: TrustManager;
   /**

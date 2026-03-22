@@ -1,17 +1,17 @@
 # Plugin Development Guide
 
-This guide explains how to develop Conatus plugins.
+This guide explains how to develop Moxen plugins.
 
 ---
 
 ## Plugin Types
 
-Conatus supports three types of plugins.
+Moxen supports three types of plugins.
 
 | Type | Interface | Purpose |
 |------|-----------|---------|
 | `data_source` | `IDataSourceAdapter` | Observe state from external APIs or databases |
-| `notifier` | `INotifier` | Send Conatus events to external services |
+| `notifier` | `INotifier` | Send Moxen events to external services |
 | `adapter` | `IAdapter` | Agent adapters (e.g., Claude Code CLI) |
 
 ---
@@ -46,9 +46,9 @@ supported_events:
 # Plugin entry point (relative path from plugin directory)
 entry_point: "src/index.ts" # Default: "dist/index.js"
 
-# Supported Conatus version range (semver)
-min_conatus_version: "0.1.0"
-max_conatus_version: "2.0.0" # Optional
+# Supported Moxen version range (semver)
+min_moxen_version: "0.1.0"
+max_moxen_version: "2.0.0" # Optional
 
 # Configuration schema (used by PluginLoader for validation)
 config_schema:
@@ -331,16 +331,16 @@ import { MyDbAdapter } from "../examples/plugins/my-db-datasource/src/index.js";
 
 ### Local Installation
 
-Place the plugin directory under `~/.conatus/plugins/`.
+Place the plugin directory under `~/.moxen/plugins/`.
 
 ```bash
-cp -r my-plugin ~/.conatus/plugins/my-plugin
+cp -r my-plugin ~/.moxen/plugins/my-plugin
 ```
 
 Directory structure:
 
 ```
-~/.conatus/plugins/
+~/.moxen/plugins/
 └── my-plugin/
     ├── plugin.yaml
     ├── src/
@@ -353,29 +353,29 @@ Directory structure:
 
 ```bash
 # Install as an npm package
-npm install -g @conatus-plugins/pagerduty-notifier
+npm install -g @moxen-plugins/pagerduty-notifier
 
-# Symlink into ~/.conatus/plugins/
-ln -s $(npm root -g)/@conatus-plugins/pagerduty-notifier ~/.conatus/plugins/pagerduty-notifier
+# Symlink into ~/.moxen/plugins/
+ln -s $(npm root -g)/@moxen-plugins/pagerduty-notifier ~/.moxen/plugins/pagerduty-notifier
 ```
 
 ---
 
-## Publishing to npm under the `@conatus-plugins/` Scope
+## Publishing to npm under the `@moxen-plugins/` Scope
 
-1. Set the `name` field in `package.json` to `@conatus-plugins/<plugin-name>`.
+1. Set the `name` field in `package.json` to `@moxen-plugins/<plugin-name>`.
 
-2. Add `"conatus": ">=0.1.0"` to `peerDependencies`.
+2. Add `"moxen": ">=0.1.0"` to `peerDependencies`.
 
 3. Expose the entry point via the `exports` field.
 
 ```json
 {
-  "name": "@conatus-plugins/my-notifier",
+  "name": "@moxen-plugins/my-notifier",
   "version": "1.0.0",
   "type": "module",
   "exports": { ".": "./dist/index.js" },
-  "peerDependencies": { "conatus": ">=0.1.0" }
+  "peerDependencies": { "moxen": ">=0.1.0" }
 }
 ```
 

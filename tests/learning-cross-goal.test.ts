@@ -64,7 +64,7 @@ describe("LearningPipeline — extractCrossGoalPatterns", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "motiva-cross-goal-test-")
+      path.join(os.tmpdir(), "moxen-cross-goal-test-")
     );
     stateManager = new StateManager(tmpDir);
     const mockEmbeddingClient = new MockEmbeddingClient(4);
@@ -252,7 +252,7 @@ describe("LearningPipeline — sharePatternsAcrossGoals", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "motiva-share-patterns-test-")
+      path.join(os.tmpdir(), "moxen-share-patterns-test-")
     );
     stateManager = new StateManager(tmpDir);
     const llm = createMockLLMClient([]);
@@ -379,7 +379,7 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "motiva-kt-pattern-test-")
+      path.join(os.tmpdir(), "moxen-kt-pattern-test-")
     );
     stateManager = new StateManager(tmpDir);
 

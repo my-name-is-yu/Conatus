@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getReportingEngine } from '../../../../lib/motiva-client';
+import { getReportingEngine } from '../../../../lib/moxen-client';
 
 export async function GET(
   _req: NextRequest,

@@ -167,7 +167,7 @@ describe("Milestone 7 — Group 1: GoalTreeManager", () => {
     const goalTreeManager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, depGraph);
 
     // Save the root goal
-    const root = makeGoal("root-decompose-1", "Improve Motiva documentation quality");
+    const root = makeGoal("root-decompose-1", "Improve Moxen documentation quality");
     await stateManager.saveGoal(root);
 
     const config = {
