@@ -200,7 +200,7 @@ afterEach(() => {
   }
   delete process.env.CONATUS_LLM_PROVIDER;
 
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ENOTEMPTY on Node 20 CI — ignore */ }
   vi.clearAllMocks();
 });
 
