@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1] - 2026-03-22
+
+### Fixed
+
+- Fixed Codex CLI integration: removed deprecated `--path` argument, using `cwd` instead.
+- Fixed TUI intent recognizer: LLM fallback errors were silently swallowed, now logged. Added `"unknown"` to schema enum to prevent Zod parse failures.
+
+### Changed
+
+- Translated all TUI text from Japanese to English (status labels, input placeholder).
+
 ## [0.1.0] - 2026-03-23
 
 ### Initial Release
