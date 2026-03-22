@@ -223,7 +223,7 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
   const visibleMessages = messages.slice(startIdx);
 
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={1} overflow="hidden">
       {/* Scroll indicator */}
       {startIdx > 0 && (
         <Text dimColor>{"\u2191"} {startIdx} earlier messages</Text>
@@ -286,44 +286,38 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
       </Box>
 
       {/* Input area with borders */}
-      {(() => {
-        const termCols = process.stdout.columns || 80;
-        const borderLine = "\u2500".repeat(termCols);
-        return (
+      <Box flexDirection="column">
+        <Box borderStyle="single" borderColor="gray" borderBottom={false} borderLeft={false} borderRight={false} />
+        <Box>
+          <Text color="green" bold>
+            {"\u276F "}
+          </Text>
+          <TextInput
+            value={input}
+            onChange={(val) => { justSelected.current = false; setInput(val); }}
+            onSubmit={handleSubmit}
+            placeholder="/ for commands"
+          />
+        </Box>
+        <Box borderStyle="single" borderColor="gray" borderTop={false} borderLeft={false} borderRight={false} />
+        {hasMatches && (
           <Box flexDirection="column">
-            <Text dimColor>{borderLine}</Text>
-            <Box>
-              <Text color="green" bold>
-                {"\u276F "}
-              </Text>
-              <TextInput
-                value={input}
-                onChange={(val) => { justSelected.current = false; setInput(val); }}
-                onSubmit={handleSubmit}
-                placeholder="/ for commands"
-              />
-            </Box>
-            <Text dimColor>{borderLine}</Text>
-            {hasMatches && (
-              <Box flexDirection="column">
-                {matches.map((suggestion, idx) => {
-                  const isSelected = idx === selectedIdx;
-                  const label = suggestion.type === 'goal'
-                    ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
-                    : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
-                  const key = `${suggestion.type}-${suggestion.name}-${suggestion.description}`;
-                  return isSelected ? (
-                    <Text key={key} bold color="blue">{label}</Text>
-                  ) : (
-                    <Text key={key} dimColor>{label}</Text>
-                  );
-                })}
-                <Text dimColor>  arrows to navigate, tab/enter to select, esc to dismiss</Text>
-              </Box>
-            )}
+            {matches.map((suggestion, idx) => {
+              const isSelected = idx === selectedIdx;
+              const label = suggestion.type === 'goal'
+                ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
+                : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
+              const key = `${suggestion.type}-${suggestion.name}-${suggestion.description}`;
+              return isSelected ? (
+                <Text key={key} bold color="blue">{label}</Text>
+              ) : (
+                <Text key={key} dimColor>{label}</Text>
+              );
+            })}
+            <Text dimColor>  arrows to navigate, tab/enter to select, esc to dismiss</Text>
           </Box>
-        );
-      })()}
+        )}
+      </Box>
     </Box>
   );
 }

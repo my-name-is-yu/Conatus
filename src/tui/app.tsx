@@ -248,13 +248,14 @@ export function App({
             borderStyle="single"
             borderColor="gray"
             paddingX={1}
+            overflow="hidden"
           >
             <Dashboard state={loopState} />
           </Box>
         )}
 
         {/* ── Right pane: Chat / overlays ── */}
-        <Box flexDirection="column" flexGrow={1}>
+        <Box flexDirection="column" flexGrow={1} overflow="hidden">
           {approvalRequest !== null ? (
             <ApprovalOverlay
               task={approvalRequest.task}

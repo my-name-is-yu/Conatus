@@ -82,10 +82,9 @@ export function Dashboard({ state }: DashboardProps) {
     return (
       <Box
         flexDirection="column"
-        borderStyle="round"
-        borderColor="magenta"
         paddingX={1}
         paddingY={1}
+        overflow="hidden"
       >
         <Text bold color="magenta">
           🎯 CONATUS
@@ -116,7 +115,7 @@ export function Dashboard({ state }: DashboardProps) {
   const goalLabel = state.goalId ?? "(unknown)";
 
   return (
-    <Box flexDirection="column" borderStyle="single" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} overflow="hidden">
       {/* Header */}
       <Box>
         <Text bold color="magenta">
@@ -136,7 +135,7 @@ export function Dashboard({ state }: DashboardProps) {
       </Box>
 
       {/* Separator */}
-      <Text color="gray">{"─".repeat(Math.min(process.stdout.columns || 60, 60) - 4)}</Text>
+      <Box borderStyle="single" borderColor="gray" borderTop={false} borderLeft={false} borderRight={false} />
 
       {/* Stats row: iter, elapsed, last result */}
       {(state.running || state.iteration > 0) && (
