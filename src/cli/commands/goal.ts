@@ -217,7 +217,7 @@ export async function cmdStatus(stateManager: StateManager, goalId: string): Pro
   for (const dim of goal.dimensions) {
     const progress =
       typeof dim.current_value === "number"
-        ? `${(dim.current_value * 100).toFixed(1)}%`
+        ? `${dim.current_value.toFixed(1)}`
         : dim.current_value !== null
         ? String(dim.current_value)
         : "not yet measured";

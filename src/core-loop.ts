@@ -305,6 +305,19 @@ export class CoreLoop {
       }
     }
 
+    // Persist final status to disk before post-loop hooks
+    if (finalStatus === "completed") {
+      try {
+        const goalState = await this.deps.stateManager.loadGoal(goalId);
+        if (goalState) {
+          goalState.status = "completed";
+          await this.deps.stateManager.saveGoal(goalState);
+        }
+      } catch (err) {
+        this.logger?.warn("CoreLoop: failed to persist final status", { goalId, finalStatus, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     // After loop completes, check curiosity triggers if engine is available
     if (this.deps.curiosityEngine && (finalStatus === "completed" || finalStatus === "max_iterations")) {
       try {
@@ -401,7 +414,13 @@ export class CoreLoop {
 
     // 3. Gap calculate + zero check
     const gapResult = await calculateGapOrComplete(ctx, goalId, goal, loopIndex, result, startTime);
-    if (!gapResult) return result;
+    if (!gapResult) {
+      // Generate report even when gap=0 (goal already satisfied)
+      if (result.completionJudgment?.is_complete && !result.error) {
+        await this.tryGenerateReport(goalId, loopIndex, result, goal);
+      }
+      return result;
+    }
     const { gapVector, gapAggregate } = gapResult;
 
     // 4. Drive scoring + knowledge gap check
