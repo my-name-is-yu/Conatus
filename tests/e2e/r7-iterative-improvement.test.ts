@@ -664,60 +664,70 @@ describe("R7-3: LLM observation min-type scaling accuracy", () => {
     const goalId = "r7-3-scaling";
 
     /**
-     * LLM call sequence for 2-iteration convergence:
+     * LLM call sequence for 3-iteration convergence:
+     *
+     * SatisficingJudge requires double-confirmation (2 consecutive cycles where
+     * all dimensions meet threshold) before declaring is_complete=true (§4.4).
      *
      * Iteration 1 (code_quality=0.75, below threshold 0.8):
      *   Call 0: code_quality observation → 0.75
      *   Call 1: task generation
      *   Call 2: LLM review
      *
-     * Iteration 2 (code_quality=0.90, above threshold 0.8):
+     * Iteration 2 (code_quality=0.90, above threshold 0.8, streak=1):
      *   Call 3: code_quality observation → 0.90
-     *   [task may or may not run if judge detects completion]
+     *   gap=0 → skipTaskGeneration, Phase 5 sets streak=1 → is_complete=false
+     *
+     * Iteration 3 (code_quality=0.90, still above threshold, streak=2):
+     *   Call 4: code_quality observation → 0.90
+     *   gap=0 → skipTaskGeneration, Phase 5 sets streak=2 → is_complete=true
      *
      * Guard responses:
-     *   Call 4: task generation guard
-     *   Call 5: LLM review guard
-     *   Call 6: observation guard
-     *   Call 7: task generation guard
-     *   Call 8: LLM review guard
+     *   Call 5+: unused guards
      */
     // Use score=0.35 for iter1 so that after verifyTask's auto-progress (+0.4),
     // the value becomes 0.75 which is still below threshold 0.8.
-    // iter2 observes 0.90 which exceeds threshold.
+    // iter2 and iter3 observe 0.90 which exceeds threshold.
     const llmClient = createSequentialMockLLMClient([
       // Iteration 1 — below threshold (0.35 + 0.4 auto-progress = 0.75, still < 0.8)
       JSON.stringify({ score: 0.35, reason: "Code quality needs significant improvement" }),
       "```json\n" + makeTaskGenerationResponse("code_quality") + "\n```",
       makeLLMReviewResponse(),
-      // Iteration 2 — above threshold
+      // Iteration 2 — above threshold (streak=1, not yet complete)
       JSON.stringify({ score: 0.90, reason: "Code quality now meets the 0.8 requirement" }),
-      // Guard responses
-      "```json\n" + makeTaskGenerationResponse("code_quality") + "\n```",
-      makeLLMReviewResponse(),
+      // Iteration 3 — above threshold again (streak=2, complete)
       JSON.stringify({ score: 0.90, reason: "Still meeting requirements" }),
+      // Guard responses
       "```json\n" + makeTaskGenerationResponse("code_quality") + "\n```",
       makeLLMReviewResponse(),
     ]);
 
-    const coreLoop = buildCoreLoop(stateManager, llmClient, 3);
+    const coreLoop = buildCoreLoop(stateManager, llmClient, 5);
 
     const goal = makeOneDimGoal(goalId, "code_quality", 0.8);
     await stateManager.saveGoal(goal);
 
     const result = await coreLoop.run(goalId);
 
-    // Should complete in exactly 2 iterations (iter1: below, iter2: above)
+    // Should complete in exactly 3 iterations due to double-confirmation requirement (§4.4):
+    //   iter1: below threshold → task runs
+    //   iter2: above threshold → streak=1, not complete yet
+    //   iter3: above threshold again → streak=2, complete
     expect(result.finalStatus).toBe("completed");
-    expect(result.totalIterations).toBe(2);
+    expect(result.totalIterations).toBe(3);
 
     // Iteration 1: gap should be > 0 (score 0.35 < threshold 0.8)
     const iter1 = result.iterations[0]!;
     expect(iter1.gapAggregate).toBeGreaterThan(0);
 
-    // Iteration 2: should be complete
+    // Iteration 2: gap=0 but not yet complete (first confirmation)
     const iter2 = result.iterations[1]!;
-    expect(iter2.completionJudgment.is_complete).toBe(true);
+    expect(iter2.gapAggregate).toBe(0);
+    expect(iter2.completionJudgment.is_complete).toBe(false);
+
+    // Iteration 3: gap=0 and now complete (second confirmation)
+    const iter3 = result.iterations[2]!;
+    expect(iter3.completionJudgment.is_complete).toBe(true);
 
     // Final goal state should have code_quality updated to 0.90 (approx)
     const finalGoal = await stateManager.loadGoal(goalId);

@@ -432,25 +432,36 @@ export class CoreLoop {
     // 3. Gap calculate + zero check
     const gapResult = await calculateGapOrComplete(ctx, goalId, goal, loopIndex, result, startTime);
     if (!gapResult) {
-      // Generate report even when gap=0 (goal already satisfied)
-      if (result.completionJudgment?.is_complete && !result.error) {
-        await this.tryGenerateReport(goalId, loopIndex, result, goal);
-      }
+      // null means a hard error occurred — result.error is already set
       return result;
     }
-    const { gapVector, gapAggregate } = gapResult;
+    const { gapVector, gapAggregate, skipTaskGeneration } = gapResult;
 
-    // 4. Drive scoring + knowledge gap check
-    const driveResult = await scoreDrivesAndCheckKnowledge(
-      ctx, goalId, goal, gapVector, loopIndex, result, startTime,
-      (id, idx, r, g) => this.tryGenerateReport(id, idx, r, g)
-    );
-    if (!driveResult) return result;
-    const { driveScores, highDissatisfactionDimensions } = driveResult;
+    // 4. Drive scoring + knowledge gap check (skip when gap=0 — no task needed)
+    let driveScores: import("./types/drive.js").DriveScore[] = [];
+    let highDissatisfactionDimensions: string[] = [];
+    if (!skipTaskGeneration) {
+      const driveResult = await scoreDrivesAndCheckKnowledge(
+        ctx, goalId, goal, gapVector, loopIndex, result, startTime,
+        (id, idx, r, g) => this.tryGenerateReport(id, idx, r, g)
+      );
+      if (!driveResult) return result;
+      driveScores = driveResult.driveScores;
+      highDissatisfactionDimensions = driveResult.highDissatisfactionDimensions;
+    }
 
     // 5. Completion check + milestones
     await checkCompletionAndMilestones(ctx, goalId, goal, result, startTime);
     if (result.error) return result;
+
+    // When gap=0, SatisficingJudge in Phase 5 is the authority on completion.
+    // If it says not complete (e.g. low confidence), continue the loop normally
+    // but skip task generation since there is no gap to close.
+    if (skipTaskGeneration) {
+      await this.tryGenerateReport(goalId, loopIndex, result, goal);
+      result.elapsedMs = Date.now() - startTime;
+      return result;
+    }
 
     // 6. Stall detection + rebalance
     await detectStallsAndRebalance(ctx, goalId, goal, result);

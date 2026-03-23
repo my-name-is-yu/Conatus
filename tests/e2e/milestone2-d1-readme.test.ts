@@ -487,10 +487,15 @@ describe("Milestone 2 D-1: README quality goal", () => {
     expect(iteration.completionJudgment).toBeDefined();
     expect(typeof iteration.completionJudgment.is_complete).toBe("boolean");
 
-    // When LLM reports scores above threshold, the gap should be zero or near zero
-    // which means is_complete should be true
+    // When LLM reports scores above threshold, the gap should be zero or near zero.
+    // SatisficingJudge requires double-confirmation (2 consecutive cycles) before
+    // declaring is_complete=true, so with maxIterations=1 the goal may not be
+    // marked complete yet even when gap=0. We verify that the judgment was evaluated
+    // by SatisficingJudge (not the old gap=0 short-circuit).
     if (iteration.gapAggregate <= 0) {
-      expect(iteration.completionJudgment.is_complete).toBe(true);
+      // completionJudgment must be present and well-formed regardless of is_complete value
+      expect(iteration.completionJudgment.blocking_dimensions).toBeDefined();
+      expect(Array.isArray(iteration.completionJudgment.blocking_dimensions)).toBe(true);
     }
 
     // The final loop status should reflect completion or max_iterations

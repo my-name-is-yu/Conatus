@@ -177,6 +177,138 @@ describe("ObservationEngine — score jump suppression (§3.3)", () => {
     expect(warnMessages.some((m) => m.includes("observation score jump suppressed"))).toBe(false);
   });
 
+  // ─── Range clamping tests ───
+
+  it("min type: extractedValue does not trigger clamp for normal scores (score <= 1)", async () => {
+    const goal = makeGoal({ id: "goal-clamp-min" });
+    await stateManager.saveGoal(goal);
+
+    // score=0.99, threshold=100 → extractedValue=99, which is < 100*2=200 — no clamp
+    const llmClient = createMockLLMClient(0.99, "high score");
+    const { logger, warnMessages } = createMockLogger();
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      undefined,
+      { gitContextFetcher: async () => "content" },
+      logger
+    );
+
+    const entry = await engine.observeWithLLM(
+      "goal-clamp-min",
+      "dim1",
+      "Test goal",
+      "dim1",
+      JSON.stringify({ type: "min", value: 100 }),
+      "content",
+      null,
+      true
+    );
+
+    // extractedValue = 0.99 * 100 = 99 — within bounds, no clamp warning
+    expect(entry.extracted_value).toBeCloseTo(99, 1);
+    expect(warnMessages.some((m) => m.includes("clamped for min threshold"))).toBe(false);
+  });
+
+  it("min type: no suspicious warning when extractedValue <= threshold*1.5", async () => {
+    const goal = makeGoal({ id: "goal-no-suspicious" });
+    await stateManager.saveGoal(goal);
+
+    // score=0.9, threshold=100 → extractedValue=90, which is < 100*1.5=150 — no warning
+    const llmClient = createMockLLMClient(0.9, "normal");
+    const { logger, warnMessages } = createMockLogger();
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      undefined,
+      { gitContextFetcher: async () => "content" },
+      logger
+    );
+
+    const entry = await engine.observeWithLLM(
+      "goal-no-suspicious",
+      "dim1",
+      "Test goal",
+      "dim1",
+      JSON.stringify({ type: "min", value: 100 }),
+      "content",
+      null,
+      true
+    );
+
+    // extractedValue = 90 — below 1.5x, no suspicious warning
+    expect(entry.extracted_value).toBeCloseTo(90, 1);
+    expect(warnMessages.some((m) => m.includes("suspiciously high"))).toBe(false);
+  });
+
+  it("max type: score=0.0 gives threshold*2 and triggers suspicious warning (>1.5x)", async () => {
+    const goal = makeGoal({ id: "goal-max-worst" });
+    await stateManager.saveGoal(goal);
+
+    // score=0.0 → extractedValue = 100*(2-0) = 200 = threshold*2
+    const llmClient = createMockLLMClient(0.0, "way over max");
+    const { logger, warnMessages } = createMockLogger();
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      undefined,
+      { gitContextFetcher: async () => "content" },
+      logger
+    );
+
+    const entry = await engine.observeWithLLM(
+      "goal-max-worst",
+      "dim1",
+      "Test goal",
+      "dim1",
+      JSON.stringify({ type: "max", value: 100 }),
+      "content",
+      null,
+      true
+    );
+
+    // score=0.0 → extractedValue = 200 — equal to clampMax so NOT clamped
+    expect(entry.extracted_value).toBeCloseTo(200, 1);
+    expect(warnMessages.some((m) => m.includes("clamped for max threshold"))).toBe(false);
+    // 200 > 100*1.5=150 → suspicious warning fires
+    expect(warnMessages.some((m) => m.includes("suspiciously high for max threshold"))).toBe(true);
+  });
+
+  it("max type: score=1.0 gives exactly threshold with no warnings", async () => {
+    const goal = makeGoal({ id: "goal-max-at-limit" });
+    await stateManager.saveGoal(goal);
+
+    const llmClient = createMockLLMClient(1.0, "exactly at max");
+    const { logger, warnMessages } = createMockLogger();
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      undefined,
+      { gitContextFetcher: async () => "content" },
+      logger
+    );
+
+    const entry = await engine.observeWithLLM(
+      "goal-max-at-limit",
+      "dim1",
+      "Test goal",
+      "dim1",
+      JSON.stringify({ type: "max", value: 100 }),
+      "content",
+      null,
+      true
+    );
+
+    // score=1.0 → extractedValue = 100*(2-1.0) = 100 — at threshold, no warnings
+    expect(entry.extracted_value).toBeCloseTo(100, 1);
+    expect(warnMessages.some((m) => m.includes("clamped"))).toBe(false);
+    expect(warnMessages.some((m) => m.includes("suspiciously high"))).toBe(false);
+  });
+
   it("delta exactly equal to 0.4 is NOT suppressed (boundary is exclusive)", async () => {
     const goal = makeGoal({ id: "goal-boundary" });
     await stateManager.saveGoal(goal);

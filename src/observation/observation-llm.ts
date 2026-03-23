@@ -246,12 +246,34 @@ export async function observeWithLLM(
     const threshold = JSON.parse(thresholdDescription);
     if (threshold.type === "min" && typeof threshold.value === "number" && threshold.value > 1) {
       extractedValue = score * threshold.value;
+      const clampMax = threshold.value * 2;
+      if (extractedValue > clampMax) {
+        logger?.warn(
+          `WARN: extractedValue clamped for min threshold: raw=${extractedValue.toFixed(3)}, clampMax=${clampMax}, threshold=${threshold.value}`
+        );
+        extractedValue = clampMax;
+      } else if (extractedValue > threshold.value * 1.5) {
+        logger?.warn(
+          `WARN: extractedValue suspiciously high for min threshold: value=${extractedValue.toFixed(3)}, threshold=${threshold.value}`
+        );
+      }
     } else if (threshold.type === "max" && typeof threshold.value === "number" && threshold.value > 1) {
       // Invert: score=1.0 means current is AT the max (gap=0); score=0.0 means far above max.
       // formula: value = threshold * (2 - score)
       // score=1.0 → threshold (exactly at max, gap=0)
       // score=0.0 → 2*threshold (double the max, clearly not met)
       extractedValue = threshold.value * (2 - score);
+      const clampMax = threshold.value * 2;
+      if (extractedValue > clampMax) {
+        logger?.warn(
+          `WARN: extractedValue clamped for max threshold: raw=${extractedValue.toFixed(3)}, clampMax=${clampMax}, threshold=${threshold.value}`
+        );
+        extractedValue = clampMax;
+      } else if (extractedValue > threshold.value * 1.5) {
+        logger?.warn(
+          `WARN: extractedValue suspiciously high for max threshold: value=${extractedValue.toFixed(3)}, threshold=${threshold.value}`
+        );
+      }
     }
   } catch { /* keep original score if threshold parsing fails */ }
 

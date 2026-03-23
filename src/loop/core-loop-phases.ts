@@ -108,8 +108,11 @@ export async function observeAndReload(
 
 // ─── Phase 3 ───
 
-/** Calculate gap vector and aggregate. Returns null if gap is zero
- * (result is mutated with early completion) or on error. */
+/** Calculate gap vector and aggregate.
+ * Returns null on error.
+ * When gap === 0, returns the gap result with skipTaskGeneration=true so the
+ * caller continues to Phase 5 (SatisficingJudge) instead of short-circuiting.
+ */
 export async function calculateGapOrComplete(
   ctx: PhaseCtx,
   goalId: string,
@@ -117,7 +120,7 @@ export async function calculateGapOrComplete(
   loopIndex: number,
   result: LoopIterationResult,
   startTime: number
-): Promise<{ gapVector: GapVector; gapAggregate: number } | null> {
+): Promise<{ gapVector: GapVector; gapAggregate: number; skipTaskGeneration?: boolean } | null> {
   let gapVector: GapVector;
   let gapAggregate: number;
   try {
@@ -152,18 +155,11 @@ export async function calculateGapOrComplete(
     return null;
   }
 
-  // Gap zero check — goal already satisfied
+  // Gap zero check — gap is satisfied; skip task generation but continue to
+  // Phase 5 so SatisficingJudge can enforce confidence and double-confirmation.
   if (gapAggregate === 0) {
-    ctx.logger?.info(`[CoreLoop] gap=0 for goal ${goalId} — skipping task generation`);
-    result.completionJudgment = {
-      is_complete: true,
-      blocking_dimensions: [],
-      low_confidence_dimensions: [],
-      needs_verification_task: false,
-      checked_at: new Date().toISOString(),
-    };
-    result.elapsedMs = Date.now() - startTime;
-    return null;
+    ctx.logger?.info(`[CoreLoop] gap=0 for goal ${goalId} — skipping task generation, deferring to SatisficingJudge`);
+    return { gapVector, gapAggregate, skipTaskGeneration: true };
   }
 
   ctx.deps.onProgress?.({

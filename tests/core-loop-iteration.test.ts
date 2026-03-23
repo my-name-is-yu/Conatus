@@ -429,12 +429,18 @@ describe("CoreLoop", async () => {
       mocks.gapCalculator.calculateGapVector.mockReturnValue(zeroGapVector);
       mocks.gapCalculator.aggregateGaps.mockReturnValue(0);
 
+      // SatisficingJudge confirms completion (gap=0 with high confidence)
+      mocks.satisficingJudge.isGoalComplete.mockReturnValueOnce(
+        makeCompletionJudgment({ is_complete: true, blocking_dimensions: [] })
+      );
+
       const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
       const result = await loop.runOneIteration("goal-1", 0);
 
       expect(result.gapAggregate).toBe(0);
       expect(result.taskResult).toBeNull();
       expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+      // SatisficingJudge (not gap=0 alone) determines completion
       expect(result.completionJudgment.is_complete).toBe(true);
     });
   });

@@ -1,6 +1,8 @@
 // ─── tavori suggest and improve commands ───
 
 import { parseArgs } from "node:util";
+import * as fs from "node:fs";
+import { spawnSync } from "node:child_process";
 
 import { StateManager } from "../../state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
@@ -499,6 +501,63 @@ export async function cmdSuggest(
   return 0;
 }
 
+// ─── gatherProjectContext ───
+
+async function gatherProjectContext(targetPath: string): Promise<string> {
+  const parts: string[] = [];
+
+  // Read package.json if present
+  try {
+    const pkgPath = `${targetPath}/package.json`;
+    const pkgRaw = fs.readFileSync(pkgPath, "utf-8");
+    const pkg = JSON.parse(pkgRaw) as Record<string, unknown>;
+    const name = typeof pkg.name === "string" ? pkg.name : "";
+    const description = typeof pkg.description === "string" ? pkg.description : "";
+    const scripts = pkg.scripts && typeof pkg.scripts === "object"
+      ? Object.keys(pkg.scripts as Record<string, unknown>).join(", ")
+      : "";
+    const prefix = name ? `Node.js project '${name}'` : "Node.js project";
+    const descPart = description ? `. ${description}` : "";
+    const scriptsPart = scripts ? `. Scripts: ${scripts}` : "";
+    parts.push(`${prefix}${descPart}${scriptsPart}`);
+  } catch {
+    // no package.json or parse error — skip
+  }
+
+  // List top-level directory entries
+  try {
+    const entries = fs.readdirSync(targetPath);
+    const dirs = entries.filter((e) => {
+      try { return fs.statSync(`${targetPath}/${e}`).isDirectory(); } catch { return false; }
+    });
+    const files = entries.filter((e) => {
+      try { return fs.statSync(`${targetPath}/${e}`).isFile(); } catch { return false; }
+    });
+    const topDirs = dirs.slice(0, 10).map((d) => `${d}/`).join(", ");
+    const topFiles = files.slice(0, 5).join(", ");
+    const filePart = [topDirs, topFiles].filter(Boolean).join(", ");
+    if (filePart) {
+      parts.push(`Files: ${filePart}`);
+    }
+  } catch {
+    // readdirSync failed — skip
+  }
+
+  // Get last 5 git commit subjects using spawnSync (no shell, no injection risk)
+  const gitResult = spawnSync("git", ["log", "--oneline", "-5", "--format=%s"], {
+    cwd: targetPath,
+    encoding: "utf-8",
+  });
+  if (gitResult.status === 0 && gitResult.stdout) {
+    const log = gitResult.stdout.trim();
+    if (log) {
+      parts.push(`Recent changes: ${log.split("\n").join("; ")}`);
+    }
+  }
+
+  return parts.join(". ");
+}
+
 // ─── cmdImprove ───
 
 export async function cmdImprove(
@@ -543,8 +602,8 @@ export async function cmdImprove(
     return 1;
   }
 
-  // Step 1: Gather context (stub — returns empty string as in original)
-  const context = "";
+  // Step 1: Gather context from the target path
+  const context = await gatherProjectContext(targetPath);
 
   // Step 2: Suggest goals
   const existingGoalIds = await deps.stateManager.listGoalIds();
@@ -556,17 +615,29 @@ export async function cmdImprove(
     }
   }
 
-  let suggestions;
+  const capabilityDetectorLlmClient = await buildLLMClient();
+  const capabilityReportingEngine = new ReportingEngine(stateManager);
+  const capabilityDetector = new CapabilityDetector(stateManager, capabilityDetectorLlmClient, capabilityReportingEngine);
+
+  const maxSuggestions = parseInt(values.max || "3", 10);
+  let rawSuggestions: unknown;
   try {
-    suggestions = await deps.goalNegotiator.suggestGoals(context, {
-      maxSuggestions: parseInt(values.max || "3", 10),
-      existingGoals: existingTitles,
-      repoPath: targetPath,
-    });
+    rawSuggestions = await generateSuggestOutput(
+      deps.goalNegotiator.suggestGoals.bind(deps.goalNegotiator),
+      context,
+      {
+        maxSuggestions,
+        existingGoals: existingTitles,
+        repoPath: targetPath,
+        capabilityDetector,
+      }
+    );
   } catch (err) {
     logger.error(formatOperationError("generate improvement suggestions", err));
     return 1;
   }
+
+  const suggestions = Array.isArray(rawSuggestions) ? rawSuggestions as GoalSuggestion[] : [];
 
   if (suggestions.length === 0) {
     console.log("No improvement goals found for the given path.");
