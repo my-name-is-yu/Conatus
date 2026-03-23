@@ -1,5 +1,7 @@
 import type { StateManager } from "../state-manager.js";
 import type { GoalTreeManager } from "./goal-tree-manager.js";
+import type { GoalRefiner } from "./goal-refiner.js";
+import { hasValidatedDimensions } from "./goal-refiner.js";
 import type { StateAggregator } from "./state-aggregator.js";
 import type { SatisficingJudge } from "../drive/satisficing-judge.js";
 import type { GoalDecompositionConfig } from "../types/goal-tree.js";
@@ -34,7 +36,8 @@ export class TreeLoopOrchestrator {
     private readonly stateManager: StateManager,
     private readonly goalTreeManager: GoalTreeManager,
     private readonly stateAggregator: StateAggregator,
-    private readonly satisficingJudge: SatisficingJudge
+    private readonly satisficingJudge: SatisficingJudge,
+    private readonly goalRefiner?: GoalRefiner
   ) {}
 
   // ─── Tree Execution Initialization ───
@@ -73,6 +76,46 @@ export class TreeLoopOrchestrator {
   // ─── Node Selection ───
 
   /**
+   * Ensure the goal at goalId has been refined (has validated leaves or children).
+   * When GoalRefiner is available and the goal has no validated leaf dimensions
+   * and no children, calls refiner.refine(goalId).
+   * Falls back to GoalTreeManager.decomposeGoal() if refiner is absent.
+   * No-op if the goal already has children or validated dimensions.
+   */
+  async ensureGoalRefined(goalId: string): Promise<void> {
+    const goal = await this.stateManager.loadGoal(goalId);
+    if (!goal) return;
+
+    // Already has children — no refinement needed
+    if (goal.children_ids.length > 0) return;
+
+    // Already has validated dimensions — no refinement needed
+    if (hasValidatedDimensions(goal)) return;
+
+    const defaultDecompConfig: GoalDecompositionConfig = {
+      max_depth: this.config.max_depth,
+      min_specificity: this.config.min_specificity,
+      auto_prune_threshold: this.config.auto_prune_threshold,
+      parallel_loop_limit: this.config.parallel_loop_limit,
+    };
+
+    if (this.goalRefiner) {
+      try {
+        await this.goalRefiner.refine(goalId);
+      } catch {
+        // Non-fatal: fall back to raw decompose if refiner errors
+        try {
+          await this.goalTreeManager.decomposeGoal(goalId, defaultDecompConfig);
+        } catch { /* ignore */ }
+      }
+    } else {
+      try {
+        await this.goalTreeManager.decomposeGoal(goalId, defaultDecompConfig);
+      } catch { /* ignore */ }
+    }
+  }
+
+  /**
    * Select the next node to execute from the tree rooted at rootId.
    *
    * Algorithm (MVP: leaf-first):
@@ -95,45 +138,7 @@ export class TreeLoopOrchestrator {
 
     // Step 2: Collect all IDs (root + all descendants)
     const allIds = [rootId, ...await this._collectAllDescendantIds(rootId)];
-
-    // Step 3 & 4: Filter eligible nodes — active + idle, leaf first
-    const eligibleLeaves: string[] = [];
-    const eligibleNonLeaves: string[] = [];
-
-    for (const id of allIds) {
-      const goal = await this.stateManager.loadGoal(id);
-      if (!goal) continue;
-      if (goal.status !== "active") continue;
-      if (goal.loop_status === "running" || goal.loop_status === "paused") continue;
-
-      if (goal.node_type === "leaf") {
-        eligibleLeaves.push(id);
-      } else {
-        eligibleNonLeaves.push(id);
-      }
-    }
-
-    // Step 5: Pick best candidate (leaf-first, then non-leaf)
-    let selectedId: string | null = null;
-
-    if (eligibleLeaves.length > 0) {
-      // Among leaves, prefer deeper ones (higher decomposition_depth)
-      // Note: sorting is done synchronously using already-loaded data from above pass
-      // We re-use the loaded goals by building a depth map first
-      const depthMap = new Map<string, number>();
-      for (const id of eligibleLeaves) {
-        const g = await this.stateManager.loadGoal(id);
-        depthMap.set(id, g?.decomposition_depth ?? 0);
-      }
-      eligibleLeaves.sort((a, b) => {
-        const depthA = depthMap.get(a) ?? 0;
-        const depthB = depthMap.get(b) ?? 0;
-        return depthB - depthA; // descending: deeper first
-      });
-      selectedId = eligibleLeaves[0] ?? null;
-    } else if (eligibleNonLeaves.length > 0) {
-      selectedId = eligibleNonLeaves[0] ?? null;
-    }
+    const selectedId = await this._selectEligibleNodeId(allIds);
 
     if (selectedId === null) return null;
 
@@ -222,17 +227,7 @@ export class TreeLoopOrchestrator {
     }
 
     // Step 3: Completion cascade
-    const cascadeIds = await this.stateAggregator.checkCompletionCascade(goalId);
-    for (const ancestorId of cascadeIds) {
-      const ancestor = await this.stateManager.loadGoal(ancestorId);
-      if (ancestor && ancestor.status !== "completed") {
-        await this.stateManager.saveGoal({
-          ...ancestor,
-          status: "completed",
-          updated_at: now,
-        });
-      }
-    }
+    await this._applyCompletionCascade(goalId, now);
   }
 
   // ─── Private Helpers ───
@@ -249,5 +244,47 @@ export class TreeLoopOrchestrator {
       result.push(...await this._collectAllDescendantIds(childId));
     }
     return result;
+  }
+
+  /**
+   * Select the best eligible node from the tree, preferring active idle leaves
+   * and deeper leaves before non-leaf nodes.
+   */
+  private async _selectEligibleNodeId(allIds: string[]): Promise<string | null> {
+    const eligibleLeaves: Array<{ id: string; depth: number }> = [];
+    const eligibleNonLeaves: string[] = [];
+
+    for (const id of allIds) {
+      const goal = await this.stateManager.loadGoal(id);
+      if (!goal) continue;
+      if (goal.status !== "active") continue;
+      if (goal.loop_status === "running" || goal.loop_status === "paused") continue;
+
+      if (goal.node_type === "leaf") {
+        eligibleLeaves.push({ id, depth: goal.decomposition_depth ?? 0 });
+      } else {
+        eligibleNonLeaves.push(id);
+      }
+    }
+
+    eligibleLeaves.sort((a, b) => b.depth - a.depth);
+    return eligibleLeaves[0]?.id ?? eligibleNonLeaves[0] ?? null;
+  }
+
+  /**
+   * Apply completion cascade results by marking each ancestor as completed.
+   */
+  private async _applyCompletionCascade(goalId: string, now: string): Promise<void> {
+    const cascadeIds = await this.stateAggregator.checkCompletionCascade(goalId);
+    for (const ancestorId of cascadeIds) {
+      const ancestor = await this.stateManager.loadGoal(ancestorId);
+      if (ancestor && ancestor.status !== "completed") {
+        await this.stateManager.saveGoal({
+          ...ancestor,
+          status: "completed",
+          updated_at: now,
+        });
+      }
+    }
   }
 }

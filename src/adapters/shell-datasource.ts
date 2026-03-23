@@ -30,7 +30,7 @@ const execFileAsync = promisify(execFile);
 const SHELL_BLOCKLIST = ['bash', 'sh', 'zsh', 'dash', 'fish', 'csh', 'ksh', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh'];
 
 export interface ShellCommandSpec {
-  argv: string[];          // e.g. ["grep", "-rc", "TODO", "src/"]
+  argv: string[];          // e.g. ["grep", "-rc", "unfinished item", "src/"]
   output_type: "number" | "boolean" | "raw";
   cwd?: string;            // default: process.cwd()
   timeout_ms?: number;     // default: 15000

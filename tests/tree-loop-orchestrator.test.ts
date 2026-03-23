@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { GoalRefiner } from "../src/goal/goal-refiner.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -323,6 +324,29 @@ describe("selectNextNode — basic selection", async () => {
 
     const result = await orchestrator.selectNextNode("root");
     expect(result).toBe("leaf1"); // first in stable order among equal depth
+  });
+
+  it("prioritizes deeper eligible leaves over shallower eligible leaves", async () => {
+    await saveGoal({
+      id: "root",
+      node_type: "goal",
+      children_ids: ["shallow", "deep"],
+    });
+    await saveGoal({
+      id: "shallow",
+      node_type: "leaf",
+      parent_id: "root",
+      decomposition_depth: 1,
+    });
+    await saveGoal({
+      id: "deep",
+      node_type: "leaf",
+      parent_id: "root",
+      decomposition_depth: 3,
+    });
+
+    const result = await orchestrator.selectNextNode("root");
+    expect(result).toBe("deep");
   });
 });
 
@@ -706,6 +730,18 @@ describe("onNodeCompleted — completion cascade", async () => {
     expect((await stateManager.loadGoal("l2"))?.status).toBe("completed");
     expect((await stateManager.loadGoal("root"))?.status).toBe("completed");
   });
+
+  it("applies cascade completion to every ancestor returned by the aggregator", async () => {
+    await saveGoal({ id: "root", node_type: "goal", status: "active", children_ids: ["mid"] });
+    await saveGoal({ id: "mid", node_type: "subgoal", parent_id: "root", status: "active", children_ids: ["leaf"] });
+    await saveGoal({ id: "leaf", node_type: "leaf", parent_id: "mid", status: "active", loop_status: "running" });
+
+    await stateManager.saveGoal({ ...await stateManager.loadGoal("leaf")!, status: "completed" });
+    await orchestrator.onNodeCompleted("leaf");
+
+    expect((await stateManager.loadGoal("mid"))?.status).toBe("completed");
+    expect((await stateManager.loadGoal("root"))?.status).toBe("completed");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -951,5 +987,210 @@ describe("edge cases", async () => {
     // Each call should select from its own tree
     expect(resultA).toBe("leafA");
     expect(resultB).toBe("leafB");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 6. GOAL REFINER INTEGRATION TESTS
+// ═══════════════════════════════════════════════════════════════════
+
+describe("ensureGoalRefined — GoalRefiner integration", () => {
+  it("calls refiner.refine() when GoalRefiner is provided and goal has no children or validated dimensions", async () => {
+    const mockRefiner = {
+      refine: vi.fn().mockResolvedValue({ goal: {}, leaf: true, children: null, feasibility: null, tokensUsed: 0, reason: "measurable" }),
+      reRefineLeaf: vi.fn(),
+    } as unknown as GoalRefiner;
+
+    const orchestratorWithRefiner = new TreeLoopOrchestrator(
+      stateManager,
+      goalTreeManager,
+      stateAggregator,
+      satisficingJudge,
+      mockRefiner
+    );
+
+    // Goal with manual dimension (not validated) and no children
+    const goal = await saveGoal({
+      id: "unrefined-goal",
+      node_type: "goal",
+      children_ids: [],
+      dimensions: [{
+        name: "score",
+        label: "Score",
+        current_value: null,
+        threshold: { type: "min", value: 100 },
+        confidence: 0.5,
+        observation_method: {
+          type: "manual",
+          source: "manual",
+          schedule: null,
+          endpoint: null,
+          confidence_tier: "self_report",
+        },
+        last_updated: new Date().toISOString(),
+        history: [],
+        weight: 1.0,
+        uncertainty_weight: null,
+        state_integrity: "ok",
+        dimension_mapping: null,
+      }],
+    });
+
+    await orchestratorWithRefiner.ensureGoalRefined(goal.id);
+
+    expect(mockRefiner.refine).toHaveBeenCalledOnce();
+    expect(mockRefiner.refine).toHaveBeenCalledWith(goal.id);
+  });
+
+  it("does NOT call refiner.refine() when goal already has children", async () => {
+    const mockRefiner = {
+      refine: vi.fn(),
+      reRefineLeaf: vi.fn(),
+    } as unknown as GoalRefiner;
+
+    const orchestratorWithRefiner = new TreeLoopOrchestrator(
+      stateManager,
+      goalTreeManager,
+      stateAggregator,
+      satisficingJudge,
+      mockRefiner
+    );
+
+    await saveGoal({ id: "child-1", node_type: "leaf" });
+    await saveGoal({ id: "parent-goal", node_type: "goal", children_ids: ["child-1"] });
+
+    await orchestratorWithRefiner.ensureGoalRefined("parent-goal");
+
+    expect(mockRefiner.refine).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call refiner.refine() when goal already has validated dimensions", async () => {
+    const mockRefiner = {
+      refine: vi.fn(),
+      reRefineLeaf: vi.fn(),
+    } as unknown as GoalRefiner;
+
+    const orchestratorWithRefiner = new TreeLoopOrchestrator(
+      stateManager,
+      goalTreeManager,
+      stateAggregator,
+      satisficingJudge,
+      mockRefiner
+    );
+
+    // Goal with mechanical (validated) dimension
+    await saveGoal({
+      id: "validated-goal",
+      node_type: "goal",
+      children_ids: [],
+      dimensions: [makeDimension({
+        observation_method: {
+          type: "mechanical",
+          source: "shell",
+          schedule: null,
+          endpoint: "npm test",
+          confidence_tier: "mechanical",
+        },
+      })],
+    });
+
+    await orchestratorWithRefiner.ensureGoalRefined("validated-goal");
+
+    expect(mockRefiner.refine).not.toHaveBeenCalled();
+  });
+
+  it("falls back to goalTreeManager.decomposeGoal() when GoalRefiner is NOT provided", async () => {
+    // orchestrator without refiner (default in beforeEach)
+    const decompSpy = vi.spyOn(goalTreeManager, "decomposeGoal").mockResolvedValue({
+      parent_id: "unrefined-fallback",
+      children: [],
+      depth: 1,
+      specificity_scores: {},
+      reasoning: "mock decomposition",
+    });
+
+    await saveGoal({
+      id: "unrefined-fallback",
+      node_type: "goal",
+      children_ids: [],
+      dimensions: [makeDimension({
+        observation_method: {
+          type: "manual",
+          source: "manual",
+          schedule: null,
+          endpoint: null,
+          confidence_tier: "self_report",
+        },
+      })],
+    });
+
+    await orchestrator.ensureGoalRefined("unrefined-fallback");
+
+    expect(decompSpy).toHaveBeenCalledOnce();
+    expect(decompSpy).toHaveBeenCalledWith("unrefined-fallback", expect.any(Object));
+
+    decompSpy.mockRestore();
+  });
+
+  it("falls back to decomposeGoal() when refiner.refine() throws", async () => {
+    const mockRefiner = {
+      refine: vi.fn().mockRejectedValue(new Error("refiner failure")),
+      reRefineLeaf: vi.fn(),
+    } as unknown as GoalRefiner;
+
+    const orchestratorWithRefiner = new TreeLoopOrchestrator(
+      stateManager,
+      goalTreeManager,
+      stateAggregator,
+      satisficingJudge,
+      mockRefiner
+    );
+
+    const decompSpy = vi.spyOn(goalTreeManager, "decomposeGoal").mockResolvedValue({
+      parent_id: "fallback-on-error",
+      children: [],
+      depth: 1,
+      specificity_scores: {},
+      reasoning: "fallback mock",
+    });
+
+    await saveGoal({
+      id: "fallback-on-error",
+      node_type: "goal",
+      children_ids: [],
+      dimensions: [makeDimension({
+        observation_method: {
+          type: "manual",
+          source: "manual",
+          schedule: null,
+          endpoint: null,
+          confidence_tier: "self_report",
+        },
+      })],
+    });
+
+    // Should not throw even when refiner errors
+    await expect(orchestratorWithRefiner.ensureGoalRefined("fallback-on-error")).resolves.toBeUndefined();
+    expect(decompSpy).toHaveBeenCalledOnce();
+
+    decompSpy.mockRestore();
+  });
+
+  it("is a no-op for a nonexistent goal", async () => {
+    const mockRefiner = {
+      refine: vi.fn(),
+      reRefineLeaf: vi.fn(),
+    } as unknown as GoalRefiner;
+
+    const orchestratorWithRefiner = new TreeLoopOrchestrator(
+      stateManager,
+      goalTreeManager,
+      stateAggregator,
+      satisficingJudge,
+      mockRefiner
+    );
+
+    await expect(orchestratorWithRefiner.ensureGoalRefined("does-not-exist")).resolves.toBeUndefined();
+    expect(mockRefiner.refine).not.toHaveBeenCalled();
   });
 });

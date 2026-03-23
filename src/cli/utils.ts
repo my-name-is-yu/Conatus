@@ -16,7 +16,8 @@ Usage:
   tavori improve [path]               Analyze path, suggest goals, and optionally run improvement loop
   tavori suggest "<context>"          Suggest improvement goals for a project context
   tavori goal add --title "<t>" --dim "name:type:val"  Register a goal (raw mode, no LLM)
-  tavori goal add "<description>" --negotiate          Register a goal via LLM negotiation
+  tavori goal add "<description>"                      Register a goal via GoalRefiner (default)
+  tavori goal add "<description>" --no-refine          Register a goal via legacy LLM negotiation
   tavori goal list                    List all registered goals
   tavori goal list --archived         Also list archived goals
   tavori goal archive <id>            Archive a completed goal (moves state to ~/.tavori/archive/)
@@ -63,7 +64,8 @@ Options (tavori suggest):
 Options (tavori goal add):
   --title <title>                     Goal title (raw mode)
   --dim <name:type:value>             Dimension spec, repeatable (raw mode, e.g. "tsc_error_count:min:0")
-  --negotiate                         Use LLM negotiation instead of raw mode
+  --no-refine                         Skip GoalRefiner, use legacy negotiate() instead
+  --negotiate                         Alias: same as default (refine mode)
   --deadline <ISO-date>               Optional deadline (e.g. 2026-06-01)
   --constraint <text>                 Optional constraint (repeatable)
 
@@ -91,7 +93,8 @@ Environment:
 Examples:
   tavori goal add --title "tsc zero" --dim "tsc_error_count:min:0"
   tavori goal add --title "clean code" --dim "todo_count:max:0" --dim "fixme_count:max:0"
-  tavori goal add "Increase test coverage to 90%" --negotiate
+  tavori goal add "Increase test coverage to 90%"
+  tavori goal add "Increase test coverage to 90%" --no-refine
   tavori goal list
   tavori goal show <id>
   tavori goal reset <id>

@@ -32,6 +32,7 @@ import { TreeLoopOrchestrator } from "../goal/tree-loop-orchestrator.js";
 import { GoalTreeManager } from "../goal/goal-tree-manager.js";
 import { StateAggregator } from "../goal/state-aggregator.js";
 import { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
+import { GoalRefiner } from "../goal/goal-refiner.js";
 import { MemoryLifecycleManager, DriveScoreAdapter } from "../knowledge/memory-lifecycle.js";
 import { CharacterConfigManager } from "../traits/character-config.js";
 import * as GapCalculator from "../drive/gap-calculator.js";
@@ -202,5 +203,14 @@ export async function buildDeps(
     adapterRegistry.getAdapterCapabilities()
   );
 
-  return { coreLoop, goalNegotiator, reportingEngine, stateManager, driveSystem };
+  const goalRefiner = new GoalRefiner(
+    stateManager,
+    llmClient,
+    observationEngine,
+    goalNegotiator,
+    goalTreeManager,
+    ethicsGate,
+  );
+
+  return { coreLoop, goalNegotiator, goalRefiner, reportingEngine, stateManager, driveSystem };
 }

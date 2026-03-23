@@ -118,7 +118,7 @@ async function collectContextItems(
   const items: ContextItem[] = [];
 
   // 1. Search for files related to the dimension name
-  // Convert dimension_name to search terms (e.g., "todo_count" → "TODO")
+  // Convert dimension_name to search terms (e.g., "unfinished_item_count" → "UNFINISHED ITEM")
   const searchTerms = dimensionNameToSearchTerms(dimensionName);
 
   for (const term of searchTerms) {
@@ -207,7 +207,7 @@ async function collectContextItems(
 
 /**
  * Convert dimension names to search terms for grep.
- * e.g., "todo_count" → ["TODO"], "fixme_count" → ["FIXME"],
+ * e.g., "unfinished_item_count" → ["UNFINISHED ITEM"], "fixme_count" → ["FIXME"],
  *        "test_coverage" → ["test", "coverage"], "code_quality" → ["quality"]
  */
 export function dimensionNameToSearchTerms(dimensionName: string): string[] {

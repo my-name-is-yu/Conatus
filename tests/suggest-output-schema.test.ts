@@ -171,4 +171,36 @@ describe("suggest output schema", () => {
       repo_context: { path: "." },
     });
   }, 15000);
+
+  it("retains a raw total count in fallback TODO/FIXME inventory context", async () => {
+    fs.mkdirSync(path.join(tmpDir, "tests"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "tests", "sample.test.ts"), "it('works', () => {})\n");
+    vi.spyOn(process, "cwd").mockReturnValue(tmpDir);
+
+    vi.mocked(GoalNegotiator).mockImplementation(() => ({
+      suggestGoals: vi.fn().mockResolvedValue([]),
+    } as unknown as GoalNegotiator));
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const context = [
+      "TODO-like marker inventory:",
+      '  grouped_counts: {"TODO":2,"FIXME":1}',
+      "  raw_total_count: 3",
+      "  tests/sample.test.ts",
+    ].join("\n");
+    const code = await new CLIRunner(tmpDir).run(["suggest", context, "--path", "."]);
+    const jsonCall = consoleSpy.mock.calls
+      .map((call) => call[0])
+      .find((value): value is string => typeof value === "string" && value.trim().startsWith("{"));
+    consoleSpy.mockRestore();
+
+    expect(code).toBe(0);
+    expect(jsonCall).toBeTruthy();
+
+    const payload = SuggestOutputSchema.parse(JSON.parse(jsonCall as string));
+    const rationale = payload.suggestions[0]?.rationale ?? "";
+    expect(rationale).toContain("raw_total_count");
+    expect(rationale).toContain("\"TODO\":2");
+    expect(rationale).toContain("\"FIXME\":1");
+  }, 15000);
 });

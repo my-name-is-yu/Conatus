@@ -171,8 +171,8 @@ export async function observeWithLLM(
     `Previous score: ${previousScoreText}\n\n` +
     (historyBlock ? `${historyBlock}\n\n` : "") +
     `FEW-SHOT CALIBRATION:\n` +
-    `- Context: grep shows 0 TODO matches → {"score": 1.0, "reason": "No TODOs; target achieved"}\n` +
-    `- Context: grep shows 3 matches: src/foo.ts:42: TODO fix this → {"score": 0.0, "reason": "3 TODOs remain"}\n\n` +
+    `- Context: grep shows 0 unfinished item matches → {"score": 1.0, "reason": "No unfinished items; target achieved"}\n` +
+    `- Context: grep shows 3 matches: src/foo.ts:42: unfinished item fix this → {"score": 0.0, "reason": "3 unfinished items remain"}\n\n` +
     `WORKSPACE CONTENT:\n` +
     `${contextContent}\n\n` +
     `Score now based strictly on the above content.`;

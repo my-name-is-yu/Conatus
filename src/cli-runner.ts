@@ -193,6 +193,7 @@ export class CLIRunner {
         let positionals: string[] = [];
         let addValues: {
           negotiate?: boolean;
+          "no-refine"?: boolean;
           dim?: string[];
           title?: string;
           deadline?: string;
@@ -204,6 +205,7 @@ export class CLIRunner {
             args: argv.slice(2),
             options: {
               negotiate: { type: "boolean" },
+              "no-refine": { type: "boolean" },
               dim: { type: "string", multiple: true },
               title: { type: "string" },
               deadline: { type: "string" },
@@ -234,15 +236,17 @@ export class CLIRunner {
           return await cmdGoalAddRaw(this.stateManager, { title, description, rawDimensions });
         }
 
-        // Negotiate mode: requires description
+        // Refine/negotiate mode: requires description
         if (!description) {
-          logger.error('Error: description is required. Usage: tavori goal add "<description>" [--negotiate]');
+          logger.error('Error: description is required. Usage: tavori goal add "<description>" [--no-refine]');
           return 1;
         }
 
         const deadline = addValues.deadline;
         const constraints = addValues.constraint ?? [];
-        return await cmdGoalAdd(this.stateManager, this.characterConfigManager, description, { deadline, constraints, yes });
+        // --no-refine skips GoalRefiner and uses legacy negotiate(); --negotiate is an alias for refine (default)
+        const noRefine = addValues["no-refine"] ?? false;
+        return await cmdGoalAdd(this.stateManager, this.characterConfigManager, description, { deadline, constraints, yes, noRefine });
       }
 
       if (goalSubcommand === "list") {

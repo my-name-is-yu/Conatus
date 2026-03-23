@@ -74,6 +74,24 @@ vi.mock("../src/goal/goal-negotiator.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../src/goal/goal-refiner.js", () => ({
+  GoalRefiner: vi.fn().mockImplementation(() => ({
+    refine: vi.fn().mockResolvedValue({
+      goal: { id: "goal_refine_default", title: "Refined Goal", status: "active", dimensions: [], description: "" },
+      leaf: true,
+      children: null,
+      feasibility: null,
+      tokensUsed: 100,
+      reason: "measurable",
+    }),
+  })),
+  collectLeafGoalIds: vi.fn().mockImplementation((result: { leaf: boolean; goal: { id: string }; children?: unknown[] | null }) => {
+    if (result.leaf) return [result.goal.id];
+    if (!result.children) return [result.goal.id];
+    return [result.goal.id];
+  }),
+}));
+
 vi.mock("../src/llm/llm-client.js", () => ({
   LLMClient: vi.fn().mockImplementation(() => ({})),
   MockLLMClient: vi.fn(),
@@ -144,6 +162,7 @@ import { CLIRunner } from "../src/cli-runner.js";
 import { StateManager } from "../src/state-manager.js";
 import { CoreLoop } from "../src/core-loop.js";
 import { GoalNegotiator, EthicsRejectedError } from "../src/goal/goal-negotiator.js";
+import { GoalRefiner } from "../src/goal/goal-refiner.js";
 import { ensureProviderConfig } from "../src/cli/ensure-api-key.js";
 import type { LoopResult } from "../src/core-loop.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
@@ -512,14 +531,32 @@ describe("goal add subcommand", async () => {
     expect(code).toBe(1);
   });
 
-  it("calls GoalNegotiator.negotiate() with the given description", async () => {
+  it("calls GoalRefiner.refine() with the given description (default path)", async () => {
+    const mockRefine = vi.fn().mockResolvedValue({
+      goal: makeGoal({ id: "goal_refine_1" }),
+      leaf: true,
+      children: null,
+      feasibility: null,
+      tokensUsed: 200,
+      reason: "measurable",
+    });
+    vi.mocked(GoalRefiner).mockImplementation(
+      () => ({ refine: mockRefine } as unknown as GoalRefiner)
+    );
+
+    await runCLI("goal", "add", "Build a better README");
+
+    expect(mockRefine).toHaveBeenCalledWith(expect.any(String), { feasibilityCheck: true });
+  });
+
+  it("calls GoalNegotiator.negotiate() with the given description when --no-refine is set", async () => {
     const goal = makeGoal();
     const mockNegotiate = vi.fn().mockResolvedValue(makeNegotiationResult(goal));
     vi.mocked(GoalNegotiator).mockImplementation(
       () => ({ negotiate: mockNegotiate } as unknown as GoalNegotiator)
     );
 
-    await runCLI("goal", "add", "Build a better README");
+    await runCLI("goal", "add", "Build a better README", "--no-refine");
 
     expect(mockNegotiate).toHaveBeenCalledWith(
       "Build a better README",
@@ -527,44 +564,61 @@ describe("goal add subcommand", async () => {
     );
   });
 
-  it("exits with code 0 on successful negotiation", async () => {
+  it("exits with code 0 on successful refine (default path)", async () => {
     const goal = makeGoal();
-    vi.mocked(GoalNegotiator).mockImplementation(() => ({
-      negotiate: vi.fn().mockResolvedValue(makeNegotiationResult(goal)),
-    } as unknown as GoalNegotiator));
+    vi.mocked(GoalRefiner).mockImplementation(() => ({
+      refine: vi.fn().mockResolvedValue({
+        goal,
+        leaf: true,
+        children: null,
+        feasibility: null,
+        tokensUsed: 100,
+        reason: "measurable",
+      }),
+    } as unknown as GoalRefiner));
 
     const code = await runCLI("goal", "add", "Improve test coverage");
     expect(code).toBe(0);
   });
 
-  it("exits with code 1 when EthicsRejectedError is thrown", async () => {
+  it("exits with code 1 when EthicsRejectedError is thrown via --no-refine path", async () => {
     vi.mocked(GoalNegotiator).mockImplementation(() => ({
       negotiate: vi.fn().mockRejectedValue(
         new EthicsRejectedError({ verdict: "reject", reasoning: "Harmful content" })
       ),
     } as unknown as GoalNegotiator));
 
-    const code = await runCLI("goal", "add", "DDoS competitor servers");
+    const code = await runCLI("goal", "add", "DDoS competitor servers", "--no-refine");
     expect(code).toBe(1);
   });
 
-  it("re-throws non-EthicsRejectedError errors (propagated to main() which exits 1)", async () => {
+  it("exits with code 1 when negotiate errors via --no-refine path", async () => {
     vi.mocked(GoalNegotiator).mockImplementation(() => ({
       negotiate: vi.fn().mockRejectedValue(new Error("Network error")),
     } as unknown as GoalNegotiator));
 
-    const code = await runCLI("goal", "add", "Write some code");
+    const code = await runCLI("goal", "add", "Write some code", "--no-refine");
     expect(code).toBe(1);
   });
 
-  it("passes --deadline option to negotiate()", async () => {
+  it("exits with code 0 (fallback) when refine() throws a non-ethics error", async () => {
+    vi.mocked(GoalRefiner).mockImplementation(() => ({
+      refine: vi.fn().mockRejectedValue(new Error("Network error")),
+    } as unknown as GoalRefiner));
+
+    const code = await runCLI("goal", "add", "Write some code");
+    // Graceful fallback: goal stub was saved, returns 0
+    expect(code).toBe(0);
+  });
+
+  it("passes --deadline option to negotiate() via --no-refine", async () => {
     const goal = makeGoal();
     const mockNegotiate = vi.fn().mockResolvedValue(makeNegotiationResult(goal));
     vi.mocked(GoalNegotiator).mockImplementation(
       () => ({ negotiate: mockNegotiate } as unknown as GoalNegotiator)
     );
 
-    await runCLI("goal", "add", "Refactor module", "--deadline", "2026-06-01");
+    await runCLI("goal", "add", "Refactor module", "--deadline", "2026-06-01", "--no-refine");
 
     expect(mockNegotiate).toHaveBeenCalledWith(
       "Refactor module",
@@ -572,14 +626,14 @@ describe("goal add subcommand", async () => {
     );
   });
 
-  it("passes --constraint option to negotiate()", async () => {
+  it("passes --constraint option to negotiate() via --no-refine", async () => {
     const goal = makeGoal();
     const mockNegotiate = vi.fn().mockResolvedValue(makeNegotiationResult(goal));
     vi.mocked(GoalNegotiator).mockImplementation(
       () => ({ negotiate: mockNegotiate } as unknown as GoalNegotiator)
     );
 
-    await runCLI("goal", "add", "Deploy app", "--constraint", "no downtime");
+    await runCLI("goal", "add", "Deploy app", "--constraint", "no downtime", "--no-refine");
 
     expect(mockNegotiate).toHaveBeenCalledWith(
       "Deploy app",
@@ -587,29 +641,35 @@ describe("goal add subcommand", async () => {
     );
   });
 
-  it("prints goal ID and title after successful negotiation", async () => {
-    const goal = makeGoal({ id: "new-goal-id", title: "Negotiated Title" });
-    vi.mocked(GoalNegotiator).mockImplementation(() => ({
-      negotiate: vi.fn().mockResolvedValue(makeNegotiationResult(goal)),
-    } as unknown as GoalNegotiator));
+  it("prints goal ID after successful refine (default path)", async () => {
+    const goal = makeGoal({ id: "new-goal-id", title: "Refined Title" });
+    vi.mocked(GoalRefiner).mockImplementation(() => ({
+      refine: vi.fn().mockResolvedValue({
+        goal,
+        leaf: true,
+        children: null,
+        feasibility: null,
+        tokensUsed: 100,
+        reason: "measurable",
+      }),
+    } as unknown as GoalRefiner));
 
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await runCLI("goal", "add", "Do something");
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(output).toContain("new-goal-id");
-    expect(output).toContain("Negotiated Title");
     consoleSpy.mockRestore();
   });
 
-  it("prints an error message when EthicsRejectedError is thrown", async () => {
+  it("prints an error message when EthicsRejectedError is thrown via --no-refine", async () => {
     vi.mocked(GoalNegotiator).mockImplementation(() => ({
       negotiate: vi.fn().mockRejectedValue(
         new EthicsRejectedError({ verdict: "reject", reasoning: "Dangerous activity" })
       ),
     } as unknown as GoalNegotiator));
 
-    const code = await runCLI("goal", "add", "Harmful goal");
+    const code = await runCLI("goal", "add", "Harmful goal", "--no-refine");
     expect(code).toBe(1);
   });
 });
@@ -658,17 +718,20 @@ describe("goal add raw mode", async () => {
     expect(mockNegotiate).not.toHaveBeenCalled();
   });
 
-  it("calls GoalNegotiator when --negotiate flag is present", async () => {
-    const goal = makeGoal();
-    const mockNegotiate = vi.fn().mockResolvedValue(makeNegotiationResult(goal));
-    vi.mocked(GoalNegotiator).mockImplementation(() => ({ negotiate: mockNegotiate } as unknown as GoalNegotiator));
+  it("calls GoalRefiner.refine() when --negotiate flag is present (--negotiate is alias for refine)", async () => {
+    const mockRefine = vi.fn().mockResolvedValue({
+      goal: makeGoal({ id: "goal_neg_alias" }),
+      leaf: true,
+      children: null,
+      feasibility: null,
+      tokensUsed: 100,
+      reason: "measurable",
+    });
+    vi.mocked(GoalRefiner).mockImplementation(() => ({ refine: mockRefine } as unknown as GoalRefiner));
 
     await runCLI("goal", "add", "TypeScriptエラーを0にする", "--negotiate");
 
-    expect(mockNegotiate).toHaveBeenCalledWith(
-      "TypeScriptエラーを0にする",
-      expect.objectContaining({ deadline: undefined, constraints: [] })
-    );
+    expect(mockRefine).toHaveBeenCalledWith(expect.any(String), { feasibilityCheck: true });
   });
 });
 
@@ -1062,16 +1125,22 @@ describe("directory initialisation", () => {
 // ─── Integration: goal add then goal list ────────────────────────────────────
 
 describe("integration: goal add then goal list", async () => {
-  it("a goal added via negotiate() appears in goal list output", async () => {
+  it("a goal added via refine() appears in goal list output", async () => {
     const goal = makeGoal({ id: "integ-goal", title: "Integration Test Goal" });
-    // The real GoalNegotiator.negotiate() saves the goal internally before returning.
-    // Simulate that behaviour in the mock so goal list can find it.
-    const mockNegotiate = vi.fn().mockImplementation(async () => {
+    // GoalRefiner.refine() saves the goal internally. Simulate that in the mock.
+    const mockRefine = vi.fn().mockImplementation(async () => {
       await stateManager.saveGoal(goal);
-      return makeNegotiationResult(goal);
+      return {
+        goal,
+        leaf: true,
+        children: null,
+        feasibility: null,
+        tokensUsed: 100,
+        reason: "measurable",
+      };
     });
-    vi.mocked(GoalNegotiator).mockImplementation(
-      () => ({ negotiate: mockNegotiate } as unknown as GoalNegotiator)
+    vi.mocked(GoalRefiner).mockImplementation(
+      () => ({ refine: mockRefine } as unknown as GoalRefiner)
     );
 
     // Add

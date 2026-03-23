@@ -16,6 +16,7 @@ import type {
   ConcretenessScore,
 } from "../types/goal-tree.js";
 import { scoreConcreteness as _scoreConcreteness } from "./goal-tree-quality.js";
+import { sanitizeThresholdTypes } from "./refiner-prompts.js";
 
 // ─── LLM Response Schemas ───
 
@@ -279,6 +280,9 @@ export class GoalTreeManager {
    *
    * Options override instance-level defaults when provided.
    * Returns a DecompositionResult for the top-level call.
+   *
+   * @deprecated For new goals, use {@link GoalRefiner.refine} instead.
+   * This method is used internally by GoalRefiner and remains callable for backward compatibility.
    */
   async decomposeGoal(
     goalId: string,
@@ -411,24 +415,8 @@ export class GoalTreeManager {
         );
         // Sanitize threshold_type values before schema validation --
         // LLMs sometimes return "exact", "scale", "qualitative" etc.
-        const THRESHOLD_TYPE_MAP: Record<string, string> = {
-          exact: "match",
-          scale: "min",
-          qualitative: "min",
-          boolean: "present",
-          percentage: "min",
-          count: "min",
-        };
-        const VALID_TYPES = new Set(["min", "max", "range", "present", "match"]);
         const rawContent = subgoalResponse.content;
-        let sanitized = rawContent.replace(
-          /"threshold_type"\s*:\s*"([^"]+)"/g,
-          (_match: string, val: string) => {
-            if (VALID_TYPES.has(val)) return `"threshold_type": "${val}"`;
-            const mapped = THRESHOLD_TYPE_MAP[val] ?? "min";
-            return `"threshold_type": "${mapped}"`;
-          }
-        );
+        let sanitized = sanitizeThresholdTypes(rawContent);
         // Sanitize hypothesis field: LLMs may use "title", "description", "goal", etc.
         let preprocessed: unknown;
         try {

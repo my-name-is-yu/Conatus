@@ -81,6 +81,10 @@ export class GoalNegotiator {
 
   // ─── negotiate() ───
 
+  /**
+   * @deprecated For new goals, use {@link GoalRefiner.refine} instead.
+   * This method remains available for renegotiation of existing goals with prior observations.
+   */
   async negotiate(
     rawGoalDescription: string,
     options?: {

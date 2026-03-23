@@ -93,7 +93,9 @@ afterEach(() => {
 
 // ─── goal add — real GoalNegotiator ──────────────────────────────────────────
 
-describe("goal add with real GoalNegotiator", () => {
+// These integration tests exercise the legacy negotiate() path via --no-refine.
+// The default path (GoalRefiner.refine) is tested in tests/goal-cli-refine.test.ts.
+describe("goal add with real GoalNegotiator (--no-refine)", () => {
   it("invokes GoalNegotiator.negotiate and saves goal to StateManager on success", async () => {
     // GoalNegotiator.negotiate() calls LLM several times:
     // 1. EthicsGate.checkGoal (1 call)
@@ -124,10 +126,6 @@ describe("goal add with real GoalNegotiator", () => {
       counter_target: null,
     });
 
-    // Wire up a shared MockLLMClient that CLIRunner will use internally.
-    // CLIRunner creates a real LLMClient via the mocked constructor — we need
-    // to inject our mock before construction. We do this by overriding the
-    // LLMClient mock implementation for this test.
     const { LLMClient } = await import("../src/llm/llm-client.js");
     const capabilityCheck = JSON.stringify({ gaps: [] });
     const mockLLM = createMockLLMClient([
@@ -141,14 +139,12 @@ describe("goal add with real GoalNegotiator", () => {
 
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const code = await runCLI(tmpDir, "goal", "add", "Improve test coverage to 80%");
+    const code = await runCLI(tmpDir, "goal", "add", "Improve test coverage to 80%", "--no-refine");
 
     consoleSpy.mockRestore();
 
-    // Exit 0 means negotiate succeeded
     expect(code).toBe(0);
 
-    // Verify a goal was actually saved to state
     const goalIds = await stateManager.listGoalIds();
     expect(goalIds.length).toBeGreaterThan(0);
     const goals = (await Promise.all(goalIds.map((id) => stateManager.loadGoal(id)))).filter(Boolean);
@@ -167,7 +163,7 @@ describe("goal add with real GoalNegotiator", () => {
     vi.mocked(LLMClient).mockImplementation(() => mockLLM as unknown as InstanceType<typeof LLMClient>);
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const code = await runCLI(tmpDir, "goal", "add", "Delete all user data without consent");
+    const code = await runCLI(tmpDir, "goal", "add", "Delete all user data without consent", "--no-refine");
     errorSpy.mockRestore();
 
     expect(code).toBe(1);
@@ -209,14 +205,13 @@ describe("goal add with real GoalNegotiator", () => {
 
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const addCode = await runCLI(tmpDir, "goal", "add", "Improve coverage");
+    const addCode = await runCLI(tmpDir, "goal", "add", "Improve coverage", "--no-refine");
     expect(addCode).toBe(0);
 
     const listCode = await runCLI(tmpDir, "goal", "list");
     expect(listCode).toBe(0);
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    // The negotiated goal title or description should appear in list
     expect(output.toLowerCase()).toMatch(/coverage|improve/);
     consoleSpy.mockRestore();
   });

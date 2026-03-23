@@ -105,6 +105,39 @@ Observe → Gap → Score → Task → Execute → Verify → Loop
 
 For detailed architecture, see [docs/architecture-map.md](docs/architecture-map.md).
 
+## Loop-Stall Prevention
+
+Tavori runs the `Observe → Gap → Score → Task → Execute → Verify → Loop` cycle until the goal is complete or until the orchestrator must stop because progress cannot be made.
+
+### Loop-Stall Prevention and Measurement
+
+1. A **stall** is a run that exits because the orchestrator cannot make further measurable progress on the current goal node.
+2. **Stall rate** is calculated as `stall_rate = stalled_runs / total_runs`, where `stalled_runs` is the number of runs that exited due to stall and `total_runs` is the number of finished runs in the same measurement window.
+3. The **median observation-delegate-verify loop count for completed goals** is the median, across completed goals, of the number of `Observe → Delegate → Verify` cycles executed before each goal reaches completion.
+4. The **changed-path regression rule** is: any change that affects stall behavior, loop stopping, goal-node progression, or verification outcomes must be covered by `npm run test:changed`, and that command must not introduce new stall-related failures.
+
+The operator should stop the loop when any of these conditions is true:
+
+1. The goal is complete, meaning the observed dimensions meet their thresholds with sufficient evidence.
+2. `Verify` returns the same outcome for the same goal node after a changed task plan, and the next `Observe` still does not move the state.
+3. The loop has repeated without new measurable progress for the same goal node, even after trying a different task, scope, or decomposition path.
+4. The result is no longer testable or observable enough to justify another observe-delegate-verify cycle.
+
+When a stall is detected, the orchestrator should not keep replaying the same observe/delegate/verify shape. It should record the stall, change the plan or decomposition, and stop treating repetition as progress.
+
+### Operator Checklist
+
+- Record the loop count for each completed goal.
+- Stop after repeated no-progress observations for the same goal node.
+- Run `npm run test:changed` for stall-related changes before considering the change complete.
+- Treat any stall-related failure as blocking.
+
+### Changed-Path Verification
+
+```bash
+npm run test:changed
+```
+
 ## Supported Adapters
 
 | Adapter | Type | Use Case |

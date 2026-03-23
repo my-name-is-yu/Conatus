@@ -33,6 +33,16 @@ vi.mock("../src/goal/goal-negotiator.js", async (importOriginal) => {
   return { ...actual, GoalNegotiator: vi.fn() };
 });
 
+// GoalRefiner mock — refine() returns the goal that was pre-saved by the test.
+// Also export collectLeafGoalIds since goal.ts imports it from this module.
+vi.mock("../src/goal/goal-refiner.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/goal/goal-refiner.js")>();
+  return {
+    ...actual,
+    GoalRefiner: vi.fn(),
+  };
+});
+
 vi.mock("../src/llm/llm-client.js", () => ({
   LLMClient: vi.fn().mockImplementation(() => ({})),
   MockLLMClient: vi.fn(),
@@ -102,6 +112,7 @@ vi.mock("../src/reporting-engine.js", async (importOriginal) => {
 import { CLIRunner } from "../src/cli-runner.js";
 import { StateManager } from "../src/state-manager.js";
 import { GoalNegotiator } from "../src/goal/goal-negotiator.js";
+import { GoalRefiner } from "../src/goal/goal-refiner.js";
 import type { Goal } from "../src/types/goal.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 import { makeGoal } from "./helpers/fixtures.js";
@@ -192,6 +203,17 @@ describe("CLIRunner — auto FileExistenceDataSource registration", () => {
       negotiate: vi.fn().mockResolvedValue(makeNegotiationResult(goal)),
     } as unknown as GoalNegotiator));
 
+    vi.mocked(GoalRefiner).mockImplementation(() => ({
+      refine: vi.fn().mockResolvedValue({
+        goal,
+        leaf: true,
+        children: null,
+        feasibility: null,
+        tokensUsed: 100,
+        reason: "measurable",
+      }),
+    } as unknown as GoalRefiner));
+
     const runner = new CLIRunner(tmpDir);
     const exitCode = await runner.run(["goal", "add", "Ensure CONTRIBUTING.md exists in the repo"]);
 
@@ -243,6 +265,17 @@ describe("CLIRunner — auto FileExistenceDataSource registration", () => {
       negotiate: vi.fn().mockResolvedValue(makeNegotiationResult(goal)),
     } as unknown as GoalNegotiator));
 
+    vi.mocked(GoalRefiner).mockImplementation(() => ({
+      refine: vi.fn().mockResolvedValue({
+        goal,
+        leaf: true,
+        children: null,
+        feasibility: null,
+        tokensUsed: 100,
+        reason: "measurable",
+      }),
+    } as unknown as GoalRefiner));
+
     const runner = new CLIRunner(tmpDir);
     const exitCode = await runner.run(["goal", "add", "Make sure LICENSE.md file is present"]);
 
@@ -288,6 +321,17 @@ describe("CLIRunner — auto FileExistenceDataSource registration", () => {
     vi.mocked(GoalNegotiator).mockImplementation(() => ({
       negotiate: vi.fn().mockResolvedValue(makeNegotiationResult(goal)),
     } as unknown as GoalNegotiator));
+
+    vi.mocked(GoalRefiner).mockImplementation(() => ({
+      refine: vi.fn().mockResolvedValue({
+        goal,
+        leaf: true,
+        children: null,
+        feasibility: null,
+        tokensUsed: 100,
+        reason: "measurable",
+      }),
+    } as unknown as GoalRefiner));
 
     const runner = new CLIRunner(tmpDir);
     const exitCode = await runner.run(["goal", "add", "Increase test coverage to 80%"]);

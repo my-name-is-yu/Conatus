@@ -20,9 +20,39 @@ export interface ShellCommandConfig {
   timeout_ms?: number;
 }
 
+export interface TodoLikeMarkerInventory {
+  grouped_counts: {
+    TODO: number;
+    FIXME: number;
+  };
+  raw_total_count: number;
+}
+
+export function buildTodoLikeMarkerInventory(todoCount: number, fixmeCount: number): TodoLikeMarkerInventory {
+  const normalizedTodoCount = Number.isFinite(todoCount) && todoCount > 0 ? Math.floor(todoCount) : 0;
+  const normalizedFixmeCount = Number.isFinite(fixmeCount) && fixmeCount > 0 ? Math.floor(fixmeCount) : 0;
+
+  return {
+    grouped_counts: {
+      TODO: normalizedTodoCount,
+      FIXME: normalizedFixmeCount,
+    },
+    raw_total_count: normalizedTodoCount + normalizedFixmeCount,
+  };
+}
+
+export function formatTodoLikeMarkerInventory(inventory: TodoLikeMarkerInventory): string {
+  return [
+    "TODO-like marker inventory:",
+    `  grouped_counts: ${JSON.stringify(inventory.grouped_counts)}`,
+    `  raw_total_count: ${inventory.raw_total_count}`,
+  ].join("\n");
+}
+
 export const SHELL_DIMENSION_PATTERNS: Record<string, ShellCommandConfig> = {
   todo_count:        { argv: ["grep", "-rc", "TODO", "src/"], output_type: "number" },
   fixme_count:       { argv: ["grep", "-rc", "FIXME", "src/"], output_type: "number" },
+  todo_like_marker_inventory: { argv: ["grep", "-rn", "--include=*.ts", "-E", "TODO|FIXME", "src/"], output_type: "raw" },
   test_count:        { argv: ["grep", "-rEc", "it\\(|test\\(|describe\\(", "tests/"], output_type: "number" },
   lint_errors:       { argv: ["npx", "eslint", "src/", "--format", "compact", "--max-warnings", "9999"], output_type: "number" },
   tsc_error_count:   { argv: ["npx", "tsc", "--noEmit", "--pretty", "false"], output_type: "number" },

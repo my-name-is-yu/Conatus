@@ -156,6 +156,17 @@ export async function detectStallsAndRebalance(
             goalId,
             evidence: analysis.evidence,
           });
+        } else if (stallReport.suggested_cause === "information_deficit" && ctx.deps.goalRefiner) {
+          // Observation-failure stall: re-refine the leaf to get better dimensions
+          ctx.logger?.info("CoreLoop: observation-failure stall — calling reRefineLeaf", { goalId });
+          try {
+            await ctx.deps.goalRefiner.reRefineLeaf(goalId, stallReport.suggested_cause);
+          } catch (reRefineErr) {
+            ctx.logger?.warn("CoreLoop: reRefineLeaf failed (non-fatal)", {
+              goalId,
+              err: reRefineErr instanceof Error ? reRefineErr.message : String(reRefineErr),
+            });
+          }
         } else if (analysis?.recommended_action === "escalate") {
           // ESCALATE: set escalation level to max to trigger loop exit
           ctx.logger?.warn("CoreLoop: stall ESCALATE — goal_unreachable detected", {
@@ -294,6 +305,17 @@ async function checkGlobalStall(
       goalId,
       evidence: globalAnalysis.evidence,
     });
+  } else if (globalStall.suggested_cause === "information_deficit" && ctx.deps.goalRefiner) {
+    // Observation-failure stall: re-refine the leaf to get better dimensions
+    ctx.logger?.info("CoreLoop: global observation-failure stall — calling reRefineLeaf", { goalId });
+    try {
+      await ctx.deps.goalRefiner.reRefineLeaf(goalId, globalStall.suggested_cause);
+    } catch (reRefineErr) {
+      ctx.logger?.warn("CoreLoop: global reRefineLeaf failed (non-fatal)", {
+        goalId,
+        err: reRefineErr instanceof Error ? reRefineErr.message : String(reRefineErr),
+      });
+    }
   } else if (globalAnalysis?.recommended_action === "escalate") {
     ctx.logger?.warn("CoreLoop: global stall ESCALATE — goal_unreachable", {
       goalId,

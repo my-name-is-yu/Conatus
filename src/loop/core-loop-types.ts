@@ -24,6 +24,7 @@ import type { LearningPipeline } from "../knowledge/learning-pipeline.js";
 import { DriveScoreAdapter } from "../knowledge/memory-lifecycle.js";
 import type { MemoryLifecycleManager } from "../knowledge/memory-lifecycle.js";
 import type { ParallelExecutor } from "../execution/parallel-executor.js";
+import type { GoalRefiner } from "../goal/goal-refiner.js";
 import type { Goal } from "../types/goal.js";
 import type { GapVector } from "../types/gap.js";
 import type { DriveContext, DriveScore } from "../types/drive.js";
@@ -180,6 +181,11 @@ export interface CoreLoopDeps {
    * If not provided, all tasks fall through to the normal single-task flow.
    */
   parallelExecutor?: ParallelExecutor;
+  /**
+   * Optional GoalRefiner. When present, tree-mode decomposition calls refine()
+   * instead of raw decomposeGoal(), and observation-failure stalls call reRefineLeaf().
+   */
+  goalRefiner?: GoalRefiner;
   /**
    * Optional factory function to generate a TaskGroup for a large task.
    * Provided as a callback so the caller owns the llmClient dependency.

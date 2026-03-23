@@ -16,6 +16,7 @@ import type { SuggestOutput, Suggestion } from "../../types/suggest.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
+import { buildTodoLikeMarkerInventory, formatTodoLikeMarkerInventory } from "./goal-utils.js";
 
 // ─── Suggest helpers ───
 
@@ -80,8 +81,30 @@ function synthesizeFallbackSuggestions(targetPath: string, context: string, maxS
   const hasCliSource = candidatePaths.some((p) => /(?:^|\/)src\/.*(?:cli|command|runner)/i.test(p) || /(?:^|\/)tests\/cli\//i.test(p));
   const testCountMatch = context.match(/Test files:\s*(\d+)/i);
   const testCount = testCountMatch ? Number.parseInt(testCountMatch[1] ?? "0", 10) : candidatePaths.filter((p) => /^tests?\//i.test(p) || /\.test\.[a-z]+$/i.test(p)).length;
+  const rawInventoryMatch = context.match(/raw_total_count:\s*(\d+)/i);
   const todoCountMatch = context.match(/TODO\/FIXME count:\s*(\d+)/i);
-  const todoCount = todoCountMatch ? Number.parseInt(todoCountMatch[1] ?? "0", 10) : 0;
+  const rawTotalCount = rawInventoryMatch
+    ? Number.parseInt(rawInventoryMatch[1] ?? "0", 10)
+    : todoCountMatch
+      ? Number.parseInt(todoCountMatch[1] ?? "0", 10)
+      : 0;
+  const groupedCountMatch = context.match(/grouped_counts:\s*(\{.*\})/i);
+  let groupedTodoCount = 0;
+  let groupedFixmeCount = 0;
+  if (groupedCountMatch) {
+    try {
+      const parsed = JSON.parse(groupedCountMatch[1] ?? "{}") as Partial<Record<"TODO" | "FIXME", unknown>>;
+      groupedTodoCount = typeof parsed.TODO === "number" && Number.isFinite(parsed.TODO) ? parsed.TODO : 0;
+      groupedFixmeCount = typeof parsed.FIXME === "number" && Number.isFinite(parsed.FIXME) ? parsed.FIXME : 0;
+    } catch {
+      // Ignore malformed grouped inventory context and fall back to raw count.
+    }
+  }
+  const todoInventory = buildTodoLikeMarkerInventory(groupedTodoCount, groupedFixmeCount);
+  const effectiveTodoInventory = {
+    ...todoInventory,
+    raw_total_count: rawTotalCount > 0 ? rawTotalCount : todoInventory.raw_total_count,
+  };
 
   const addSuggestion = (title: string, target: string, change: string, rationale: string, dimensions: string[]) => {
     if (suggestions.length >= suggestionLimit) return;
@@ -134,17 +157,17 @@ function synthesizeFallbackSuggestions(targetPath: string, context: string, maxS
     );
   }
 
-  if (todoCount > 0 || hasPackageJson || candidatePaths.some((p) => /^src\//i.test(p) || /\/src\//i.test(p))) {
+  if (effectiveTodoInventory.raw_total_count > 0 || hasPackageJson || candidatePaths.some((p) => /^src\//i.test(p) || /\/src\//i.test(p))) {
     addSuggestion(
-      todoCount > 0 ? "Resolve one tracked implementation gap" : "Harden one concrete repository path",
-      todoCount > 0 ? srcTarget : (hasPackageJson ? packageTarget : srcTarget),
-      todoCount > 0
+      effectiveTodoInventory.raw_total_count > 0 ? "Resolve one tracked implementation gap" : "Harden one concrete repository path",
+      effectiveTodoInventory.raw_total_count > 0 ? srcTarget : (hasPackageJson ? packageTarget : srcTarget),
+      effectiveTodoInventory.raw_total_count > 0
         ? `replace one TODO or FIXME with a completed implementation or a verifiable follow-up in ${srcTarget}`
         : `clarify scripts, validation, or behavior so the next change is scoped to ${hasPackageJson ? packageTarget : srcTarget}`,
-      todoCount > 0
-        ? "Local TODO and FIXME markers indicate an unfinished repo-specific improvement opportunity."
+      effectiveTodoInventory.raw_total_count > 0
+        ? `Local TODO and FIXME markers indicate an unfinished repo-specific improvement opportunity. ${formatTodoLikeMarkerInventory(effectiveTodoInventory)}`
         : "The repository surface includes concrete implementation files, so the fallback should stay anchored to a real path.",
-      todoCount > 0 ? ["implementation_gap", "maintainability"] : ["repo_actionability", "maintainability"]
+      effectiveTodoInventory.raw_total_count > 0 ? ["implementation_gap", "maintainability"] : ["repo_actionability", "maintainability"]
     );
   }
 

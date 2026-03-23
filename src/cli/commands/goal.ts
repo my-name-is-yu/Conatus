@@ -2,7 +2,6 @@
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import * as readline from "node:readline";
 import { getArchiveDir, getGoalsDir, getReportsDir } from "../../utils/paths.js";
 import { readJsonFile } from "../../utils/json-io.js";
 
@@ -10,7 +9,8 @@ import { StateManager } from "../../state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import { ReportingEngine } from "../../reporting-engine.js";
-import { EthicsRejectedError, gatherNegotiationContext } from "../../goal/goal-negotiator.js";
+import { EthicsRejectedError } from "../../goal/goal-negotiator.js";
+import { collectLeafGoalIds } from "../../goal/goal-refiner.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
@@ -18,12 +18,43 @@ import {
   autoRegisterFileExistenceDataSources,
   autoRegisterShellDataSources,
 } from "./goal-utils.js";
+import type { RefineResult } from "../../types/goal-refiner.js";
+
+// ─── Display helpers ───
+
+function printRefineResult(result: RefineResult, indent = 0): void {
+  const pad = "  ".repeat(indent);
+  const { goal } = result;
+  console.log(`${pad}Goal ID:    ${goal.id}`);
+  console.log(`${pad}Title:      ${goal.title}`);
+  console.log(`${pad}Status:     ${goal.status}`);
+  console.log(`${pad}Leaf:       ${result.leaf}`);
+  console.log(`${pad}Reason:     ${result.reason}`);
+  if (goal.dimensions.length > 0) {
+    console.log(`${pad}Dimensions:`);
+    for (const dim of goal.dimensions) {
+      console.log(`${pad}  - ${dim.label} (${dim.name}): ${JSON.stringify(dim.threshold)}`);
+    }
+  }
+  if (result.feasibility && result.feasibility.length > 0) {
+    console.log(`${pad}Feasibility:`);
+    for (const f of result.feasibility) {
+      console.log(`${pad}  - ${f.dimension}: ${f.assessment} (${f.reasoning.slice(0, 80)}...)`);
+    }
+  }
+  if (result.children && result.children.length > 0) {
+    console.log(`${pad}Children (${result.children.length}):`);
+    for (const child of result.children) {
+      printRefineResult(child, indent + 1);
+    }
+  }
+}
 
 export async function cmdGoalAdd(
   stateManager: StateManager,
   characterConfigManager: CharacterConfigManager,
   description: string,
-  opts: { deadline?: string; constraints?: string[]; yes?: boolean }
+  opts: { deadline?: string; constraints?: string[]; yes?: boolean; noRefine?: boolean }
 ): Promise<number> {
   try {
     await ensureProviderConfig();
@@ -36,16 +67,112 @@ export async function cmdGoalAdd(
   try {
     deps = await buildDeps(stateManager, characterConfigManager);
   } catch (err) {
-    getCliLogger().error(formatOperationError("initialise goal negotiation dependencies", err));
+    getCliLogger().error(formatOperationError("initialise goal refinement dependencies", err));
     return 1;
   }
 
   const { goalNegotiator } = deps;
 
-  console.log(`Negotiating goal: "${description}"`);
+  // --no-refine: skip refinement, use legacy negotiate() path
+  if (opts.noRefine) {
+    return cmdGoalAddLegacyNegotiate(stateManager, goalNegotiator, description, opts);
+  }
+
+  // Default: use GoalRefiner.refine()
+  console.log(`Refining goal: "${description}"`);
   if (opts.deadline) {
     console.log(`Deadline: ${opts.deadline}`);
   }
+  if (opts.constraints && opts.constraints.length > 0) {
+    console.log(`Constraints: ${opts.constraints.join(", ")}`);
+  }
+  console.log("This may take a moment...\n");
+
+  // Build a stub goal so refiner has something to work with
+  const now = new Date().toISOString();
+  const goalId = `goal_${Date.now()}`;
+  const stubGoal = {
+    id: goalId,
+    parent_id: null,
+    node_type: "goal" as const,
+    title: description.slice(0, 120),
+    description,
+    status: "active" as const,
+    loop_status: "idle" as const,
+    dimensions: [],
+    gap_aggregation: "max" as const,
+    dimension_mapping: null,
+    constraints: opts.constraints ?? [],
+    children_ids: [],
+    target_date: opts.deadline ?? null,
+    origin: "negotiation" as const,
+    pace_snapshot: null,
+    deadline: opts.deadline ?? null,
+    confidence_flag: null,
+    user_override: false,
+    feasibility_note: null,
+    uncertainty_weight: 1.0,
+    decomposition_depth: 0,
+    specificity_score: null,
+    created_at: now,
+    updated_at: now,
+  };
+  await stateManager.saveGoal(stubGoal);
+
+  const { goalRefiner: refiner } = deps;
+
+  let result: RefineResult;
+  try {
+    result = await refiner.refine(goalId, { feasibilityCheck: true });
+  } catch (err) {
+    if (err instanceof EthicsRejectedError) {
+      getCliLogger().error(formatOperationError(`refine goal "${description}" via ethics gate`, err));
+      getCliLogger().error(`Ethics gate reasoning: ${err.verdict.reasoning}`);
+      await stateManager.deleteGoal(goalId).catch(() => {});
+      return 1;
+    }
+    getCliLogger().warn(`[goal add] Refinement failed, saving goal without refinement: ${err instanceof Error ? err.message : String(err)}`);
+    // Graceful fallback: goal stub was already saved, register as-is
+    console.log(`Goal registered (unrefined — refinement failed).`);
+    console.log(`Goal ID:    ${goalId}`);
+    console.log(`Title:      ${stubGoal.title}`);
+    console.log(`\nTo run the loop: tavori run --goal ${goalId}`);
+    return 0;
+  }
+
+  // Auto-register data sources for all leaf goals
+  const leafIds = collectLeafGoalIds(result);
+  for (const leafId of leafIds) {
+    const leafGoal = await stateManager.loadGoal(leafId);
+    if (leafGoal && leafGoal.dimensions.length > 0) {
+      await autoRegisterFileExistenceDataSources(stateManager, leafGoal.dimensions, leafGoal.description, leafId);
+      await autoRegisterShellDataSources(stateManager, leafGoal.dimensions, leafId);
+    }
+  }
+
+  console.log(`Goal registered successfully!`);
+  console.log(`Tokens used: ${result.tokensUsed}`);
+  console.log();
+  printRefineResult(result);
+
+  const runId = result.leaf ? result.goal.id : goalId;
+  console.log(`\nTo run the loop: tavori run --goal ${runId}${!result.leaf ? " --tree" : ""}`);
+  return 0;
+}
+
+// ─── Legacy negotiate path (--no-refine) ───
+
+async function cmdGoalAddLegacyNegotiate(
+  stateManager: StateManager,
+  goalNegotiator: import("../../goal/goal-negotiator.js").GoalNegotiator,
+  description: string,
+  opts: { deadline?: string; constraints?: string[]; yes?: boolean }
+): Promise<number> {
+  const { gatherNegotiationContext } = await import("../../goal/goal-negotiator.js");
+  const readline = await import("node:readline");
+
+  console.log(`Negotiating goal (legacy): "${description}"`);
+  if (opts.deadline) console.log(`Deadline: ${opts.deadline}`);
   if (opts.constraints && opts.constraints.length > 0) {
     console.log(`Constraints: ${opts.constraints.join(", ")}`);
   }
