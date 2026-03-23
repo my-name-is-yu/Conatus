@@ -437,7 +437,7 @@ export class StrategyManagerBase {
     });
   }
 
-  protected async savePortfolio(goalId: string, portfolio: Portfolio): Promise<void> {
+  async savePortfolio(goalId: string, portfolio: Portfolio): Promise<void> {
     const parsed = PortfolioSchema.parse(portfolio);
     await this.stateManager.writeRaw(
       `strategies/${goalId}/portfolio.json`,

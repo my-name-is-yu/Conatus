@@ -51,16 +51,8 @@ function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): Curiosity
     check: vi.fn().mockResolvedValue({ verdict: "pass" }),
   } as any;
 
-  const satisficingJudge = {
-    judgeCompletion: vi.fn(),
-  } as any;
-
   const stallDetector = {
     getStallState: vi.fn().mockResolvedValue(makeStallState()),
-  } as any;
-
-  const observationEngine = {
-    observe: vi.fn(),
   } as any;
 
   const driveSystem = {
@@ -81,9 +73,7 @@ function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): Curiosity
     stateManager,
     llmClient,
     ethicsGate,
-    satisficingJudge,
     stallDetector,
-    observationEngine,
     driveSystem,
     config: mergedConfig,
     ...restOverrides,

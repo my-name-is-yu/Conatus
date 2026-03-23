@@ -272,7 +272,7 @@ export class MemoryLifecycleManager {
     tags: string[],
     maxEntries: number = 10
   ): Promise<{ shortTerm: ShortTermEntry[]; lessons: LessonEntry[] }> {
-    return _selectForWorkingMemory(this.selectionDeps, goalId, dimensions, tags, maxEntries);
+    return _selectForWorkingMemory(this.selectionDeps, goalId, dimensions, tags, { maxEntries });
   }
 
   /**
@@ -296,12 +296,14 @@ export class MemoryLifecycleManager {
       goalId,
       dimensions,
       tags,
-      maxEntries,
-      activeGoalIds,
-      completedGoalIds,
-      satisfiedDimensions,
-      highDissatisfactionDimensions,
-      maxDissatisfaction
+      {
+        maxEntries,
+        activeGoalIds,
+        completedGoalIds,
+        satisfiedDimensions,
+        highDissatisfactionDimensions,
+        maxDissatisfaction,
+      }
     );
   }
 
@@ -622,33 +624,3 @@ export class MemoryLifecycleManager {
     return _runGarbageCollection(this.compressionDeps);
   }
 }
-
-// Re-export types and helpers needed by tests that import from this module
-export type {
-  ShortTermEntry,
-  LessonEntry,
-  StatisticalSummary,
-  MemoryIndex,
-  CompressionResult,
-  RetentionConfig,
-  MemoryDataType,
-} from "../types/memory-lifecycle.js";
-
-// Re-export phase helpers for tests that may import them directly
-export {
-  extractPatterns,
-  distillLessons,
-  validateCompressionQuality,
-} from "./memory-distill.js";
-export { updateStatistics, mergeTaskStats, mergeDimStats, computeTrend, computePeriod } from "./memory-stats.js";
-export { storeLessonsLongTerm, loadIndex, saveIndex, updateIndex, removeFromIndex, removeGoalFromIndex, touchIndexEntry, archiveOldestLongTermEntries, initializeIndex } from "./memory-index.js";
-export { queryLessons, queryCrossGoalLessons } from "./memory-query.js";
-
-export {
-  atomicWriteAsync,
-  readJsonFileAsync,
-  getDataFile,
-  generateId,
-  getDirectorySizeAsync,
-  getRetentionLimit,
-} from "./memory-persistence.js";

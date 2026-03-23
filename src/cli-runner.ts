@@ -30,17 +30,8 @@ import type { LoopConfig } from "./core-loop.js";
 
 // Commands
 import { cmdRun } from "./cli/commands/run.js";
-import {
-  cmdGoalAdd,
-  cmdGoalList,
-  cmdStatus,
-  cmdGoalShow,
-  cmdGoalReset,
-  cmdLog,
-  cmdGoalArchive,
-  cmdCleanup,
-} from "./cli/commands/goal.js";
-import { cmdGoalAddRaw } from "./cli/commands/goal-raw.js";
+import { cmdStatus, cmdLog, cmdCleanup } from "./cli/commands/goal.js";
+import { dispatchGoalCommand } from "./cli/commands/goal-dispatch.js";
 import { cmdPluginList, cmdPluginInstall, cmdPluginRemove, cmdPluginUpdate, cmdPluginSearch } from "./cli/commands/plugin.js";
 import { cmdReport } from "./cli/commands/report.js";
 import {
@@ -181,149 +172,13 @@ export class CLIRunner {
     }
 
     if (subcommand === "goal") {
-      const goalSubcommand = argv[1];
-
-      if (!goalSubcommand) {
-        logger.error("Error: goal subcommand required. Available: goal add, goal list, goal archive, goal remove, goal show, goal reset");
-        return 1;
-      }
-
-      if (goalSubcommand === "add") {
-        // Parse all goal add flags from argv.slice(2) with allowPositionals
-        let positionals: string[] = [];
-        let addValues: {
-          negotiate?: boolean;
-          "no-refine"?: boolean;
-          dim?: string[];
-          title?: string;
-          deadline?: string;
-          constraint?: string[];
-          yes?: boolean;
-        } = {};
-        try {
-          const parsed = parseArgs({
-            args: argv.slice(2),
-            options: {
-              negotiate: { type: "boolean" },
-              "no-refine": { type: "boolean" },
-              dim: { type: "string", multiple: true },
-              title: { type: "string" },
-              deadline: { type: "string" },
-              constraint: { type: "string", multiple: true },
-              yes: { type: "boolean", short: "y" },
-            },
-            allowPositionals: true,
-            strict: false,
-          }) as { values: typeof addValues; positionals: string[] };
-          addValues = parsed.values;
-          positionals = parsed.positionals;
-        } catch (err) {
-          logger.error(formatOperationError("parse goal add arguments", err));
-          return 1;
-        }
-
-        const description = positionals[0];
-        const yes = globalYes || (addValues.yes ?? false);
-        const rawDimensions = addValues.dim ?? [];
-
-        // Raw mode: --dim provided and --negotiate not set
-        if (rawDimensions.length > 0 && !addValues.negotiate) {
-          const title = addValues.title || description;
-          if (!title) {
-            logger.error("Error: --title or description is required. Usage: tavori goal add --title \"tsc zero\" --dim \"tsc_error_count:min:0\"");
-            return 1;
-          }
-          return await cmdGoalAddRaw(this.stateManager, { title, description, rawDimensions });
-        }
-
-        // Refine/negotiate mode: requires description
-        if (!description) {
-          logger.error('Error: description is required. Usage: tavori goal add "<description>" [--no-refine]');
-          return 1;
-        }
-
-        const deadline = addValues.deadline;
-        const constraints = addValues.constraint ?? [];
-        // --no-refine skips GoalRefiner and uses legacy negotiate(); --negotiate is an alias for refine (default)
-        const noRefine = addValues["no-refine"] ?? false;
-        return await cmdGoalAdd(this.stateManager, this.characterConfigManager, description, { deadline, constraints, yes, noRefine });
-      }
-
-      if (goalSubcommand === "list") {
-        let listValues: { archived?: boolean } = {};
-        try {
-          ({ values: listValues } = parseArgs({
-            args: argv.slice(2),
-            options: { archived: { type: "boolean" } },
-            strict: false,
-          }) as { values: { archived?: boolean } });
-        } catch (err) {
-          logger.error(formatOperationError("parse goal list arguments", err));
-          listValues = {};
-        }
-        return cmdGoalList(this.stateManager, { archived: listValues.archived });
-      }
-
-      if (goalSubcommand === "archive") {
-        const goalId = argv[2];
-        if (!goalId) {
-          logger.error("Error: goal ID is required. Usage: tavori goal archive <id>");
-          return 1;
-        }
-        let archiveValues: { yes?: boolean; force?: boolean } = {};
-        try {
-          ({ values: archiveValues } = parseArgs({
-            args: argv.slice(3),
-            options: {
-              yes: { type: "boolean", short: "y" },
-              force: { type: "boolean" },
-            },
-            strict: false,
-          }) as { values: { yes?: boolean; force?: boolean } });
-        } catch (err) {
-          logger.error(formatOperationError("parse goal archive arguments", err));
-          archiveValues = {};
-        }
-        return await cmdGoalArchive(this.stateManager, goalId, { ...archiveValues, yes: globalYes || archiveValues.yes });
-      }
-
-      if (goalSubcommand === "remove") {
-        const goalId = argv[2];
-        if (!goalId) {
-          logger.error("Error: goal ID is required. Usage: tavori goal remove <id>");
-          return 1;
-        }
-        const deleted = await this.stateManager.deleteGoal(goalId);
-        if (deleted) {
-          console.log(`Goal ${goalId} removed.`);
-          return 0;
-        } else {
-          logger.error(`Goal not found: ${goalId}`);
-          return 1;
-        }
-      }
-
-      if (goalSubcommand === "show") {
-        const goalId = argv[2];
-        if (!goalId) {
-          logger.error("Error: goal ID is required. Usage: tavori goal show <id>");
-          return 1;
-        }
-        return await cmdGoalShow(this.stateManager, goalId);
-      }
-
-      if (goalSubcommand === "reset") {
-        const goalId = argv[2];
-        if (!goalId) {
-          logger.error("Error: goal ID is required. Usage: tavori goal reset <id>");
-          return 1;
-        }
-        return await cmdGoalReset(this.stateManager, goalId);
-      }
-
-      logger.error(`Unknown goal subcommand: "${goalSubcommand}"`);
-      logger.error("Available: goal add, goal list, goal archive, goal remove, goal show, goal reset");
-      return 1;
+      return dispatchGoalCommand(
+        argv[1],
+        argv.slice(2),
+        globalYes,
+        this.stateManager,
+        this.characterConfigManager,
+      );
     }
 
     if (subcommand === "status") {

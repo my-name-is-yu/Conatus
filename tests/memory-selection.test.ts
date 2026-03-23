@@ -169,9 +169,7 @@ describe("selectForWorkingMemory — tier-aware mode", () => {
       goalId,
       ["dim-x"],
       ["tag-y"],
-      10,
-      [goalId],   // activeGoalIds
-      []          // completedGoalIds
+      { maxEntries: 10, activeGoalIds: [goalId], completedGoalIds: [] }
     );
 
     // core-1 should appear before recall-1
@@ -207,9 +205,7 @@ describe("selectForWorkingMemory — tier-aware mode", () => {
       goalId,
       ["dim-x"],
       ["tag-y"],
-      10,
-      [goalId],
-      []
+      { maxEntries: 10, activeGoalIds: [goalId], completedGoalIds: [] }
     );
 
     // The entry should be returned
@@ -245,9 +241,7 @@ describe("selectForWorkingMemory — tier-aware mode", () => {
       activeGoalId,
       ["dim-x"],
       ["tag-y"],
-      10,
-      [activeGoalId],
-      [completedGoalId]
+      { maxEntries: 10, activeGoalIds: [activeGoalId], completedGoalIds: [completedGoalId] }
     );
 
     expect(result.shortTerm.length).toBeGreaterThanOrEqual(1);
@@ -340,9 +334,7 @@ describe("archival semantic search", () => {
       goalId,
       ["dim-x"],
       ["tag-y"],
-      10,
-      [activeGoalId],  // goalId is NOT in activeGoalIds → entries become archival
-      []
+      { maxEntries: 10, activeGoalIds: [activeGoalId], completedGoalIds: [] }
     );
 
     // The archival entry should be returned
@@ -378,9 +370,7 @@ describe("archival semantic search", () => {
       goalId,
       ["dim-a"],
       ["tag-a"],
-      10,
-      [activeGoalId],  // goalId not in activeGoalIds → archival
-      []
+      { maxEntries: 10, activeGoalIds: [activeGoalId], completedGoalIds: [] }
     );
 
     // Archival entry is still returned in fallback mode
@@ -433,9 +423,7 @@ describe("archival semantic search", () => {
       goalId,
       ["dim-b"],
       ["tag-b"],
-      10,
-      [activeGoalId],  // goalId not in activeGoalIds → archival
-      []
+      { maxEntries: 10, activeGoalIds: [activeGoalId], completedGoalIds: [] }
     );
 
     const ids = result.shortTerm.map((e) => e.id);

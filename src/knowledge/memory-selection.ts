@@ -14,7 +14,8 @@ import {
 } from "./memory-persistence.js";
 import { loadIndex, touchIndexEntry } from "./memory-index.js";
 import { queryLessons, queryCrossGoalLessons } from "./memory-query.js";
-import { classifyTier, sortByTier, computeDynamicBudget, filterByTierBudget, llmClassifyTier } from "./memory-tier.js";
+import { classifyTier, sortByTier, computeDynamicBudget, filterByTierBudget, llmClassifyTier, getDeadlineBonus } from "./memory-tier.js";
+export { getCompressionDelay, getDeadlineBonus } from "./memory-tier.js";
 
 // ─── Deps interface ───
 
@@ -79,6 +80,19 @@ export function relevanceScore(
   return tagMatchRatio * driveWeight * freshnessFactor * importanceMultiplier;
 }
 
+// ─── SelectionContext ───
+
+export interface SelectionContext {
+  maxEntries?: number;
+  activeGoalIds?: string[];
+  completedGoalIds?: string[];
+  satisfiedDimensions?: string[];
+  highDissatisfactionDimensions?: string[];
+  maxDissatisfaction?: number;
+  useLLMClassification?: boolean;
+  llmClient?: { generateStructured: (...args: any[]) => Promise<any> };
+}
+
 // ─── selectForWorkingMemory ───
 
 /**
@@ -95,15 +109,18 @@ export async function selectForWorkingMemory(
   goalId: string,
   dimensions: string[],
   tags: string[],
-  maxEntries: number = 10,
-  activeGoalIds?: string[],
-  completedGoalIds?: string[],
-  satisfiedDimensions?: string[],
-  highDissatisfactionDimensions?: string[],
-  maxDissatisfaction?: number,
-  useLLMClassification?: boolean,
-  llmClient?: { generateStructured: (...args: any[]) => Promise<any> }
+  ctx: SelectionContext = {}
 ): Promise<{ shortTerm: ShortTermEntry[]; lessons: LessonEntry[] }> {
+  const {
+    maxEntries = 10,
+    activeGoalIds,
+    completedGoalIds,
+    satisfiedDimensions,
+    highDissatisfactionDimensions,
+    maxDissatisfaction,
+    useLLMClassification,
+    llmClient,
+  } = ctx;
   // 1. Tag-based query: short-term entries for this goal matching dimensions/tags
   const stIndex = await loadIndex(deps.memoryDir, "short-term");
   let matchingIndexEntries = stIndex.entries.filter(
@@ -430,7 +447,7 @@ export async function selectForWorkingMemorySemantic(
 ): Promise<{ shortTerm: ShortTermEntry[]; lessons: LessonEntry[] }> {
   // Fall back to sync method if no vectorIndex
   if (!deps.vectorIndex) {
-    return selectForWorkingMemory(deps, goalId, dimensions, tags, maxEntries);
+    return selectForWorkingMemory(deps, goalId, dimensions, tags, { maxEntries });
   }
 
   // Compute deadline bonuses per dimension
@@ -505,39 +522,3 @@ export async function selectForWorkingMemorySemantic(
   return { shortTerm: shortTermEntries, lessons };
 }
 
-// ─── Drive helpers (used by selection + compression) ───
-
-/**
- * Dissatisfaction drive: delay compression up to 2x for high-dissatisfaction dimensions.
- * For each dimension, if dissatisfaction > 0.7, delay_factor = 1 + dissatisfaction (max 2.0).
- * Returns map of dimension -> delay_factor.
- */
-export function getCompressionDelay(
-  driveScores: Array<{ dimension: string; dissatisfaction: number }>
-): Map<string, number> {
-  const result = new Map<string, number>();
-  for (const { dimension, dissatisfaction } of driveScores) {
-    if (dissatisfaction > 0.7) {
-      const delayFactor = Math.min(2.0, 1 + dissatisfaction);
-      result.set(dimension, delayFactor);
-    } else {
-      result.set(dimension, 1.0);
-    }
-  }
-  return result;
-}
-
-/**
- * Deadline drive: boost Working Memory priority up to 30%.
- * For each dimension, bonus = min(deadline * 0.3, 0.3).
- * Returns map of dimension -> bonus_factor.
- */
-export function getDeadlineBonus(
-  driveScores: Array<{ dimension: string; deadline: number }>
-): Map<string, number> {
-  const result = new Map<string, number>();
-  for (const { dimension, deadline } of driveScores) {
-    result.set(dimension, Math.min(deadline * 0.3, 0.3));
-  }
-  return result;
-}

@@ -6,7 +6,6 @@ import type { ILLMClient } from "../llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
 import type { GoalDependencyGraph } from "./goal-dependency-graph.js";
-import type { GoalNegotiator } from "./goal-negotiator.js";
 import { GoalSchema } from "../types/goal.js";
 import type { Goal } from "../types/goal.js";
 import type {
@@ -212,7 +211,6 @@ export class GoalTreeManager {
     private readonly llmClient: ILLMClient,
     private readonly ethicsGate: EthicsGate,
     private readonly goalDependencyGraph: GoalDependencyGraph,
-    private readonly goalNegotiator?: GoalNegotiator,
     options?: GoalTreeManagerOptions,
     private readonly promptGateway?: IPromptGateway
   ) {

@@ -53,6 +53,12 @@ Respond with JSON:
 Return ONLY the JSON object, no other text.`;
 }
 
+export function buildIncrementalMetaPatternPrompt(
+  patternDescriptions: string
+): string {
+  return `Given these newly learned patterns, extract 1-3 cross-domain meta-patterns that could apply to other goals:\n\n${patternDescriptions}\n\nReturn JSON object: { "meta_patterns": [{ "description": string, "applicable_domains": string[], "source_pattern_ids": string[] }] }`;
+}
+
 export function buildMetaPatternPrompt(patterns: LearnedPattern[]): string {
   const patternSummaries = patterns
     .slice(0, 50) // limit to avoid token overflow

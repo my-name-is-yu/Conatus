@@ -1,9 +1,7 @@
 import type { StateManager } from "../state-manager.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { EthicsGate } from "./ethics-gate.js";
-import type { SatisficingJudge } from "../drive/satisficing-judge.js";
 import type { StallDetector } from "../drive/stall-detector.js";
-import type { ObservationEngine } from "../observation/observation-engine.js";
 import type { DriveSystem } from "../drive/drive-system.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
 import type { KnowledgeTransfer } from "../knowledge/knowledge-transfer.js";
@@ -44,9 +42,7 @@ export interface CuriosityEngineDeps {
   stateManager: StateManager;
   llmClient: ILLMClient;
   ethicsGate: EthicsGate;
-  satisficingJudge: SatisficingJudge;
   stallDetector: StallDetector;
-  observationEngine: ObservationEngine;
   driveSystem: DriveSystem;
   vectorIndex?: VectorIndex;  // Phase 2: embedding-based detection
   knowledgeTransfer?: KnowledgeTransfer;  // Stage 14F: cross-goal transfer detection
@@ -73,9 +69,7 @@ export class CuriosityEngine {
   private readonly stateManager: StateManager;
   private readonly llmClient: ILLMClient;
   private readonly ethicsGate: EthicsGate;
-  private readonly satisficingJudge: SatisficingJudge;
   private readonly stallDetector: StallDetector;
-  private readonly observationEngine: ObservationEngine;
   private readonly driveSystem: DriveSystem;
   private readonly vectorIndex?: VectorIndex;
   private readonly knowledgeTransfer?: KnowledgeTransfer;
@@ -86,9 +80,7 @@ export class CuriosityEngine {
     this.stateManager = deps.stateManager;
     this.llmClient = deps.llmClient;
     this.ethicsGate = deps.ethicsGate;
-    this.satisficingJudge = deps.satisficingJudge;
     this.stallDetector = deps.stallDetector;
-    this.observationEngine = deps.observationEngine;
     this.driveSystem = deps.driveSystem;
     this.vectorIndex = deps.vectorIndex;
     this.knowledgeTransfer = deps.knowledgeTransfer;

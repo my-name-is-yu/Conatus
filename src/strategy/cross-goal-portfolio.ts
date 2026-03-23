@@ -3,6 +3,7 @@ import { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
 import { VectorIndex } from "../knowledge/vector-index.js";
 import type { IEmbeddingClient } from "../knowledge/embedding-client.js";
 import { scoreDeadline } from "../drive/drive-scorer.js";
+import { computeRawGap, normalizeGap } from "../drive/gap-calculator.js";
 import {
   CrossGoalPortfolioConfigSchema,
 } from "../types/cross-portfolio.js";
@@ -435,54 +436,15 @@ export class CrossGoalPortfolio {
   // ─── Private helpers ───
 
   /**
-   * Produce a rough [0,1] severity for a single goal dimension.
-   *
-   * For numeric thresholds we compute gap / scale.
-   * For binary thresholds (present/match) we return 0 or 1.
-   * Returns 0 when the dimension is already satisfied.
+   * Produce a [0,1] severity for a single goal dimension.
+   * Delegates to computeRawGap + normalizeGap from gap-calculator.
    */
   private _estimateDimensionGap(
     dim: Goal["dimensions"][number]
   ): number {
     const { current_value, threshold } = dim;
-
-    if (current_value === null) return 1;
-
-    switch (threshold.type) {
-      case "min": {
-        if (typeof current_value !== "number") return 0;
-        const gap = threshold.value - current_value;
-        if (gap <= 0) return 0;
-        return threshold.value !== 0 ? clamp(gap / threshold.value, 0, 1) : 1;
-      }
-      case "max": {
-        if (typeof current_value !== "number") return 0;
-        const gap = current_value - threshold.value;
-        if (gap <= 0) return 0;
-        return threshold.value !== 0 ? clamp(gap / threshold.value, 0, 1) : 1;
-      }
-      case "range": {
-        if (typeof current_value !== "number") return 0;
-        const span = threshold.high - threshold.low;
-        if (current_value < threshold.low) {
-          const gap = threshold.low - current_value;
-          return span > 0 ? clamp(gap / span, 0, 1) : 1;
-        }
-        if (current_value > threshold.high) {
-          const gap = current_value - threshold.high;
-          return span > 0 ? clamp(gap / span, 0, 1) : 1;
-        }
-        return 0;
-      }
-      case "present": {
-        return current_value ? 0 : 1;
-      }
-      case "match": {
-        return current_value === threshold.value ? 0 : 1;
-      }
-      default:
-        return 0;
-    }
+    const rawGap = computeRawGap(current_value, threshold);
+    return normalizeGap(rawGap, threshold, current_value);
   }
 
   /**

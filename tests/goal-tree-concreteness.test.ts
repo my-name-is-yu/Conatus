@@ -248,7 +248,7 @@ describe("decomposeGoal() with concreteness auto-stop", () => {
 
     // CONCRETENESS_ALL_TRUE returns score=1.0 → >= 0.7 threshold → auto-stop
     const mockLLM = createMockLLMClient([CONCRETENESS_ALL_TRUE]);
-    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, undefined, { concretenesThreshold: 0.7 });
+    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, { concretenesThreshold: 0.7 });
 
     const result = await manager.decomposeGoal(goal.id, DEFAULT_CONFIG);
 
@@ -284,7 +284,7 @@ describe("decomposeGoal() with concreteness auto-stop", () => {
       COVERAGE_PASS,
       HIGH_SPECIFICITY, // child specificity eval → leaf
     ]);
-    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, undefined, { concretenesThreshold: 0.7 });
+    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, { concretenesThreshold: 0.7 });
 
     const result = await manager.decomposeGoal(goal.id, DEFAULT_CONFIG);
 
@@ -361,7 +361,7 @@ describe("decomposeGoal() respects maxDepth", () => {
     // then internal specificity: LOW_SPECIFICITY → not leaf by specificity (0.4 < 0.7)
     // but depth check: decomposition_depth(0) >= effectiveMaxDepth(0) → forced leaf
     const mockLLM = createMockLLMClient([CONCRETENESS_ALL_FALSE, LOW_SPECIFICITY]);
-    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, undefined, {
+    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, {
       maxDepth: 0,
     });
 
@@ -404,7 +404,7 @@ describe("decomposeGoal() respects maxDepth", () => {
       COVERAGE_PASS,
       HIGH_SPECIFICITY, // child specificity eval → leaf
     ]);
-    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, undefined, {
+    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, {
       maxDepth: 0,
       concretenesThreshold: 0.7,
     });
@@ -425,7 +425,7 @@ describe("GoalTreeManager constructor options", () => {
 
     // score=0.75 >= 0.7 → auto-stop
     const mockLLM = createMockLLMClient([CONCRETENESS_THREE_TRUE]);
-    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, undefined, { concretenesThreshold: 0.7 });
+    const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph, { concretenesThreshold: 0.7 });
 
     const result = await manager.decomposeGoal(goal.id, DEFAULT_CONFIG);
     expect(result.children).toHaveLength(0);
@@ -451,7 +451,6 @@ describe("GoalTreeManager constructor options", () => {
       mockLLM,
       ethicsGate,
       dependencyGraph,
-      undefined,
       { concretenesThreshold: 0.6 }
     );
 

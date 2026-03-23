@@ -1,6 +1,6 @@
 import { StrategyManager } from "./strategy/strategy-manager.js";
 import { StateManager } from "./state-manager.js";
-import { StrategySchema, PortfolioSchema } from "./types/strategy.js";
+import { StrategySchema } from "./types/strategy.js";
 import type { Strategy, Portfolio } from "./types/strategy.js";
 import { PortfolioConfigSchema } from "./types/portfolio.js";
 import type {
@@ -528,10 +528,7 @@ export class PortfolioManager {
       ),
     };
 
-    await this.stateManager.writeRaw(
-      `strategies/${goalId}/portfolio.json`,
-      PortfolioSchema.parse(updated)
-    );
+    await this.strategyManager.savePortfolio(goalId, updated);
   }
 
   /**

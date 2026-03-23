@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import type { Goal } from "../types/goal.js";
 import type { GapVector, GapHistoryEntry } from "../types/gap.js";
+import type { StallReport } from "../types/stall.js";
 import type { DriveScore } from "../types/drive.js";
 import {
   buildDriveContext,
@@ -131,115 +132,8 @@ export async function detectStallsAndRebalance(
         result.stallDetected = true;
         result.stallReport = stallReport;
 
-        if (ctx.deps.learningPipeline) {
-          try {
-            await ctx.deps.learningPipeline.onStallDetected(goalId, stallReport);
-          } catch {
-            // non-fatal
-          }
-        }
-
         const escalationLevel = await ctx.deps.stallDetector.getEscalationLevel(goalId, dim.name);
-
-        // Capture active strategy id for decision recording
-        const activeStrategyForRecord = await Promise.resolve(ctx.deps.strategyManager.getActiveStrategy(goalId)).catch(() => null);
-        const strategyIdForRecord = activeStrategyForRecord?.id ?? "unknown";
-
-        // M14-S2: analyze stall cause to determine REFINE/PIVOT/ESCALATE
-        // Falls back to PIVOT behavior when analyzeStallCause is unavailable
-        const analysis = ctx.deps.stallDetector.analyzeStallCause?.(dimGapHistory);
-        result.stallAnalysis = analysis;
-
-        if (analysis?.recommended_action === "refine") {
-          // REFINE: keep current strategy, just log and continue
-          ctx.logger?.info("CoreLoop: stall REFINE — parameter_issue detected, keeping strategy", {
-            goalId,
-            evidence: analysis.evidence,
-          });
-        } else if (stallReport.suggested_cause === "information_deficit" && ctx.deps.goalRefiner) {
-          // Observation-failure stall: re-refine the leaf to get better dimensions
-          ctx.logger?.info("CoreLoop: observation-failure stall — calling reRefineLeaf", { goalId });
-          try {
-            await ctx.deps.goalRefiner.reRefineLeaf(goalId, stallReport.suggested_cause);
-          } catch (reRefineErr) {
-            ctx.logger?.warn("CoreLoop: reRefineLeaf failed (non-fatal)", {
-              goalId,
-              err: reRefineErr instanceof Error ? reRefineErr.message : String(reRefineErr),
-            });
-          }
-        } else if (analysis?.recommended_action === "escalate") {
-          // ESCALATE: set escalation level to max to trigger loop exit
-          ctx.logger?.warn("CoreLoop: stall ESCALATE — goal_unreachable detected", {
-            goalId,
-            evidence: analysis.evidence,
-          });
-          await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
-          result.pivotOccurred = true;
-        } else {
-          // PIVOT: switch strategy, but check pivot count limit first
-          const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
-          const activeStrategy = portfolio?.strategies.find((s) => s.state === "active");
-          const pivotCount = activeStrategy?.pivot_count ?? 0;
-          const maxPivotCount = activeStrategy?.max_pivot_count ?? 2;
-
-          if (pivotCount >= maxPivotCount) {
-            // Auto-escalate when pivot limit reached
-            ctx.logger?.warn("CoreLoop: stall auto-ESCALATE — pivot_count limit reached", {
-              goalId,
-              pivotCount,
-              maxPivotCount,
-            });
-            await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
-            result.pivotOccurred = true;
-          } else {
-            const newStrategy = await ctx.deps.strategyManager.onStallDetected(
-              goalId,
-              escalationLevel + 1,
-              goal.origin ?? "general"
-            );
-            if (newStrategy) {
-              result.pivotOccurred = true;
-              if (activeStrategy?.id) {
-                try {
-                  await ctx.deps.strategyManager.incrementPivotCount(goalId, activeStrategy.id);
-                } catch {
-                  // non-fatal
-                }
-              }
-            }
-          }
-        }
-
-        // M14-S3: Record decision (non-fatal)
-        if (ctx.deps.knowledgeManager) {
-          try {
-            const goalType = goal.origin ?? "general";
-            const latestGap = dimGapHistory[dimGapHistory.length - 1]?.normalized_gap ?? 1;
-            await ctx.deps.knowledgeManager.recordDecision({
-              id: randomUUID(),
-              goal_id: goalId,
-              goal_type: goalType,
-              strategy_id: strategyIdForRecord,
-              hypothesis: activeStrategyForRecord?.hypothesis,
-              decision: analysis?.recommended_action ?? "pivot",
-              context: {
-                gap_value: latestGap,
-                stall_count: stallReport.escalation_level,
-                cycle_count: dimGapHistory.length,
-                trust_score: 0,
-              },
-              outcome: "pending",
-              timestamp: new Date().toISOString(),
-              what_worked: [],
-              what_failed: [],
-              suggested_next: [],
-            });
-          } catch {
-            // non-fatal: never block the loop for decision recording
-          }
-        }
-
-        await ctx.deps.stallDetector.incrementEscalation(goalId, dim.name);
+        await applyStallAction(ctx, goalId, goal, dimGapHistory, stallReport, escalationLevel, dim.name, result, "");
         break;
       }
     }
@@ -255,6 +149,135 @@ export async function detectStallsAndRebalance(
     }
   } catch (err) {
     ctx.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// ─── Shared stall-action helper ───
+
+/** Apply REFINE/PIVOT/ESCALATE logic for a detected stall (per-dimension or global).
+ * @param dimHistory      Gap history slice used for analysis (single-dim or first-dim for global).
+ * @param stallReport     The detected StallReport.
+ * @param escalationLevel Current escalation level for the stall dimension.
+ * @param incrementDimName Dimension name passed to incrementEscalation after handling.
+ * @param logPrefix       Short prefix for log messages, e.g. "" or "global ".
+ */
+async function applyStallAction(
+  ctx: PhaseCtx,
+  goalId: string,
+  goal: Goal,
+  dimHistory: Array<{ normalized_gap: number }>,
+  stallReport: StallReport,
+  escalationLevel: number,
+  incrementDimName: string,
+  result: LoopIterationResult,
+  logPrefix: string
+): Promise<void> {
+  if (ctx.deps.learningPipeline) {
+    try {
+      await ctx.deps.learningPipeline.onStallDetected(goalId, stallReport);
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const activeStrategyForRecord = await Promise.resolve(ctx.deps.strategyManager.getActiveStrategy(goalId)).catch(() => null);
+  const strategyIdForRecord = activeStrategyForRecord?.id ?? "unknown";
+
+  // M14-S2: analyze stall cause to determine REFINE/PIVOT/ESCALATE
+  // Falls back to PIVOT behavior when analyzeStallCause is unavailable
+  const analysis = ctx.deps.stallDetector.analyzeStallCause?.(dimHistory);
+  result.stallAnalysis = analysis;
+
+  if (analysis?.recommended_action === "refine") {
+    // REFINE: keep current strategy, just log and continue
+    ctx.logger?.info(`CoreLoop: ${logPrefix}stall REFINE — parameter_issue detected, keeping strategy`, {
+      goalId,
+      evidence: analysis.evidence,
+    });
+  } else if (stallReport.suggested_cause === "information_deficit" && ctx.deps.goalRefiner) {
+    // Observation-failure stall: re-refine the leaf to get better dimensions
+    ctx.logger?.info(`CoreLoop: ${logPrefix}observation-failure stall — calling reRefineLeaf`, { goalId });
+    try {
+      await ctx.deps.goalRefiner.reRefineLeaf(goalId, stallReport.suggested_cause!);
+    } catch (reRefineErr) {
+      ctx.logger?.warn(`CoreLoop: ${logPrefix}reRefineLeaf failed (non-fatal)`, {
+        goalId,
+        err: reRefineErr instanceof Error ? reRefineErr.message : String(reRefineErr),
+      });
+    }
+  } else if (analysis?.recommended_action === "escalate") {
+    // ESCALATE: set escalation level to max to trigger loop exit
+    ctx.logger?.warn(`CoreLoop: ${logPrefix}stall ESCALATE — goal_unreachable detected`, {
+      goalId,
+      evidence: analysis.evidence,
+    });
+    await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+    result.pivotOccurred = true;
+  } else {
+    // PIVOT: switch strategy, but check pivot count limit first
+    const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
+    const activeStrategy = portfolio?.strategies.find((s) => s.state === "active");
+    const pivotCount = activeStrategy?.pivot_count ?? 0;
+    const maxPivotCount = activeStrategy?.max_pivot_count ?? 2;
+
+    if (pivotCount >= maxPivotCount) {
+      // Auto-escalate when pivot limit reached
+      ctx.logger?.warn(`CoreLoop: ${logPrefix}stall auto-ESCALATE — pivot_count limit reached`, {
+        goalId,
+        pivotCount,
+        maxPivotCount,
+      });
+      await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+      result.pivotOccurred = true;
+    } else {
+      const newStrategy = await ctx.deps.strategyManager.onStallDetected(
+        goalId,
+        escalationLevel + 1,
+        goal.origin ?? "general"
+      );
+      if (newStrategy) {
+        result.pivotOccurred = true;
+        if (activeStrategy?.id) {
+          try {
+            await ctx.deps.strategyManager.incrementPivotCount(goalId, activeStrategy.id);
+          } catch {
+            // non-fatal
+          }
+        }
+      }
+    }
+  }
+
+  // M14-S3: Record decision (non-fatal)
+  if (ctx.deps.knowledgeManager) {
+    try {
+      const latestGap = dimHistory[dimHistory.length - 1]?.normalized_gap ?? 1;
+      await ctx.deps.knowledgeManager.recordDecision({
+        id: randomUUID(),
+        goal_id: goalId,
+        goal_type: goal.origin ?? "general",
+        strategy_id: strategyIdForRecord,
+        hypothesis: activeStrategyForRecord?.hypothesis,
+        decision: analysis?.recommended_action ?? "pivot",
+        context: {
+          gap_value: latestGap,
+          stall_count: stallReport.escalation_level,
+          cycle_count: dimHistory.length,
+          trust_score: 0,
+        },
+        outcome: "pending",
+        timestamp: new Date().toISOString(),
+        what_worked: [],
+        what_failed: [],
+        suggested_next: [],
+      });
+    } catch {
+      // non-fatal: never block the loop for decision recording
+    }
+  }
+
+  if (incrementDimName) {
+    await ctx.deps.stallDetector.incrementEscalation(goalId, incrementDimName);
   }
 }
 
@@ -285,104 +308,11 @@ async function checkGlobalStall(
   result.stallDetected = true;
   result.stallReport = globalStall;
 
-  if (ctx.deps.learningPipeline) {
-    try {
-      await ctx.deps.learningPipeline.onStallDetected(goalId, globalStall);
-    } catch {
-      // non-fatal
-    }
-  }
-
-  const globalActiveStrategyForRecord = await Promise.resolve(ctx.deps.strategyManager.getActiveStrategy(goalId)).catch(() => null);
-  const globalStrategyIdForRecord = globalActiveStrategyForRecord?.id ?? "unknown";
-
   const firstDimHistory = allDimGaps.values().next().value ?? [];
-  const globalAnalysis = ctx.deps.stallDetector.analyzeStallCause?.(firstDimHistory);
-  result.stallAnalysis = globalAnalysis;
+  const firstDimName = goal.dimensions[0]?.name ?? "";
 
-  if (globalAnalysis?.recommended_action === "refine") {
-    ctx.logger?.info("CoreLoop: global stall REFINE — parameter_issue, keeping strategy", {
-      goalId,
-      evidence: globalAnalysis.evidence,
-    });
-  } else if (globalStall.suggested_cause === "information_deficit" && ctx.deps.goalRefiner) {
-    // Observation-failure stall: re-refine the leaf to get better dimensions
-    ctx.logger?.info("CoreLoop: global observation-failure stall — calling reRefineLeaf", { goalId });
-    try {
-      await ctx.deps.goalRefiner.reRefineLeaf(goalId, globalStall.suggested_cause);
-    } catch (reRefineErr) {
-      ctx.logger?.warn("CoreLoop: global reRefineLeaf failed (non-fatal)", {
-        goalId,
-        err: reRefineErr instanceof Error ? reRefineErr.message : String(reRefineErr),
-      });
-    }
-  } else if (globalAnalysis?.recommended_action === "escalate") {
-    ctx.logger?.warn("CoreLoop: global stall ESCALATE — goal_unreachable", {
-      goalId,
-      evidence: globalAnalysis.evidence,
-    });
-    await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
-    result.pivotOccurred = true;
-  } else {
-    const globalPortfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
-    const globalActiveStrategy = globalPortfolio?.strategies.find((s) => s.state === "active");
-    const globalPivotCount = globalActiveStrategy?.pivot_count ?? 0;
-    const globalMaxPivotCount = globalActiveStrategy?.max_pivot_count ?? 2;
-
-    if (globalPivotCount >= globalMaxPivotCount) {
-      ctx.logger?.warn("CoreLoop: global stall auto-ESCALATE — pivot_count limit reached", {
-        goalId,
-        pivotCount: globalPivotCount,
-        maxPivotCount: globalMaxPivotCount,
-      });
-      await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
-      result.pivotOccurred = true;
-    } else {
-      const newStrategy = await ctx.deps.strategyManager.onStallDetected(goalId, 2, goal.origin ?? "general");
-      if (newStrategy) {
-        result.pivotOccurred = true;
-        if (globalActiveStrategy?.id) {
-          try {
-            await ctx.deps.strategyManager.incrementPivotCount(goalId, globalActiveStrategy.id);
-          } catch {
-            // non-fatal
-          }
-        }
-      }
-    }
-  }
-
-  if (ctx.deps.knowledgeManager) {
-    try {
-      const latestGap = firstDimHistory[firstDimHistory.length - 1]?.normalized_gap ?? 1;
-      await ctx.deps.knowledgeManager.recordDecision({
-        id: randomUUID(),
-        goal_id: goalId,
-        goal_type: goal.origin ?? "general",
-        strategy_id: globalStrategyIdForRecord,
-        hypothesis: globalActiveStrategyForRecord?.hypothesis,
-        decision: globalAnalysis?.recommended_action ?? "pivot",
-        context: {
-          gap_value: latestGap,
-          stall_count: globalStall.escalation_level,
-          cycle_count: firstDimHistory.length,
-          trust_score: 0,
-        },
-        outcome: "pending",
-        timestamp: new Date().toISOString(),
-        what_worked: [],
-        what_failed: [],
-        suggested_next: [],
-      });
-    } catch {
-      // non-fatal: never block the loop for decision recording
-    }
-  }
-
-  const firstDimName = goal.dimensions[0]?.name;
-  if (firstDimName) {
-    await ctx.deps.stallDetector.incrementEscalation(goalId, firstDimName);
-  }
+  // Pass escalationLevel=1 so that escalationLevel+1=2, preserving the original global PIVOT level
+  await applyStallAction(ctx, goalId, goal, firstDimHistory, globalStall, 1, firstDimName, result, "global ");
 }
 
 /** Portfolio rebalance: check for rebalance triggers and handle wait strategy expiry. */

@@ -62,6 +62,7 @@ function createMockStrategyManager(): StrategyManager {
     updateAllocation: vi.fn(),
     terminateStrategy: vi.fn(),
     activateMultiple: vi.fn().mockReturnValue([]),
+    savePortfolio: vi.fn().mockResolvedValue(undefined),
   } as unknown as StrategyManager;
 }
 
@@ -696,7 +697,7 @@ describe("PortfolioManager", () => {
       await Promise.resolve(); // flush microtasks so async updateStrategyAllocation completes
 
       expect(mockStrategyManager.updateState).toHaveBeenCalledWith("s1", "active");
-      expect(mockStateManager.writeRaw).toHaveBeenCalled();
+      expect(mockStrategyManager.savePortfolio).toHaveBeenCalled();
     });
 
     it("multiple strategies get equal split", async () => {
@@ -710,8 +711,8 @@ describe("PortfolioManager", () => {
       await Promise.resolve(); // flush microtasks so async updateStrategyAllocation completes
 
       expect(mockStrategyManager.updateState).toHaveBeenCalledTimes(3);
-      // writeRaw called once per strategy for allocation update
-      expect(mockStateManager.writeRaw).toHaveBeenCalledTimes(3);
+      // savePortfolio called once per strategy for allocation update
+      expect(mockStrategyManager.savePortfolio).toHaveBeenCalledTimes(3);
     });
 
     it("does nothing when no strategy IDs provided", async () => {

@@ -202,6 +202,43 @@ export function filterByTierBudget(
   return result;
 }
 
+// ─── Drive helpers (used by selection + compression) ───
+
+/**
+ * Dissatisfaction drive: delay compression up to 2x for high-dissatisfaction dimensions.
+ * For each dimension, if dissatisfaction > 0.7, delay_factor = 1 + dissatisfaction (max 2.0).
+ * Returns map of dimension -> delay_factor.
+ */
+export function getCompressionDelay(
+  driveScores: Array<{ dimension: string; dissatisfaction: number }>
+): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const { dimension, dissatisfaction } of driveScores) {
+    if (dissatisfaction > 0.7) {
+      const delayFactor = Math.min(2.0, 1 + dissatisfaction);
+      result.set(dimension, delayFactor);
+    } else {
+      result.set(dimension, 1.0);
+    }
+  }
+  return result;
+}
+
+/**
+ * Deadline drive: boost Working Memory priority up to 30%.
+ * For each dimension, bonus = min(deadline * 0.3, 0.3).
+ * Returns map of dimension -> bonus_factor.
+ */
+export function getDeadlineBonus(
+  driveScores: Array<{ dimension: string; deadline: number }>
+): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const { dimension, deadline } of driveScores) {
+    result.set(dimension, Math.min(deadline * 0.3, 0.3));
+  }
+  return result;
+}
+
 // ─── llmClassifyTier ───
 
 const LLMTierResponseSchema = z.object({
