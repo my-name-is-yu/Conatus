@@ -65,7 +65,7 @@ describe("Guard 3: Score-evidence consistency check (§4.3)", () => {
       noopApply,
       undefined, // workspaceContext: none
       null,
-      true, // dryRun
+      false, // dryRun=false so P0 guard fires
       logger
     );
 
@@ -149,7 +149,7 @@ describe("Guard 3: Score-evidence consistency check (§4.3)", () => {
       noopApply,
       undefined,
       null,
-      true,
+      false, // dryRun=false so P0 guard fires
       logger
     );
 
