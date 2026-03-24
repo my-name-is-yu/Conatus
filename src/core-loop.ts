@@ -13,6 +13,7 @@ import type {
   ExecutionSummaryParams,
   ReportingEngine,
   LoopConfig,
+  ResolvedLoopConfig,
   LoopIterationResult,
   LoopResult,
   CoreLoopDeps,
@@ -47,6 +48,7 @@ export type {
   ExecutionSummaryParams,
   ReportingEngine,
   LoopConfig,
+  ResolvedLoopConfig,
   LoopIterationResult,
   LoopResult,
   CoreLoopDeps,
@@ -79,7 +81,7 @@ const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget">> = {
  */
 export class CoreLoop {
   private readonly deps: CoreLoopDeps;
-  private readonly config: Required<Omit<LoopConfig, "iterationBudget">> & Pick<LoopConfig, "iterationBudget">;
+  private readonly config: ResolvedLoopConfig;
   private readonly logger?: Logger;
   private stopped = false;
   private readonly learning: CoreLoopLearning = new CoreLoopLearning();
@@ -221,10 +223,8 @@ export class CoreLoop {
         break;
       }
 
-      // Check shared iteration budget before each iteration
-      const { allowed, warnings } = budget.consume();
-      for (const w of warnings) { this.logger?.warn(w); }
-      if (!allowed) {
+      // Check shared iteration budget before each iteration (but do not consume yet)
+      if (budget.exhausted) {
         this.logger?.info("Iteration budget exhausted, stopping loop");
         break;
       }
@@ -236,6 +236,17 @@ export class CoreLoop {
       // so callers always see a meaningful value rather than the default 0.
       if (iterationResult.skipped && iterations.length >= 1) {
         iterationResult.gapAggregate = iterations[iterations.length - 1]!.gapAggregate;
+      }
+
+      // Only consume budget for non-skipped iterations — skipped iterations do minimal
+      // work (observation only) and should not count against the shared budget.
+      if (!iterationResult.skipped) {
+        const { allowed, warnings } = budget.consume();
+        for (const w of warnings) { this.logger?.warn(w); }
+        if (!allowed) {
+          this.logger?.info("Iteration budget exhausted, stopping loop");
+          break;
+        }
       }
       iterations.push(iterationResult);
 
@@ -603,7 +614,7 @@ export class CoreLoop {
    *
    * Called by run() when treeMode=true.
    */
-  async runTreeIteration(rootId: string, loopIndex: number, nodeConsumedMap?: Map<string, number>): Promise<LoopIterationResult> {
+  async runTreeIteration(rootId: string, loopIndex: number, nodeConsumedMap: Map<string, number>): Promise<LoopIterationResult> {
     return runTreeIterationImpl(rootId, loopIndex, this.deps, this.config, this.logger,
       (id, idx) => this.runOneIteration(id, idx), nodeConsumedMap);
   }
