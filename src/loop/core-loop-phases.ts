@@ -162,11 +162,15 @@ export async function calculateGapOrComplete(
     return { gapVector, gapAggregate, skipTaskGeneration: true };
   }
 
+  const avgConf = gapVector.gaps.length > 0
+    ? gapVector.gaps.reduce((s, g) => s + g.confidence, 0) / gapVector.gaps.length
+    : undefined;
   ctx.deps.onProgress?.({
     iteration: loopIndex + 1,
     maxIterations: ctx.config.maxIterations,
     phase: "Generating task...",
     gap: gapAggregate,
+    confidence: avgConf,
   });
 
   return { gapVector, gapAggregate };

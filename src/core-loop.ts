@@ -459,6 +459,12 @@ export class CoreLoop {
         );
         result.skipped = true;
         result.skipReason = "no_state_change";
+        this.deps.onProgress?.({
+          iteration: loopIndex + 1,
+          maxIterations: this.config.maxIterations,
+          phase: "Skipped",
+          skipReason: result.skipReason,
+        });
         // Carry forward completion status from the previous snapshot's iteration
         // so a completed goal is not forced through 5 more iterations.
         const goalState = await this.deps.stateManager.loadGoal(goalId);
