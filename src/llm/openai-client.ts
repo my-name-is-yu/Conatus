@@ -9,6 +9,7 @@ import { LLMError } from "../utils/errors.js";
 const DEFAULT_MODEL = "gpt-4o";
 const DEFAULT_TEMPERATURE = 0.2;
 const MAX_RETRY_ATTEMPTS = 3;
+const DEFAULT_LLM_TIMEOUT_MS = 60_000;
 
 /** Exponential backoff delays in milliseconds: 1s, 2s, 4s */
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
@@ -97,7 +98,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
       try {
         try {
-          const response = await this.client.chat.completions.create(createParams);
+          const response = await this.client.chat.completions.create(createParams, { timeout: DEFAULT_LLM_TIMEOUT_MS });
 
           const choice = response.choices[0];
           const content = choice?.message.content ?? "";

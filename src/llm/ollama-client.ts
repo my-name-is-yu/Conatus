@@ -8,6 +8,7 @@ import { LLMError } from "../utils/errors.js";
 const DEFAULT_MODEL = "qwen3:4b";
 const DEFAULT_TEMPERATURE = 0;
 const MAX_RETRY_ATTEMPTS = 3;
+const DEFAULT_LLM_TIMEOUT_MS = 60_000;
 
 /** Exponential backoff delays in milliseconds: 1s, 2s, 4s */
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
@@ -71,13 +72,21 @@ export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
 
     for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
       try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body,
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), DEFAULT_LLM_TIMEOUT_MS);
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body,
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => "(no body)");

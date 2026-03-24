@@ -97,6 +97,11 @@ export interface LoopConfig {
    * (e.g. via `tavori goal archive <id>` CLI command or by setting this flag intentionally).
    */
   autoArchive?: boolean;
+  /**
+   * When true, suppress loop side effects such as checkpoint persistence,
+   * final goal status writes, and archive operations.
+   */
+  dryRun?: boolean;
 }
 
 // ─── Result types ───

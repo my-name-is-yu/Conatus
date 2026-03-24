@@ -669,8 +669,8 @@ describe("R7-3: LLM observation min-type scaling accuracy", () => {
      * SatisficingJudge requires double-confirmation (2 consecutive cycles where
      * all dimensions meet threshold) before declaring is_complete=true (§4.4).
      *
-     * Iteration 1 (code_quality=0.75, below threshold 0.8):
-     *   Call 0: code_quality observation → 0.75
+     * Iteration 1 (code_quality=0.55, below threshold 0.8):
+     *   Call 0: code_quality observation → 0.55
      *   Call 1: task generation
      *   Call 2: LLM review
      *
@@ -685,12 +685,16 @@ describe("R7-3: LLM observation min-type scaling accuracy", () => {
      * Guard responses:
      *   Call 5+: unused guards
      */
-    // Use score=0.35 for iter1 so that after verifyTask's auto-progress (+0.4),
-    // the value becomes 0.75 which is still below threshold 0.8.
-    // iter2 and iter3 observe 0.90 which exceeds threshold.
+    // Use score=0.55 for iter1 (below threshold 0.8). The verifier's +0.2 bump brings
+    // current_value to 0.75 (still below threshold), so the post-task satisficing check
+    // does NOT advance the streak in iter1. iter2 and iter3 observe 0.90 which exceeds
+    // threshold. The jump from 0.55 to 0.90 is delta=0.35, within the §3.3 jump-suppression
+    // limit (±0.4). previousScore now comes from dim.history (not current_value) so
+    // verifier's bump no longer bridges the suppression gap — hence the score must already
+    // be within 0.4 of the prior observed value.
     const llmClient = createSequentialMockLLMClient([
-      // Iteration 1 — below threshold (0.35 + 0.4 auto-progress = 0.75, still < 0.8)
-      JSON.stringify({ score: 0.35, reason: "Code quality needs significant improvement" }),
+      // Iteration 1 — below threshold (0.55 < 0.8), task runs; 0.55+0.2=0.75 still < 0.8
+      JSON.stringify({ score: 0.55, reason: "Code quality needs significant improvement" }),
       "```json\n" + makeTaskGenerationResponse("code_quality") + "\n```",
       makeLLMReviewResponse(),
       // Iteration 2 — above threshold (streak=1, not yet complete)
@@ -716,7 +720,7 @@ describe("R7-3: LLM observation min-type scaling accuracy", () => {
     expect(result.finalStatus).toBe("completed");
     expect(result.totalIterations).toBe(3);
 
-    // Iteration 1: gap should be > 0 (score 0.35 < threshold 0.8)
+    // Iteration 1: gap should be > 0 (score 0.55 < threshold 0.8)
     const iter1 = result.iterations[0]!;
     expect(iter1.gapAggregate).toBeGreaterThan(0);
 

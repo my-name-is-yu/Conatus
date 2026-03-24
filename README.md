@@ -216,6 +216,15 @@ Run the focused verification command:
 npx vitest run tests/unit/goalNegotiator.test.ts
 ```
 
+Regression note: `tests/core-loop-orchestrator-regression.test.ts` covers the main loop orchestrator decision points across live and `dryRun` modes in 12 scenarios, including score overrides, delegation, verification, loop termination, three failure paths, and two side-effect suppression checks. Each scenario asserts the returned termination reason (`finalStatus`), the emitted action or failure state, and the visible side effects.
+Use it to verify orchestrator changes without waiting for the full suite.
+
+Run the focused verification command:
+
+```bash
+npx vitest run tests/core-loop-orchestrator-regression.test.ts
+```
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

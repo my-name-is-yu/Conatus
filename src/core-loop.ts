@@ -62,6 +62,7 @@ const DEFAULT_CONFIG: Required<LoopConfig> = {
   goalIds: [],
   minIterations: 1,
   autoArchive: false,
+  dryRun: false,
 };
 
 // ─── CoreLoop ───
@@ -202,7 +203,7 @@ export class CoreLoop {
       iterations.push(iterationResult);
 
       // Save checkpoint after each successful verify step (§4.8)
-      if (iterationResult.error === null && iterationResult.taskResult !== null) {
+      if (!this.config.dryRun && iterationResult.error === null && iterationResult.taskResult !== null) {
         try {
           const currentGoalForCp = await this.deps.stateManager.readRaw(`goals/${goalId}/goal.json`);
           const dimensionSnapshot: Record<string, number> = {};
@@ -306,7 +307,7 @@ export class CoreLoop {
     }
 
     // Persist final status to disk before post-loop hooks
-    if (finalStatus === "completed") {
+    if (finalStatus === "completed" && !this.config.dryRun) {
       try {
         const goalState = await this.deps.stateManager.loadGoal(goalId);
         if (goalState) {
@@ -354,7 +355,7 @@ export class CoreLoop {
     }
 
     // Archive goal state on completion (only when autoArchive is explicitly enabled)
-    if (finalStatus === "completed" && this.config.autoArchive) {
+    if (finalStatus === "completed" && this.config.autoArchive && !this.config.dryRun) {
       try {
         await this.deps.stateManager.archiveGoal(goalId);
       } catch (err) {

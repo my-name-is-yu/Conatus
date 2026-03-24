@@ -45,12 +45,15 @@ describe("LLMClient.sendMessage", () => {
     const response = await client.sendMessage([{ role: "user", content: "hello" }]);
 
     expect(anthropicCtor).toHaveBeenCalledWith({ apiKey: "sk-ant-test" });
-    expect(createMock).toHaveBeenCalledWith({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      temperature: 0,
-      messages: [{ role: "user", content: "hello" }],
-    });
+    expect(createMock).toHaveBeenCalledWith(
+      {
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        temperature: 0,
+        messages: [{ role: "user", content: "hello" }],
+      },
+      { timeout: 60000 }
+    );
     expect(response).toEqual({
       content: "ok",
       usage: { input_tokens: 12, output_tokens: 3 },
@@ -72,12 +75,15 @@ describe("LLMClient.sendMessage", () => {
       { model: "claude-test", max_tokens: 123, temperature: 0.7 }
     );
 
-    expect(createMock).toHaveBeenCalledWith({
-      model: "claude-test",
-      max_tokens: 123,
-      temperature: 0.7,
-      messages: [{ role: "assistant", content: "prior" }],
-    });
+    expect(createMock).toHaveBeenCalledWith(
+      {
+        model: "claude-test",
+        max_tokens: 123,
+        temperature: 0.7,
+        messages: [{ role: "assistant", content: "prior" }],
+      },
+      { timeout: 60000 }
+    );
   });
 
   it("includes system prompts and falls back to empty content or unknown stop reason", async () => {
@@ -94,13 +100,16 @@ describe("LLMClient.sendMessage", () => {
       { system: "system prompt" }
     );
 
-    expect(createMock).toHaveBeenCalledWith({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      temperature: 0,
-      system: "system prompt",
-      messages: [{ role: "user", content: "call tool" }],
-    });
+    expect(createMock).toHaveBeenCalledWith(
+      {
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        temperature: 0,
+        system: "system prompt",
+        messages: [{ role: "user", content: "call tool" }],
+      },
+      { timeout: 60000 }
+    );
     expect(response).toEqual({
       content: "",
       usage: { input_tokens: 9, output_tokens: 0 },

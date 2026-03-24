@@ -43,6 +43,7 @@ export interface ILLMClient {
 const DEFAULT_MODEL = "claude-sonnet-4-20250514";
 const DEFAULT_TEMPERATURE = 0;
 const MAX_RETRY_ATTEMPTS = 3;
+const DEFAULT_LLM_TIMEOUT_MS = 60_000;
 
 /** Exponential backoff delays in milliseconds: 1s, 2s, 4s */
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
@@ -111,16 +112,19 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
 
     for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
       try {
-        const response = await this.client.messages.create({
-          model,
-          max_tokens,
-          temperature,
-          ...(system ? { system } : {}),
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        });
+        const response = await this.client.messages.create(
+          {
+            model,
+            max_tokens,
+            temperature,
+            ...(system ? { system } : {}),
+            messages: messages.map((m) => ({
+              role: m.role,
+              content: m.content,
+            })),
+          },
+          { timeout: DEFAULT_LLM_TIMEOUT_MS }
+        );
 
         const block = response.content[0];
         const content = block && block.type === "text" ? block.text : "";

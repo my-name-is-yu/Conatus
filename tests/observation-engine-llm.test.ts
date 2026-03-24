@@ -403,7 +403,92 @@ describe("ObservationEngine LLM observation", () => {
     });
   });
 
-  // ─── Test 6: contextProvider output is included in the LLM prompt ───
+  // ─── Test 6 (bug #233): previousScore is derived from history, not current_value ───
+
+  describe("observe(): previousScore passed to observeWithLLM (bug #233)", () => {
+    it("passes previousScore=null when history is empty, even if current_value is non-zero", async () => {
+      // Simulate a verifier-written high value: current_value=0.9 but no prior observations
+      const mockLLMClient = createMockLLMClient(0.9, "high value");
+      const engine = new ObservationEngine(stateManager, [], mockLLMClient, undefined, {
+        gitContextFetcher: fakeGitContextFetcher,
+      });
+
+      const goal = makeGoal({
+        id: "goal-bug233-empty-history",
+        dimensions: [
+          {
+            name: "dim1",
+            label: "Dimension 1",
+            current_value: 0.9, // verifier-written — NOT a real prior observation
+            threshold: { type: "min", value: 0.8 },
+            confidence: 0.8,
+            observation_method: defaultMethod,
+            last_updated: new Date().toISOString(),
+            history: [], // no real observations yet
+            weight: 1.0,
+            uncertainty_weight: null,
+            state_integrity: "ok",
+          },
+        ],
+      });
+      await stateManager.saveGoal(goal);
+
+      // Spy on the instance method to capture the previousScore argument
+      const observeWithLLMSpy = vi.spyOn(engine, "observeWithLLM");
+
+      await engine.observe("goal-bug233-empty-history", [defaultMethod]);
+
+      expect(observeWithLLMSpy).toHaveBeenCalled();
+      // 6th argument (index 6) is previousScore — must be null, not 0.9
+      const callArgs = observeWithLLMSpy.mock.calls[0]!;
+      const previousScoreArg = callArgs[6]; // previousScore parameter
+      expect(previousScoreArg).toBeNull();
+    });
+
+    it("passes previousScore from last history entry, not from current_value", async () => {
+      // current_value=0.9 (verifier-written) but last history entry has value=0.55
+      const mockLLMClient = createMockLLMClient(0.8, "progress");
+      const engine = new ObservationEngine(stateManager, [], mockLLMClient, undefined, {
+        gitContextFetcher: fakeGitContextFetcher,
+      });
+
+      const now = new Date().toISOString();
+      const goal = makeGoal({
+        id: "goal-bug233-history-entries",
+        dimensions: [
+          {
+            name: "dim1",
+            label: "Dimension 1",
+            current_value: 0.9, // verifier-written — should NOT be used as previousScore
+            threshold: { type: "min", value: 0.8 },
+            confidence: 0.8,
+            observation_method: defaultMethod,
+            last_updated: now,
+            history: [
+              { value: 0.4, timestamp: now, confidence: 0.7, source_observation_id: "obs-1" },
+              { value: 0.55, timestamp: now, confidence: 0.7, source_observation_id: "obs-2" },
+            ],
+            weight: 1.0,
+            uncertainty_weight: null,
+            state_integrity: "ok",
+          },
+        ],
+      });
+      await stateManager.saveGoal(goal);
+
+      const observeWithLLMSpy = vi.spyOn(engine, "observeWithLLM");
+
+      await engine.observe("goal-bug233-history-entries", [defaultMethod]);
+
+      expect(observeWithLLMSpy).toHaveBeenCalled();
+      const callArgs = observeWithLLMSpy.mock.calls[0]!;
+      const previousScoreArg = callArgs[6]; // previousScore parameter
+      // Must come from the last history entry (0.55), not from current_value (0.9)
+      expect(previousScoreArg).toBe(0.55);
+    });
+  });
+
+  // ─── Test 7: contextProvider output is included in the LLM prompt ───
 
   describe("observeWithLLM: workspace context injection", () => {
     it("includes contextProvider output in the LLM prompt", async () => {

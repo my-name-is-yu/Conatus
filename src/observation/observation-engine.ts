@@ -335,7 +335,15 @@ export class ObservationEngine {
           // Only pass previousScore when there's actual observation history.
           // The seed current_value in a new goal is not a real observation and
           // should not trigger the §3.3 score-jump suppression guard.
+          // Use the last history entry (not current_value) to avoid treating
+          // verifier-written values as prior observations (bug #233).
           const hasPriorObs = Array.isArray(dim.history) && dim.history.length > 0;
+          const lastObsEntry =
+            hasPriorObs ? dim.history[dim.history.length - 1] : null;
+          const previousScore =
+            lastObsEntry && typeof lastObsEntry.value === "number"
+              ? lastObsEntry.value
+              : null;
           await this.observeWithLLM(
             goalId,
             dim.name,
@@ -343,7 +351,7 @@ export class ObservationEngine {
             dim.label ?? dim.name,
             JSON.stringify(dim.threshold),
             ctx,
-            hasPriorObs && typeof dim.current_value === "number" ? dim.current_value : null
+            previousScore
           );
           continue;
         } catch (err) {
