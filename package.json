@@ -13,9 +13,9 @@
   },
   "license": "MIT",
   "author": "yuyoshimuta",
-  "homepage": "https://github.com/my-name-is-yu/Tavori#readme",
+  "homepage": "https://github.com/my-name-is-yu/SeedPulse#readme",
   "bugs": {
-    "url": "https://github.com/my-name-is-yu/Tavori/issues"
+    "url": "https://github.com/my-name-is-yu/SeedPulse/issues"
   },
   "bin": {
     "seedpulse": "dist/cli-runner.js"
@@ -36,7 +36,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/my-name-is-yu/Tavori.git"
+    "url": "https://github.com/my-name-is-yu/SeedPulse.git"
   },
   "files": [
     "dist",
