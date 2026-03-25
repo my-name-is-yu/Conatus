@@ -351,9 +351,17 @@ export class CoreLoop {
         );
         result.skipped = true;
         result.skipReason = "no_state_change";
+        this.deps.onProgress?.({
+          iteration: loopIndex + 1,
+          maxIterations: this.config.maxIterations,
+          phase: "Skipped",
+          skipReason: result.skipReason,
+        });
         // Carry forward completion status from the already-loaded goal so a
         // completed goal is not forced through 5 more iterations.
-        if (goal.status === "completed") {
+        // Reload fresh state to ensure we reflect any status changes since observation.
+        const goalState = await this.deps.stateManager.loadGoal(goalId);
+        if (goalState?.status === "completed") {
           result.completionJudgment.is_complete = true;
         }
         this.deps.onProgress?.({

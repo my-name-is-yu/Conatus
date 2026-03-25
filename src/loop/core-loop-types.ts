@@ -301,6 +301,7 @@ export type ProgressPhase =
   | "Generating task..."
   | "Executing task..."
   | "Verifying result..."
+  | "Skipped"
   | "Skipped (no state change)";
 
 export interface ProgressEvent {
@@ -312,8 +313,12 @@ export interface ProgressEvent {
   phase: ProgressPhase;
   /** Gap aggregate from latest gap calculation (undefined before first gap calc) */
   gap?: number;
+  /** Average confidence across gap dimensions (undefined before first gap calc) */
+  confidence?: number;
   /** Short description of the task being executed (undefined outside execute phase) */
   taskDescription?: string;
+  /** Reason this iteration was skipped (undefined when not skipped) */
+  skipReason?: string;
 }
 
 // ─── Helpers ───
