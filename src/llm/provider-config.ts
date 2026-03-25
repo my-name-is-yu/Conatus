@@ -304,8 +304,19 @@ export async function loadProviderConfig(): Promise<ProviderConfig> {
   }
 
   const provider = resolveProvider(fileConfig.provider);
-  const model = resolveModel(fileConfig.model, provider);
+  let model = resolveModel(fileConfig.model, provider);
   const adapter = resolveAdapter(fileConfig.adapter);
+
+  // Auto-correct model-adapter incompatibility (e.g. OPENAI_MODEL=gpt-4o-mini with openai_codex_cli)
+  const registryEntry = MODEL_REGISTRY[model];
+  if (registryEntry && !registryEntry.adapters.includes(adapter)) {
+    const fallback = provider === "anthropic" ? "claude-sonnet-4-6" : provider === "ollama" ? "qwen3:4b" : "gpt-5.4-mini";
+    console.warn(
+      `[provider-config] Model "${model}" is not compatible with adapter "${adapter}". Falling back to "${fallback}".`
+    );
+    model = fallback;
+  }
+
   const api_key = resolveApiKey(fileConfig.api_key, provider);
   const base_url = resolveBaseUrl(fileConfig.base_url, provider);
 
