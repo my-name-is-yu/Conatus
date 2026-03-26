@@ -16,16 +16,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI: autocomplete now executes command on selection (single Enter, no confirmation step)
 - TUI: typing `/` shows all available commands
 
-## [0.1.1] - 2026-03-22
+## [0.1.1] - 2026-03-26
 
 ### Fixed
 
-- Fixed Codex CLI integration: removed deprecated `--path` argument, using `cwd` instead.
-- Fixed TUI intent recognizer: LLM fallback errors were silently swallowed, now logged. Added `"unknown"` to schema enum to prevent Zod parse failures.
+- Fixed LLM observation confidence: downgrade from 0.70 to 0.30 (`self_report` layer) when no DataSource can observe a dimension (#300)
+- Fixed skip-path observation entry: uses `self_report` layer when `sourceAvailable === false` instead of hardcoded `independent_review`
+- Fixed `suggest` command: skip `repo_context` injection for non-software goals (#298)
+- Fixed `improve negotiate` timeout hang when LLM response is slow (#308)
+- Fixed dimension name fuzzy matching in negotiate flow (#309)
+- Fixed range-type dimension threshold parse error for hyphen-separated values like `7-9` (#314)
+- Fixed stall detector: zero-progress early detection (#294)
+- Fixed `suggest` command: README.md prompt leak in output (#297)
+- Fixed `improve --max` flag propagation (#299)
+- Fixed Codex CLI integration: removed deprecated `--path` argument, using `cwd` instead
+- Fixed TUI intent recognizer: LLM fallback errors were silently swallowed, now logged
+
+### Added
+
+- Added auto goal decomposition with sub-goal tree mode switching (#295)
+- Added dimension auto-inference from ambiguous goal titles (#296)
 
 ### Changed
 
-- Translated all TUI text from Japanese to English (status labels, input placeholder).
+- LLM prompt for range dimensions now uses comma-separated format (`10,20`) instead of hyphen
+- Translated all TUI text from Japanese to English (status labels, input placeholder)
 
 ## [0.1.0] - 2026-03-23
 
