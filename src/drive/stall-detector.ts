@@ -29,6 +29,13 @@ const DEFAULT_DURATION_HOURS_BY_CATEGORY: Record<string, number> = {
 
 const DEFAULT_DURATION_HOURS_FALLBACK = 3;
 
+// ─── Early zero-progress detection window ───
+// When gap stays near-maximum (>=0.95) with negligible variance for this many loops,
+// detect stall immediately without waiting for the full adjusted-N window.
+const ZERO_PROGRESS_WINDOW = 3;
+const ZERO_PROGRESS_GAP_FLOOR = 0.90;
+const ZERO_PROGRESS_MAX_VARIANCE = 0.01;
+
 // ─── Stall thresholds ───
 
 const CONSECUTIVE_FAILURE_THRESHOLD = 3;
@@ -70,6 +77,17 @@ export class StallDetector {
     return Math.round(base * multiplier);
   }
 
+  /**
+   * Check if recent gap history shows zero progress (gap stuck near maximum).
+   */
+  private isZeroProgress(gapHistory: Array<{ normalized_gap: number }>): boolean {
+    if (gapHistory.length < ZERO_PROGRESS_WINDOW) return false;
+    const recent = gapHistory.slice(-ZERO_PROGRESS_WINDOW);
+    const gaps = recent.map(e => e.normalized_gap);
+    if (!gaps.every(g => g >= ZERO_PROGRESS_GAP_FLOOR)) return false;
+    return Math.max(...gaps) - Math.min(...gaps) < ZERO_PROGRESS_MAX_VARIANCE;
+  }
+
   // ─── Public Methods ───
 
   /**
@@ -87,6 +105,21 @@ export class StallDetector {
     if (gapHistory.length < n + 1) {
       // Not enough history to determine a stall
       return null;
+    }
+
+    // Zero-progress detection: after confirming sufficient history,
+    // check if recent entries show no progress at all
+    if (this.isZeroProgress(gapHistory)) {
+      return StallReportSchema.parse({
+        stall_type: "dimension_stall",
+        goal_id: goalId,
+        dimension_name: dimensionName,
+        task_id: null,
+        detected_at: new Date().toISOString(),
+        escalation_level: 0,
+        suggested_cause: "approach_failure",
+        decay_factor: DECAY_FACTOR_STALLED,
+      });
     }
 
     const recent = gapHistory.slice(-n - 1);
@@ -185,10 +218,17 @@ export class StallDetector {
       return null;
     }
 
+    let zeroProgressCount = 0;
+
     for (const [, gapHistory] of allDimensionGaps) {
       if (gapHistory.length < loopThreshold + 1) {
         // Not enough data for this dimension — treat as not stalled (insufficient evidence)
         return null;
+      }
+
+      if (this.isZeroProgress(gapHistory)) {
+        zeroProgressCount++;
+        continue;
       }
 
       const recent = gapHistory.slice(-loopThreshold - 1);
@@ -201,7 +241,21 @@ export class StallDetector {
       }
     }
 
-    // All dimensions are non-improving
+    // Only trigger zero-progress global stall if ALL dimensions are zero-progress
+    if (zeroProgressCount === allDimensionGaps.size) {
+      return StallReportSchema.parse({
+        stall_type: "global_stall",
+        goal_id: goalId,
+        dimension_name: null,
+        task_id: null,
+        detected_at: new Date().toISOString(),
+        escalation_level: 0,
+        suggested_cause: "goal_infeasible",
+        decay_factor: DECAY_FACTOR_STALLED,
+      });
+    }
+
+    // All dimensions are non-improving (normal stall path)
     return StallReportSchema.parse({
       stall_type: "global_stall",
       goal_id: goalId,
