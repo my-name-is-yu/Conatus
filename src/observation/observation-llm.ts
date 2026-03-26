@@ -167,6 +167,16 @@ export async function observeWithLLM(
       confidence: 0.1,
       notes: "Skipped: no context available, existing value preserved.",
     });
+    // RC-2: Apply the skip entry so state reflects the preserved value.
+    try {
+      await applyObservation(goalId, skipEntry);
+    } catch (persistErr) {
+      throw new ObservationPersistenceError(
+        `Failed to persist skip observation for dimension "${dimensionName}": ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+        skipEntry,
+        persistErr instanceof Error ? persistErr : new Error(String(persistErr)),
+      );
+    }
     return skipEntry;
   }
 
@@ -246,12 +256,24 @@ export async function observeWithLLM(
   // If no evidence (no context, no git diff), LLM score > 0.0 is unreliable.
   // Skip this check in dryRun (cross-validation) mode — the caller needs the
   // raw LLM score to compare against the mechanical value.
+  // RC-1: When no context but a previousScore is known from observation history,
+  // preserve the previous score with degraded confidence rather than forcing 0.0.
+  // "No context" means "can't verify", not "definitely zero".
   let score = parsed.score;
+  let scorePreservedFromPrevious = false;
   if (!hasContext && score > 0.0 && !dryRun) {
-    logger?.warn(
-      `score overridden to 0.0 (no evidence available, LLM returned ${score})`
-    );
-    score = 0.0;
+    if (typeof previousScore === "number" && Number.isFinite(previousScore)) {
+      score = previousScore;
+      scorePreservedFromPrevious = true;
+      logger?.warn(
+        `score preserved from previous observation (no context): ${previousScore.toFixed(3)}`
+      );
+    } else {
+      logger?.warn(
+        `score overridden to 0.0 (no evidence available, LLM returned ${score})`
+      );
+      score = 0.0;
+    }
   }
 
   // §3.3: Observation score jump suppression (±0.4/cycle)
@@ -262,10 +284,10 @@ export async function observeWithLLM(
   let resolvedConfidence: number;
   if (sourceAvailable === false) {
     resolvedLayer = "self_report";
-    resolvedConfidence = hasContext ? 0.30 : 0.10;
+    resolvedConfidence = hasContext ? 0.30 : (scorePreservedFromPrevious ? 0.30 : 0.10);
   } else {
     resolvedLayer = "independent_review";
-    resolvedConfidence = hasContext ? 0.70 : 0.10;
+    resolvedConfidence = hasContext ? 0.70 : (scorePreservedFromPrevious ? 0.30 : 0.10);
   }
   if (
     typeof previousScore === "number" &&
