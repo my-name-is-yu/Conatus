@@ -101,6 +101,7 @@ vi.mock("../src/loop/core-loop-phases.js", () => ({
   observeAndReload: vi.fn(async (_ctx: unknown, _goalId: string, goal: any) => goal),
   calculateGapOrComplete: vi.fn(),
   scoreDrivesAndCheckKnowledge: vi.fn(async () => ({ driveScores: [], highDissatisfactionDimensions: [] })),
+  phaseAutoDecompose: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../src/loop/core-loop-phases-b.js", () => ({

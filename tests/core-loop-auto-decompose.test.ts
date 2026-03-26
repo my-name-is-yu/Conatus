@@ -379,4 +379,34 @@ describe("CoreLoop auto-decompose (issue #295)", () => {
     expect(orchestratorMock.ensureGoalRefined).toHaveBeenCalledTimes(1);
     expect(orchestratorMock.ensureGoalRefined).toHaveBeenCalledWith("goal-1");
   });
+
+  it("skips decomposition for non-root goals (decomposition_depth > 0)", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock();
+    const { deps, mocks } = createMockDeps(tmpDir, orchestratorMock);
+
+    // Child goal at depth 1 — should NOT be decomposed
+    const childGoal = makeGoal({ id: "goal-child", children_ids: [], node_type: "goal", decomposition_depth: 1 });
+    await mocks.stateManager.saveGoal(childGoal);
+
+    const loop = new CoreLoop(deps, { maxIterations: 1, delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-child", 0);
+
+    expect(orchestratorMock.ensureGoalRefined).not.toHaveBeenCalled();
+  });
+
+  it("loop continues without crashing when ensureGoalRefined throws", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock();
+    orchestratorMock.ensureGoalRefined.mockRejectedValue(new Error("decomposition service unavailable"));
+    const { deps, mocks } = createMockDeps(tmpDir, orchestratorMock);
+
+    const goal = makeGoal({ id: "goal-1", specificity_score: null, children_ids: [], node_type: "goal" });
+    await mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { maxIterations: 1, delayBetweenLoopsMs: 0 });
+    // Should not throw — error is non-fatal
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(result.error).toBeNull();
+    expect(orchestratorMock.ensureGoalRefined).toHaveBeenCalledWith("goal-1");
+  });
 });

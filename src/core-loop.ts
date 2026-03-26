@@ -80,7 +80,8 @@ const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget">> = {
  */
 export class CoreLoop {
   private readonly deps: CoreLoopDeps;
-  private readonly config: ResolvedLoopConfig;
+  /** Mutable config — may be updated mid-run (e.g. treeMode enabled after decomposition). */
+  private config: ResolvedLoopConfig;
   private readonly logger?: Logger;
   private stopped = false;
   private readonly learning: CoreLoopLearning = new CoreLoopLearning();
@@ -334,9 +335,19 @@ export class CoreLoop {
     if (!loadedGoal) return result;
     let goal = loadedGoal;
 
-    if (!this.decomposedGoals.has(goalId)) {
-      this.decomposedGoals.add(goalId);
-      await phaseAutoDecompose(goalId, goal, this.deps, this.config, this.logger);
+    await phaseAutoDecompose(goalId, goal, this.deps, this.config, this.logger, this.decomposedGoals);
+
+    // After decomposition: if children were created, reload and switch to tree mode
+    // so subsequent iterations use runTreeIteration instead of runOneIteration.
+    if (!goal.children_ids.length) {
+      const reloadedAfterDecompose = await this.deps.stateManager.loadGoal(goalId);
+      if (reloadedAfterDecompose && reloadedAfterDecompose.children_ids.length > 0) {
+        goal = reloadedAfterDecompose;
+        if (this.deps.treeLoopOrchestrator) {
+          this.config = { ...this.config, treeMode: true };
+          this.logger?.info("[CoreLoop] treeMode enabled after auto-decomposition", { goalId, childrenCount: goal.children_ids.length });
+        }
+      }
     }
 
     // 2. Observe + reload
