@@ -5,7 +5,6 @@
   "openclaw": {
     "extensions": ["src/index.ts"]
   },
-  "main": "src/index.ts",
   "keywords": ["openclaw", "plugin", "seedpulse", "orchestration", "goal-driven"],
   "author": "SeedPulse",
   "license": "MIT",

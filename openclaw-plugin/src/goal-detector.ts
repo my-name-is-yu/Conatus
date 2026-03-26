@@ -42,7 +42,8 @@ Respond in JSON:
 
 async function llmDetect(msg: string, client: ILLMClient): Promise<GoalDetectionResult> {
   const res = await client.sendMessage([{ role: "user", content: buildPrompt(msg) }], { system: SYSTEM });
-  const raw = JSON.parse(res.content) as Partial<GoalDetectionResult>;
+  const cleaned = res.content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+  const raw = JSON.parse(cleaned) as Partial<GoalDetectionResult>;
   return {
     isGoal: raw.isGoal === true,
     description: typeof raw.description === "string" ? raw.description : undefined,

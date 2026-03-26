@@ -61,6 +61,7 @@ interface GoalState {
 }
 
 async function readGoalState(goalId: string): Promise<GoalState | null> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(goalId)) return null;
   try { return JSON.parse(await readFile(join(SEEDPULSE_DIR, "goals", goalId, "state.json"), "utf8")) as GoalState; }
   catch { return null; }
 }
@@ -99,6 +100,7 @@ class SeedPulseEngine {
     this.goalId = top.id;
     this.running = true;
     this.proc = spawn(SEEDPULSE_CLI, ["run", "--goal", top.id, "--adapter", "openclaw_gateway", "--yes"], { stdio: "ignore" });
+    this.proc.on("error", (e) => { this.api.log.error("SeedPulse: resume run error", e); this.running = false; this.clearPoll(); });
     this.poll(session.sessionKey, top.id);
     this.api.log.info(`SeedPulse: resumed goal ${top.id}`);
   }
@@ -147,7 +149,7 @@ class SeedPulseEngine {
     catch (err) { this.api.log.error("SeedPulse: parse negotiate failed", err); this.running = false; return; }
     this.goalId = goal.id;
     this.proc = spawn(SEEDPULSE_CLI, ["run", "--goal", goal.id, "--adapter", "openclaw_gateway", "--yes"], { stdio: "ignore" });
-    this.proc.on("error", (e) => { this.api.log.error("SeedPulse: run error", e); this.running = false; });
+    this.proc.on("error", (e) => { this.api.log.error("SeedPulse: run error", e); this.running = false; this.clearPoll(); });
     this.poll(sessionKey, goal.id);
   }
 
