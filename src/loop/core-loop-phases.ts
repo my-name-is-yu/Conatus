@@ -67,6 +67,68 @@ export async function loadGoalWithAggregation(
   return goal;
 }
 
+// ─── Phase 1b: Auto-decompose ───
+
+/**
+ * Automatically decompose an abstract goal into sub-goals using
+ * TreeLoopOrchestrator.ensureGoalRefined(). Skipped when disabled,
+ * when the goal already has children, or when the goal is a leaf.
+ * Only root goals (decomposition_depth === 0) are auto-decomposed to
+ * prevent recursive decomposition of child nodes.
+ * Specificity checks are delegated to ensureGoalRefined internally.
+ *
+ * @param decomposedGoals - Set of goal IDs already decomposed this run.
+ *   When provided, goals already in the set are skipped and the goal ID is
+ *   added to the set after a successful decomposition attempt.
+ */
+export async function phaseAutoDecompose(
+  goalId: string,
+  goal: Goal,
+  deps: CoreLoopDeps,
+  config: ResolvedLoopConfig,
+  logger: Logger | undefined,
+  decomposedGoals?: Set<string>
+): Promise<void> {
+  if (config.autoDecompose === false) return;
+  if (!deps.treeLoopOrchestrator) return;
+
+  if (goal.children_ids.length > 0) {
+    logger?.debug("[CoreLoop] phaseAutoDecompose: skipped — goal already has children", { goalId });
+    return;
+  }
+
+  if (goal.node_type === "leaf") {
+    logger?.debug("[CoreLoop] phaseAutoDecompose: skipped — goal is leaf", { goalId });
+    return;
+  }
+
+  // Only auto-decompose root goals — prevent recursive decomposition of children
+  if ((goal.decomposition_depth ?? 0) > 0) {
+    logger?.debug("[CoreLoop] phaseAutoDecompose: skipped — non-root goal (depth > 0)", { goalId, depth: goal.decomposition_depth });
+    return;
+  }
+
+  // Skip if already decomposed this run
+  if (decomposedGoals?.has(goalId)) {
+    logger?.debug("[CoreLoop] phaseAutoDecompose: skipped — already decomposed this run", { goalId });
+    return;
+  }
+
+  logger?.info("[CoreLoop] phaseAutoDecompose: decomposing abstract goal", { goalId });
+  decomposedGoals?.add(goalId);
+  try {
+    await deps.treeLoopOrchestrator.ensureGoalRefined(goalId);
+  } catch (err) {
+    logger?.warn("[CoreLoop] phaseAutoDecompose: ensureGoalRefined failed (non-fatal)", {
+      goalId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  logger?.info("[CoreLoop] phaseAutoDecompose: decomposition complete", { goalId });
+}
+
 // ─── Phase 2 ───
 
 /** Run observation engine, reload goal after observation.
