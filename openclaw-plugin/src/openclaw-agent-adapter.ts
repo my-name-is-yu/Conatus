@@ -2,13 +2,10 @@
 // Wraps OpenClaw's Pi Agent as a SeedPulse IAdapter.
 // CoreLoop sends tasks by posting messages and polling for new assistant replies.
 
-// Local type definitions — no seedpulse import (independent package)
-
+// Minimal local type definitions (plugin uses peerDependencies, not relative paths)
 interface AgentTask {
   prompt: string;
   timeout_ms: number;
-  adapter_type: string;
-  allowed_tools?: readonly string[];
 }
 
 interface AgentResult {
@@ -17,14 +14,11 @@ interface AgentResult {
   error: string | null;
   exit_code: number | null;
   elapsed_ms: number;
-  stopped_reason: "completed" | "timeout" | "error";
-  filesChanged?: boolean;
+  stopped_reason: string;
 }
 
 interface IAdapter {
   execute(task: AgentTask): Promise<AgentResult>;
-  readonly adapterType: string;
-  readonly capabilities?: readonly string[];
 }
 
 interface OpenClawPluginApi {
@@ -72,11 +66,10 @@ export class OpenClawAgentAdapter implements IAdapter {
         return { success: false, output: "", error: "Timeout waiting for OpenClaw response", exit_code: null, elapsed_ms: elapsed, stopped_reason: "timeout" };
       }
 
-      const hasError = /\b(error|failed|exception|cannot|unable)\b/i.test(response);
       return {
-        success: !hasError,
+        success: true,
         output: response,
-        error: hasError ? "Task execution reported errors" : null,
+        error: null,
         exit_code: null,
         elapsed_ms: elapsed,
         stopped_reason: "completed",
