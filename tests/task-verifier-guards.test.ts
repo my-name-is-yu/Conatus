@@ -623,3 +623,102 @@ describe("§4.5 checkDimensionDirection", () => {
     expect(result).toBe(true);
   });
 });
+
+// ─── RC-3: Verifier dimension_updates update confidence and last_observed_layer ───
+
+describe("RC-3: handleVerdict updates confidence and last_observed_layer on dimension_updates", () => {
+  let tmpDir: string;
+  let stateManager: StateManager;
+  let sessionManager: SessionManager;
+  let trustManager: TrustManager;
+  let stallDetector: StallDetector;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+    stateManager = new StateManager(tmpDir);
+    sessionManager = new SessionManager(stateManager);
+    trustManager = new TrustManager(stateManager);
+    stallDetector = new StallDetector(stateManager);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function setupGoalWithDim(dimName: string, currentValue: number): Promise<void> {
+    await stateManager.writeRaw("goals/goal-1/goal.json", {
+      id: "goal-1", title: "Test", status: "active",
+      dimensions: [{
+        name: dimName, label: dimName, current_value: currentValue,
+        threshold: { type: "min", value: 1.0 }, last_updated: null,
+        confidence: 0.4, last_observed_layer: "self_report",
+      }],
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+  }
+
+  it("pass verdict: updates confidence and last_observed_layer to mechanical when dimension_update applied", async () => {
+    const deps = makeDeps(stateManager, sessionManager, trustManager, stallDetector);
+    const task = makeTask();
+    await setupGoalWithDim("dim", 0.5);
+
+    const vr = makeVerificationResult({
+      verdict: "pass",
+      confidence: 0.85,
+      dimension_updates: [{ dimension_name: "dim", previous_value: 0.5, new_value: 0.7, confidence: 0.85 }],
+    });
+
+    await handleVerdict(deps, task, vr);
+
+    const goalData = await stateManager.readRaw("goals/goal-1/goal.json") as Record<string, unknown>;
+    const dims = goalData.dimensions as Array<Record<string, unknown>>;
+    const dim = dims.find((d) => d.name === "dim")!;
+    expect(dim.current_value as number).toBeCloseTo(0.7, 10);
+    expect(dim.confidence as number).toBe(0.85);
+    expect(dim.last_observed_layer as string).toBe("mechanical");
+  });
+
+  it("partial verdict: updates confidence and last_observed_layer to mechanical when dimension_update applied", async () => {
+    const deps = makeDeps(stateManager, sessionManager, trustManager, stallDetector);
+    const task = makeTask({
+      success_criteria: [{ description: "Manual check", verification_method: "Manual review", is_blocking: true }],
+    });
+    await setupGoalWithDim("dim", 0.4);
+
+    const vr = makeVerificationResult({
+      verdict: "partial",
+      confidence: 0.75,
+      dimension_updates: [{ dimension_name: "dim", previous_value: 0.4, new_value: 0.6, confidence: 0.75 }],
+    });
+
+    await handleVerdict(deps, task, vr);
+
+    const goalData = await stateManager.readRaw("goals/goal-1/goal.json") as Record<string, unknown>;
+    const dims = goalData.dimensions as Array<Record<string, unknown>>;
+    const dim = dims.find((d) => d.name === "dim")!;
+    expect(dim.current_value as number).toBeCloseTo(0.6, 10);
+    expect(dim.confidence as number).toBe(0.75);
+    expect(dim.last_observed_layer as string).toBe("mechanical");
+  });
+
+  it("pass verdict with no dimension_updates: confidence and last_observed_layer unchanged", async () => {
+    const deps = makeDeps(stateManager, sessionManager, trustManager, stallDetector);
+    const task = makeTask();
+    await setupGoalWithDim("dim", 0.5);
+
+    const vr = makeVerificationResult({
+      verdict: "pass",
+      confidence: 0.9,
+      dimension_updates: [],
+    });
+
+    await handleVerdict(deps, task, vr);
+
+    const goalData = await stateManager.readRaw("goals/goal-1/goal.json") as Record<string, unknown>;
+    const dims = goalData.dimensions as Array<Record<string, unknown>>;
+    const dim = dims.find((d) => d.name === "dim")!;
+    // No update applied: confidence and last_observed_layer remain as set originally
+    expect(dim.confidence as number).toBe(0.4);
+    expect(dim.last_observed_layer as string).toBe("self_report");
+  });
+});

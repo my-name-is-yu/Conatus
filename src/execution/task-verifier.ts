@@ -483,6 +483,10 @@ export async function handleVerdict(
                 continue;
               }
               dim.current_value = clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
+              // RC-3: Update confidence and last_observed_layer so gap-calculator
+              // uses the verifier's confidence rather than stale observation confidence.
+              dim.confidence = verificationResult.confidence ?? 0.70;
+              dim.last_observed_layer = "mechanical";
             }
             // Update last_updated for the primary dimension
             if (dim.name === task.primary_dimension) {
@@ -523,6 +527,9 @@ export async function handleVerdict(
                   continue;
                 }
                 dim.current_value = clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
+                // RC-3: Update confidence and last_observed_layer for partial verdicts too.
+                dim.confidence = verificationResult.confidence ?? 0.70;
+                dim.last_observed_layer = "mechanical";
               }
             }
             await deps.stateManager.writeRaw(`goals/${task.goal_id}/goal.json`, goal);
