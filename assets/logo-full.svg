@@ -1,21 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 100">
   <defs>
-    <radialGradient id="bodyGradF" cx="38%" cy="32%" r="65%" fx="36%" fy="30%">
-      <stop offset="0%" stop-color="#F5F2E8"/>
+    <radialGradient id="sp-bodyGrad-full" cx="38%" cy="32%" r="65%" fx="36%" fy="30%">
+      <stop offset="0%" stop-color="#F5F0E8"/>
       <stop offset="55%" stop-color="#EDE7D4"/>
       <stop offset="100%" stop-color="#D6CEBC"/>
     </radialGradient>
-    <radialGradient id="shadowGradF" cx="50%" cy="50%" r="50%">
+    <radialGradient id="sp-shadowGrad-full" cx="50%" cy="50%" r="50%">
       <stop offset="0%" stop-color="#A89880" stop-opacity="0.45"/>
       <stop offset="100%" stop-color="#A89880" stop-opacity="0"/>
     </radialGradient>
   </defs>
 
   <!-- Ground shadow -->
-  <ellipse cx="50" cy="96" rx="26" ry="5" fill="url(#shadowGradF)"/>
+  <ellipse cx="50" cy="96" rx="26" ry="5" fill="url(#sp-shadowGrad-full)"/>
 
   <!-- Body -->
-  <ellipse cx="50" cy="70" rx="33" ry="30" fill="url(#bodyGradF)"/>
+  <ellipse cx="50" cy="70" rx="33" ry="30" fill="url(#sp-bodyGrad-full)"/>
 
   <!-- Inner highlight -->
   <ellipse cx="39" cy="57" rx="13" ry="10" fill="#FFFFFF" opacity="0.25"/>
@@ -40,8 +40,6 @@
   <circle cx="39.5" cy="71" r="1.6" fill="#FFFFFF" opacity="0.75"/>
   <circle cx="57.5" cy="71" r="1.6" fill="#FFFFFF" opacity="0.75"/>
 
-  <!-- Text: "Seed" -->
-  <text x="96" y="72" font-family="sans-serif" font-weight="700" font-size="40" fill="#1A1A1A" letter-spacing="-0.5">Seed</text>
-  <!-- Text: "Pulse" -->
-  <text x="196" y="72" font-family="sans-serif" font-weight="700" font-size="40" fill="#4CAF50" letter-spacing="-0.5">Pulse</text>
+  <!-- Text: "Seed" + "Pulse" -->
+  <text x="96" y="72" font-family="sans-serif" font-weight="700" font-size="40" letter-spacing="-0.5"><tspan fill="#1A1A1A">Seed</tspan><tspan fill="#4CAF50">Pulse</tspan></text>
 </svg>

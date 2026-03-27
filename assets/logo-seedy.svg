@@ -1,23 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
     <!-- Body gradient: warm cream with subtle shading darker at bottom -->
-    <radialGradient id="bodyGrad" cx="40%" cy="35%" r="65%" fx="38%" fy="32%">
-      <stop offset="0%" stop-color="#F5F2E8"/>
+    <radialGradient id="sp-bodyGrad-seedy" cx="40%" cy="35%" r="65%" fx="38%" fy="32%">
+      <stop offset="0%" stop-color="#F5F0E8"/>
       <stop offset="55%" stop-color="#EDE7D4"/>
       <stop offset="100%" stop-color="#D6CEBC"/>
     </radialGradient>
     <!-- Shadow under body -->
-    <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
+    <radialGradient id="sp-shadowGrad-seedy" cx="50%" cy="50%" r="50%">
       <stop offset="0%" stop-color="#A89880" stop-opacity="0.5"/>
       <stop offset="100%" stop-color="#A89880" stop-opacity="0"/>
     </radialGradient>
   </defs>
 
   <!-- Ground shadow -->
-  <ellipse cx="64" cy="112" rx="34" ry="7" fill="url(#shadowGrad)"/>
+  <ellipse cx="64" cy="112" rx="34" ry="7" fill="url(#sp-shadowGrad-seedy)"/>
 
   <!-- Body: slightly wider than tall, sits on the ground -->
-  <ellipse cx="64" cy="84" rx="42" ry="39" fill="url(#bodyGrad)"/>
+  <ellipse cx="64" cy="84" rx="42" ry="39" fill="url(#sp-bodyGrad-seedy)"/>
 
   <!-- Subtle inner highlight top-left for 3D roundness -->
   <ellipse cx="50" cy="68" rx="18" ry="14" fill="#FFFFFF" opacity="0.25"/>

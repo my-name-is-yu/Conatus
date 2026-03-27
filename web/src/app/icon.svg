@@ -1,21 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <defs>
-    <radialGradient id="bodyGradFav" cx="38%" cy="32%" r="65%" fx="36%" fy="30%">
-      <stop offset="0%" stop-color="#F5F2E8"/>
+    <radialGradient id="sp-bodyGrad-icon" cx="38%" cy="32%" r="65%" fx="36%" fy="30%">
+      <stop offset="0%" stop-color="#F5F0E8"/>
       <stop offset="55%" stop-color="#EDE7D4"/>
       <stop offset="100%" stop-color="#D6CEBC"/>
     </radialGradient>
-    <radialGradient id="shadowGradFav" cx="50%" cy="50%" r="50%">
+    <radialGradient id="sp-shadowGrad-icon" cx="50%" cy="50%" r="50%">
       <stop offset="0%" stop-color="#A89880" stop-opacity="0.45"/>
       <stop offset="100%" stop-color="#A89880" stop-opacity="0"/>
     </radialGradient>
   </defs>
 
   <!-- Ground shadow -->
-  <ellipse cx="16" cy="30.5" rx="9" ry="2" fill="url(#shadowGradFav)"/>
+  <ellipse cx="16" cy="30.5" rx="9" ry="2" fill="url(#sp-shadowGrad-icon)"/>
 
   <!-- Body -->
-  <ellipse cx="16" cy="21" rx="11" ry="10" fill="url(#bodyGradFav)"/>
+  <ellipse cx="16" cy="21" rx="11" ry="10" fill="url(#sp-bodyGrad-icon)"/>
 
   <!-- Inner highlight -->
   <ellipse cx="12" cy="16.5" rx="4" ry="3" fill="#FFFFFF" opacity="0.25"/>

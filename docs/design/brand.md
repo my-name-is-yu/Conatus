@@ -130,6 +130,10 @@ The standard lockup is: **Seedy icon** + **"SeedPulse"** wordmark in Quicksand B
 | Dark BG / dark surface | `#E6EDF3` (Dark Text) |
 | On Sprout Green | `#FAFAF7` (Warm White) |
 
+### Asset Files
+
+**Favicon sync rule**: `assets/favicon.svg` is the canonical favicon source. `web/src/app/icon.svg` must be kept in sync with it. When updating the favicon, copy the changes to both files.
+
 ---
 
 ## Dark Mode Compatibility
