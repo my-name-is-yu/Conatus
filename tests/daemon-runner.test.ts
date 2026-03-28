@@ -62,12 +62,26 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
 
 describe("DaemonRunner", () => {
   let tmpDir: string;
+  let currentDaemon: DaemonRunner | null = null;
+  let currentStartPromise: Promise<void> | null = null;
 
   beforeEach(() => {
     tmpDir = makeTempDir();
+    currentDaemon = null;
+    currentStartPromise = null;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Ensure any in-flight daemon is fully stopped before removing tmpDir.
+    // This prevents ENOENT races from writeJsonFileAtomic rename syscalls.
+    if (currentDaemon) {
+      currentDaemon.stop();
+      currentDaemon = null;
+    }
+    if (currentStartPromise) {
+      await currentStartPromise.catch(() => {});
+      currentStartPromise = null;
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
     // Remove any process signal listeners that may have been registered
     process.removeAllListeners("SIGINT");
@@ -116,8 +130,10 @@ describe("DaemonRunner", () => {
         config: { check_interval_ms: 50 },
       });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       // Let the loop run one iteration
       await new Promise((resolve) => setTimeout(resolve, 60));
       daemon.stop();
@@ -130,8 +146,10 @@ describe("DaemonRunner", () => {
     it("should save daemon-state.json with status=running on start", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       // Allow one tick for initial state write
       await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -147,8 +165,10 @@ describe("DaemonRunner", () => {
     it("should run CoreLoop.run() for active goals", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 60));
       daemon.stop();
       await startPromise;
@@ -161,7 +181,9 @@ describe("DaemonRunner", () => {
       (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 60));
       daemon.stop();
       await startPromise;
@@ -172,8 +194,10 @@ describe("DaemonRunner", () => {
     it("should pass active_goals to daemon state from start() argument", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-a", "goal-b"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const statePath = path.join(tmpDir, "daemon-state.json");
@@ -191,8 +215,10 @@ describe("DaemonRunner", () => {
     it("should set status to stopped in daemon-state.json after stop resolves", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 500 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
       daemon.stop();
       await startPromise;
@@ -205,8 +231,10 @@ describe("DaemonRunner", () => {
     it("should terminate the loop and resolve the start() promise", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
 
@@ -217,8 +245,10 @@ describe("DaemonRunner", () => {
     it("should remove PID file after stopping", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
       await startPromise;
@@ -229,8 +259,10 @@ describe("DaemonRunner", () => {
     it("should set status to stopped in daemon-state.json after loop exits", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
       await startPromise;
@@ -256,7 +288,9 @@ describe("DaemonRunner", () => {
       );
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 80));
       daemon.stop();
       await startPromise;
@@ -278,7 +312,9 @@ describe("DaemonRunner", () => {
       );
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 80));
       daemon.stop();
       await startPromise;
@@ -416,8 +452,10 @@ describe("DaemonRunner", () => {
     it("should write daemon-state.json to baseDir on start", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(fs.existsSync(path.join(tmpDir, "daemon-state.json"))).toBe(true);
@@ -432,7 +470,9 @@ describe("DaemonRunner", () => {
       (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockResolvedValue(makeLoopResult());
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       // Allow ~3 iterations at 20ms interval
       await new Promise((resolve) => setTimeout(resolve, 100));
       daemon.stop();
@@ -447,8 +487,10 @@ describe("DaemonRunner", () => {
     it("should have pid set to current process PID in saved state", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const state = JSON.parse(
@@ -473,7 +515,9 @@ describe("DaemonRunner", () => {
       });
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-fast"]);
+      currentStartPromise = startPromise;
       // 10ms interval → loop should run within 100ms
       await new Promise((resolve) => setTimeout(resolve, 80));
       daemon.stop();
@@ -491,8 +535,10 @@ describe("DaemonRunner", () => {
     it("should set shuttingDown flag on SIGTERM signal", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 500 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       // Wait for daemon to be running
       await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -517,7 +563,9 @@ describe("DaemonRunner", () => {
       });
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
 
       // Wait for one loop to start
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -532,8 +580,10 @@ describe("DaemonRunner", () => {
     it("should save interrupted_goals on shutdown", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-a", "goal-b"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
       daemon.stop();
       await startPromise;
@@ -568,7 +618,9 @@ describe("DaemonRunner", () => {
       });
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
 
       // Wait for the loop to start (hanging)
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -610,8 +662,10 @@ describe("DaemonRunner", () => {
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-new"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       const statePath = path.join(tmpDir, "daemon-state.json");
@@ -645,9 +699,11 @@ describe("DaemonRunner", () => {
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       // Start with goal-a (overlaps with interrupted_goals) and goal-c
       const startPromise = daemon.start(["goal-a", "goal-c"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       const statePath = path.join(tmpDir, "daemon-state.json");
@@ -671,8 +727,10 @@ describe("DaemonRunner", () => {
     it("should remove PID file on normal stop", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 30 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
       daemon.stop();
       await startPromise;
@@ -683,8 +741,10 @@ describe("DaemonRunner", () => {
     it("should not leave .tmp files behind after state persistence", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
       await startPromise;
@@ -716,8 +776,10 @@ describe("DaemonRunner", () => {
         eventServer: eventServer as unknown as DaemonDeps["eventServer"],
       });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
       daemon.stop();
       await startPromise;
@@ -732,8 +794,10 @@ describe("DaemonRunner", () => {
         eventServer: eventServer as unknown as DaemonDeps["eventServer"],
       });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
       daemon.stop();
       await startPromise;
@@ -749,7 +813,9 @@ describe("DaemonRunner", () => {
       );
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
       daemon.stop();
       await startPromise;
@@ -767,7 +833,9 @@ describe("DaemonRunner", () => {
       );
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 20));
       daemon.stop();
       await startPromise;
@@ -792,7 +860,9 @@ describe("DaemonRunner", () => {
       const runSpy = deps.coreLoop as { run: ReturnType<typeof vi.fn> };
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
 
       // Wait for one loop iteration to complete and daemon to enter the 5s sleep
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -829,8 +899,10 @@ describe("DaemonRunner", () => {
       // No eventServer provided — daemon should start and stop normally
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 60));
       daemon.stop();
 

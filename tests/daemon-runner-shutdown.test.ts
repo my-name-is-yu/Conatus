@@ -74,12 +74,26 @@ function readMarker(tmpDir: string): ShutdownMarker | null {
 
 describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
   let tmpDir: string;
+  let currentDaemon: DaemonRunner | null = null;
+  let currentStartPromise: Promise<void> | null = null;
 
   beforeEach(() => {
     tmpDir = makeTempDir();
+    currentDaemon = null;
+    currentStartPromise = null;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Ensure any in-flight daemon is fully stopped before removing tmpDir.
+    // This prevents ENOENT races from writeJsonFileAtomic rename syscalls.
+    if (currentDaemon) {
+      currentDaemon.stop();
+      currentDaemon = null;
+    }
+    if (currentStartPromise) {
+      await currentStartPromise.catch(() => {});
+      currentStartPromise = null;
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
     process.removeAllListeners("SIGINT");
     process.removeAllListeners("SIGTERM");
@@ -91,8 +105,10 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     it("should set shuttingDown flag on SIGTERM and resolve the loop", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 500 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       // Wait for daemon to be up and running
       await new Promise((resolve) => setTimeout(resolve, 30));
 
@@ -105,8 +121,10 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     it("should write clean_shutdown state file on graceful stop via stop()", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
       await startPromise;
@@ -120,8 +138,10 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     it("should write clean_shutdown state file on graceful stop via SIGTERM", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 500 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       process.emit("SIGTERM");
       await startPromise;
@@ -134,8 +154,10 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     it("should write clean_shutdown state file on graceful stop via SIGINT", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 500 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       process.emit("SIGINT");
       await startPromise;
@@ -148,8 +170,10 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     it("should include goal_ids in the shutdown state file", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-alpha", "goal-beta"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
       await startPromise;
@@ -163,8 +187,10 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     it("should include a timestamp in the shutdown state file", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
       await startPromise;
@@ -199,7 +225,9 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       const loggerInfoSpy = vi.spyOn(deps.logger, "info");
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
       await startPromise;
@@ -228,7 +256,9 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       const loggerWarnSpy = vi.spyOn(deps.logger, "warn");
 
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
       await startPromise;
@@ -260,9 +290,11 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       // After start() begins, the old marker should be deleted (a new "running" one is written)
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 40));
 
       // The new marker (state: "running") should exist, not the old "clean_shutdown" one
@@ -283,8 +315,10 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
         config: { check_interval_ms: 500 }, // long interval so daemon stays running
       });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       // Wait for startup sequence to complete (marker is written after state init)
       await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -306,9 +340,11 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
 
       // Should start without errors even with no marker
       const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
       await new Promise((resolve) => setTimeout(resolve, 30));
       daemon.stop();
 

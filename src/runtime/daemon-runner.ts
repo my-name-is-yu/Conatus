@@ -460,8 +460,10 @@ export class DaemonRunner {
     };
     try {
       await writeJsonFileAtomic(markerPath, marker);
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      this.logger.warn("Failed to write shutdown marker", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     this.logger.info("Daemon stopped", {
@@ -512,8 +514,10 @@ export class DaemonRunner {
     const markerPath = path.join(this.baseDir, "shutdown-state.json");
     try {
       await writeJsonFileAtomic(markerPath, marker);
-    } catch {
-      // Non-fatal — log but don't crash
+    } catch (err) {
+      this.logger.warn("Failed to write shutdown marker", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
