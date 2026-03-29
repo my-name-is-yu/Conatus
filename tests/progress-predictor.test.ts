@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ProgressPredictor } from "../src/progress-predictor.js";
+import { ProgressPredictor } from "../src/drive/progress-predictor.js";
 
 describe("ProgressPredictor", () => {
   const predictor = new ProgressPredictor();
@@ -159,5 +159,12 @@ describe("ProgressPredictor", () => {
     const result = predictor.predict([1.0, 0.8, 0.6, 0.4, 0.2]);
     expect(result).not.toBeNull();
     expect(result!.predictedIterationsToGoal).toBe(1);
+  });
+
+  it('should return null iterations when gap is already near zero', () => {
+    const predictor = new ProgressPredictor();
+    const result = predictor.predict([0.1, 0.05, 0.0]);
+    expect(result).not.toBeNull();
+    expect(result!.predictedIterationsToGoal).toBeNull();
   });
 });

@@ -17,7 +17,7 @@ import { TrustManager } from "../traits/trust-manager.js";
 import { DriveSystem } from "../drive/drive-system.js";
 import { ObservationEngine } from "../observation/observation-engine.js";
 import { StallDetector } from "../drive/stall-detector.js";
-import { ProgressPredictor } from "../progress-predictor.js";
+import { ProgressPredictor } from "../drive/progress-predictor.js";
 import { SatisficingJudge } from "../drive/satisficing-judge.js";
 import { EthicsGate } from "../traits/ethics-gate.js";
 import { SessionManager } from "../execution/session-manager.js";

@@ -96,7 +96,7 @@ export class ProgressPredictor {
       // x is relative to x=0 in the window, so subtract current last index (n-1)
       const xAtZero = -intercept / slope;
       const stepsFromNow = xAtZero - (n - 1);
-      if (stepsFromNow > 0) {
+      if (stepsFromNow > 0.5) {
         predictedIterationsToGoal = Math.ceil(stepsFromNow);
       }
     }

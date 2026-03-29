@@ -1,5 +1,5 @@
 import { StateManager } from "../state-manager.js";
-import { ProgressPredictor } from "../progress-predictor.js";
+import { ProgressPredictor } from "./progress-predictor.js";
 import { StallReportSchema, StallStateSchema, StallAnalysisSchema } from "../types/stall.js";
 import type { StallReport, StallState, StallAnalysis } from "../types/stall.js";
 import type { CharacterConfig } from "../types/character.js";
@@ -146,7 +146,7 @@ export class StallDetector {
     // Trivial improvements (< 0.05) are treated as noise and do not reset stall detection.
     if (oldest - latest >= MIN_IMPROVEMENT_DELTA) {
       // Meaningful improvement — check predictor for early warning before returning null
-      return this.checkPredictedStall(goalId, dimensionName, gapHistory) ?? null;
+      return this.checkPredictedStall(goalId, dimensionName, recent) ?? null;
     }
 
     return StallReportSchema.parse({

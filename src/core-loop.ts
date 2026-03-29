@@ -1,7 +1,4 @@
 import { sleep } from "./utils/sleep.js";
-// ProgressPredictor is wired into StallDetector at the dependency setup layer (src/cli/setup.ts).
-// This import ensures the module is available for future direct usage in CoreLoop.
-export { ProgressPredictor } from "./progress-predictor.js";
 import type { Logger } from "./runtime/logger.js";
 import type { StateDiffCalculator, IterationSnapshot } from "./loop/state-diff.js";
 import { IterationBudget } from "./loop/iteration-budget.js";

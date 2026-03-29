@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../src/state-manager.js";
 import { StallDetector } from "../src/drive/stall-detector.js";
-import { ProgressPredictor } from "../src/progress-predictor.js";
+import { ProgressPredictor } from "../src/drive/progress-predictor.js";
 import type { StallState } from "../src/types/stall.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
