@@ -136,6 +136,18 @@ export async function detectStallsAndRebalance(
         result.stallDetected = true;
         result.stallReport = stallReport;
 
+        // Predicted stalls are advisory — log but don't pivot/escalate
+        if (
+          stallReport.stall_type === "predicted_plateau" ||
+          stallReport.stall_type === "predicted_regression"
+        ) {
+          ctx.logger?.info(
+            `CoreLoop: early warning ${stallReport.stall_type} — monitoring, no pivot`,
+            { goalId },
+          );
+          continue;
+        }
+
         const escalationLevel = await ctx.deps.stallDetector.getEscalationLevel(goalId, dim.name);
         await applyStallAction(ctx, goalId, goal, dimGapHistory, stallReport, escalationLevel, dim.name, result, "");
         break;
@@ -176,6 +188,15 @@ async function applyStallAction(
   result: LoopIterationResult,
   logPrefix: string
 ): Promise<void> {
+  // Predicted stall types are early warnings — log but do not pivot/escalate
+  if (
+    stallReport.stall_type === "predicted_plateau" ||
+    stallReport.stall_type === "predicted_regression"
+  ) {
+    ctx.logger?.info(`CoreLoop: early warning ${stallReport.stall_type} — monitoring`, { goalId });
+    return;
+  }
+
   if (ctx.deps.learningPipeline) {
     try {
       await ctx.deps.learningPipeline.onStallDetected(goalId, stallReport);
