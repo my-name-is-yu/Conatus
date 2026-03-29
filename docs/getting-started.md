@@ -205,6 +205,6 @@ pulseed cron --goal <goal-id>
 - **Full configuration reference** — [docs/configuration.md](configuration.md): all env vars, provider.json formats, plugin config
 - **Available adapters** — README.md `Supported Adapters` table
 - **Architecture deep-dive** — [docs/mechanism.md](mechanism.md), [docs/runtime.md](runtime.md)
-- **Design documents** — [docs/design/](design/) (23 files covering every subsystem)
+- **Design documents** — [docs/design/](design/) (34 files covering every subsystem)
 - **OpenAI / Codex setup** — [docs/codex-testing-guide.md](codex-testing-guide.md)
 - **Local LLM (Ollama)** — [docs/local-llm-testing-guide.md](local-llm-testing-guide.md)

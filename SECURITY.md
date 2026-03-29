@@ -29,7 +29,7 @@ Do not open a public GitHub issue for security vulnerabilities.
 The following are **in scope** for security reports:
 
 - **Core orchestrator** (`src/` — CoreLoop, GoalNegotiator, TaskLifecycle, SessionManager, and related modules)
-- **CLI** (`src/cli/` — `seedpulse` command and all subcommands)
+- **CLI** (`src/cli/` — `pulseed` command and all subcommands)
 - **Built-in plugins / adapters** (`src/adapters/` — claude-code-cli, claude-api, openai-codex, github-issue, shell/file-existence data sources)
 - **State persistence layer** (access to and handling of `~/.pulseed/` state files)
 - **EthicsGate** — approval gate bypass or circumvention
