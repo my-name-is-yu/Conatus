@@ -185,14 +185,14 @@ export async function suggestGoals(
       );
       rawContent = response.content;
     } catch (err) {
-      options?.logger?.warn(`[suggestGoals] LLM call failed: ${err}`);
+      options?.logger?.warn(`[suggestGoals] LLM call failed: ${String(err)}`);
       return [];
     }
 
     try {
       suggestions = llmClient.parseJSON(rawContent, GoalSuggestionListSchema);
     } catch (err) {
-      options?.logger?.warn(`[suggestGoals] Failed to parse LLM response as GoalSuggestionList: ${err}`);
+      options?.logger?.warn(`[suggestGoals] Failed to parse LLM response as GoalSuggestionList: ${String(err)}`);
       return [];
     }
   }
@@ -261,7 +261,7 @@ export async function filterSuggestions(
         }
       } catch (err) {
         // Non-blocking: if capability check fails, keep the suggestion
-        logger?.warn(`[GoalNegotiator] Capability check failed for "${suggestion.title}": ${err}`);
+        logger?.warn(`[GoalNegotiator] Capability check failed for "${suggestion.title}": ${String(err)}`);
       }
     }
 

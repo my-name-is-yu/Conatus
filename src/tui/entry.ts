@@ -70,7 +70,7 @@ async function buildDeps() {
   const stallDetector = new StallDetector(stateManager, characterConfig);
   const satisficingJudge = new SatisficingJudge(stateManager);
   const ethicsGate = new EthicsGate(stateManager, llmClient);
-  const goalDependencyGraph = new GoalDependencyGraph(stateManager, llmClient);
+  const goalDependencyGraph = new GoalDependencyGraph(stateManager, llmClient, undefined, getCliLogger());
   const sessionManager = new SessionManager(stateManager, goalDependencyGraph);
   const strategyManager = new StrategyManager(stateManager, llmClient);
   const adapterRegistry = await buildAdapterRegistry(llmClient);

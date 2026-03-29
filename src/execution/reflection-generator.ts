@@ -148,6 +148,7 @@ export async function getReflectionsForGoal(
   knowledgeManager: KnowledgeManager,
   goalId: string,
   limit = 5,
+  logger?: ReflectionLogger,
 ): Promise<ReflectionNote[]> {
   const entries = await knowledgeManager.loadKnowledge(goalId, ["reflection"]);
 
@@ -165,7 +166,7 @@ export async function getReflectionsForGoal(
       });
       reflections.push(note);
     } catch (err) {
-      console.warn(`[ReflectionGenerator] getReflectionsForGoal: skipping malformed entry ${entry.entry_id}: ${String(err)}`);
+      logger?.warn?.(`[ReflectionGenerator] getReflectionsForGoal: skipping malformed entry ${entry.entry_id}: ${String(err)}`);
     }
   }
 

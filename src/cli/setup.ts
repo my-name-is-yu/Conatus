@@ -116,7 +116,7 @@ export async function buildDeps(
   const ethicsGate = new EthicsGate(stateManager, llmClient);
 
   // Stage 14 — tree mode dependencies
-  const goalDependencyGraph = new GoalDependencyGraph(stateManager, llmClient);
+  const goalDependencyGraph = new GoalDependencyGraph(stateManager, llmClient, undefined, logger);
   const sessionManager = new SessionManager(stateManager, goalDependencyGraph);
   const strategyManager = new StrategyManager(stateManager, llmClient);
   const adapterRegistry = await buildAdapterRegistry(llmClient);

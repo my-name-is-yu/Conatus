@@ -11,6 +11,10 @@ import { DependencyGraphSchema } from "../types/dependency.js";
 import type { DependencyType } from "../types/core.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 
+interface DependencyLogger {
+  warn?: (message: string, context?: Record<string, unknown>) => void;
+}
+
 const AutoDetectItemSchema = z.object({
   from_goal_id: z.string(),
   to_goal_id: z.string(),
@@ -38,12 +42,14 @@ export class GoalDependencyGraph {
   private stateManager: StateManager;
   private llmClient?: ILLMClient;
   private promptGateway?: IPromptGateway;
+  private logger?: DependencyLogger;
   private graph: DependencyGraph;
 
-  constructor(stateManager: StateManager, llmClient?: ILLMClient, promptGateway?: IPromptGateway) {
+  constructor(stateManager: StateManager, llmClient?: ILLMClient, promptGateway?: IPromptGateway, logger?: DependencyLogger) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
     this.promptGateway = promptGateway;
+    this.logger = logger;
     this.graph = { nodes: [], edges: [], updated_at: new Date().toISOString() };
   }
 
@@ -282,7 +288,7 @@ Return empty array [] if no dependencies found.`;
       }
       const parsed = AutoDetectResponseSchema.safeParse(rawData);
       if (!parsed.success) {
-        console.warn(
+        this.logger?.warn?.(
           `autoDetectDependencies: LLM response failed Zod validation — ${parsed.error.message}`
         );
         return [];
@@ -309,7 +315,7 @@ Return empty array [] if no dependencies found.`;
       }
       return edges;
     } catch (err) {
-      console.warn(`[GoalDependencyGraph] autoDetectDependencies failed: ${String(err)}`);
+      this.logger?.warn?.(`[GoalDependencyGraph] autoDetectDependencies failed: ${String(err)}`);
       return [];
     }
   }

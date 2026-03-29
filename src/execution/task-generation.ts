@@ -220,7 +220,7 @@ export async function generateTask(
 
   if (deps.knowledgeManager) {
     try {
-      const reflections = await getReflectionsForGoal(deps.knowledgeManager, goalId, 5);
+      const reflections = await getReflectionsForGoal(deps.knowledgeManager, goalId, 5, deps.logger);
       if (reflections.length > 0) {
         reflectionsBlock = wrapXmlTag(
           "past_reflections",
