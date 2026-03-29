@@ -8,6 +8,7 @@
     "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
+    "types": ["estree", "js-yaml", "node", "node-fetch", "nodemailer", "prop-types", "react"],
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
