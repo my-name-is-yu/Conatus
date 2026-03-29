@@ -286,7 +286,7 @@ export class TaskLifecycle {
     // Inject past reflections
     if (this.knowledgeManager) {
       try {
-        const pastReflections = await getReflectionsForGoal(this.knowledgeManager, goalId, 5);
+        const pastReflections = await getReflectionsForGoal(this.knowledgeManager, goalId, 5, this.logger);
         if (pastReflections.length > 0) {
           const reflectionText = formatReflectionsForPrompt(pastReflections);
           enrichedKnowledgeContext = enrichedKnowledgeContext
