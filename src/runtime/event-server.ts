@@ -152,6 +152,13 @@ export class EventServer {
 
   /** Handle incoming HTTP request */
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    // GET /health — liveness check
+    if (req.method === "GET" && req.url === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", uptime: process.uptime() }));
+      return;
+    }
+
     // Only accept POST /events
     if (req.method !== "POST" || req.url !== "/events") {
       res.writeHead(404, { "Content-Type": "application/json" });
