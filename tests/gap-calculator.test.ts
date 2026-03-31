@@ -104,12 +104,13 @@ describe("computeRawGap", () => {
       expect(computeRawGap(null, threshold)).toBe(1);
     });
 
-    it("works with numeric match (exact integer match value)", () => {
+    it("treats numeric currentValue as 0-1 score (not exact equality)", () => {
       const numThreshold: Threshold = { type: "match", value: 42 };
-      // 42 is a number, so: gap = max(0, 1 - 42) = 0 (clamped)
-      expect(computeRawGap(42, numThreshold)).toBe(0);
-      // 41 is a number, so: gap = max(0, 1 - 41) = 0 (clamped)
-      expect(computeRawGap(41, numThreshold)).toBe(0);
+      // Numeric currentValue is always treated as a 0-1 observation score.
+      // Exact numeric equality is handled by min/max/range threshold types.
+      expect(computeRawGap(1, numThreshold)).toBe(0);   // score=1.0 → gap=0
+      expect(computeRawGap(0, numThreshold)).toBe(1);   // score=0.0 → gap=1
+      expect(computeRawGap(0.7, numThreshold)).toBeCloseTo(0.3); // score=0.7 → gap=0.3
     });
 
     it("numeric 1.0 (fully matched) → gap = 0", () => {
@@ -204,6 +205,7 @@ describe("normalizeGap", () => {
     const t: Threshold = { type: "match", value: "ok" };
     expect(normalizeGap(0, t, "ok")).toBe(0);
     expect(normalizeGap(1, t, "bad")).toBe(1);
+    expect(normalizeGap(0.3, t, 0.7)).toBeCloseTo(0.3);
   });
 });
 
@@ -661,6 +663,13 @@ describe("edge cases", () => {
     // treat -Infinity as invalid/unobserved data rather than relying on this.
     const result = computeRawGap(-Infinity, { type: "max", value: 0.05 });
     expect(result).toBe(0);
+  });
+
+  it("match type: NaN and Infinity return gap=1", () => {
+    const t: Threshold = { type: "match", value: "ok" };
+    expect(computeRawGap(NaN, t)).toBe(1);
+    expect(computeRawGap(Infinity, t)).toBe(1);
+    expect(computeRawGap(-Infinity, t)).toBe(1);
   });
 
   it("doc example: full pipeline verification", () => {
