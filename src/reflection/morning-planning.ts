@@ -7,6 +7,7 @@ import type { INotificationDispatcher } from "../runtime/notification-dispatcher
 import { z } from "zod";
 import type { PlanningReport, GoalSummary } from "./types.js";
 import { PlanningReportSchema } from "./types.js";
+import type { HookManager } from "../runtime/hook-manager.js";
 
 // ─── LLM response schema ───
 
@@ -65,8 +66,9 @@ export async function runMorningPlanning(deps: {
   llmClient: ILLMClient;
   baseDir: string;
   notificationDispatcher?: INotificationDispatcher;
+  hookManager?: HookManager;
 }): Promise<PlanningReport> {
-  const { stateManager, llmClient, baseDir, notificationDispatcher } = deps;
+  const { stateManager, llmClient, baseDir, notificationDispatcher, hookManager } = deps;
   const date = todayISO();
   const now = new Date().toISOString();
 
@@ -112,6 +114,8 @@ Respond with JSON matching this schema:
   const reflectionsDir = path.join(baseDir, "reflections");
   await fsp.mkdir(reflectionsDir, { recursive: true });
   await writeJsonFileAtomic(path.join(reflectionsDir, `morning-${date}.json`), report);
+
+  void hookManager?.emit("ReflectionComplete", { data: { type: "morning_planning" } });
 
   // Notify
   if (notificationDispatcher && goalSummaries.length > 0) {

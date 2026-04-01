@@ -50,6 +50,7 @@ import type { KnowledgeTransfer } from "../knowledge/knowledge-transfer.js";
 import type { KnowledgeManager } from "../knowledge/knowledge-manager.js";
 import { generateReflection, saveReflectionAsKnowledge, getReflectionsForGoal, formatReflectionsForPrompt } from "./reflection-generator.js";
 import { GuardrailRunner } from "../guardrail-runner.js";
+import type { HookManager } from "../runtime/hook-manager.js";
 
 export type { TaskCycleResult } from "./task-execution-types.js";
 import type { TaskCycleResult } from "./task-execution-types.js";
@@ -79,6 +80,7 @@ export class TaskLifecycle {
   private readonly knowledgeTransfer?: KnowledgeTransfer;
   private readonly knowledgeManager?: KnowledgeManager;
   private readonly guardrailRunner?: GuardrailRunner;
+  private readonly hookManager?: HookManager;
   private onTaskComplete?: (strategyId: string) => void;
 
   constructor(
@@ -107,6 +109,8 @@ export class TaskLifecycle {
       knowledgeManager?: KnowledgeManager;
       /** Optional guardrail runner for before_tool/after_tool hooks */
       guardrailRunner?: GuardrailRunner;
+      /** Optional HookManager for lifecycle hook events */
+      hookManager?: HookManager;
     }
   ) {
     this.stateManager = stateManager;
@@ -126,6 +130,7 @@ export class TaskLifecycle {
     this.knowledgeTransfer = options?.knowledgeTransfer;
     this.knowledgeManager = options?.knowledgeManager;
     this.guardrailRunner = options?.guardrailRunner;
+    this.hookManager = options?.hookManager;
   }
 
   /** Register a callback invoked when a task completes successfully (used by PortfolioManager). */
@@ -302,11 +307,13 @@ export class TaskLifecycle {
     }
 
     // 3. Generate task (optionally with injected knowledge context)
+    void this.hookManager?.emit("PreTaskCreate", { goal_id: goalId, data: { task_type: targetDimension } });
     const task = await this.generateTask(goalId, targetDimension, undefined, enrichedKnowledgeContext, adapter.adapterType, existingTasks, workspaceContext);
     if (task === null) {
       this.logger?.warn("TaskLifecycle: task generation returned null (duplicate detected), skipping cycle");
       return createSkippedTaskResult(goalId, targetDimension);
     }
+    void this.hookManager?.emit("PostTaskCreate", { goal_id: goalId, data: { task_id: task.id } });
 
     // 4. Pre-execution checks: ethics, capability, irreversible approval
     const preCheckResult = await runPreExecutionChecks(
@@ -322,7 +329,9 @@ export class TaskLifecycle {
 
     // 4. Execute task
     this.logger?.debug(`[DEBUG-TL] Executing task ${task.id} via adapter ${adapter.adapterType}`);
+    void this.hookManager?.emit("PreExecute", { goal_id: goalId, data: { task_id: task.id } });
     const executionResult = await this.executeTask(task, adapter, workspaceContext);
+    void this.hookManager?.emit("PostExecute", { goal_id: goalId, data: { task_id: task.id, success: executionResult.success } });
     this.logger?.debug(`[DEBUG-TL] Execution result: success=${executionResult.success}, stopped=${executionResult.stopped_reason}, error=${executionResult.error}, output=${executionResult.output?.substring(0, 200)}`);
 
     // 4b. Post-execution health check (opt-in)

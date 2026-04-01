@@ -300,6 +300,8 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
    * are automatically registered as reusable templates.
    */
   strategyTemplateRegistry?: StrategyTemplateRegistry;
+  /** Optional HookManager for lifecycle hook events. */
+  hookManager?: import("../runtime/hook-manager.js").HookManager;
 }
 
 export type ProgressPhase =

@@ -7,6 +7,7 @@ import type { INotificationDispatcher } from "../runtime/notification-dispatcher
 import { z } from "zod";
 import type { CatchupReport, GoalSummary } from "./types.js";
 import { CatchupReportSchema } from "./types.js";
+import type { HookManager } from "../runtime/hook-manager.js";
 
 // ─── LLM response schema ───
 
@@ -57,8 +58,9 @@ export async function runEveningCatchup(deps: {
   llmClient: ILLMClient;
   baseDir: string;
   notificationDispatcher?: INotificationDispatcher;
+  hookManager?: HookManager;
 }): Promise<CatchupReport> {
-  const { stateManager, llmClient, baseDir, notificationDispatcher } = deps;
+  const { stateManager, llmClient, baseDir, notificationDispatcher, hookManager } = deps;
   const date = todayISO();
   const now = new Date().toISOString();
 
@@ -119,6 +121,8 @@ Respond with JSON:
   const reflectionsDir = path.join(baseDir, "reflections");
   await fsp.mkdir(reflectionsDir, { recursive: true });
   await writeJsonFileAtomic(path.join(reflectionsDir, `evening-${date}.json`), report);
+
+  void hookManager?.emit("ReflectionComplete", { data: { type: "evening_catchup" } });
 
   // Notify
   if (notificationDispatcher && goalSummaries.length > 0) {
