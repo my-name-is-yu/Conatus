@@ -59,7 +59,7 @@ async function createRealConnection(config: MCPServerConfig): Promise<IMCPConnec
     },
     async listTools() {
       const result = await client.listTools();
-      return result.tools.map((t) => ({ name: t.name }));
+      return result.tools.map((t: { name: string }) => ({ name: t.name }));
     },
     async callTool(name: string, args: Record<string, unknown>) {
       const result = await client.callTool({ name, arguments: args });
