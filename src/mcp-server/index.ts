@@ -35,7 +35,7 @@ export async function startMCPServer(deps: MCPServerDeps): Promise<void> {
     "pulseed_goal_status",
     "Get status and latest gap vector for a goal",
     { goal_id: z.string().describe("The goal ID") },
-    async (args) => {
+    async (args: { goal_id: string }) => {
       return toolGoalStatus(deps, args);
     }
   );
@@ -48,7 +48,7 @@ export async function startMCPServer(deps: MCPServerDeps): Promise<void> {
       title: z.string().describe("Goal title"),
       description: z.string().describe("Goal description"),
     },
-    async (args) => {
+    async (args: { title: string; description: string }) => {
       return toolGoalCreate(deps, args);
     }
   );
@@ -58,7 +58,7 @@ export async function startMCPServer(deps: MCPServerDeps): Promise<void> {
     "pulseed_observe",
     "Get latest observations for a goal",
     { goal_id: z.string().describe("The goal ID") },
-    async (args) => {
+    async (args: { goal_id: string }) => {
       return toolObserve(deps, args);
     }
   );
@@ -68,7 +68,7 @@ export async function startMCPServer(deps: MCPServerDeps): Promise<void> {
     "pulseed_task_list",
     "List tasks for a goal",
     { goal_id: z.string().describe("The goal ID") },
-    async (args) => {
+    async (args: { goal_id: string }) => {
       return toolTaskList(deps, args);
     }
   );
@@ -78,7 +78,7 @@ export async function startMCPServer(deps: MCPServerDeps): Promise<void> {
     "pulseed_knowledge_search",
     "Search the PulSeed knowledge base",
     { query: z.string().describe("Search query") },
-    async (args) => {
+    async (args: { query: string }) => {
       return toolKnowledgeSearch(deps, args);
     }
   );
@@ -92,8 +92,8 @@ export async function startMCPServer(deps: MCPServerDeps): Promise<void> {
       event_type: z.string().describe("Type of event"),
       data: z.record(z.unknown()).describe("Event payload"),
     },
-    async (args) => {
-      return toolTrigger(deps, { ...args, data: args.data as Record<string, unknown> });
+    async (args: { source: string; event_type: string; data: Record<string, unknown> }) => {
+      return toolTrigger(deps, args);
     }
   );
 
