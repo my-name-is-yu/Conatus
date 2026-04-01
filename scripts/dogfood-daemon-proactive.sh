@@ -90,11 +90,11 @@ cat > "$TMP_WORKSPACE/daemon-config.json" <<'JSON'
 JSON
 echo "Daemon config written to $TMP_WORKSPACE/daemon-config.json"
 
-# --- Register goal ---
+# --- Register goal (easy-to-satisfy so daemon becomes idle quickly) ---
 echo "--- Registering goal ---"
 GOAL_OUTPUT=$($PULSEED goal add \
-  --title "Improve test coverage" \
-  --dim "test_count:min:5" \
+  --title "Trivial coverage check" \
+  --dim "test_count:max:999" \
   --constraint "workspace_path:$TMP_WORKSPACE" 2>&1)
 
 echo "$GOAL_OUTPUT"

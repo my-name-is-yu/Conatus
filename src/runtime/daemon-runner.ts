@@ -313,7 +313,7 @@ export class DaemonRunner {
             maxGapScore,
             this.consecutiveIdleCycles
           );
-          this.logger.debug(`Sleeping for ${intervalMs}ms until next check`);
+          this.logger.info(`Sleeping for ${intervalMs}ms until next check`);
           await this.sleep(intervalMs);
         }
       } catch (err) {

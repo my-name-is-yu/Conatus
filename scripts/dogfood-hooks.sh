@@ -150,10 +150,14 @@ echo "--- Checking hook log ---"
 echo "Contents of $HOOK_LOG:"
 cat "$HOOK_LOG" || echo "(empty)"
 
-LOOP_CYCLE_COUNT=$(grep -c "HOOK_FIRED: LoopCycleStart" "$HOOK_LOG" 2>/dev/null || echo 0)
-POST_OBSERVE_COUNT=$(grep -c "HOOK_FIRED: PostObserve" "$HOOK_LOG" 2>/dev/null || echo 0)
-GOAL_STATE_COUNT=$(grep -c "HOOK_FIRED: GoalStateChange" "$HOOK_LOG" 2>/dev/null || echo 0)
-TOTAL_COUNT=$(grep -c "HOOK_FIRED:" "$HOOK_LOG" 2>/dev/null || echo 0)
+LOOP_CYCLE_COUNT=$(grep -c "HOOK_FIRED: LoopCycleStart" "$HOOK_LOG" 2>/dev/null || true)
+LOOP_CYCLE_COUNT=${LOOP_CYCLE_COUNT:-0}
+POST_OBSERVE_COUNT=$(grep -c "HOOK_FIRED: PostObserve" "$HOOK_LOG" 2>/dev/null || true)
+POST_OBSERVE_COUNT=${POST_OBSERVE_COUNT:-0}
+GOAL_STATE_COUNT=$(grep -c "HOOK_FIRED: GoalStateChange" "$HOOK_LOG" 2>/dev/null || true)
+GOAL_STATE_COUNT=${GOAL_STATE_COUNT:-0}
+TOTAL_COUNT=$(grep -c "HOOK_FIRED:" "$HOOK_LOG" 2>/dev/null || true)
+TOTAL_COUNT=${TOTAL_COUNT:-0}
 
 echo ""
 echo "--- Hook fire counts ---"

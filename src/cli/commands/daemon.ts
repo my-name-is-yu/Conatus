@@ -103,8 +103,15 @@ export async function cmdStart(
     process.exit(1);
   }
 
-  // Gap 2: Create EventServer for event-driven wake-ups
-  const eventServer = new EventServer(deps.driveSystem, undefined, logger);
+  // Gap 2: Create EventServer for event-driven wake-ups (only if config specifies a port)
+  let eventServer: EventServer | undefined;
+  if (daemonConfig && typeof (daemonConfig as Record<string, unknown>).event_server_port === "number") {
+    eventServer = new EventServer(
+      deps.driveSystem,
+      { port: (daemonConfig as Record<string, unknown>).event_server_port as number },
+      logger
+    );
+  }
 
   // Gap 4: Create CronScheduler for scheduled tasks
   const cronScheduler = new CronScheduler(baseDir);
@@ -116,7 +123,7 @@ export async function cmdStart(
     pidManager,
     logger,
     config: daemonConfig,
-    eventServer,
+    ...(eventServer ? { eventServer } : {}),
     llmClient: deps.llmClient,
     cronScheduler,
   });
