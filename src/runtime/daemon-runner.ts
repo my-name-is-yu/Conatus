@@ -12,6 +12,8 @@ import type { EventServer } from "./event-server.js";
 import type { PulSeedEvent } from "../types/drive.js";
 import type { DaemonConfig, DaemonState } from "../types/daemon.js";
 import { DaemonConfigSchema, DaemonStateSchema } from "../types/daemon.js";
+import type { ILLMClient } from "../llm/llm-client.js";
+import { z } from "zod";
 
 // ─── ShutdownMarker ───
 //
@@ -50,6 +52,7 @@ export interface DaemonDeps {
   logger: Logger;
   config?: Partial<DaemonConfig>;
   eventServer?: EventServer;
+  llmClient?: ILLMClient;
 }
 
 export class DaemonRunner {
@@ -68,6 +71,9 @@ export class DaemonRunner {
   private sleepAbortController: AbortController | null = null;
   private currentGoalIds: string[] = [];
   private currentLoopIndex = 0;
+  private lastProactiveTickAt: number = 0;
+  private llmClient: ILLMClient | undefined;
+  private consecutiveIdleCycles: number = 0;
 
   constructor(deps: DaemonDeps) {
     this.coreLoop = deps.coreLoop;
@@ -76,6 +82,8 @@ export class DaemonRunner {
     this.pidManager = deps.pidManager;
     this.logger = deps.logger;
     this.eventServer = deps.eventServer;
+    this.llmClient = deps.llmClient;
+    this.lastProactiveTickAt = Date.now();
 
     // Parse config with defaults via DaemonConfigSchema.parse()
     this.config = DaemonConfigSchema.parse(deps.config ?? {});
@@ -271,9 +279,28 @@ export class DaemonRunner {
         // 3. Save state
         await this.saveDaemonState();
 
-        // 4. Wait for next check interval
+        // 4. Proactive tick: fire when no goals activated and proactive_mode is enabled
+        if (this.running && activeGoals.length === 0) {
+          await this.proactiveTick();
+        }
+
+        // 5. Track idle cycles for adaptive sleep
+        if (activeGoals.length > 0) {
+          this.consecutiveIdleCycles = 0;
+        } else {
+          this.consecutiveIdleCycles++;
+        }
+
+        // 6. Wait for next check interval
         if (this.running) {
-          const intervalMs = this.getNextInterval(goalIds);
+          const baseIntervalMs = this.getNextInterval(goalIds);
+          const maxGapScore = await this.getMaxGapScore(goalIds);
+          const intervalMs = this.calculateAdaptiveInterval(
+            baseIntervalMs,
+            activeGoals.length,
+            maxGapScore,
+            this.consecutiveIdleCycles
+          );
           this.logger.debug(`Sleeping for ${intervalMs}ms until next check`);
           await this.sleep(intervalMs);
         }
@@ -503,6 +530,139 @@ export class DaemonRunner {
       event_type: event.type,
     });
     this.sleepAbortController?.abort();
+  }
+
+  // ─── Private: Proactive Tick ───
+
+  // Zod schema for the LLM proactive action response
+  private static readonly ProactiveResponseSchema = z.object({
+    action: z.enum(["suggest_goal", "investigate", "preemptive_check", "sleep"]),
+    details: z.record(z.string(), z.unknown()).optional(),
+  });
+
+  /**
+   * Ask the LLM for a proactive action when no goals were activated this cycle.
+   * Fires only if proactive_mode is enabled and enough time has passed since last tick.
+   * Errors are caught and logged — they never affect the daemon loop.
+   */
+  private async proactiveTick(): Promise<void> {
+    if (!this.config.proactive_mode) return;
+    if (!this.llmClient) return;
+    if (Date.now() - this.lastProactiveTickAt < this.config.proactive_interval_ms) return;
+
+    try {
+      // Build a brief summary of all tracked goals from daemon state
+      const goalSummaries = this.state.active_goals.length > 0
+        ? this.state.active_goals.map((id) => `- ${id}`).join("\n")
+        : "(no active goals)";
+
+      const prompt = `You are PulSeed's proactive engine. Given the current state of all goals:\n${goalSummaries}\n\nDecide what action to take:\n- "suggest_goal": A new goal should be created (provide title + description)\n- "investigate": Something needs investigation (provide what and why)\n- "preemptive_check": Run a pre-emptive observation (provide goal_id)\n- "sleep": Nothing needs attention right now\n\nRespond with JSON: { "action": "...", "details": { ... } }`;
+
+      const response = await this.llmClient.sendMessage(
+        [{ role: "user", content: prompt }],
+        { model_tier: "light" }
+      );
+
+      const parsed = DaemonRunner.ProactiveResponseSchema.safeParse(
+        this.llmClient.parseJSON(response.content, DaemonRunner.ProactiveResponseSchema)
+      );
+
+      if (!parsed.success) {
+        this.logger.warn("Proactive tick: failed to parse LLM response", {
+          raw: response.content,
+          error: parsed.error.message,
+        });
+        this.lastProactiveTickAt = Date.now();
+        return;
+      }
+
+      const { action, details } = parsed.data;
+
+      if (action === "sleep") {
+        this.logger.debug("Proactive tick: LLM decided to sleep");
+      } else {
+        this.logger.info(`Proactive tick: action=${action}`, { details });
+      }
+    } catch (err) {
+      this.logger.warn("Proactive tick: LLM error (ignored)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    this.lastProactiveTickAt = Date.now();
+  }
+
+  // ─── Private: Adaptive Sleep ───
+
+  /**
+   * Get the highest gap score across all active goals.
+   * Falls back to 0 if no gap data is available.
+   */
+  private async getMaxGapScore(goalIds: string[]): Promise<number> {
+    let max = 0;
+    for (const goalId of goalIds) {
+      try {
+        const schedule = await this.driveSystem.getSchedule(goalId);
+        if (schedule && typeof (schedule as Record<string, unknown>)["last_gap_score"] === "number") {
+          const score = (schedule as Record<string, unknown>)["last_gap_score"] as number;
+          if (score > max) max = score;
+        }
+      } catch {
+        // Non-fatal — just use 0 for this goal
+      }
+    }
+    return max;
+  }
+
+  /**
+   * Calculate the adaptive sleep interval based on time-of-day, urgency, and activity.
+   * Returns baseInterval unchanged if adaptive_sleep is disabled.
+   */
+  calculateAdaptiveInterval(
+    baseInterval: number,
+    goalsActivatedThisCycle: number,
+    maxGapScore: number,
+    consecutiveIdleCycles: number
+  ): number {
+    const cfg = this.config.adaptive_sleep;
+    if (!cfg.enabled) return baseInterval;
+
+    // 1. Time-of-day factor
+    const hour = new Date().getHours();
+    const { night_start_hour, night_end_hour, night_multiplier } = cfg;
+    let timeOfDayFactor: number;
+    if (night_start_hour > night_end_hour) {
+      // Spans midnight: night is [night_start_hour, 24) ∪ [0, night_end_hour)
+      timeOfDayFactor = (hour >= night_start_hour || hour < night_end_hour) ? night_multiplier : 1.0;
+    } else {
+      // Same-day range
+      timeOfDayFactor = (hour >= night_start_hour && hour < night_end_hour) ? night_multiplier : 1.0;
+    }
+
+    // 2. Urgency factor
+    let urgencyFactor: number;
+    if (maxGapScore >= 0.8) {
+      urgencyFactor = 0.5;
+    } else if (maxGapScore >= 0.5) {
+      urgencyFactor = 0.75;
+    } else {
+      urgencyFactor = 1.0;
+    }
+
+    // 3. Activity factor
+    let activityFactor: number;
+    if (goalsActivatedThisCycle > 0) {
+      activityFactor = 0.75;
+    } else if (consecutiveIdleCycles >= 5) {
+      activityFactor = 1.5;
+    } else {
+      activityFactor = 1.0;
+    }
+
+    // 4. Apply factors and clamp
+    const effective = baseInterval * timeOfDayFactor * urgencyFactor * activityFactor;
+    const clamped = Math.max(cfg.min_interval_ms, Math.min(cfg.max_interval_ms, effective));
+    return Math.round(clamped);
   }
 
   // ─── Private: Shutdown Marker ───
