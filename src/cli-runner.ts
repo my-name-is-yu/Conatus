@@ -499,6 +499,12 @@ export class CLIRunner {
       return 1;
     }
 
+    if (subcommand === "mcp-server") {
+      const { startMCPServer } = await import("./mcp-server/index.js");
+      await startMCPServer({ stateManager: this.stateManager, baseDir: this.stateManager.getBaseDir() });
+      return 0;
+    }
+
     if (subcommand === "tui") {
       // Dynamically import to avoid bundling Ink into the CLI when not needed
       const { startTUI } = await import("./tui/entry.js");

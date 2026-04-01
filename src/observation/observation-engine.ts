@@ -7,6 +7,7 @@ import type { IDataSourceAdapter } from "./data-source-adapter.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { Logger } from "../runtime/logger.js";
 import type { IDimensionPreChecker } from "./dimension-pre-checker.js";
+import type { HookManager } from "../runtime/hook-manager.js";
 import {
   observeForTask as _observeForTask,
 } from "./observation-task.js";
@@ -62,6 +63,7 @@ export class ObservationEngine {
   private readonly options: ObservationEngineOptions;
   private readonly logger?: Logger;
   private readonly preChecker?: IDimensionPreChecker;
+  private readonly hookManager?: HookManager;
 
   constructor(
     stateManager: StateManager,
@@ -70,7 +72,8 @@ export class ObservationEngine {
     contextProvider?: (goalId: string, dimensionName: string) => Promise<string>,
     options: ObservationEngineOptions = {},
     logger?: Logger,
-    preChecker?: IDimensionPreChecker
+    preChecker?: IDimensionPreChecker,
+    hookManager?: HookManager
   ) {
     this.stateManager = stateManager;
     this.dataSources = dataSources;
@@ -79,6 +82,7 @@ export class ObservationEngine {
     this.options = options;
     this.logger = logger;
     this.preChecker = preChecker;
+    this.hookManager = hookManager;
   }
 
   // ─── Cross-Validation ───
@@ -271,6 +275,8 @@ export class ObservationEngine {
       const dim = goal.dimensions[idx]!;
       const method: ObservationMethod = methods[idx] ?? dim.observation_method;
 
+      void this.hookManager?.emit("PreObserve", { goal_id: goalId, dimension: dim.name });
+
       // Stage 0: Deterministic pre-check (skip LLM if nothing changed)
       // Respect goal-level opt-out: skip_on_no_change=false disables the pre-check entirely.
       if (this.preChecker && goal.observation_optimization?.skip_on_no_change !== false) {
@@ -311,6 +317,7 @@ export class ObservationEngine {
             this.logger?.debug(
               `[ObservationEngine] Pre-check: skipping LLM for dimension "${dim.name}" (no change detected, confidence decayed to ${cachedEntry.confidence.toFixed(3)})`
             );
+            void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: cachedEntry.extracted_value, confidence: cachedEntry.confidence } });
             continue;
           }
         } catch (err) {
@@ -380,6 +387,7 @@ export class ObservationEngine {
             }
           }
 
+          void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: null, confidence: null } });
           continue;
         } catch (err) {
           this.logger?.warn(
@@ -450,6 +458,7 @@ export class ObservationEngine {
             !!dataSource,
             workspacePath
           );
+          void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: null, confidence: null } });
           continue;
         } catch (err) {
           this.logger?.warn(
@@ -479,6 +488,7 @@ export class ObservationEngine {
               confidence: err.entry.confidence,
             });
             await this.applyObservation(goalId, recoveryEntry);
+            void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: recoveryEntry.extracted_value, confidence: recoveryEntry.confidence } });
             continue;
           }
         }
@@ -508,6 +518,7 @@ export class ObservationEngine {
       });
 
       await this.applyObservation(goalId, entry);
+      void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: entry.extracted_value, confidence: entry.confidence } });
     }
   }
 

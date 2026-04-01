@@ -16,6 +16,16 @@ export const DaemonConfigSchema = z.object({
     graceful_shutdown_timeout_ms: z.number().int().positive().optional(),
   }).default({}),
   goal_intervals: z.record(z.string(), z.number().int().positive()).optional(), // goal_id -> interval_ms override
+  proactive_mode: z.boolean().default(false),
+  proactive_interval_ms: z.number().default(3_600_000), // 1 hour minimum between proactive ticks
+  adaptive_sleep: z.object({
+    enabled: z.boolean().default(false),
+    min_interval_ms: z.number().default(60_000),      // 1 minute minimum
+    max_interval_ms: z.number().default(1_800_000),    // 30 minutes maximum
+    night_start_hour: z.number().default(22),           // 22:00
+    night_end_hour: z.number().default(7),              // 07:00
+    night_multiplier: z.number().default(2.0),          // 2x interval at night
+  }).default({}),
 });
 export type DaemonConfig = z.infer<typeof DaemonConfigSchema>;
 

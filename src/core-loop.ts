@@ -190,6 +190,8 @@ export class CoreLoop {
         break;
       }
 
+      void this.deps.hookManager?.emit("LoopCycleStart", { goal_id: goalId, data: { loopIndex } });
+
       const iterationResult = this.config.treeMode && this.deps.treeLoopOrchestrator
         ? await this.runTreeIteration(goalId, loopIndex, nodeConsumedMap)
         : await this.runOneIteration(goalId, loopIndex);
@@ -209,6 +211,8 @@ export class CoreLoop {
           break;
         }
       }
+      void this.deps.hookManager?.emit("LoopCycleEnd", { goal_id: goalId, data: { loopIndex, status: iterationResult.error ? "error" : "ok" } });
+
       iterations.push(iterationResult);
 
       // Save checkpoint after each successful verify step (§4.8)
@@ -228,6 +232,7 @@ export class CoreLoop {
       if (iterationResult.completionJudgment.is_complete &&
           loopIndex >= (this.config.minIterations ?? 1) - 1) {
         finalStatus = "completed";
+        void this.deps.hookManager?.emit("GoalStateChange", { goal_id: goalId, data: { newStatus: "completed" } });
         break;
       }
 
@@ -272,6 +277,7 @@ export class CoreLoop {
         iterationResult.stallReport.escalation_level >= 3
       ) {
         finalStatus = "stalled";
+        void this.deps.hookManager?.emit("GoalStateChange", { goal_id: goalId, data: { newStatus: "stalled" } });
         break;
       }
 

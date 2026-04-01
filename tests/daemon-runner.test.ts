@@ -928,4 +928,440 @@ describe("DaemonRunner", () => {
       await expect(startPromise).resolves.toBeUndefined();
     });
   });
+
+  // ─── Proactive Tick ───
+
+  describe("proactive tick", () => {
+    function makeLLMClientMock(action: string, details: Record<string, unknown> = {}) {
+      const response = JSON.stringify({ action, details });
+      return {
+        sendMessage: vi.fn().mockResolvedValue({
+          content: response,
+          usage: { input_tokens: 10, output_tokens: 10 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn().mockReturnValue({ action, details }),
+      };
+    }
+
+    it("should fire proactive tick when no goals activated and interval elapsed", async () => {
+      const llmClient = makeLLMClientMock("sleep");
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: true,
+          proactive_interval_ms: 0, // always eligible
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      // No goals should activate
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+      await startPromise;
+
+      expect(llmClient.sendMessage).toHaveBeenCalled();
+    });
+
+    it("should NOT fire proactive tick when proactive_mode is false", async () => {
+      const llmClient = makeLLMClientMock("sleep");
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: false,
+          proactive_interval_ms: 0,
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+      await startPromise;
+
+      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("should NOT fire proactive tick when interval has not elapsed", async () => {
+      const llmClient = makeLLMClientMock("sleep");
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: true,
+          proactive_interval_ms: 9_999_999, // far future
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+      await startPromise;
+
+      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("should NOT fire proactive tick when goals were activated", async () => {
+      const llmClient = makeLLMClientMock("sleep");
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: true,
+          proactive_interval_ms: 0,
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      // Goals DO activate
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(true);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+      await startPromise;
+
+      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("should catch LLM error in proactive tick and not crash the daemon", async () => {
+      const llmClient = {
+        sendMessage: vi.fn().mockRejectedValue(new Error("LLM timeout")),
+        parseJSON: vi.fn(),
+      };
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: true,
+          proactive_interval_ms: 0,
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+
+      // Daemon must resolve cleanly despite LLM error
+      await expect(startPromise).resolves.toBeUndefined();
+    });
+
+    it("should log suggest_goal action from proactive tick", async () => {
+      const llmClient = makeLLMClientMock("suggest_goal", { title: "New goal", description: "Do something" });
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: true,
+          proactive_interval_ms: 0,
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+      await startPromise;
+
+      expect(llmClient.sendMessage).toHaveBeenCalled();
+    });
+
+    it("should handle investigate action from proactive tick without crashing", async () => {
+      const llmClient = makeLLMClientMock("investigate", { what: "goal-1 stalled", why: "no progress" });
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: true,
+          proactive_interval_ms: 0,
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+
+      await expect(startPromise).resolves.toBeUndefined();
+    });
+
+    it("should handle preemptive_check action from proactive tick without crashing", async () => {
+      const llmClient = makeLLMClientMock("preemptive_check", { goal_id: "goal-1" });
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: true,
+          proactive_interval_ms: 0,
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+
+      await expect(startPromise).resolves.toBeUndefined();
+    });
+  });
+
+  // ─── Adaptive Sleep ───
+
+  describe("adaptive sleep", () => {
+    function makeDaemonWithAdaptiveSleep(overrides: Record<string, unknown> = {}): DaemonRunner {
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 300_000,
+          adaptive_sleep: {
+            enabled: true,
+            min_interval_ms: 60_000,
+            max_interval_ms: 1_800_000,
+            night_start_hour: 22,
+            night_end_hour: 7,
+            night_multiplier: 2.0,
+            ...overrides,
+          },
+        },
+      });
+      return new DaemonRunner(deps);
+    }
+
+    it("should return base interval unchanged when adaptive_sleep is disabled", () => {
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 300_000 } });
+      const daemon = new DaemonRunner(deps);
+      const result = daemon.calculateAdaptiveInterval(300_000, 0, 0, 0);
+      expect(result).toBe(300_000);
+    });
+
+    it("should return base interval when enabled and all factors are neutral (daytime, low gap, no idle)", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 12; }
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // timeOfDay=1.0, urgency=1.0, activity=1.0 → 300000
+        const result = daemon.calculateAdaptiveInterval(300_000, 0, 0.3, 0);
+        expect(result).toBe(300_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should apply night multiplier when current hour is in night range (after midnight)", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 23; } // 23:00 within [22, 7)
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // timeOfDay=2.0, urgency=1.0, activity=1.0 → 600000
+        const result = daemon.calculateAdaptiveInterval(300_000, 0, 0.3, 0);
+        expect(result).toBe(600_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should apply night multiplier for early morning hours", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 3; } // 03:00 within [22, 7)
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // timeOfDay=2.0, urgency=1.0, activity=1.0 → 600000
+        const result = daemon.calculateAdaptiveInterval(300_000, 0, 0.3, 0);
+        expect(result).toBe(600_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should not apply night multiplier during daytime", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 14; }
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // timeOfDay=1.0, urgency=1.0, activity=1.0 → 300000
+        const result = daemon.calculateAdaptiveInterval(300_000, 0, 0.3, 0);
+        expect(result).toBe(300_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should apply 0.5 urgency factor for high gap score (>= 0.8)", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 12; }
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // timeOfDay=1.0, urgency=0.5, activity=1.0 → 150000
+        const result = daemon.calculateAdaptiveInterval(300_000, 0, 0.9, 0);
+        expect(result).toBe(150_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should apply 0.75 urgency factor for medium gap score (0.5 to 0.8)", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 12; }
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // timeOfDay=1.0, urgency=0.75, activity=1.0 → 225000
+        const result = daemon.calculateAdaptiveInterval(300_000, 0, 0.6, 0);
+        expect(result).toBe(225_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should apply 0.75 activity factor when goals were activated this cycle", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 12; }
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // timeOfDay=1.0, urgency=1.0, activity=0.75 → 225000
+        const result = daemon.calculateAdaptiveInterval(300_000, 2, 0.3, 0);
+        expect(result).toBe(225_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should apply 1.5 activity factor after 5 or more consecutive idle cycles", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 12; }
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // timeOfDay=1.0, urgency=1.0, activity=1.5 → 450000
+        const result = daemon.calculateAdaptiveInterval(300_000, 0, 0.3, 5);
+        expect(result).toBe(450_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should clamp result to min_interval_ms when too small", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 12; }
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep({ min_interval_ms: 120_000 });
+        // 50000 * 1.0 * 0.5 * 0.75 = 18750 → clamped to 120000
+        const result = daemon.calculateAdaptiveInterval(50_000, 2, 0.9, 0);
+        expect(result).toBe(120_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should clamp result to max_interval_ms when too large", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 23; } // night: 2.0
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep({ max_interval_ms: 1_800_000 });
+        // 1000000 * 2.0 * 1.0 * 1.5 = 3000000 → clamped to 1800000
+        const result = daemon.calculateAdaptiveInterval(1_000_000, 0, 0.3, 10);
+        expect(result).toBe(1_800_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should multiply all factors correctly", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 23; } // night: 2.0
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // 400000 * 2.0 * 0.75 * 0.75 = 450000, within [60000, 1800000]
+        const result = daemon.calculateAdaptiveInterval(400_000, 1, 0.6, 0);
+        expect(result).toBe(450_000);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+
+    it("should return an integer result", () => {
+      const realDate = globalThis.Date;
+      const mockDate = class extends realDate {
+        getHours() { return 12; }
+      } as typeof Date;
+      globalThis.Date = mockDate;
+
+      try {
+        const daemon = makeDaemonWithAdaptiveSleep();
+        // 100001 * 0.75 = 75000.75 → rounded to integer
+        const result = daemon.calculateAdaptiveInterval(100_001, 0, 0.6, 0);
+        expect(Number.isInteger(result)).toBe(true);
+      } finally {
+        globalThis.Date = realDate;
+      }
+    });
+  });
 });
