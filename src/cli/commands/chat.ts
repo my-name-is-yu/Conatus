@@ -12,6 +12,10 @@ import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import type { ChatRunner } from "../../chat/chat-runner.js";
 import { Chat, type ChatMessage } from "../../tui/chat.js";
+import { EthicsGate } from "../../traits/ethics-gate.js";
+import { ObservationEngine } from "../../observation/observation-engine.js";
+import { GoalNegotiator } from "../../goal/goal-negotiator.js";
+import { EscalationHandler } from "../../chat/escalation.js";
 
 const logger = getCliLogger();
 
@@ -137,8 +141,20 @@ export async function cmdChat(
     const adapterRegistry = await buildAdapterRegistry(llmClient);
     const adapter = adapterRegistry.getAdapter(adapterType);
 
+    // Build escalation deps (optional — /track works only when LLM is available)
+    let escalationHandler: EscalationHandler | undefined;
+    try {
+      const ethicsGate = new EthicsGate(stateManager, llmClient);
+      const observationEngine = new ObservationEngine(stateManager, [], llmClient);
+      const goalNegotiator = new GoalNegotiator(stateManager, llmClient, ethicsGate, observationEngine);
+      escalationHandler = new EscalationHandler({ stateManager, llmClient, goalNegotiator });
+    } catch {
+      // Non-fatal: /track will show "not available" if escalation fails to init
+      logger.warn("Escalation handler could not be initialized — /track will be unavailable");
+    }
+
     const { ChatRunner } = await import("../../chat/chat-runner.js");
-    const chatRunner = new ChatRunner({ adapter, stateManager });
+    const chatRunner = new ChatRunner({ adapter, stateManager, llmClient, escalationHandler });
 
     // Non-interactive: single turn
     if (task) {

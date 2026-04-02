@@ -8,6 +8,7 @@ import type { IAdapter, AgentTask } from "../execution/adapter-layer.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import { ChatHistory } from "./chat-history.js";
 import { buildChatContext, resolveGitRoot } from "../observation/context-provider.js";
+import type { EscalationHandler } from "./escalation.js";
 
 // ─── Types ───
 
@@ -16,6 +17,8 @@ export interface ChatRunnerDeps {
   adapter: IAdapter;
   /** Optional: reserved for future escalation support (Phase 1c). */
   llmClient?: ILLMClient;
+  /** Optional: escalation handler for /track command (Phase 1c). */
+  escalationHandler?: EscalationHandler;
 }
 
 export interface ChatRunResult {
@@ -60,7 +63,7 @@ export class ChatRunner {
     this.sessionActive = true;
   }
 
-  private handleCommand(input: string): ChatRunResult | null {
+  private async handleCommand(input: string): Promise<ChatRunResult | null> {
     const cmd = input.trim().toLowerCase();
     if (!cmd.startsWith("/")) return null;
 
@@ -77,7 +80,7 @@ export class ChatRunner {
       return { success: true, output: "Exiting chat mode.", elapsed_ms: Date.now() - start };
     }
     if (cmd === "/track") {
-      return { success: false, output: "/track: not yet implemented", elapsed_ms: Date.now() - start };
+      return this.handleTrack(start);
     }
 
     return {
@@ -85,6 +88,38 @@ export class ChatRunner {
       output: `Unknown command: ${input.trim()}. Type /help for available commands.`,
       elapsed_ms: Date.now() - start,
     };
+  }
+
+  private async handleTrack(start: number): Promise<ChatRunResult> {
+    if (!this.deps.escalationHandler) {
+      return {
+        success: false,
+        output: "Escalation not available — missing LLM configuration",
+        elapsed_ms: Date.now() - start,
+      };
+    }
+    if (!this.history || this.history.getMessages().length === 0) {
+      return {
+        success: false,
+        output: "No conversation to escalate. Chat first, then /track.",
+        elapsed_ms: Date.now() - start,
+      };
+    }
+    try {
+      const result = await this.deps.escalationHandler.escalateToGoal(this.history);
+      return {
+        success: true,
+        output: `Goal created: ${result.title} (ID: ${result.goalId})\nRun: pulseed run --goal ${result.goalId} --yes`,
+        elapsed_ms: Date.now() - start,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        output: `Escalation failed: ${message}`,
+        elapsed_ms: Date.now() - start,
+      };
+    }
   }
 
   /**
@@ -100,7 +135,7 @@ export class ChatRunner {
    */
   async execute(input: string, cwd: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ChatRunResult> {
     // Intercept commands before any adapter call
-    const commandResult = this.handleCommand(input);
+    const commandResult = await this.handleCommand(input);
     if (commandResult !== null) {
       return commandResult;
     }

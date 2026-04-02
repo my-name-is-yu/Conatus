@@ -3,6 +3,7 @@ import { ChatRunner } from "../../src/chat/chat-runner.js";
 import type { ChatRunnerDeps } from "../../src/chat/chat-runner.js";
 import type { StateManager } from "../../src/state-manager.js";
 import type { IAdapter, AgentResult } from "../../src/execution/adapter-layer.js";
+import type { EscalationHandler, EscalationResult } from "../../src/chat/escalation.js";
 
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../src/observation/context-provider.js", () => ({
@@ -107,15 +108,56 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
-    it("/track returns 'not yet implemented' with success: false", async () => {
+    it("/track without escalationHandler returns 'not available' message", async () => {
       const adapter = makeMockAdapter();
       const runner = new ChatRunner(makeDeps({ adapter }));
 
       const result = await runner.execute("/track", "/repo");
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("not yet implemented");
+      expect(result.output).toContain("not available");
       expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("/track with escalationHandler but no history returns 'No conversation' message", async () => {
+      const escalationHandler = {
+        escalateToGoal: vi.fn(),
+      } as unknown as EscalationHandler;
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter, escalationHandler }));
+
+      const result = await runner.execute("/track", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("No conversation");
+      expect(escalationHandler.escalateToGoal).not.toHaveBeenCalled();
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("/track with escalationHandler and history returns goal info", async () => {
+      const escalationResult: EscalationResult = {
+        goalId: "goal-abc-123",
+        title: "My tracked goal",
+        description: "My tracked goal",
+      };
+      const escalationHandler = {
+        escalateToGoal: vi.fn().mockResolvedValue(escalationResult),
+      } as unknown as EscalationHandler;
+      const adapter = makeMockAdapter();
+      const stateManager = makeMockStateManager();
+      const runner = new ChatRunner(makeDeps({ adapter, stateManager, escalationHandler }));
+
+      // Populate history by running a normal turn first
+      runner.startSession("/repo");
+      await runner.execute("What should I track?", "/repo");
+
+      const result = await runner.execute("/track", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("goal-abc-123");
+      expect(result.output).toContain("My tracked goal");
+      expect(result.output).toContain("pulseed run --goal");
+      expect(adapter.execute).toHaveBeenCalledOnce(); // only the non-command turn
     });
 
     it("/exit returns exit message without calling adapter", async () => {
