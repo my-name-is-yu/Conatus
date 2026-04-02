@@ -245,10 +245,17 @@ export class ContextAssembler {
 
   private buildCurrentState(goalState: any): string {
     if (!goalState?.dimensions?.length) return "";
+    const getThresholdTarget = (t: Dimension["threshold"]): string | number | undefined => {
+      if (!t) return undefined;
+      if (t.type === "range") return `${t.low}–${t.high}`;
+      if (t.type === "present") return "present";
+      const v = t.value;
+      return typeof v === "boolean" ? String(v) : v;
+    };
     const dims = (goalState.dimensions as Array<Dimension & { gap?: number }>).map((d) => ({
       name: d.name,
       current: d.current_value,
-      target: d.threshold?.value,
+      target: getThresholdTarget(d.threshold),
       gap: d.gap,
     }));
     return formatCurrentState(dims);
@@ -261,7 +268,7 @@ export class ContextAssembler {
     for (const dim of ((goalState.dimensions as Dimension[]) ?? [])) {
       if (dim.history?.length) {
         for (const h of dim.history) {
-          allHistory.push({ timestamp: h.timestamp, score: h.value });
+          allHistory.push({ timestamp: h.timestamp, score: typeof h.value === "number" ? h.value : 0 });
         }
       }
     }

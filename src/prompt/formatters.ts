@@ -45,13 +45,13 @@ export function formatGoalContext(
 }
 
 export function formatCurrentState(
-  dimensions: Array<{ name: string; current: number; target?: number; gap?: number }>
+  dimensions: Array<{ name: string; current: string | number | boolean | null; target?: string | number; gap?: number }>
 ): string {
   if (!dimensions.length) return "";
 
   return dimensions
     .map((d) => {
-      let line = `${d.name}: ${d.current}`;
+      let line = `${d.name}: ${String(d.current ?? "")}`;
       if (d.target !== undefined) line += ` (target: ${d.target}`;
       if (d.gap !== undefined) line += `, gap: ${d.gap}`;
       if (d.target !== undefined) line += ")";
