@@ -59,6 +59,25 @@ const RECOVERY_SCHEDULE: Array<{ loops: number; factor: number }> = [
   { loops: 4, factor: 1.0 },
 ];
 
+// ─── Repetitive pattern detection constants ───
+
+const REPETITIVE_WINDOW = 3;
+const SIMILARITY_THRESHOLD = 0.8;
+const NO_CHANGE_PATTERNS = ["no changes made", "no modifications", "nothing to change", "no action taken"];
+
+// ─── Exported interfaces ───
+
+export interface TaskHistoryEntry {
+  strategy_id: string | null;
+  output: string;
+}
+
+export interface RepetitivePatternResult {
+  isRepetitive: boolean;
+  pattern: 'identical_actions' | 'oscillating' | 'no_change' | null;
+  confidence: number;
+}
+
 /**
  * StallDetector detects stalls (circuit breaker) in the PulSeed orchestrator loop.
  * Supports 4 stall types: dimension_stall, time_exceeded, consecutive_failure, global_stall.
@@ -97,6 +116,89 @@ export class StallDetector {
     const gaps = recent.map(e => e.normalized_gap);
     if (!gaps.every(g => g >= ZERO_PROGRESS_GAP_FLOOR)) return false;
     return Math.max(...gaps) - Math.min(...gaps) < ZERO_PROGRESS_MAX_VARIANCE;
+  }
+
+  /**
+   * Compute bigram Dice coefficient similarity between two strings.
+   * Returns 2 * |intersection| / (|bigrams_a| + |bigrams_b|).
+   */
+  private stringSimilarity(a: string, b: string): number {
+    if (a.length === 0 || b.length === 0) return 0;
+
+    const getBigrams = (s: string): string[] => {
+      const bigrams: string[] = [];
+      for (let i = 0; i < s.length - 1; i++) {
+        bigrams.push(s.slice(i, i + 2));
+      }
+      return bigrams;
+    };
+
+    const bigramsA = getBigrams(a);
+    const bigramsB = getBigrams(b);
+    if (bigramsA.length === 0 || bigramsB.length === 0) return 0;
+
+    const setB = new Map<string, number>();
+    for (const bg of bigramsB) {
+      setB.set(bg, (setB.get(bg) ?? 0) + 1);
+    }
+
+    let intersection = 0;
+    for (const bg of bigramsA) {
+      const count = setB.get(bg) ?? 0;
+      if (count > 0) {
+        intersection++;
+        setB.set(bg, count - 1);
+      }
+    }
+
+    return (2 * intersection) / (bigramsA.length + bigramsB.length);
+  }
+
+  /**
+   * Detect repetitive patterns in task execution history.
+   * Checks for: identical_actions, oscillating, no_change patterns.
+   */
+  detectRepetitivePatterns(taskHistory: TaskHistoryEntry[]): RepetitivePatternResult {
+    if (taskHistory.length < REPETITIVE_WINDOW) {
+      return { isRepetitive: false, pattern: null, confidence: 0 };
+    }
+
+    const recent = taskHistory.slice(-REPETITIVE_WINDOW);
+    const outputs = recent.map(e => e.output);
+
+    // 1. no_change: last 3 outputs contain any NO_CHANGE_PATTERNS string (case-insensitive)
+    const noChangeCount = recent.filter(entry =>
+      NO_CHANGE_PATTERNS.some(p => entry.output.toLowerCase().includes(p))
+    ).length;
+    if (noChangeCount >= REPETITIVE_WINDOW) {
+      return { isRepetitive: true, pattern: "no_change", confidence: 0.95 };
+    }
+
+    // 2. identical_actions: same strategy_id (non-null) and high output similarity
+    const strategyIds = recent.map(e => e.strategy_id);
+    const allSameStrategy = strategyIds[0] !== null && strategyIds.every(id => id === strategyIds[0]);
+    if (allSameStrategy) {
+      const sim01 = this.stringSimilarity(outputs[0], outputs[1]);
+      const sim12 = this.stringSimilarity(outputs[1], outputs[2]);
+      const avgSim = (sim01 + sim12) / 2;
+      if (avgSim >= SIMILARITY_THRESHOLD) {
+        return { isRepetitive: true, pattern: "identical_actions", confidence: avgSim };
+      }
+    }
+
+    // 3. oscillating: A→B→A→B pattern (need 4+ entries)
+    if (taskHistory.length >= 4) {
+      const last4 = taskHistory.slice(-4);
+      const o = last4.map(e => e.output);
+      const sim02 = this.stringSimilarity(o[0], o[2]);
+      const sim13 = this.stringSimilarity(o[1], o[3]);
+      const sim01 = this.stringSimilarity(o[0], o[1]);
+      if (sim02 >= SIMILARITY_THRESHOLD && sim13 >= SIMILARITY_THRESHOLD && sim01 < SIMILARITY_THRESHOLD) {
+        return { isRepetitive: true, pattern: "oscillating", confidence: Math.min(sim02, sim13) };
+      }
+    }
+
+    return { isRepetitive: false, pattern: null, confidence: 0 };
   }
 
   // ─── Public Methods ───
