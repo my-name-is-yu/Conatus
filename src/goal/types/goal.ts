@@ -6,7 +6,7 @@ import {
   GapAggregationEnum,
   PaceStatusEnum,
   DurationSchema,
-} from "./core.js";
+} from "../../types/core.js";
 
 // --- History Entry ---
 

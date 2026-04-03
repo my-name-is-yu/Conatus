@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StrategyStateEnum, DurationSchema } from "./core.js";
+import { StrategyStateEnum, DurationSchema } from "../../types/core.js";
 
 // --- Expected Effect ---
 

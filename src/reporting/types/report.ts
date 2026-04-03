@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ReportTypeEnum, VerbosityLevelEnum } from "./core.js";
+import { ReportTypeEnum, VerbosityLevelEnum } from "../../types/core.js";
 
 // --- Report ---
 
