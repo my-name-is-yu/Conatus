@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StateManager } from "../../state/state-manager.js";
-import { MockLLMClient } from "../../llm/llm-client.js";
+import { StateManager } from "../../base/state/state-manager.js";
+import { MockLLMClient } from "../../base/llm/llm-client.js";
 import { GoalDependencyGraph } from "../goal-dependency-graph.js";
 import type { DependencyEdge } from "../../types/dependency.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";

@@ -7,7 +7,7 @@ import {
   type DriveScorerModule,
   type ReportingEngine,
 } from "../core-loop.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { TrustManager } from "../../traits/trust-manager.js";
 import type { ObservationEngine } from "../../observation/observation-engine.js";
 import type { TaskLifecycle, TaskCycleResult } from "../../execution/task/task-lifecycle.js";

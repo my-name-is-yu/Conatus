@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import { ObservationEngine } from "../observation-engine.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { ObservationMethod } from "../../types/core.js";
-import type { ILLMClient } from "../../llm/llm-client.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IDataSourceAdapter } from "../data-source-adapter.js";
 import type { DataSourceConfig } from "../../types/data-source.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";

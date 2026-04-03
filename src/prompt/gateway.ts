@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import { ContextAssembler } from "./context-assembler.js";
 import { PURPOSE_CONFIGS } from "./purposes/index.js";
 import type { ContextPurpose } from "./slot-definitions.js";

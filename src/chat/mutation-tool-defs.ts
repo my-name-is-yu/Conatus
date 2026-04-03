@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../llm/llm-client.js";
+import type { ToolDefinition } from "../base/llm/llm-client.js";
 
 // ─── Approval ───
 
@@ -16,7 +16,7 @@ export const DEFAULT_APPROVAL: Record<string, ApprovalLevel> = {
 
 // ─── Dependencies ───
 
-import type { StateManager } from "../state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 import type { TrustManager } from "../traits/trust-manager.js";
 import type { PluginLoader } from "../runtime/plugin-loader.js";
 

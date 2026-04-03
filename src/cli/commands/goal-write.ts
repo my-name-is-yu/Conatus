@@ -2,10 +2,10 @@
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { getReportsDir, getDatasourcesDir } from "../../utils/paths.js";
-import { readJsonFile } from "../../utils/json-io.js";
+import { getReportsDir, getDatasourcesDir } from "../../base/utils/paths.js";
+import { readJsonFile } from "../../base/utils/json-io.js";
 
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import { EthicsRejectedError } from "../../goal/goal-negotiator.js";

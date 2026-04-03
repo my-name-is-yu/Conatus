@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { SatisficingJudge } from "../satisficing-judge.js";
 import type { Dimension } from "../../types/goal.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";

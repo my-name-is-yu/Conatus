@@ -13,7 +13,7 @@ vi.mock("../../utils/paths.js", async (importOriginal) => {
   };
 });
 
-import { getLogsDir } from "../../utils/paths.js";
+import { getLogsDir } from "../../base/utils/paths.js";
 import { cmdLogs } from "../commands/logs.js";
 
 // Helper to build a sample log line

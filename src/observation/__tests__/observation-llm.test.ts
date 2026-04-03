@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { observeWithLLM } from "../observation-llm.js";
-import type { ILLMClient } from "../../llm/llm-client.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { Logger } from "../../runtime/logger.js";
 
 function createMockLLMClient(score: number, reason = "test reason"): ILLMClient {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type { StateManager } from "../../state/state-manager.js";
+import type { StateManager } from "../../base/state/state-manager.js";
 import type { TrustManager } from "../../traits/trust-manager.js";
 import type { PluginLoader } from "../../runtime/plugin-loader.js";
 

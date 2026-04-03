@@ -1,5 +1,5 @@
-import type { StateManager } from "../state/state-manager.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { StateManager } from "../base/state/state-manager.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { EthicsGate } from "./ethics-gate.js";
 import type { StallDetector } from "../drive/stall-detector.js";
 import type { DriveSystem } from "../drive/drive-system.js";

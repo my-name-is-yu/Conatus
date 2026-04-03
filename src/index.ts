@@ -1,6 +1,6 @@
 export * from "./types/index.js";
-export { LLMError, AdapterError, ValidationError, StateError } from "./utils/errors.js";
-export { StateManager } from "./state/state-manager.js";
+export { LLMError, AdapterError, ValidationError, StateError } from "./base/utils/errors.js";
+export { StateManager } from "./base/state/state-manager.js";
 export {
   computeRawGap,
   normalizeGap,
@@ -25,13 +25,13 @@ export {
 export { ObservationEngine } from "./observation/observation-engine.js";
 export { StallDetector } from "./drive/stall-detector.js";
 export { SatisficingJudge, aggregateValues } from "./drive/satisficing-judge.js";
-export type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, ModelTier } from "./llm/llm-client.js";
-export { LLMClient, MockLLMClient, extractJSON } from "./llm/llm-client.js";
-export { BaseLLMClient, DEFAULT_MAX_TOKENS } from "./llm/base-llm-client.js";
-export { OllamaLLMClient } from "./llm/ollama-client.js";
-export type { OllamaClientConfig } from "./llm/ollama-client.js";
-export { OpenAILLMClient } from "./llm/openai-client.js";
-export type { OpenAIClientConfig } from "./llm/openai-client.js";
+export type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, ModelTier } from "./base/llm/llm-client.js";
+export { LLMClient, MockLLMClient, extractJSON } from "./base/llm/llm-client.js";
+export { BaseLLMClient, DEFAULT_MAX_TOKENS } from "./base/llm/base-llm-client.js";
+export { OllamaLLMClient } from "./base/llm/ollama-client.js";
+export type { OllamaClientConfig } from "./base/llm/ollama-client.js";
+export { OpenAILLMClient } from "./base/llm/openai-client.js";
+export type { OpenAIClientConfig } from "./base/llm/openai-client.js";
 export { EthicsGate } from "./traits/ethics-gate.js";
 export * from "./types/guardrail.js";
 export { GuardrailRunner } from "./traits/guardrail-runner.js";
@@ -49,11 +49,11 @@ export type { OpenAICodexCLIAdapterConfig } from "./adapters/agents/openai-codex
 export { GitHubIssueAdapter } from "./adapters/github-issue.js";
 export type { GitHubIssueAdapterConfig } from "./adapters/github-issue.js";
 export { GitHubIssueDataSourceAdapter } from "./adapters/datasources/github-issue-datasource.js";
-export { buildLLMClient, buildAdapterRegistry } from "./llm/provider-factory.js";
-export { CodexLLMClient } from "./llm/codex-llm-client.js";
-export type { CodexLLMClientConfig } from "./llm/codex-llm-client.js";
-export { loadProviderConfig, saveProviderConfig, DEFAULT_PROVIDER_CONFIG, migrateProviderConfig, validateProviderConfig, MODEL_REGISTRY } from "./llm/provider-config.js";
-export type { ProviderConfig, ValidationResult } from "./llm/provider-config.js";
+export { buildLLMClient, buildAdapterRegistry } from "./base/llm/provider-factory.js";
+export { CodexLLMClient } from "./base/llm/codex-llm-client.js";
+export type { CodexLLMClientConfig } from "./base/llm/codex-llm-client.js";
+export { loadProviderConfig, saveProviderConfig, DEFAULT_PROVIDER_CONFIG, migrateProviderConfig, validateProviderConfig, MODEL_REGISTRY } from "./base/llm/provider-config.js";
+export type { ProviderConfig, ValidationResult } from "./base/llm/provider-config.js";
 export { TaskLifecycle } from "./execution/task/task-lifecycle.js";
 export { ReportingEngine } from "./reporting/reporting-engine.js";
 export { KnowledgeManager } from "./knowledge/knowledge-manager.js";

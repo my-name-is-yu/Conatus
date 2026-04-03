@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import { z } from "zod";
 import { GuardrailRunner } from "../guardrail-runner.js";
-import { LLMClient } from "../../llm/llm-client.js";
-import { StateManager } from "../../state/state-manager.js";
+import { LLMClient } from "../../base/llm/llm-client.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { SessionManager } from "../../execution/session-manager.js";
 import { TrustManager } from "../trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
@@ -14,7 +14,7 @@ import type {
   LLMMessage,
   LLMRequestOptions,
   LLMResponse,
-} from "../../llm/llm-client.js";
+} from "../../base/llm/llm-client.js";
 import type { IGuardrailHook, GuardrailContext } from "../../types/guardrail.js";
 import type { Task } from "../../types/task.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";

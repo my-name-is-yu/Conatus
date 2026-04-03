@@ -7,7 +7,7 @@ import yaml from "js-yaml";
 import { PluginManifestSchema } from "../../types/plugin.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
-import { getPluginsDir } from "../../utils/paths.js";
+import { getPluginsDir } from "../../base/utils/paths.js";
 import { parseSemver, compareSemver, satisfiesRange } from "../../runtime/plugin-loader.js";
 
 const execFile = promisify(cp.execFile);

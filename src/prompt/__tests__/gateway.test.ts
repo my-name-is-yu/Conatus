@@ -3,7 +3,7 @@ import { z } from "zod";
 import { PromptGateway } from "../gateway.js";
 import { ContextAssembler } from "../context-assembler.js";
 import type { AssembledContext } from "../context-assembler.js";
-import type { ILLMClient } from "../../llm/llm-client.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 
 const makeAssembledContext = (overrides: Partial<AssembledContext> = {}): AssembledContext => ({
   systemPrompt: "You are an AI assistant.",

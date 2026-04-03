@@ -21,7 +21,7 @@ import {
   type ReportingEngine,
 } from "../core-loop.js";
 import { detectStallsAndRebalance } from "../core-loop-phases-b.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { ObservationEngine } from "../../observation/observation-engine.js";
 import type { TaskLifecycle } from "../../execution/task/task-lifecycle.js";
 import type { SatisficingJudge } from "../../drive/satisficing-judge.js";

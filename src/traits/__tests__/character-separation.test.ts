@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { EthicsGate } from "../ethics-gate.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { ReportingEngine } from "../../reporting/reporting-engine.js";

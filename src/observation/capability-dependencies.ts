@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StateManager } from "../state/state-manager.js";
+import { StateManager } from "../base/state/state-manager.js";
 import type { CapabilityDependency, CapabilityGap } from "../types/capability.js";
 
 // ─── Constants ───

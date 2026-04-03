@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ILLMClient } from "../../llm/llm-client.js";
-import { extractJSON } from "../../llm/llm-client.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import { extractJSON } from "../../base/llm/llm-client.js";
 import type { VectorIndex } from "../vector-index.js";
-import type { StateManager } from "../../state/state-manager.js";
+import type { StateManager } from "../../base/state/state-manager.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import {
   LearningTriggerSchema,

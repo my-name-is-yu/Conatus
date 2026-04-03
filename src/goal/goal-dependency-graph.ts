@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { ValidationError } from "../utils/errors.js";
-import type { StateManager } from "../state/state-manager.js";
-import type { ILLMClient, LLMMessage } from "../llm/llm-client.js";
+import { ValidationError } from "../base/utils/errors.js";
+import type { StateManager } from "../base/state/state-manager.js";
+import type { ILLMClient, LLMMessage } from "../base/llm/llm-client.js";
 import type {
   DependencyEdge,
   DependencyEdgeStatus,

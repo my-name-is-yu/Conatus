@@ -4,10 +4,10 @@
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { getPulseedDirPath, getDatasourcesDir } from "../utils/paths.js";
-import { readJsonFile } from "../utils/json-io.js";
+import { getPulseedDirPath, getDatasourcesDir } from "../base/utils/paths.js";
+import { readJsonFile } from "../base/utils/json-io.js";
 
-import { StateManager } from "../state/state-manager.js";
+import { StateManager } from "../base/state/state-manager.js";
 import type { DataSourceConfig } from "../types/data-source.js";
 import type { IDataSourceAdapter } from "../observation/data-source-adapter.js";
 import { FileDataSourceAdapter, HttpApiDataSourceAdapter } from "../observation/data-source-adapter.js";
@@ -15,7 +15,7 @@ import { GitHubIssueDataSourceAdapter } from "../adapters/datasources/github-iss
 import { FileExistenceDataSourceAdapter } from "../adapters/datasources/file-existence-datasource.js";
 import { ShellDataSourceAdapter } from "../adapters/datasources/shell-datasource.js";
 import { createWorkspaceContextProvider } from "../observation/workspace-context.js";
-import { buildLLMClient, buildAdapterRegistry } from "../llm/provider-factory.js";
+import { buildLLMClient, buildAdapterRegistry } from "../base/llm/provider-factory.js";
 import { TrustManager } from "../traits/trust-manager.js";
 import { DriveSystem } from "../drive/drive-system.js";
 import { ObservationEngine } from "../observation/observation-engine.js";

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Logger } from "../runtime/logger.js";
-import type { StateManager } from "../state/state-manager.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { StateManager } from "../base/state/state-manager.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
 import type { GoalDependencyGraph } from "./goal-dependency-graph.js";

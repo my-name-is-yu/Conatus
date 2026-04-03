@@ -1,5 +1,5 @@
 import type { RecognizedIntent } from "./intent-recognizer.js";
-import type { StateManager } from "../state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 import type { GoalNegotiator } from "../goal/goal-negotiator.js";
 import type { ReportingEngine } from "../reporting/reporting-engine.js";
 import type { Report } from "../types/report.js";

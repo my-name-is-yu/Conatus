@@ -22,7 +22,7 @@ import {
   findBestDimensionMatch,
 } from "../../goal/goal-validation.js";
 import { MockEmbeddingClient } from "../../knowledge/embedding-client.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { Dimension, Goal } from "../../types/goal.js";
 import type { Threshold } from "../../types/core.js";
 

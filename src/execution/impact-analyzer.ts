@@ -5,7 +5,7 @@
  * to compare the task output against the expected target scope.
  */
 
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { Logger } from "../runtime/logger.js";
 import { ImpactAnalysisSchema } from "../types/pipeline.js";

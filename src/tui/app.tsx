@@ -18,7 +18,7 @@ import { useLoop } from "./use-loop.js";
 import type { ActionHandler } from "./actions.js";
 import type { IntentRecognizer } from "./intent-recognizer.js";
 import type { CoreLoop } from "../loop/core-loop.js";
-import type { StateManager } from "../state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 import type { TrustManager } from "../traits/trust-manager.js";
 import type { Task } from "../types/task.js";
 

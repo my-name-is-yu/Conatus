@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { EthicsGate } from "../../traits/ethics-gate.js";
 import { ObservationEngine } from "../../observation/observation-engine.js";
 import { GoalNegotiator } from "../goal-negotiator.js";

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { EthicsGate } from "../../traits/ethics-gate.js";
 import { ObservationEngine } from "../../observation/observation-engine.js";
 import { GoalNegotiator } from "../goal-negotiator.js";

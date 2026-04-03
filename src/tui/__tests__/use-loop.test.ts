@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { LoopController, calcDimensionProgress } from "../use-loop.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { CoreLoop, LoopResult } from "../../loop/core-loop.js";
 import type { TrustManager } from "../../traits/trust-manager.js";
 import type { Threshold } from "../../types/core.js";

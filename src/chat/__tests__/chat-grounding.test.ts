@@ -40,8 +40,8 @@ import { BrowserUseCLIAdapter } from "../../adapters/agents/browser-use-cli.js";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
 import type { IAdapter, AgentResult } from "../../execution/adapter-layer.js";
-import type { StateManager } from "../../state/state-manager.js";
-import type { ILLMClient } from "../../llm/llm-client.js";
+import type { StateManager } from "../../base/state/state-manager.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { spawnWithTimeout } from "../../adapters/spawn-helper.js";
 
 // ─── Shared helpers ───

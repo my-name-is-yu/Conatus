@@ -100,7 +100,7 @@ vi.mock("../../llm/provider-factory.js", async (importOriginal) => {
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { CLIRunner } from "../cli-runner.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { SharedKnowledgeEntry } from "../../types/knowledge.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 

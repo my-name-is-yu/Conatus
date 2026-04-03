@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
-import { writeJsonFileAtomic, readJsonFileOrNull } from "../utils/json-io.js";
+import { writeJsonFileAtomic, readJsonFileOrNull } from "../base/utils/json-io.js";
 import { CronTaskSchema, CronTaskListSchema, type CronTask } from "../types/cron.js";
 
 const TASKS_FILE = "scheduled-tasks.json";

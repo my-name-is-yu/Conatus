@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Logger } from "../runtime/logger.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
 import type { CapabilityDetector } from "../observation/capability-detector.js";
 import type { IPromptGateway } from "../prompt/gateway.js";

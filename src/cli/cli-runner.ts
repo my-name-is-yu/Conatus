@@ -26,7 +26,7 @@
 //   pulseed task show <taskId> --goal <id>  Show task details
 
 import { getCliLogger } from "./cli-logger.js";
-import { StateManager } from "../state/state-manager.js";
+import { StateManager } from "../base/state/state-manager.js";
 import { CharacterConfigManager } from "../traits/character-config.js";
 import type { CoreLoop } from "../loop/core-loop.js";
 import { dispatchCommand } from "./cli-command-registry.js";

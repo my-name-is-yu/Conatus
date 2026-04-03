@@ -15,7 +15,7 @@ import {
   CoreLoop,
   type CoreLoopDeps,
 } from "../core-loop.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { IAdapter } from "../../execution/adapter-layer.js";
 import type { Goal } from "../../types/goal.js";
 import type { CompletionJudgment } from "../../types/satisficing.js";

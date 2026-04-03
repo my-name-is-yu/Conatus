@@ -11,7 +11,7 @@ vi.mock("../../utils/paths.js", async (importOriginal) => {
   };
 });
 
-import { getPulseedDirPath } from "../../utils/paths.js";
+import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { cmdNotify } from "../commands/notify.js";
 
 describe("cmdNotify", () => {

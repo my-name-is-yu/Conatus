@@ -5,7 +5,7 @@
 // multiple adapter instances.
 
 import * as fsp from "node:fs/promises";
-import { ValidationError } from "../utils/errors.js";
+import { ValidationError } from "../base/utils/errors.js";
 import type {
   DataSourceType,
   DataSourceConfig,

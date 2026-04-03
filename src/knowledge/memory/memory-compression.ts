@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import type { ILLMClient } from "../../llm/llm-client.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { VectorIndex } from "../vector-index.js";
 import {
   ShortTermEntrySchema,

@@ -3,7 +3,7 @@ import type { GoalRefiner } from "../goal-refiner.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { SatisficingJudge } from "../../drive/satisficing-judge.js";
 import { StateAggregator } from "../state-aggregator.js";
 import { GoalTreeManager } from "../goal-tree-manager.js";

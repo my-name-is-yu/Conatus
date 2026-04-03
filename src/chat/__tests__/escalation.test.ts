@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EscalationHandler } from "../escalation.js";
 import type { EscalationDeps } from "../escalation.js";
-import type { StateManager } from "../../state/state-manager.js";
-import type { ILLMClient, LLMResponse } from "../../llm/llm-client.js";
+import type { StateManager } from "../../base/state/state-manager.js";
+import type { ILLMClient, LLMResponse } from "../../base/llm/llm-client.js";
 import type { GoalNegotiator } from "../../goal/goal-negotiator.js";
 import { ChatHistory } from "../chat-history.js";
 

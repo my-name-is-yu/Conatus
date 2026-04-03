@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { StateManager } from "../state/state-manager.js";
+import { StateManager } from "../base/state/state-manager.js";
 import { StrategySchema, PortfolioSchema } from "../types/strategy.js";
 import type { Strategy, Portfolio } from "../types/strategy.js";
 import type { StrategyState } from "../types/core.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { KnowledgeGapSignal } from "../types/knowledge.js";
 import type { KnowledgeManager } from "../knowledge/knowledge-manager.js";

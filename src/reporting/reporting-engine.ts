@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { StateManager } from "../state/state-manager.js";
+import { StateManager } from "../base/state/state-manager.js";
 import { ReportSchema } from "../types/report.js";
 import type { Report } from "../types/report.js";
 import type { INotificationDispatcher } from "../runtime/notification-dispatcher.js";

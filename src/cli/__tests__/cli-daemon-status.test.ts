@@ -16,7 +16,7 @@ vi.mock("../../utils/paths.js", async (importOriginal) => {
   };
 });
 
-import { getPulseedDirPath } from "../../utils/paths.js";
+import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { cmdDaemonStatus } from "../commands/daemon.js";
 
 describe("cmdDaemonStatus", () => {

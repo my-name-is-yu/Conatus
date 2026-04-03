@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GoalRefiner } from "../goal-refiner.js";
-import type { StateManager } from "../../state/state-manager.js";
+import type { StateManager } from "../../base/state/state-manager.js";
 import type { ObservationEngine } from "../../observation/observation-engine.js";
 import type { GoalNegotiator } from "../goal-negotiator.js";
 import type { GoalTreeManager } from "../goal-tree-manager.js";

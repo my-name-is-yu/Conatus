@@ -28,7 +28,7 @@ import type {
   LLMMessage,
   LLMRequestOptions,
   LLMResponse,
-} from "../llm/llm-client.js";
+} from "../base/llm/llm-client.js";
 import { makeTempDir } from "../../tests/helpers/temp-dir.js";
 
 function makeGoal(goalId = "goal-core"): Goal {

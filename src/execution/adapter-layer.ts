@@ -5,7 +5,7 @@
 // This is the abstraction layer that isolates TaskLifecycle from
 // concrete agent implementations (Claude Code CLI, Claude API, etc.).
 
-import { AdapterError } from "../utils/errors.js";
+import { AdapterError } from "../base/utils/errors.js";
 
 // ─── Types ───
 

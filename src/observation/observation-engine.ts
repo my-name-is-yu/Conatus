@@ -1,10 +1,10 @@
 import { ObservationLogSchema } from "../types/state.js";
 import type { ObservationLogEntry, ObservationLog } from "../types/state.js";
 import type { ObservationLayer, ObservationMethod } from "../types/core.js";
-import type { StateManager } from "../state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 import type { KnowledgeGapSignal } from "../types/knowledge.js";
 import type { IDataSourceAdapter } from "./data-source-adapter.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { Logger } from "../runtime/logger.js";
 import type { IDimensionPreChecker } from "./dimension-pre-checker.js";
 import type { HookManager } from "../runtime/hook-manager.js";

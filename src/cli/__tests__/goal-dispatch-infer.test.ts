@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { StateManager } from "../../state/state-manager.js";
+import type { StateManager } from "../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../traits/character-config.js";
 
 // ─── Module-level mocks ───
@@ -46,7 +46,7 @@ vi.mock("../utils.js", () => ({
 import { dispatchGoalCommand } from "../commands/goal-dispatch.js";
 import * as goalRaw from "../commands/goal-raw.js";
 import * as goal from "../commands/goal.js";
-import * as providerFactory from "../../llm/provider-factory.js";
+import * as providerFactory from "../../base/llm/provider-factory.js";
 import * as goalInfer from "../commands/goal-infer.js";
 import * as cliUtils from "../utils.js";
 

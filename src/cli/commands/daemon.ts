@@ -4,11 +4,11 @@ import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
-import { readJsonFileOrNull } from "../../utils/json-io.js";
+import { readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { DaemonStateSchema, DaemonConfigSchema } from "../../types/daemon.js";
 import type { DaemonState, DaemonConfig } from "../../types/daemon.js";
 
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
 import { Logger } from "../../runtime/logger.js";
 import { DaemonRunner } from "../../runtime/daemon-runner.js";
@@ -23,7 +23,7 @@ import { DataSourceRegistry } from "../../observation/data-source-adapter.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
-import { getPulseedDirPath, getLogsDir } from "../../utils/paths.js";
+import { getPulseedDirPath, getLogsDir } from "../../base/utils/paths.js";
 
 export async function cmdStart(
   stateManager: StateManager,

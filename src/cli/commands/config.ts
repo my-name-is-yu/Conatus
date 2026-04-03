@@ -3,15 +3,15 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
-import { getDatasourcesDir } from "../../utils/paths.js";
-import { writeJsonFile, readJsonFile } from "../../utils/json-io.js";
+import { getDatasourcesDir } from "../../base/utils/paths.js";
+import { writeJsonFile, readJsonFile } from "../../base/utils/json-io.js";
 
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
 
-import { loadProviderConfig, saveProviderConfig } from "../../llm/provider-config.js";
-import type { ProviderConfig } from "../../llm/provider-config.js";
-import { buildLLMClient } from "../../llm/provider-factory.js";
+import { loadProviderConfig, saveProviderConfig } from "../../base/llm/provider-config.js";
+import type { ProviderConfig } from "../../base/llm/provider-config.js";
+import { buildLLMClient } from "../../base/llm/provider-factory.js";
 import { ReportingEngine } from "../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../observation/capability-detector.js";
 import { formatOperationError, printCharacterConfig } from "../utils.js";

@@ -10,7 +10,7 @@ import {
   type ReportingEngine,
   type LoopIterationResult,
 } from "../core-loop.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { ObservationEngine } from "../../observation/observation-engine.js";
 import type { TaskLifecycle, TaskCycleResult } from "../../execution/task/task-lifecycle.js";
 import type { SatisficingJudge } from "../../drive/satisficing-judge.js";

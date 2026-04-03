@@ -116,7 +116,7 @@ vi.mock("../../reporting/reporting-engine.js", async (importOriginal) => {
 // ─── Imports after mocks ──────────────────────────────────────────────────────
 
 import { CLIRunner } from "../cli-runner.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { CoreLoop } from "../../loop/core-loop.js";
 import { GoalNegotiator } from "../../goal/goal-negotiator.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";

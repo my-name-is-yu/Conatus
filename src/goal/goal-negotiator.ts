@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { StateManager } from "../state/state-manager.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { StateManager } from "../base/state/state-manager.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import { EthicsGate } from "../traits/ethics-gate.js";
 import { ObservationEngine } from "../observation/observation-engine.js";
 import { GoalSchema } from "../types/goal.js";

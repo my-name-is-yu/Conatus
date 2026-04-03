@@ -1,5 +1,5 @@
 import type { Goal } from "../types/goal.js";
-export { sanitizeThresholdTypes, sanitizeThresholdValues } from "../llm/json-sanitizer.js";
+export { sanitizeThresholdTypes, sanitizeThresholdValues } from "../base/llm/json-sanitizer.js";
 
 /**
  * Builds the leaf test prompt for the GoalRefiner.

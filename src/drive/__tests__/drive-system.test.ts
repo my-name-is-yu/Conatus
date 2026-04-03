@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { DriveSystem } from "../drive-system.js";
 import type { PulSeedEvent, GoalSchedule } from "../../types/drive.js";
 import type { Goal } from "../../types/goal.js";

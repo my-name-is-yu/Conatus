@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { StateManager } from "../state/state-manager.js";
+import { StateManager } from "../base/state/state-manager.js";
 import { ReportingEngine } from "../reporting/reporting-engine.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { Task } from "../types/task.js";
 import type { PluginMatchResult } from "../types/plugin.js";

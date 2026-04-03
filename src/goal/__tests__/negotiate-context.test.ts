@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { gatherNegotiationContext } from "../goal-negotiator.js";
 import { GoalNegotiator } from "../goal-negotiator.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { EthicsGate } from "../../traits/ethics-gate.js";
 import { ObservationEngine } from "../../observation/observation-engine.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";

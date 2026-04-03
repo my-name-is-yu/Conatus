@@ -3,9 +3,9 @@ import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as url from "node:url";
 import yaml from "js-yaml";
-import { getPluginsDir } from "../utils/paths.js";
-import { writeJsonFileAtomic } from "../utils/json-io.js";
-import { ValidationError } from "../utils/errors.js";
+import { getPluginsDir } from "../base/utils/paths.js";
+import { writeJsonFileAtomic } from "../base/utils/json-io.js";
+import { ValidationError } from "../base/utils/errors.js";
 import type { Logger } from "./logger.js";
 import {
   PluginManifestSchema,

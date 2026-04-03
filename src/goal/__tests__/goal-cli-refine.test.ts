@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { StateManager } from "../../state/state-manager.js";
+import type { StateManager } from "../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../traits/character-config.js";
 import type { Goal } from "../../types/goal.js";
 import type { RefineResult } from "../../types/goal-refiner.js";

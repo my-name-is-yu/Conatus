@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 
 // ─── Real implementations ───
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { ObservationEngine } from "../../observation/observation-engine.js";
 import { TaskLifecycle } from "../../execution/task/task-lifecycle.js";
 import { SatisficingJudge } from "../../drive/satisficing-judge.js";

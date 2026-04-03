@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { Logger } from "../runtime/logger.js";
 import type { ConcretenessScore, DecompositionQualityMetrics } from "../types/goal-tree.js";
 import { ConcretenessScoreSchema, DecompositionQualityMetricsSchema } from "../types/goal-tree.js";

@@ -2,10 +2,10 @@
 
 import { parseArgs } from "node:util";
 
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
-import { buildLLMClient } from "../../llm/provider-factory.js";
+import { buildLLMClient } from "../../base/llm/provider-factory.js";
 import { ReportingEngine } from "../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../observation/capability-detector.js";
 import { buildDeps } from "../setup.js";
@@ -22,7 +22,7 @@ import {
   buildLoopLogger,
   buildProgressHandler,
   runLoopWithSignals,
-} from "../utils/loop-runner.js";
+} from "../base/utils/loop-runner.js";
 
 // ─── Shared setup helper ───
 

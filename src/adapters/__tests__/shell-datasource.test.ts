@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ShellDataSourceAdapter } from "../datasources/shell-datasource.js";
 import { ObservationEngine } from "../../observation/observation-engine.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { Goal } from "../../types/goal.js";
 import type { ObservationMethod } from "../../types/core.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";

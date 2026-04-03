@@ -2,7 +2,7 @@
 
 import * as readline from "node:readline";
 
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import type { LoopConfig } from "../../loop/core-loop.js";
@@ -15,7 +15,7 @@ import {
   buildLoopLogger,
   buildProgressHandler,
   runLoopWithSignals,
-} from "../utils/loop-runner.js";
+} from "../base/utils/loop-runner.js";
 
 function buildApprovalFn(rl: readline.Interface): (task: Task) => Promise<boolean> {
   return (task: Task): Promise<boolean> => {

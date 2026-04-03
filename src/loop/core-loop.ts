@@ -1,4 +1,4 @@
-import { sleep } from "../utils/sleep.js";
+import { sleep } from "../base/utils/sleep.js";
 import type { Logger } from "../runtime/logger.js";
 import type { StateDiffCalculator } from "./state-diff.js";
 import { IterationBudget } from "./iteration-budget.js";

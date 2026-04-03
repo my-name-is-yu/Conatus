@@ -3,10 +3,10 @@ import * as path from "node:path";
 import { z } from "zod";
 import { DecisionRecordSchema } from "../types/knowledge.js";
 import type { DecisionRecord } from "../types/knowledge.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
-import type { StateManager } from "../state/state-manager.js";
-import { writeJsonFileAtomic } from "../utils/json-io.js";
+import type { StateManager } from "../base/state/state-manager.js";
+import { writeJsonFileAtomic } from "../base/utils/json-io.js";
 
 // ─── LLM response schema ───
 

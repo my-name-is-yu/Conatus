@@ -1,10 +1,10 @@
-import type { ILLMClient } from "../../llm/llm-client.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { KnowledgeManager } from "../knowledge-manager.js";
 import type { VectorIndex } from "../vector-index.js";
 import type { LearningPipeline } from "../learning/learning-pipeline.js";
 import type { EthicsGate } from "../../traits/ethics-gate.js";
-import type { StateManager } from "../../state/state-manager.js";
+import type { StateManager } from "../../base/state/state-manager.js";
 import type {
   TransferCandidate,
   TransferResult,

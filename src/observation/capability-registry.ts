@@ -1,4 +1,4 @@
-import { StateManager } from "../state/state-manager.js";
+import { StateManager } from "../base/state/state-manager.js";
 import { ReportingEngine } from "../reporting/reporting-engine.js";
 import {
   CapabilitySchema,

@@ -6,9 +6,9 @@ import type { DriveSystem } from "../drive/drive-system.js";
 import { PulSeedEventSchema } from "../types/drive.js";
 import { TriggerEventSchema, TriggerMappingsConfigSchema } from "../types/trigger.js";
 import type { TriggerMappingsConfig } from "../types/trigger.js";
-import { getEventsDir } from "../utils/paths.js";
+import { getEventsDir } from "../base/utils/paths.js";
 import type { Logger } from "./logger.js";
-import type { StateManager } from "../state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 import type { TriggerMapper } from "./trigger-mapper.js";
 
 export interface EventServerConfig {

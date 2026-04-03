@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { TriggerMapper } from "../trigger-mapper.js";
-import { MockLLMClient } from "../../llm/llm-client.js";
+import { MockLLMClient } from "../../base/llm/llm-client.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───

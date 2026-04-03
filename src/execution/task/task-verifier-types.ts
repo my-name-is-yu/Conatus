@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { StateManager } from "../../state/state-manager.js";
-import type { ILLMClient } from "../../llm/llm-client.js";
+import { StateManager } from "../../base/state/state-manager.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../traits/trust-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";

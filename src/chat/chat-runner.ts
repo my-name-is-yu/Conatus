@@ -4,9 +4,9 @@
 // Bypasses TaskLifecycle — calls adapter.execute() directly.
 
 import { execFile } from "node:child_process";
-import type { StateManager } from "../state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 import type { IAdapter, AgentTask } from "../execution/adapter-layer.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import { ChatHistory } from "./chat-history.js";
 import { buildChatContext, resolveGitRoot } from "../observation/context-provider.js";
 import type { EscalationHandler } from "./escalation.js";
@@ -18,7 +18,7 @@ import { getMutationToolDefinitions, handleMutationToolCall } from "./self-knowl
 import type { MutationToolDeps, ApprovalLevel } from "./self-knowledge-mutation-tools.js";
 import type { TrustManager } from "../traits/trust-manager.js";
 import type { PluginLoader } from "../runtime/plugin-loader.js";
-import type { LLMMessage, LLMResponse } from "../llm/llm-client.js";
+import type { LLMMessage, LLMResponse } from "../base/llm/llm-client.js";
 
 // ─── Types ───
 

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { DataSourceRegistry } from "../data-source-adapter.js";
 import type { IDataSourceAdapter } from "../data-source-adapter.js";
 import { ObservationEngine } from "../observation-engine.js";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import type { DataSourceConfig } from "../../types/data-source.js";
 import type { ObservationMethod } from "../../types/core.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";

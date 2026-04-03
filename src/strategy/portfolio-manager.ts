@@ -1,5 +1,5 @@
 import { StrategyManager } from "./strategy-manager.js";
-import { StateManager } from "../state/state-manager.js";
+import { StateManager } from "../base/state/state-manager.js";
 import { StrategySchema } from "../types/strategy.js";
 import type { Strategy, Portfolio } from "../types/strategy.js";
 import { PortfolioConfigSchema } from "../types/portfolio.js";

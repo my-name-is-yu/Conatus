@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { ILLMClient } from "../../llm/llm-client.js";
-import { extractJSON } from "../../llm/llm-client.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import { extractJSON } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { LearningPipeline } from "../learning/learning-pipeline.js";
 import type { EthicsGate } from "../../traits/ethics-gate.js";
-import type { StateManager } from "../../state/state-manager.js";
+import type { StateManager } from "../../base/state/state-manager.js";
 import { TransferCandidateSchema, TransferResultSchema } from "../../types/cross-portfolio.js";
 import type { TransferCandidate, TransferResult } from "../../types/cross-portfolio.js";
 import type { TransferTrustManager } from "./transfer-trust.js";

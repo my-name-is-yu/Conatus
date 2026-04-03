@@ -9,7 +9,7 @@ import type { CrossGoalPortfolio } from "../strategy/cross-goal-portfolio.js";
 import type { GoalTreeManager } from "../goal/goal-tree-manager.js";
 import type { StateAggregator } from "../goal/state-aggregator.js";
 import type { TreeLoopOrchestrator } from "../goal/tree-loop-orchestrator.js";
-import type { StateManager } from "../state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 import type { ObservationEngine } from "../observation/observation-engine.js";
 import type { TaskLifecycle, TaskCycleResult } from "../execution/task/task-lifecycle.js";
 import type { SatisficingJudge } from "../drive/satisficing-judge.js";

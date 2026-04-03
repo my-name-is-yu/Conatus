@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { KnowledgeTransfer } from "../transfer/knowledge-transfer.js";
 import { TransferTrustManager } from "../transfer/transfer-trust.js";
 import { VectorIndex } from "../vector-index.js";

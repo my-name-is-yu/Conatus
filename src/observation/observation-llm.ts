@@ -7,7 +7,7 @@ import { ObservationLogEntrySchema } from "../types/state.js";
 
 const execFile = promisify(execFileCb);
 import type { ObservationLogEntry } from "../types/state.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import { LLMObservationResponseSchema } from "./observation-helpers.js";
 import type { ObservationEngineOptions } from "./observation-helpers.js";
 import type { Logger } from "../runtime/logger.js";

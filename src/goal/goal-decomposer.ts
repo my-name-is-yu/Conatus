@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ILLMClient } from "../llm/llm-client.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import { EthicsGate } from "../traits/ethics-gate.js";
 import { GoalSchema } from "../types/goal.js";
@@ -13,7 +13,7 @@ import type {
   DecompositionResult,
 } from "../types/goal-tree.js";
 import { decompositionToDimension } from "./goal-validation.js";
-import type { StateManager } from "../state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 
 // ─── Prompt builders ───
 

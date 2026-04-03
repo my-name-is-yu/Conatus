@@ -16,7 +16,7 @@
  *   - task-verifier-llm.ts    — LLM review, timeout, retry
  */
 
-import { StateManager } from "../../state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { VerificationResultSchema } from "../../types/task.js";
 import type { Task, VerificationResult } from "../../types/task.js";
 import type { AgentResult } from "../adapter-layer.js";

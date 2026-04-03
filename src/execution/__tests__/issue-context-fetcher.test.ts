@@ -6,7 +6,7 @@ vi.mock("../../utils/execFileNoThrow.js", () => ({
   execFileNoThrow: vi.fn(),
 }));
 
-import { execFileNoThrow } from "../../utils/execFileNoThrow.js";
+import { execFileNoThrow } from "../../base/utils/execFileNoThrow.js";
 const mockExec = vi.mocked(execFileNoThrow);
 
 // ─── extractIssueNumbers ───

@@ -10,7 +10,7 @@ import { PromptGateway } from "../gateway.js";
 import { TaskGenerationResponseSchema } from "../purposes/task-generation.js";
 import { ObservationResponseSchema } from "../purposes/observation.js";
 import { PURPOSE_CONFIGS } from "../purposes/index.js";
-import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../llm/llm-client.js";
+import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../base/llm/llm-client.js";
 import type { ZodSchema } from "zod";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
