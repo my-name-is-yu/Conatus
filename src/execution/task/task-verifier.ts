@@ -9,88 +9,49 @@
  * All functions are standalone and receive explicit dependencies instead of
  * relying on `this`. TaskLifecycle keeps thin wrapper methods for backward
  * compatibility.
+ *
+ * Implementation is split across:
+ *   - task-verifier-types.ts  — interfaces, Zod schemas
+ *   - task-verifier-rules.ts  — mechanical verification, dimension guards, history
+ *   - task-verifier-llm.ts    — LLM review, timeout, retry
  */
 
-import { z } from "zod";
 import { StateManager } from "../../state/state-manager.js";
-import type { ILLMClient } from "../../llm/llm-client.js";
-import { SessionManager } from "../session-manager.js";
-import { TrustManager } from "../../traits/trust-manager.js";
-import { StallDetector } from "../../drive/stall-detector.js";
-import { TaskSchema, VerificationResultSchema } from "../../types/task.js";
+import { VerificationResultSchema } from "../../types/task.js";
 import type { Task, VerificationResult } from "../../types/task.js";
-import type { Logger } from "../../runtime/logger.js";
-import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
-import { AdapterRegistry } from "../adapter-layer.js";
+import type { AgentResult } from "../adapter-layer.js";
 import { wrapXmlTag, formatKnowledge } from "../../prompt/formatters.js";
-import type { IPromptGateway } from "../../prompt/gateway.js";
 import { analyzeImpact } from "../impact-analyzer.js";
 import type { ImpactAnalysis } from "../../types/pipeline.js";
 
-// ─── Re-exported types used by consumers ───
+// Re-export types so external consumers keep working
+export type {
+  ExecutorReport,
+  VerdictResult,
+  FailureResult,
+  CompletionJudgerConfig,
+  VerifierDeps,
+} from "./task-verifier-types.js";
+export { CompletionJudgerResponseSchema } from "./task-verifier-types.js";
 
-export interface ExecutorReport {
-  completed: boolean;
-  summary: string;
-  partial_results: string[];
-  blockers: string[];
-}
+// Re-export rule helpers (used by task-lifecycle.ts and tests)
+export {
+  clampDimensionUpdate,
+  checkDimensionDirection,
+} from "./task-verifier-rules.js";
 
-export interface VerdictResult {
-  action: "completed" | "keep" | "discard" | "escalate";
-  task: Task;
-}
-
-export interface FailureResult {
-  action: "keep" | "discard" | "escalate";
-  task: Task;
-}
-
-// ─── CompletionJudgerResponseSchema: Zod schema for LLM completion judgment response ───
-
-const CompletionJudgerResponseSchema = z.object({
-  verdict: z.enum(["pass", "partial", "fail"]).default("fail"),
-  reasoning: z.string().default(""),
-  criteria_met: z.number().int().min(0).optional(),
-  criteria_total: z.number().int().min(0).optional(),
-});
-
-// ─── CompletionJudgerConfig: timeout + retry for the LLM completion judgment step ───
-
-export interface CompletionJudgerConfig {
-  /** Timeout for each LLM call in ms (default: 30000) */
-  timeoutMs?: number;
-  /** Maximum number of retries after the first attempt (default: 2) */
-  maxRetries?: number;
-  /** Base backoff delay in ms — doubles each retry (default: 1000) */
-  retryBackoffMs?: number;
-}
-
-// ─── VerifierDeps: all dependencies needed by the verification functions ───
-
-export interface VerifierDeps {
-  stateManager: StateManager;
-  llmClient: ILLMClient;
-  /** Optional separate LLM client for review (忖度防止 — sycophancy mitigation) */
-  reviewerLlmClient?: ILLMClient;
-  sessionManager: SessionManager;
-  trustManager: TrustManager;
-  stallDetector: StallDetector;
-  adapterRegistry?: AdapterRegistry;
-  logger?: Logger;
-  onTaskComplete?: (strategyId: string) => void;
-  durationToMs: (duration: { value: number; unit: string }) => number;
-  completionJudgerConfig?: CompletionJudgerConfig;
-  /** Optional knowledge manager for enriching LLM review prompts */
-  knowledgeManager?: {
-    getRelevantKnowledge?(goalId: string): Promise<Array<{ question: string; answer: string; confidence: number }>>;
-  };
-  /** Optional PromptGateway — when provided, LLM review calls are routed through it */
-  gateway?: IPromptGateway;
-  /** Enable post-verification impact analysis (default: false). Disabled by default to avoid
-   *  consuming extra LLM calls in contexts that only care about verification. */
-  enableImpactAnalysis?: boolean;
-}
+import type { VerifierDeps, VerdictResult, FailureResult } from "./task-verifier-types.js";
+import {
+  runMechanicalVerification,
+  clampDimensionUpdate,
+  checkDimensionDirection,
+  parseExecutorReport,
+  isDirectionCorrect,
+  attemptRevert,
+  setDimensionIntegrity,
+  appendTaskHistory,
+} from "./task-verifier-rules.js";
+import { runLLMReview } from "./task-verifier-llm.js";
 
 // ─── verifyTask ───
 
@@ -293,8 +254,6 @@ export async function verifyTask(
               ? (dim.current_value as number)
               : null;
           // Scale the normalized delta to raw threshold-scale space.
-          // gap-calculator operates in raw values, so +0.2 normalized must be
-          // multiplied by the threshold scale to produce a meaningful update.
           const threshold =
             dim !== undefined &&
             typeof dim.threshold === "object" &&
@@ -386,10 +345,7 @@ export async function handleVerdict(
   verificationResult: VerificationResult
 ): Promise<VerdictResult> {
   // P0: Progress-verdict contradiction check (§4.1)
-  // If dimension values worsened but verdict is "pass", override to "partial"
-  // "Worsened" is threshold-type-aware: min-type expects increase, max-type expects decrease.
   if (verificationResult.verdict === "pass" && verificationResult.dimension_updates?.length > 0) {
-    // Load goal dimensions to determine threshold type per dimension
     const goalRawForGuard = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
     const goalDimsForGuard = (
       goalRawForGuard &&
@@ -404,16 +360,12 @@ export async function handleVerdict(
       const next = typeof u.new_value === "number" ? u.new_value : null;
       if (prev === null || next === null) return false;
 
-      // Determine threshold type for this dimension
       const dimMeta = goalDimsForGuard.find((d) => d.name === u.dimension_name);
       const thresholdType =
         dimMeta && typeof dimMeta.threshold === "object" && dimMeta.threshold !== null
           ? (dimMeta.threshold as Record<string, unknown>).type as string | undefined
           : undefined;
 
-      // For min-type: lower value is worse (decrease = worsened)
-      // For max-type: higher value is worse (increase = worsened)
-      // For range/present/match or unknown: skip (can't determine direction safely)
       if (thresholdType === "min") {
         return next < prev - 0.05;
       } else if (thresholdType === "max") {
@@ -433,7 +385,6 @@ export async function handleVerdict(
   if (verificationResult.verdict === "fail" || verificationResult.verdict === "partial") {
     const firstEvidence = verificationResult.evidence?.[0];
     const reasoning = typeof firstEvidence?.description === "string" ? firstEvidence.description : "";
-    // Read criteria_met/criteria_total from the persisted verification result (written by verifyTask)
     let criteria_met: number | undefined;
     let criteria_total: number | undefined;
     try {
@@ -463,22 +414,20 @@ export async function handleVerdict(
 
   switch (verificationResult.verdict) {
     case "pass": {
-      // Clear stale failure context (pass means previous failures are no longer relevant)
+      // Clear stale failure context
       try {
         await deps.stateManager.writeRaw(
           `tasks/${task.goal_id}/last-failure-context.json`,
           null
         );
       } catch {
-        // Non-fatal: clearing failure context is best-effort
+        // Non-fatal
       }
 
-      // Record success
       deps.trustManager.recordSuccess(task.task_category);
 
       const now = new Date().toISOString();
 
-      // Reset consecutive failure count
       const completedTask = {
         ...task,
         consecutive_failure_count: 0,
@@ -492,14 +441,13 @@ export async function handleVerdict(
         completedTask
       );
 
-      // Apply dimension_updates and update last_updated for the primary dimension.
+      // Apply dimension_updates
       const goalData = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
       if (goalData && typeof goalData === "object") {
         const goal = goalData as Record<string, unknown>;
         const dimensions = goal.dimensions as Array<Record<string, unknown>> | undefined;
         if (dimensions) {
           for (const dim of dimensions) {
-            // Apply current_value updates from verification result
             const update = verificationResult.dimension_updates.find(
               (u) => u.dimension_name === dim.name
             );
@@ -509,12 +457,9 @@ export async function handleVerdict(
                 continue;
               }
               dim.current_value = clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
-              // RC-3: Update confidence and last_observed_layer so gap-calculator
-              // uses the verifier's confidence rather than stale observation confidence.
               dim.confidence = verificationResult.confidence ?? 0.70;
               dim.last_observed_layer = "mechanical";
             }
-            // Update last_updated for the primary dimension
             if (dim.name === task.primary_dimension) {
               dim.last_updated = now;
             }
@@ -523,10 +468,8 @@ export async function handleVerdict(
         }
       }
 
-      // Update task history
       await appendTaskHistory(deps, task.goal_id, completedTask);
 
-      // Notify portfolio manager of task completion
       if (deps.onTaskComplete && completedTask.strategy_id) {
         deps.onTaskComplete(completedTask.strategy_id);
       }
@@ -534,10 +477,8 @@ export async function handleVerdict(
       return { action: "completed", task: completedTask };
     }
     case "partial": {
-      // Check direction from evidence
       const directionCorrect = isDirectionCorrect(verificationResult);
       if (directionCorrect) {
-        // Apply partial dimension_updates to goal state
         const goalDataPartial = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
         if (goalDataPartial && typeof goalDataPartial === "object") {
           const goal = goalDataPartial as Record<string, unknown>;
@@ -553,7 +494,6 @@ export async function handleVerdict(
                   continue;
                 }
                 dim.current_value = clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
-                // RC-3: Update confidence and last_observed_layer for partial verdicts too.
                 dim.confidence = verificationResult.confidence ?? 0.70;
                 dim.last_observed_layer = "mechanical";
               }
@@ -569,7 +509,6 @@ export async function handleVerdict(
         await appendTaskHistory(deps, task.goal_id, partialTask);
         return { action: "keep", task: partialTask };
       }
-      // Direction wrong — delegate to handleFailure
       return handleFailure(deps, task, verificationResult);
     }
     case "fail": {
@@ -589,7 +528,6 @@ export async function handleFailure(
   task: Task,
   verificationResult: VerificationResult
 ): Promise<FailureResult> {
-  // Increment consecutive_failure_count
   const updatedTask = {
     ...task,
     consecutive_failure_count: task.consecutive_failure_count + 1,
@@ -597,16 +535,13 @@ export async function handleFailure(
     verification_evidence: verificationResult.evidence?.map((e) => e.description ?? String(e)) ?? [],
   };
 
-  // Record failure with TrustManager
   deps.trustManager.recordFailure(task.task_category);
 
-  // Persist updated task
   await deps.stateManager.writeRaw(
     `tasks/${task.goal_id}/${task.id}.json`,
     updatedTask
   );
 
-  // Check escalation threshold
   if (updatedTask.consecutive_failure_count >= 3) {
     deps.stallDetector.checkConsecutiveFailures(
       task.goal_id,
@@ -617,7 +552,6 @@ export async function handleFailure(
     return { action: "escalate", task: updatedTask };
   }
 
-  // Direction check
   const directionCorrect = isDirectionCorrect(verificationResult);
 
   if (directionCorrect) {
@@ -625,505 +559,19 @@ export async function handleFailure(
     return { action: "keep", task: updatedTask };
   }
 
-  // Direction wrong
   if (updatedTask.reversibility === "reversible") {
-    // Attempt revert
     const revertSuccess = await attemptRevert(deps, updatedTask);
     deps.logger?.warn(`[task] revert attempted`, { taskId: task.id, success: revertSuccess });
     if (revertSuccess) {
       await appendTaskHistory(deps, task.goal_id, updatedTask);
       return { action: "discard", task: updatedTask };
     }
-    // Revert failed — set state_integrity to "uncertain" and escalate
     deps.logger?.error(`[task] revert FAILED`, { taskId: task.id });
     await setDimensionIntegrity(deps, task.goal_id, task.primary_dimension, "uncertain");
     await appendTaskHistory(deps, task.goal_id, updatedTask);
     return { action: "escalate", task: updatedTask };
   }
 
-  // irreversible or unknown → escalate
   await appendTaskHistory(deps, task.goal_id, updatedTask);
   return { action: "escalate", task: updatedTask };
-}
-
-// ─── Private helpers (module-local) ───
-
-/**
- * Wrap a promise with a timeout. Rejects with a TimeoutError if the promise
- * does not resolve within `ms` milliseconds.
- */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`completion_judger timeout after ${ms}ms`));
-    }, ms);
-    promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (err) => { clearTimeout(timer); reject(err); }
-    );
-  });
-}
-
-/**
- * Call an async function with retry + exponential backoff.
- * On each failure (including timeout), wait `backoffMs * 2^attempt` before retrying.
- * After `maxRetries` retries, the last error is re-thrown.
- */
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries: number,
-  backoffMs: number,
-  logger?: Logger,
-  label?: string
-): Promise<T> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      if (attempt < maxRetries) {
-        const delay = backoffMs * Math.pow(2, attempt);
-        const msg = err instanceof Error ? err.message : String(err);
-        logger?.warn(`[completion_judger] ${label ?? "LLM call"} failed (attempt ${attempt + 1}/${maxRetries + 1}): ${msg} — retrying in ${delay}ms`);
-        await new Promise((res) => setTimeout(res, delay));
-      }
-    }
-  }
-  throw lastErr;
-}
-
-async function runMechanicalVerification(
-  deps: VerifierDeps,
-  task: Task
-): Promise<{ applicable: boolean; passed: boolean; description: string }> {
-  // Mechanical prefixes that indicate a command can be run directly
-  const mechanicalPrefixes = ["npm", "npx", "pytest", "sh", "bash", "node", "make", "cargo", "go ", "gh "];
-
-  // Find the first success criterion with a mechanically-verifiable verification_method
-  const mechanicalCriterion = task.success_criteria.find((c) => {
-    const method = c.verification_method.toLowerCase().trim();
-    return mechanicalPrefixes.some((prefix) => method.startsWith(prefix));
-  });
-
-  if (!mechanicalCriterion) {
-    return {
-      applicable: false,
-      passed: false,
-      description: "No mechanical verification criteria applicable",
-    };
-  }
-
-  // If no adapter registry is available, fall back to assumed pass (backward compat)
-  if (!deps.adapterRegistry) {
-    return {
-      applicable: true,
-      passed: true,
-      description: "Mechanical verification criteria detected (no adapter: assumed pass)",
-    };
-  }
-
-  // Select the first available adapter from the registry for command execution
-  const availableAdapters = deps.adapterRegistry.listAdapters();
-  if (availableAdapters.length === 0) {
-    return {
-      applicable: true,
-      passed: true,
-      description: "Mechanical verification criteria detected (no adapters registered: assumed pass)",
-    };
-  }
-
-  const adapterType = availableAdapters[0]!;
-  let adapter: IAdapter;
-  try {
-    adapter = deps.adapterRegistry.getAdapter(adapterType);
-  } catch {
-    return {
-      applicable: true,
-      passed: true,
-      description: "Mechanical verification criteria detected (adapter lookup failed: assumed pass)",
-    };
-  }
-
-  // Execute the verification command via the adapter
-  const verificationCommand = mechanicalCriterion.verification_method.trim();
-  const verificationTimeoutMs = 30_000; // 30 seconds default for L1 mechanical checks
-
-  const agentTask: AgentTask = {
-    prompt: verificationCommand,
-    timeout_ms: verificationTimeoutMs,
-    adapter_type: adapterType,
-  };
-
-  let result: AgentResult;
-  try {
-    result = await adapter.execute(agentTask);
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    deps.logger?.error("runMechanicalVerification: adapter.execute() threw", { error: errMsg });
-    return {
-      applicable: true,
-      passed: false,
-      description: `Mechanical verification command threw: ${errMsg}`,
-    };
-  }
-
-  if (result.stopped_reason === "timeout") {
-    return {
-      applicable: true,
-      passed: false,
-      description: `Mechanical verification timed out after ${verificationTimeoutMs}ms (command: ${verificationCommand})`,
-    };
-  }
-
-  const passed = result.exit_code === 0 && result.success;
-  const description = passed
-    ? `Mechanical verification passed (exit 0): ${verificationCommand}`
-    : `Mechanical verification failed (exit ${result.exit_code ?? "null"}): ${verificationCommand}${result.error ? ` — ${result.error}` : ""}`;
-
-  return { applicable: true, passed, description };
-}
-
-async function runLLMReview(
-  deps: VerifierDeps,
-  task: Task,
-  executionResult: AgentResult,
-  knowledgeBlock = "",
-  stateBlock = "",
-  modelTier: 'main' | 'light' = 'light'
-): Promise<{ passed: boolean; partial: boolean; description: string; confidence: number; criteria_met?: number; criteria_total?: number }> {
-  const timeoutMs = deps.completionJudgerConfig?.timeoutMs ?? 30_000;
-  const maxRetries = deps.completionJudgerConfig?.maxRetries ?? 2;
-  const retryBackoffMs = deps.completionJudgerConfig?.retryBackoffMs ?? 1_000;
-
-  // Create review session
-  const reviewSession = await deps.sessionManager.createSession(
-    "task_review",
-    task.goal_id,
-    task.id
-  );
-
-  // Build review context (excludes executor self-report for bias prevention)
-  const reviewContext = deps.sessionManager.buildTaskReviewContext(
-    task.goal_id,
-    task.id
-  );
-
-  const criteriaList = task.success_criteria
-    .map(
-      (c, i) =>
-        `${i + 1}. ${c.description} (blocking: ${c.is_blocking}, method: ${c.verification_method})`
-    )
-    .join("\n");
-
-  const enrichmentBlocks = [knowledgeBlock, stateBlock].filter(Boolean).join("\n");
-
-  const prompt = `Evaluate task execution against success criteria.
-
-Task: ${task.work_description}
-Approach: ${task.approach}
-
-Criteria:
-${criteriaList}
-${enrichmentBlocks ? `\n${enrichmentBlocks}\n` : ""}
-Output (first 2000 chars):
-${executionResult.output.slice(0, 2000)}
-
-Status: ${executionResult.stopped_reason} | Success: ${executionResult.success}
-Context: ${reviewContext.map((s) => s.content).join(" ")}
-
-Return JSON:
-{"verdict": "pass"|"partial"|"fail", "reasoning": "...", "criteria_met": #, "criteria_total": #}`;
-
-  // Gateway path: route through PromptGateway when available
-  if (deps.gateway) {
-    let parsed: z.infer<typeof CompletionJudgerResponseSchema>;
-    try {
-      parsed = await withRetry(
-        () => withTimeout(
-          deps.gateway!.execute({
-            purpose: "verification",
-            goalId: task.goal_id,
-            additionalContext: { review_prompt: prompt },
-            responseSchema: CompletionJudgerResponseSchema as z.ZodSchema<z.infer<typeof CompletionJudgerResponseSchema>>,
-            maxTokens: 1024,
-          }),
-          timeoutMs
-        ),
-        maxRetries,
-        retryBackoffMs,
-        deps.logger,
-        `completion_judger for task ${task.id}`
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      deps.logger?.error(`[completion_judger] All retries exhausted for task ${task.id}: ${msg}`);
-      await deps.sessionManager.endSession(reviewSession.id, `completion_judger failed: ${msg}`);
-      return {
-        passed: false,
-        partial: false,
-        description: `completion_judger failed after ${maxRetries + 1} attempt(s): ${msg}`,
-        confidence: 0.0,
-      };
-    }
-    const verdictStr = parsed.verdict;
-    const result = {
-      passed: verdictStr === "pass",
-      partial: verdictStr === "partial",
-      description: parsed.reasoning || "LLM review completed",
-      confidence: verdictStr === "pass" ? 0.8 : verdictStr === "partial" ? 0.6 : 0.8,
-      criteria_met: parsed.criteria_met,
-      criteria_total: parsed.criteria_total,
-    };
-    await deps.sessionManager.endSession(reviewSession.id, `LLM review: ${verdictStr}`);
-    return result;
-  }
-
-  // Direct LLM path (fallback when no gateway)
-  let response: import("../../llm/llm-client.js").LLMResponse;
-  try {
-    response = await withRetry(
-      () => withTimeout(
-        (deps.reviewerLlmClient ?? deps.llmClient).sendMessage(
-          [{ role: "user", content: prompt }],
-          {
-            system: "Review task results objectively against criteria. Ignore executor self-assessment.",
-            max_tokens: 1024,
-            model_tier: modelTier,
-          }
-        ),
-        timeoutMs
-      ),
-      maxRetries,
-      retryBackoffMs,
-      deps.logger,
-      `completion_judger for task ${task.id}`
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    deps.logger?.error(`[completion_judger] All retries exhausted for task ${task.id}: ${msg}`);
-    await deps.sessionManager.endSession(reviewSession.id, `completion_judger failed: ${msg}`);
-    return {
-      passed: false,
-      partial: false,
-      description: `completion_judger failed after ${maxRetries + 1} attempt(s): ${msg}`,
-      confidence: 0.0,
-    };
-  }
-
-  try {
-    const rawJson = response.content.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-    const parseResult = CompletionJudgerResponseSchema.safeParse(JSON.parse(rawJson));
-    if (!parseResult.success) {
-      deps.logger?.warn(`[completion_judger] Zod parse failed for task ${task.id}: ${parseResult.error.message}`);
-      await deps.sessionManager.endSession(reviewSession.id, "Failed to parse LLM review result");
-      return {
-        passed: false,
-        partial: false,
-        description: "Failed to parse LLM review result",
-        confidence: 0.3,
-      };
-    }
-    const parsed = parseResult.data;
-    const verdictStr = parsed.verdict;
-    const result = {
-      passed: verdictStr === "pass",
-      partial: verdictStr === "partial",
-      description: parsed.reasoning || "LLM review completed",
-      confidence: verdictStr === "pass" ? 0.8 : verdictStr === "partial" ? 0.6 : 0.8,
-      criteria_met: parsed.criteria_met,
-      criteria_total: parsed.criteria_total,
-    };
-    await deps.sessionManager.endSession(reviewSession.id, `LLM review: ${verdictStr}`);
-    return result;
-  } catch {
-    deps.logger?.warn(`[completion_judger] JSON.parse failed for task ${task.id}`);
-    await deps.sessionManager.endSession(reviewSession.id, "Failed to parse LLM review result");
-    return {
-      passed: false,
-      partial: false,
-      description: "Failed to parse LLM review result",
-      confidence: 0.3,
-    };
-  }
-}
-
-function parseExecutorReport(executionResult: AgentResult): ExecutorReport {
-  // Parse executor's output for self-assessment (reference only)
-  return {
-    completed: executionResult.success,
-    summary: executionResult.output.slice(0, 500),
-    partial_results: [],
-    blockers: executionResult.error ? [executionResult.error] : [],
-  };
-}
-
-function isDirectionCorrect(verificationResult: VerificationResult): boolean {
-  // Direction is correct when the verdict is "partial" (some criteria met)
-  // Direction is wrong when the verdict is "fail" (no criteria met / wrong approach)
-  return verificationResult.verdict === "partial";
-}
-
-async function attemptRevert(deps: VerifierDeps, task: Task): Promise<boolean> {
-  // Attempt to revert a task's changes
-  // First try git-based revert (faster, more reliable, no LLM cost)
-  // Falls back to LLM-based revert if git is not available or fails
-  try {
-    const filesToRestore = task.scope_boundary.in_scope;
-    if (filesToRestore.length > 0) {
-      const { execFileSync } = await import("child_process");
-      execFileSync("git", ["restore", ...filesToRestore], { cwd: process.cwd(), encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
-      deps.logger?.info?.(`[attemptRevert] git restore succeeded for ${filesToRestore.length} files`);
-      return true;
-    }
-  } catch {
-    // git not available or failed — fall back to LLM-based revert
-  }
-
-  try {
-    const revertSession = await deps.sessionManager.createSession(
-      "task_execution",
-      task.goal_id,
-      task.id
-    );
-
-    const revertPrompt = `Revert task "${task.work_description}". Undo all changes in: ${task.scope_boundary.in_scope.join(", ")}.
-
-Return JSON: {"success": true|false, "reason": "..."}`;
-
-    const response = await deps.llmClient.sendMessage(
-      [{ role: "user", content: revertPrompt }],
-      { system: "Revert failed task changes. Respond with JSON only.", max_tokens: 512, model_tier: "main" }
-    );
-
-    await deps.sessionManager.endSession(revertSession.id, response.content);
-
-    // Parse structured JSON response
-    try {
-      const parsed = deps.llmClient.parseJSON(
-        response.content,
-        z.object({ success: z.boolean(), reason: z.string() })
-      );
-      return parsed.success;
-    } catch {
-      // If parse fails, assume revert failed
-      return false;
-    }
-  } catch {
-    return false;
-  }
-}
-
-async function setDimensionIntegrity(
-  deps: VerifierDeps,
-  goalId: string,
-  dimensionName: string,
-  integrity: "ok" | "uncertain"
-): Promise<void> {
-  // Attempt to update the dimension's state_integrity flag
-  // Read the goal, find the dimension, update integrity
-  const goalData = await deps.stateManager.readRaw(`goals/${goalId}/goal.json`);
-  if (goalData && typeof goalData === "object") {
-    const goal = goalData as Record<string, unknown>;
-    const dimensions = goal.dimensions as Array<Record<string, unknown>> | undefined;
-    if (dimensions) {
-      for (const dim of dimensions) {
-        if (dim.name === dimensionName) {
-          dim.state_integrity = integrity;
-        }
-      }
-      await deps.stateManager.writeRaw(`goals/${goalId}/goal.json`, goal);
-    }
-  }
-}
-
-async function appendTaskHistory(deps: VerifierDeps, goalId: string, task: Task): Promise<void> {
-  const historyPath = `tasks/${goalId}/task-history.json`;
-  const existing = await deps.stateManager.readRaw(historyPath);
-  const history = Array.isArray(existing) ? existing : [];
-
-  const actual_elapsed_ms =
-    task.started_at && task.completed_at
-      ? new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()
-      : null;
-
-  const estimated_duration_ms = task.estimated_duration
-    ? deps.durationToMs(task.estimated_duration)
-    : null;
-
-  history.push({
-    task_id: task.id,
-    status: task.status,
-    primary_dimension: task.primary_dimension,
-    consecutive_failure_count: task.consecutive_failure_count,
-    completed_at: task.completed_at ?? new Date().toISOString(),
-    actual_elapsed_ms,
-    estimated_duration_ms,
-  });
-  await deps.stateManager.writeRaw(historyPath, history);
-}
-
-// ─── P0 Guard 1: dimension_updates change magnitude limit (§3.2) ───
-
-/**
- * Clamp a proposed dimension update to within ±30% absolute or ±30% relative
- * of the current value (whichever is larger). Logs a warning when clamping occurs.
- *
- * Exported for unit testing.
- */
-export function clampDimensionUpdate(
-  current: number,
-  proposed: number,
-  logger?: Logger,
-  dimName?: string
-): number {
-  const absLimit = 0.3;
-  const relLimit = Math.abs(current) * 0.3;
-  const maxDelta = Math.max(absLimit, relLimit);
-  const clamped = Math.max(current - maxDelta, Math.min(current + maxDelta, proposed));
-  if (clamped !== proposed) {
-    logger?.warn(
-      `dimension_update clamped: dim=${dimName}, proposed=${proposed}, applied=${clamped}, current=${current}`
-    );
-  }
-  return clamped;
-}
-
-// ─── §4.5 Guard: dimension_updates direction check ───
-
-/**
- * Check whether a proposed dimension update moves in the intended direction.
- * Returns true if the update should be applied, false if it should be skipped.
- *
- * Exported for unit testing.
- */
-export function checkDimensionDirection(
-  intendedDirection: "increase" | "decrease" | "neutral" | undefined,
-  currentValue: number,
-  proposedValue: number,
-  logger?: { warn: (msg: string) => void },
-  dimName?: string,
-): boolean {
-  if (!intendedDirection || intendedDirection === "neutral") return true;
-
-  const actualDirection =
-    proposedValue > currentValue
-      ? "increase"
-      : proposedValue < currentValue
-        ? "decrease"
-        : "neutral";
-
-  if (intendedDirection === "increase" && actualDirection === "decrease") {
-    logger?.warn(
-      `dimension_update direction mismatch: task intended ${intendedDirection}, but update suggests ${actualDirection} for dim ${dimName ?? "unknown"}`
-    );
-    return false;
-  }
-  if (intendedDirection === "decrease" && actualDirection === "increase") {
-    logger?.warn(
-      `dimension_update direction mismatch: task intended ${intendedDirection}, but update suggests ${actualDirection} for dim ${dimName ?? "unknown"}`
-    );
-    return false;
-  }
-  return true;
 }
