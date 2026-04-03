@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.5] - 2026-04-03
+
+### Added
+
+- Added Telegram bot plugin for bidirectional chat and notifications (#421).
+- Added chat grounding — PulSeed self-knowledge for chat mode (#422).
+- Enriched chat context and added workspace token budget.
+- Added chat verification loop with retry.
+- Added self-knowledge tools — on-demand self-awareness for chat (#437).
+- Added self-knowledge mutation tools with approval flow (#438).
+
+### Fixed
+
+- Fixed tsc build errors in context-assembler (threshold union + current_value types).
+- Fixed unsafe as any[] casts in context-assembler (#423, #366).
+- Fixed retry for HTTP 429 rate-limit responses with extended backoff (#433).
+- Fixed CoreLoop iteration wrapped in top-level try/catch for standalone mode (#434).
+- Hardened StateManager catch blocks: corrupt JSON handling, history cap, git stderr (#429–#432, #435).
+- Fixed duplicate detectRepetitivePatterns/stringSimilarity methods.
+- Fixed maxRetries in rmSync cleanup for Node 22 ENOTEMPTY flaky (#455).
+
+### Changed
+
+- Improved task execution accuracy inspired by Claude Code patterns.
+- Added filtering of past strategies by dimension relevance.
+- Added repetitive pattern detection to StallDetector.
+
+### Refactored
+
+- Reorganized src/ folder structure (Phase 1–3) (#443).
+- Subdivided execution/ into task/ and context/ subfolders (Phase 4) (#444).
+- Moved top-level src/ files to subfolders (Phase 5) (#445).
+- Split task-verifier.ts into types + rules + llm modules (Phase 6a) (#446).
+- Extracted command dispatch from cli-runner.ts (Phase 6b) (#447).
+- Extracted LLM query methods from knowledge-manager.ts (Phase 6c) (#448).
+- Extracted pure formatters from reporting-engine.ts (Phase 6d) (#449).
+- Extracted file I/O helpers from state-manager.ts (Phase 6e) (#450).
+- Extracted iteration phases from core-loop.ts (Phase 6f) (#451).
+- Extracted cron/health helpers from daemon-runner.ts (Phase 6g) (#452).
+- Extracted allocation helpers from portfolio-manager.ts (Phase 6h) (#453).
+- Updated module-map.md for restructure (Phase 7) (#454).
+- Renamed TaskHistoryEntry to StallTaskHistoryEntry in stall-detector (#436).
+- Consolidated duplicate StrategyResponseSchema and StrategyArraySchema (#355).
+
 ## [0.1.4] - 2026-04-02
 
 ### Added
