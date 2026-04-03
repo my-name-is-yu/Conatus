@@ -2,16 +2,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { StateManager } from "../src/state/state-manager.js";
-import { ReportingEngine } from "../src/reporting/reporting-engine.js";
-import { CapabilityDetector } from "../src/observation/capability-detector.js";
+import { StateManager } from "../../state/state-manager.js";
+import { ReportingEngine } from "../../reporting/reporting-engine.js";
+import { CapabilityDetector } from "../../observation/capability-detector.js";
 import type {
   Capability,
   CapabilityGap,
   CapabilityAcquisitionTask,
   AcquisitionContext,
-} from "../src/types/capability.js";
-import type { AgentResult } from "../src/execution/adapter-layer.js";
+} from "../../types/capability.js";
+import type { AgentResult } from "../../execution/adapter-layer.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 
 // ─── Fixtures ───
