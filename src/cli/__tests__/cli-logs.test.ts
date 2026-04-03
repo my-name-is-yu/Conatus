@@ -5,8 +5,8 @@ import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js"
 
 // ─── cmdLogs tests ───
 
-vi.mock("../../utils/paths.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../utils/paths.js")>();
+vi.mock("../../base/utils/paths.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../base/utils/paths.js")>();
   return {
     ...actual,
     getLogsDir: vi.fn(() => "/tmp/pulseed-logs-placeholder"),

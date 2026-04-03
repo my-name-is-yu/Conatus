@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 describe("src/index.ts exports", () => {
   it("re-exports core symbols from their source modules", async () => {
     const barrel = await import("../index.js");
-    const llmModule = await import("../llm/llm-client.js");
+    const llmModule = await import("../base/llm/llm-client.js");
     const ethicsModule = await import("../traits/ethics-gate.js");
-    const stateModule = await import("../state/state-manager.js");
+    const stateModule = await import("../base/state/state-manager.js");
 
     expect(barrel.LLMClient).toBe(llmModule.LLMClient);
     expect(barrel.MockLLMClient).toBe(llmModule.MockLLMClient);

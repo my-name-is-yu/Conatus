@@ -23,7 +23,7 @@ vi.mock("../../goal/goal-negotiator.js", async (importOriginal) => {
   return { ...actual, GoalNegotiator: vi.fn() };
 });
 
-vi.mock("../../llm/llm-client.js", () => ({
+vi.mock("../../base/llm/llm-client.js", () => ({
   LLMClient: vi.fn().mockImplementation(() => ({})),
   MockLLMClient: vi.fn(),
 }));
@@ -87,8 +87,8 @@ vi.mock("../../reporting/reporting-engine.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../llm/provider-factory.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../llm/provider-factory.js")>();
+vi.mock("../../base/llm/provider-factory.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../base/llm/provider-factory.js")>();
   return {
     ...actual,
     buildLLMClient: vi.fn().mockReturnValue({}),

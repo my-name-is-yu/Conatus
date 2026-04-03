@@ -12,7 +12,7 @@ import * as path from "node:path";
 
 // ─── Module mocks (must precede imports of mocked modules) ───────────────────
 
-vi.mock("../../llm/provider-factory.js", () => ({
+vi.mock("../../base/llm/provider-factory.js", () => ({
   buildLLMClient: vi.fn().mockResolvedValue({
     sendMessage: vi.fn(),
     parseJSON: vi.fn(),
@@ -43,7 +43,7 @@ vi.mock("../../goal/goal-refiner.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../llm/llm-client.js", () => ({
+vi.mock("../../base/llm/llm-client.js", () => ({
   LLMClient: vi.fn().mockImplementation(function() { return {}; }),
   MockLLMClient: vi.fn(),
 }));

@@ -116,7 +116,7 @@ describe("cmdGoalAdd — GoalRefiner integration", () => {
       ensureProviderConfig: vi.fn(async () => {}),
     }));
 
-    vi.doMock("../../llm/provider-factory.js", () => ({
+    vi.doMock("../../base/llm/provider-factory.js", () => ({
       buildLLMClient: vi.fn(async () => ({})),
     }));
 
@@ -240,7 +240,7 @@ describe("cmdGoalAdd — GoalRefiner integration", () => {
       ensureProviderConfig: vi.fn(async () => {}),
     }));
 
-    vi.doMock("../../llm/provider-factory.js", () => ({
+    vi.doMock("../../base/llm/provider-factory.js", () => ({
       buildLLMClient: vi.fn(async () => ({})),
     }));
 

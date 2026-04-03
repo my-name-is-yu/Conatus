@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-vi.mock("../../llm/provider-factory.js", () => ({
+vi.mock("../../base/llm/provider-factory.js", () => ({
   buildLLMClient: vi.fn().mockResolvedValue({
     sendMessage: vi.fn(),
     parseJSON: vi.fn(),
@@ -38,7 +38,7 @@ vi.mock("../../goal/goal-negotiator.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../llm/llm-client.js", () => ({
+vi.mock("../../base/llm/llm-client.js", () => ({
   LLMClient: vi.fn().mockImplementation(function() { return {}; }),
   MockLLMClient: vi.fn(),
 }));

@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { writeJsonFileAtomic } from "../utils/json-io.js";
-import type { Logger } from "../runtime/logger.js";
+import type { Logger } from "../../runtime/logger.js";
 
 /**
  * Standalone file I/O helpers extracted from StateManager.

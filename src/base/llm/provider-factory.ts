@@ -9,14 +9,14 @@ import { OllamaLLMClient } from "./ollama-client.js";
 import { OpenAILLMClient } from "./openai-client.js";
 import { CodexLLMClient } from "./codex-llm-client.js";
 import { loadProviderConfig } from "./provider-config.js";
-import { AdapterRegistry } from "../execution/adapter-layer.js";
-import { ClaudeCodeCLIAdapter } from "../adapters/agents/claude-code-cli.js";
-import { ClaudeAPIAdapter } from "../adapters/agents/claude-api.js";
-import { OpenAICodexCLIAdapter } from "../adapters/agents/openai-codex.js";
-import { GitHubIssueAdapter } from "../adapters/github-issue.js";
-import { A2AAdapter } from "../adapters/agents/a2a-adapter.js";
-import { BrowserUseCLIAdapter } from "../adapters/agents/browser-use-cli.js";
-import { OpenClawACPAdapter } from "../adapters/agents/openclaw-acp.js";
+import { AdapterRegistry } from "../../execution/adapter-layer.js";
+import { ClaudeCodeCLIAdapter } from "../../adapters/agents/claude-code-cli.js";
+import { ClaudeAPIAdapter } from "../../adapters/agents/claude-api.js";
+import { OpenAICodexCLIAdapter } from "../../adapters/agents/openai-codex.js";
+import { GitHubIssueAdapter } from "../../adapters/github-issue.js";
+import { A2AAdapter } from "../../adapters/agents/a2a-adapter.js";
+import { BrowserUseCLIAdapter } from "../../adapters/agents/browser-use-cli.js";
+import { OpenClawACPAdapter } from "../../adapters/agents/openclaw-acp.js";
 import type { ProviderConfig } from "./provider-config.js";
 
 /**

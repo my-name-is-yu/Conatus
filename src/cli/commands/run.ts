@@ -15,7 +15,7 @@ import {
   buildLoopLogger,
   buildProgressHandler,
   runLoopWithSignals,
-} from "../base/utils/loop-runner.js";
+} from "../utils/loop-runner.js";
 
 function buildApprovalFn(rl: readline.Interface): (task: Task) => Promise<boolean> {
   return (task: Task): Promise<boolean> => {

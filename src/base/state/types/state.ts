@@ -4,7 +4,7 @@ import {
   ObservationLayerEnum,
   ObservationMethodSchema,
   PaceStatusEnum,
-} from "../../types/core.js";
+} from "../../../types/core.js";
 
 // --- Observation Log Entry ---
 

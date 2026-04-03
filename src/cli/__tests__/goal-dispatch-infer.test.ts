@@ -27,7 +27,7 @@ vi.mock("../commands/goal.js", () => ({
   cmdGoalArchive: vi.fn().mockResolvedValue(0),
 }));
 
-vi.mock("../../llm/provider-factory.js", () => ({
+vi.mock("../../base/llm/provider-factory.js", () => ({
   buildLLMClient: vi.fn().mockResolvedValue({ sendMessage: vi.fn(), parseJSON: vi.fn() }),
 }));
 

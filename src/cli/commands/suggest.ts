@@ -22,7 +22,7 @@ import {
   buildLoopLogger,
   buildProgressHandler,
   runLoopWithSignals,
-} from "../base/utils/loop-runner.js";
+} from "../utils/loop-runner.js";
 
 // ─── Shared setup helper ───
 
