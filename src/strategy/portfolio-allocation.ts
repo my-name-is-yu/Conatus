@@ -6,6 +6,7 @@ import type {
   AllocationStrategy,
   RebalanceAction,
 } from "../types/cross-portfolio.js";
+import type { RebalanceResult } from "../types/portfolio.js";
 
 // ─── Helpers ───
 
@@ -294,10 +295,10 @@ export function checkStrategyTermination(
     min_allocation: number;
     termination_min_rebalances: number;
   },
-  rebalanceHistory: Map<string, Array<{ terminated_strategies: string[]; adjustments: Array<{ strategy_id: string; new_allocation: number }> }>>,
+  rebalanceHistory: Map<string, RebalanceResult[]>,
   countConsecutiveLowest: (
     strategyId: string,
-    history: Array<{ terminated_strategies: string[]; adjustments: Array<{ strategy_id: string; new_allocation: number }> }>,
+    history: RebalanceResult[],
     minAllocation: number
   ) => number
 ): boolean {
