@@ -1,24 +1,24 @@
-import type { Logger } from "../runtime/logger.js";
-import type { StateManager } from "../state-manager.js";
-import type { SessionManager } from "./session-manager.js";
-import type { ILLMClient } from "../llm/llm-client.js";
-import type { KnowledgeManager } from "../knowledge/knowledge-manager.js";
-import type { EthicsGate } from "../traits/ethics-gate.js";
-import type { CapabilityDetector } from "../observation/capability-detector.js";
-import type { Task, VerificationResult } from "../types/task.js";
-import type { GapVector } from "../types/gap.js";
-import type { DriveContext } from "../types/drive.js";
-import type { Dimension } from "../types/goal.js";
-import type { TaskPipeline, TaskDomain } from "../types/pipeline.js";
-import type { AgentTask, IAdapter } from "./adapter-layer.js";
-import { AdapterRegistry } from "./adapter-layer.js";
-import type { ObservationEngine, TaskObservationContext } from "../observation/observation-engine.js";
+import type { Logger } from "../../runtime/logger.js";
+import type { StateManager } from "../../state-manager.js";
+import type { SessionManager } from "../session-manager.js";
+import type { ILLMClient } from "../../llm/llm-client.js";
+import type { KnowledgeManager } from "../../knowledge/knowledge-manager.js";
+import type { EthicsGate } from "../../traits/ethics-gate.js";
+import type { CapabilityDetector } from "../../observation/capability-detector.js";
+import type { Task, VerificationResult } from "../../types/task.js";
+import type { GapVector } from "../../types/gap.js";
+import type { DriveContext } from "../../types/drive.js";
+import type { Dimension } from "../../types/goal.js";
+import type { TaskPipeline, TaskDomain } from "../../types/pipeline.js";
+import type { AgentTask, IAdapter } from "../adapter-layer.js";
+import { AdapterRegistry } from "../adapter-layer.js";
+import type { ObservationEngine, TaskObservationContext } from "../../observation/observation-engine.js";
 import type { TaskCycleResult } from "./task-lifecycle.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
-import { PipelineExecutor } from "./pipeline-executor.js";
+import { PipelineExecutor } from "../pipeline-executor.js";
 import { runPreExecutionChecks } from "./task-approval.js";
 import { durationToMs } from "./task-executor.js";
-import { generateReflection, saveReflectionAsKnowledge } from "./reflection-generator.js";
+import { generateReflection, saveReflectionAsKnowledge } from "../reflection-generator.js";
 
 // ─── PipelineCycleDeps ───
 

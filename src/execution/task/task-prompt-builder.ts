@@ -1,6 +1,6 @@
 import * as _path from "node:path";
 import { access, readFile } from "node:fs/promises";
-import type { StateManager } from "../state-manager.js";
+import type { StateManager } from "../../state-manager.js";
 
 /**
  * Build the LLM prompt used to generate a task for the given goal and target dimension.
@@ -171,7 +171,7 @@ Constraints:
   // Referenced Issue section (dynamic import — graceful when absent)
   let issueSection = "";
   try {
-    const { fetchIssueContext } = await import("./issue-context-fetcher.js");
+    const { fetchIssueContext } = await import("../context/issue-context-fetcher.js");
     const allText = [goal?.title, goal?.description, ...parentChain.map(p => `${p.title} ${p.description}`)].filter(Boolean).join(" ");
     issueSection = await fetchIssueContext(allText);
   } catch {
