@@ -1,10 +1,9 @@
 import { sleep } from "../utils/sleep.js";
 import type { Logger } from "../runtime/logger.js";
-import type { StateDiffCalculator, IterationSnapshot } from "./state-diff.js";
+import type { StateDiffCalculator } from "./state-diff.js";
 import { IterationBudget } from "./iteration-budget.js";
 import { saveLoopCheckpoint, restoreLoopCheckpoint } from "./checkpoint-manager-loop.js";
 import { runPostLoopHooks } from "./post-loop-hooks.js";
-import { tryRunParallel } from "./parallel-dispatch.js";
 import { generateLoopReport } from "./loop-report-helper.js";
 
 import { makeEmptyIterationResult } from "./core-loop-types.js";
@@ -14,7 +13,6 @@ import type {
   LoopIterationResult,
   LoopResult,
   CoreLoopDeps,
-  ProgressEvent,
 } from "./core-loop-types.js";
 import {
   runTreeIteration as runTreeIterationImpl,
@@ -35,6 +33,11 @@ import {
   runTaskCycleWithContext,
   type LoopCallbacks,
 } from "./core-loop-phases-b.js";
+import {
+  runStateDiffCheck,
+  tryParallelExecution,
+  type StateDiffState,
+} from "./core-loop-phases-c.js";
 import { handleCapabilityAcquisition } from "./core-loop-capability.js";
 import { CoreLoopLearning } from "./core-loop-learning.js";
 
@@ -87,7 +90,7 @@ export class CoreLoop {
   private readonly learning: CoreLoopLearning = new CoreLoopLearning();
   /** Optional StateDiffCalculator for loop-skip optimization. */
   private readonly stateDiff?: StateDiffCalculator;
-  private stateDiffState = new Map<string, { previousSnapshot: IterationSnapshot | null; consecutiveSkips: number }>();
+  private stateDiffState = new Map<string, StateDiffState>();
   /** Tracks goals that have already been through auto-decompose this run. */
   private decomposedGoals = new Set<string>();
 
@@ -146,17 +149,11 @@ export class CoreLoop {
 
     // Reset stall escalation state at the beginning of each run so prior
     // run's escalation does not immediately poison a fresh start.
-    // Gap history is intentionally preserved across runs (appended) for historical tracking.
     for (const dim of goal.dimensions) {
       await this.deps.stallDetector.resetEscalation(goalId, dim.name);
     }
 
     // Restore dimension/trust state from checkpoint if present (§4.8).
-    // cycle_number is used to resume iteration counting so loopIndex values are
-    // cumulative across runs. --max-iterations limits total NEW iterations per run.
-    // NOTE: this checkpoint (goals/<goalId>/checkpoint.json) is for crash-recovery state
-    // (dimension values, trust balance) — it is distinct from CheckpointManager in
-    // src/execution/checkpoint-manager.ts, which handles multi-agent session transfer.
     const startLoopIndex = await restoreLoopCheckpoint(
       this.deps.stateManager,
       goalId,
@@ -173,13 +170,11 @@ export class CoreLoop {
     // Effective maxIterations: runtime override takes precedence over config.
     const effectiveMaxIterations = options?.maxIterations ?? this.config.maxIterations;
 
-    // Use the provided iterationBudget if set; otherwise create a local one from maxIterations.
-    // A provided budget is shared (e.g. with parent/child agents); a local budget is loop-private.
+    // Use the provided iterationBudget if set; otherwise create a local one.
     const budget: IterationBudget = this.config.iterationBudget
       ?? new IterationBudget(effectiveMaxIterations);
 
-    // Per-node iteration tracking for tree mode — persists across loop iterations so
-    // per-node limits accumulate correctly (not reset each call).
+    // Per-node iteration tracking for tree mode.
     const nodeConsumedMap = new Map<string, number>();
 
     for (let loopIndex = startLoopIndex; loopIndex < startLoopIndex + effectiveMaxIterations; loopIndex++) {
@@ -188,7 +183,6 @@ export class CoreLoop {
         break;
       }
 
-      // Check shared iteration budget before each iteration (but do not consume yet)
       if (budget.exhausted) {
         this.logger?.info("Iteration budget exhausted, stopping loop");
         break;
@@ -212,14 +206,12 @@ export class CoreLoop {
         continue;
       }
 
-      // Carry forward gapAggregate from the previous iteration when this one was skipped,
-      // so callers always see a meaningful value rather than the default 0.
+      // Carry forward gapAggregate from the previous iteration when this one was skipped.
       if (iterationResult.skipped && iterations.length >= 1) {
         iterationResult.gapAggregate = iterations[iterations.length - 1]!.gapAggregate;
       }
 
-      // Only consume budget for non-skipped iterations — skipped iterations do minimal
-      // work (observation only) and should not count against the shared budget.
+      // Only consume budget for non-skipped iterations.
       if (!iterationResult.skipped) {
         const { allowed, warnings } = budget.consume();
         for (const w of warnings) { this.logger?.warn(w); }
@@ -298,7 +290,6 @@ export class CoreLoop {
         break;
       }
 
-      // Check stopped again after iteration
       if (this.stopped) {
         finalStatus = "stopped";
         break;
@@ -324,8 +315,6 @@ export class CoreLoop {
       tryGenerateReport: (id, idx, r, g) => generateLoopReport(id, idx, r, g, this.deps.reportingEngine, this.logger),
     });
 
-    // After loop completes, trigger learning pipeline for goal completion
-    // (kept here so CoreLoopLearning state stays inside CoreLoop)
     if (finalStatus === "completed") {
       await this.learning.onGoalCompleted(goalId, this.deps, this.logger);
     }
@@ -363,8 +352,7 @@ export class CoreLoop {
 
     await phaseAutoDecompose(goalId, goal, this.deps, this.config, this.logger, this.decomposedGoals, isFirstIteration);
 
-    // After decomposition: if children were created, reload and switch to tree mode
-    // so subsequent iterations use runTreeIteration instead of runOneIteration.
+    // After decomposition: if children were created, reload and switch to tree mode.
     if (!goal.children_ids.length) {
       const reloadedAfterDecompose = await this.deps.stateManager.loadGoal(goalId);
       if (reloadedAfterDecompose && reloadedAfterDecompose.children_ids.length > 0) {
@@ -380,65 +368,17 @@ export class CoreLoop {
     goal = await observeAndReload(ctx, goalId, goal, loopIndex);
 
     // 2b. State diff check (Pillar 2: State Diff + Loop Skip)
-    // When StateDiffCalculator is present and no meaningful change is detected,
-    // skip phases 3-9 to avoid redundant LLM calls. After maxConsecutiveSkips,
-    // the full loop runs so stall detection can fire.
     if (this.stateDiff) {
-      const diffState = this.stateDiffState.get(goalId) ?? { previousSnapshot: null, consecutiveSkips: 0 };
-      const snapshot = this.stateDiff.buildSnapshot(goal, loopIndex);
-      const diff = this.stateDiff.compare(diffState.previousSnapshot, snapshot);
-      diffState.previousSnapshot = snapshot;
-
-      if (!diff.hasChange && diffState.consecutiveSkips < this.config.maxConsecutiveSkips) {
-        diffState.consecutiveSkips++;
-        this.stateDiffState.set(goalId, diffState);
-        this.logger?.info(
-          `[CoreLoop] iteration ${loopIndex} skipped: no state change detected ` +
-          `(consecutiveSkips=${diffState.consecutiveSkips}/${this.config.maxConsecutiveSkips})`,
-          { goalId }
-        );
-        result.skipped = true;
-        result.skipReason = "no_state_change";
-        this.deps.onProgress?.({
-          iteration: loopIndex + 1,
-          maxIterations: this.config.maxIterations,
-          phase: "Skipped",
-          skipReason: result.skipReason,
-        });
-        // Carry forward completion status from the already-loaded goal so a
-        // completed goal is not forced through 5 more iterations.
-        // Reload fresh state to ensure we reflect any status changes since observation.
-        const goalState = await this.deps.stateManager.loadGoal(goalId);
-        if (goalState?.status === "completed") {
-          result.completionJudgment.is_complete = true;
-        }
-        this.deps.onProgress?.({
-          iteration: loopIndex + 1,
-          maxIterations: this.config.maxIterations,
-          phase: "Skipped (no state change)",
-        });
-        result.elapsedMs = Date.now() - startTime;
-        return result;
-      }
-
-      // Reset skip counter — full loop is running
-      diffState.consecutiveSkips = 0;
-      this.stateDiffState.set(goalId, diffState);
-      if (!diff.hasChange) {
-        this.logger?.info(
-          `[CoreLoop] max consecutive skips reached (${this.config.maxConsecutiveSkips}), ` +
-          "forcing full iteration for stall detection",
-          { goalId }
-        );
-      }
+      const { shouldSkip } = await runStateDiffCheck(
+        this.stateDiff, this.stateDiffState, goalId, goal,
+        loopIndex, this.config, this.deps, result, startTime, this.logger
+      );
+      if (shouldSkip) return result;
     }
 
     // 3. Gap calculate + zero check
     const gapResult = await calculateGapOrComplete(ctx, goalId, goal, loopIndex, result, startTime);
-    if (!gapResult) {
-      // null means a hard error occurred — result.error is already set
-      return result;
-    }
+    if (!gapResult) return result;
     const { gapVector, gapAggregate, skipTaskGeneration } = gapResult;
 
     this.logger?.info(`[iter ${loopIndex}] gap: ${gapAggregate.toFixed(2)} | ${(gapVector.gaps ?? []).map((g: any) => `${g.dimension_name}=${g.normalized_weighted_gap.toFixed(2)}`).join(', ')}`);
@@ -461,18 +401,12 @@ export class CoreLoop {
     if (result.error) return result;
 
     // 6. Stall detection + rebalance
-    // Run even when gap=0 (skipTaskGeneration=true): if gap=0 persists but
-    // is_complete=false (e.g. waiting for double-confirmation), stall detection
-    // must still fire so the loop can escalate rather than spin indefinitely.
     await detectStallsAndRebalance(ctx, goalId, goal, result);
 
     if (result.stallDetected && result.stallReport) {
       this.logger?.warn(`[iter ${loopIndex}] stall detected: ${result.stallReport.stall_type}`, { escalation: result.stallReport.escalation_level });
     }
 
-    // When gap=0, SatisficingJudge in Phase 5 is the authority on completion.
-    // If it says not complete (e.g. low confidence), continue the loop normally
-    // but skip task generation since there is no gap to close.
     if (skipTaskGeneration) {
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.reportingEngine, this.logger);
       result.elapsedMs = Date.now() - startTime;
@@ -483,21 +417,10 @@ export class CoreLoop {
     if (checkDependencyBlock(ctx, goalId, result)) return result;
 
     // 6c. TaskGroup detection and routing (M15 Phase 2)
-    // When parallelExecutor and generateTaskGroupFn are both provided, attempt
-    // to decompose large tasks into a TaskGroup and execute in parallel waves.
-    if (this.deps.parallelExecutor && this.deps.generateTaskGroupFn) {
-      const parallelResult = await tryRunParallel(
-        goalId, goal, gapAggregate, result, startTime, this.deps, this.logger
-      );
-      if (parallelResult !== null) {
-        // Parallel path completed — skip normal task cycle
-        await generateLoopReport(goalId, loopIndex, result, goal, this.deps.reportingEngine, this.logger);
-        result.elapsedMs = Date.now() - startTime;
-        return result;
-      }
-      // parallelResult === null means TaskGroup decomposition was skipped or failed;
-      // fall through to normal single-task cycle below.
-    }
+    const tookParallelPath = await tryParallelExecution(
+      goalId, goal, gapAggregate, result, startTime, this.deps, loopIndex, this.logger
+    );
+    if (tookParallelPath) return result;
 
     // 7. Task cycle with context
     const loopCallbacks: LoopCallbacks = {
@@ -528,8 +451,6 @@ export class CoreLoop {
   /**
    * Tree-mode iteration: select one node via TreeLoopOrchestrator, run a
    * normal observe→gap→score→task cycle on that node, then aggregate upward.
-   *
-   * Called by run() when treeMode=true.
    */
   async runTreeIteration(rootId: string, loopIndex: number, nodeConsumedMap: Map<string, number>): Promise<LoopIterationResult> {
     return runTreeIterationImpl(rootId, loopIndex, this.deps, this.config, this.logger,
@@ -538,14 +459,6 @@ export class CoreLoop {
 
   /**
    * Run one iteration of the multi-goal loop.
-   *
-   * Uses CrossGoalPortfolio (if available) to determine goal allocations,
-   * then calls portfolioManager.selectNextStrategyAcrossGoals() to pick
-   * which goal gets the next iteration. Falls back to equal allocation if
-   * CrossGoalPortfolio is not injected.
-   *
-   * Requires config.multiGoalMode=true and config.goalIds to be set.
-   * Throws if CrossGoalPortfolio is not injected and multiGoalMode is enabled.
    */
   async runMultiGoalIteration(loopIndex: number): Promise<LoopIterationResult> {
     return runMultiGoalIterationImpl(loopIndex, this.deps, this.config,
@@ -567,5 +480,3 @@ export class CoreLoop {
   }
 
 }
-
-
