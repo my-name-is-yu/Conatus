@@ -2,9 +2,9 @@ import { StateManager } from "../base/state/state-manager.js";
 import { StateError } from "../base/utils/errors.js";
 import { SatisficingJudge, aggregateValues } from "../drive/satisficing-judge.js";
 import { dimensionProgress } from "../drive/gap-calculator.js";
-import type { Goal, Dimension } from "../types/goal.js";
-import type { SatisficingAggregation } from "../types/goal.js";
-import type { StateAggregationRule } from "../types/goal-tree.js";
+import type { Goal, Dimension } from "../base/types/goal.js";
+import type { SatisficingAggregation } from "../base/types/goal.js";
+import type { StateAggregationRule } from "../base/types/goal-tree.js";
 
 /**
  * AggregatedState captures the result of rolling up child states into a parent.

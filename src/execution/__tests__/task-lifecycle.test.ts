@@ -20,10 +20,10 @@ import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
 import { GuardrailRunner } from "../../traits/guardrail-runner.js";
-import type { Task } from "../../types/task.js";
-import type { GapVector } from "../../types/gap.js";
-import type { DriveContext } from "../../types/drive.js";
-import type { IGuardrailHook } from "../../types/guardrail.js";
+import type { Task } from "../../base/types/task.js";
+import type { GapVector } from "../../base/types/gap.js";
+import type { DriveContext } from "../../base/types/drive.js";
+import type { IGuardrailHook } from "../../base/types/guardrail.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
@@ -514,7 +514,7 @@ describe("TaskLifecycle — uncovered branches", () => {
       const task = makeTask({ strategy_id: "strategy-abc" });
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
 
-      const vr: import("../../types/task.js").VerificationResult = {
+      const vr: import("../../base/types/task.js").VerificationResult = {
         task_id: task.id,
         verdict: "pass",
         confidence: 0.9,

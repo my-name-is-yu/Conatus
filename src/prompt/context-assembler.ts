@@ -27,7 +27,7 @@ import {
   formatTaskResults,
 } from "./formatters.js";
 import { allocateBudget, type BudgetAllocation } from "../execution/context/context-budget.js";
-import type { Dimension } from "../types/goal.js";
+import type { Dimension } from "../base/types/goal.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

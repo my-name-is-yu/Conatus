@@ -5,8 +5,8 @@ import { spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
-import { DaemonStateSchema, DaemonConfigSchema } from "../../types/daemon.js";
-import type { DaemonState, DaemonConfig } from "../../types/daemon.js";
+import { DaemonStateSchema, DaemonConfigSchema } from "../../base/types/daemon.js";
+import type { DaemonState, DaemonConfig } from "../../base/types/daemon.js";
 
 import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";

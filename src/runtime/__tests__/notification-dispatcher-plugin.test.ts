@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NotificationDispatcher } from "../notification-dispatcher.js";
 import { NotifierRegistry } from "../notifier-registry.js";
-import type { INotifier, NotificationEvent, NotificationEventType } from "../../types/plugin.js";
-import type { Report } from "../../types/report.js";
+import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
+import type { Report } from "../../base/types/report.js";
 
 // ─── Helpers ───
 

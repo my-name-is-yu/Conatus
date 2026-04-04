@@ -7,9 +7,9 @@ import { TrustManager } from "../../traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
-import type { Task } from "../../types/task.js";
-import type { GapVector } from "../../types/gap.js";
-import type { DriveContext } from "../../types/drive.js";
+import type { Task } from "../../base/types/task.js";
+import type { GapVector } from "../../base/types/gap.js";
+import type { DriveContext } from "../../base/types/drive.js";
 import type {
   ILLMClient,
   LLMMessage,
@@ -423,7 +423,7 @@ describe("TaskLifecycle", async () => {
       // Simulate two pass verdicts
       for (let i = 1; i <= 2; i++) {
         const task = makeTask({ id: `task-${i}` });
-        const vr: import("../../types/task.js").VerificationResult = {
+        const vr: import("../../base/types/task.js").VerificationResult = {
           task_id: `task-${i}`,
           verdict: "pass",
           confidence: 0.9,
@@ -448,7 +448,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([]);
       const lifecycle = createLifecycle(llm);
       const task = makeTask({ primary_dimension: "coverage" });
-      const vr: import("../../types/task.js").VerificationResult = {
+      const vr: import("../../base/types/task.js").VerificationResult = {
         task_id: "task-1",
         verdict: "pass",
         confidence: 0.9,
@@ -470,7 +470,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([]);
       const lifecycle = createLifecycle(llm);
       const task = makeTask({ consecutive_failure_count: 1 });
-      const vr: import("../../types/task.js").VerificationResult = {
+      const vr: import("../../base/types/task.js").VerificationResult = {
         task_id: "task-1",
         verdict: "fail",
         confidence: 0.9,
@@ -628,7 +628,7 @@ describe("TaskLifecycle", async () => {
       const lifecycle = createLifecycle(llm);
       const task = makeTask({ id: "task-keep" });
 
-      const vr: import("../../types/task.js").VerificationResult = {
+      const vr: import("../../base/types/task.js").VerificationResult = {
         task_id: "task-keep",
         verdict: "partial",
         confidence: 0.5,
@@ -665,7 +665,7 @@ describe("TaskLifecycle", async () => {
         consecutive_failure_count: 0,
       });
 
-      const vr: import("../../types/task.js").VerificationResult = {
+      const vr: import("../../base/types/task.js").VerificationResult = {
         task_id: "task-discard",
         verdict: "fail",
         confidence: 0.9,
@@ -691,7 +691,7 @@ describe("TaskLifecycle", async () => {
         reversibility: "reversible",
       });
 
-      const vr: import("../../types/task.js").VerificationResult = {
+      const vr: import("../../base/types/task.js").VerificationResult = {
         task_id: "task-escalate",
         verdict: "fail",
         confidence: 0.9,
@@ -718,7 +718,7 @@ describe("TaskLifecycle", async () => {
         consecutive_failure_count: 0,
       });
 
-      const vr: import("../../types/task.js").VerificationResult = {
+      const vr: import("../../base/types/task.js").VerificationResult = {
         task_id: "task-irreversible-fail",
         verdict: "fail",
         confidence: 0.9,

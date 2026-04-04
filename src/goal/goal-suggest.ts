@@ -10,7 +10,7 @@ import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
 import type { CapabilityDetector } from "../observation/capability-detector.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
-import type { DimensionDecomposition } from "../types/negotiation.js";
+import type { DimensionDecomposition } from "../base/types/negotiation.js";
 
 // ─── Goal Suggestion schemas ───
 

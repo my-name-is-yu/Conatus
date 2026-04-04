@@ -1,9 +1,9 @@
 import { StateManager } from "../base/state/state-manager.js";
-import type { Goal } from "../types/goal.js";
+import type { Goal } from "../base/types/goal.js";
 import type {
   CompletionJudgment,
   SatisficingStatus,
-} from "../types/satisficing.js";
+} from "../base/types/satisficing.js";
 import { aggregateValues, getSatisfiedValue } from "./satisficing-helpers.js";
 import type { Logger } from "../runtime/logger.js";
 
@@ -108,8 +108,8 @@ export async function propagateSubgoalCompletion(
   subgoalId: string,
   parentGoalId: string,
   stateManager: StateManager,
-  computeActualProgress: (dim: import("../types/goal.js").Dimension) => number,
-  subgoalDimensions?: import("../types/goal.js").Dimension[],
+  computeActualProgress: (dim: import("../base/types/goal.js").Dimension) => number,
+  subgoalDimensions?: import("../base/types/goal.js").Dimension[],
   logger?: Logger
 ): Promise<void> {
   const parentGoal = await stateManager.loadGoal(parentGoalId);
@@ -131,7 +131,7 @@ export async function propagateSubgoalCompletion(
 
     if (mappedDims.length > 0) {
       // Group subgoal dimensions by target parent_dimension
-      const grouped = new Map<string, import("../types/goal.js").Dimension[]>();
+      const grouped = new Map<string, import("../base/types/goal.js").Dimension[]>();
       for (const dim of mappedDims) {
         // dimension_mapping is non-null: mappedDims is filtered to only include dims with non-null mapping
         const mapping = dim.dimension_mapping ?? { parent_dimension: "", aggregation: "average" as const };

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { HookManager } from "../hook-manager.js";
-import type { HookConfig } from "../../types/hook.js";
+import type { HookConfig } from "../../base/types/hook.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───

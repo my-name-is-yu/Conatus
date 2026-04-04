@@ -4,7 +4,7 @@
  * Helper to generate and save a per-iteration execution report inside CoreLoop.
  */
 
-import type { Goal } from "../types/goal.js";
+import type { Goal } from "../base/types/goal.js";
 import type { ReportingEngine, LoopIterationResult } from "./core-loop-types.js";
 import type { Logger } from "../runtime/logger.js";
 import { dimensionProgress } from "../drive/gap-calculator.js";

@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { TaskSchema } from "../types/task.js";
-import type { Task } from "../types/task.js";
+import { TaskSchema } from "../base/types/task.js";
+import type { Task } from "../base/types/task.js";
 import {
   DomainStabilitySchema,
   REVALIDATION_SCHEDULE,
-} from "../types/knowledge.js";
+} from "../base/types/knowledge.js";
 import type {
   KnowledgeEntry,
   SharedKnowledgeEntry,
   DomainStability,
-} from "../types/knowledge.js";
+} from "../base/types/knowledge.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import { loadSharedEntries } from "./knowledge-search.js";

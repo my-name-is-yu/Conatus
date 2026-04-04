@@ -4,7 +4,7 @@ import type {
   GuardrailCheckpoint,
   GuardrailContext,
   GuardrailAggregateResult,
-} from "../types/guardrail.js";
+} from "../base/types/guardrail.js";
 
 // ─── GuardrailRunner ───
 

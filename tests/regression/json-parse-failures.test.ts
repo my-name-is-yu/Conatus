@@ -13,8 +13,8 @@ import type { Logger } from "../../src/runtime/logger.js";
 import { createMockLLMClient } from "../helpers/mock-llm.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 import { makeGoal } from "../helpers/fixtures.js";
-import type { Task } from "../../src/types/task.js";
-import type { PulSeedEvent } from "../../src/types/drive.js";
+import type { Task } from "../../src/base/types/task.js";
+import type { PulSeedEvent } from "../../src/base/types/drive.js";
 
 function makeLogger(): Logger {
   return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;

@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EventServer } from "../event-server.js";
-import type { PulSeedEvent } from "../../types/drive.js";
+import type { PulSeedEvent } from "../../base/types/drive.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───

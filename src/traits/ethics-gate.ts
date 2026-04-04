@@ -5,13 +5,13 @@ import type { IPromptGateway } from "../prompt/gateway.js";
 import {
   EthicsVerdictSchema,
   EthicsLogSchema,
-} from "../types/ethics.js";
+} from "../base/types/ethics.js";
 import type {
   EthicsVerdict,
   EthicsLog,
   EthicsSubjectType,
   CustomConstraintsConfig,
-} from "../types/ethics.js";
+} from "../base/types/ethics.js";
 import { LAYER1_RULES, ETHICS_SYSTEM_PROMPT } from "./ethics-rules.js";
 
 // ─── Constants ───

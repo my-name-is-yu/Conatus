@@ -17,8 +17,8 @@ import {
 import {
   ShortTermEntrySchema,
   MemoryIndexEntrySchema,
-} from "../../types/memory-lifecycle.js";
-import type { ShortTermEntry, MemoryIndexEntry } from "../../types/memory-lifecycle.js";
+} from "../../base/types/memory-lifecycle.js";
+import type { ShortTermEntry, MemoryIndexEntry } from "../../base/types/memory-lifecycle.js";
 
 // ─── Helpers ───
 

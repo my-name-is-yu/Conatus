@@ -12,7 +12,7 @@ import {
   FeedbackTargetStepEnum,
   LearningPipelineConfigSchema,
   LearnedPatternTypeEnum,
-} from "../../types/learning.js";
+} from "../../base/types/learning.js";
 import type {
   LearningTrigger,
   LearnedPattern,
@@ -25,8 +25,8 @@ import type {
   FeedbackAggregation,
   CrossGoalPattern,
   PatternSharingResult,
-} from "../../types/learning.js";
-import type { StallReport } from "../../types/stall.js";
+} from "../../base/types/learning.js";
+import type { StallReport } from "../../base/types/stall.js";
 import {
   getStructuralFeedback,
   recordStructuralFeedback,

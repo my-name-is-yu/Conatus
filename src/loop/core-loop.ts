@@ -384,7 +384,7 @@ export class CoreLoop {
     this.logger?.info(`[iter ${loopIndex}] gap: ${gapAggregate.toFixed(2)} | ${(gapVector.gaps ?? []).map((g: any) => `${g.dimension_name}=${g.normalized_weighted_gap.toFixed(2)}`).join(', ')}`);
 
     // 4. Drive scoring + knowledge gap check (skip when gap=0 — no task needed)
-    let driveScores: import("../types/drive.js").DriveScore[] = [];
+    let driveScores: import("../base/types/drive.js").DriveScore[] = [];
     let highDissatisfactionDimensions: string[] = [];
     if (!skipTaskGeneration) {
       const driveResult = await scoreDrivesAndCheckKnowledge(

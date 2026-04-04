@@ -1,6 +1,6 @@
-import type { Goal } from "../types/goal.js";
-import type { PaceSnapshot } from "../types/goal.js";
-import type { RescheduleOptions } from "../types/state.js";
+import type { Goal } from "../base/types/goal.js";
+import type { PaceSnapshot } from "../base/types/goal.js";
+import type { RescheduleOptions } from "../base/types/state.js";
 
 /**
  * Returns all goals with node_type === "milestone".

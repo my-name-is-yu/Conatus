@@ -5,12 +5,12 @@ import * as os from "node:os";
 import { StateManager } from "../../base/state/state-manager.js";
 import { ReportingEngine } from "../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../observation/capability-detector.js";
-import { CapabilityRegistrySchema } from "../../types/capability.js";
+import { CapabilityRegistrySchema } from "../../base/types/capability.js";
 import type {
   Capability,
   CapabilityRegistry,
-} from "../../types/capability.js";
-import type { Task } from "../../types/task.js";
+} from "../../base/types/capability.js";
+import type { Task } from "../../base/types/task.js";
 import type { LLMMessage } from "../../base/llm/llm-client.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 

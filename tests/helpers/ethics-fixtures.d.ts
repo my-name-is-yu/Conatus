@@ -5,7 +5,7 @@
  *   - JSON strings  (suffix _JSON)  — for createMockLLMClient() / LLM response mocks
  *   - Typed objects (no suffix)     — for direct mock injection (e.g. vi.fn().mockResolvedValue)
  */
-import type { EthicsVerdict } from "../../src/types/ethics.js";
+import type { EthicsVerdict } from "../../src/base/types/ethics.js";
 export declare const PASS_VERDICT: EthicsVerdict;
 export declare const REJECT_VERDICT: EthicsVerdict;
 export declare const FLAG_VERDICT: EthicsVerdict;

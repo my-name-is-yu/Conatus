@@ -20,8 +20,8 @@ import { PIDManager } from "../../src/runtime/pid-manager.js";
 import { Logger } from "../../src/runtime/logger.js";
 import { EventServer } from "../../src/runtime/event-server.js";
 import type { DaemonDeps } from "../../src/runtime/daemon-runner.js";
-import type { DaemonState } from "../../src/types/daemon.js";
-import { DaemonStateSchema } from "../../src/types/daemon.js";
+import type { DaemonState } from "../../src/base/types/daemon.js";
+import { DaemonStateSchema } from "../../src/base/types/daemon.js";
 import type { LoopResult } from "../../src/loop/core-loop.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 

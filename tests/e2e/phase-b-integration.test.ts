@@ -22,9 +22,9 @@ import { HookManager } from "../../src/runtime/hook-manager.js";
 import { EventServer } from "../../src/runtime/event-server.js";
 import { MCPClientManager } from "../../src/adapters/mcp-client-manager.js";
 import { MCPDataSourceAdapter } from "../../src/adapters/datasources/mcp-datasource.js";
-import type { HookConfig } from "../../src/types/hook.js";
-import type { IMCPConnection, MCPServerConfig } from "../../src/types/mcp.js";
-import type { PulSeedEvent } from "../../src/types/drive.js";
+import type { HookConfig } from "../../src/base/types/hook.js";
+import type { IMCPConnection, MCPServerConfig } from "../../src/base/types/mcp.js";
+import type { PulSeedEvent } from "../../src/base/types/drive.js";
 import { makeTempDir, cleanupTempDir } from "../helpers/temp-dir.js";
 
 // ─── Shared helpers ───

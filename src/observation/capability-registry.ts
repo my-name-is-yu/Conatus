@@ -4,14 +4,14 @@ import {
   CapabilitySchema,
   CapabilityRegistrySchema,
   CapabilityGapSchema,
-} from "../types/capability.js";
+} from "../base/types/capability.js";
 import type {
   Capability,
   CapabilityRegistry,
   CapabilityGap,
   CapabilityStatus,
   AcquisitionContext,
-} from "../types/capability.js";
+} from "../base/types/capability.js";
 import type { Logger } from "../runtime/logger.js";
 
 // ─── Constants ───

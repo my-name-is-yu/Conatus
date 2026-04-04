@@ -6,9 +6,9 @@ import type {
   DependencyEdge,
   DependencyEdgeStatus,
   DependencyGraph,
-} from "../types/dependency.js";
-import { DependencyGraphSchema } from "../types/dependency.js";
-import type { DependencyType } from "../types/core.js";
+} from "../base/types/dependency.js";
+import { DependencyGraphSchema } from "../base/types/dependency.js";
+import type { DependencyType } from "../base/types/core.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 
 interface DependencyLogger {

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../base/state/state-manager.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
-import type { DecisionRecord } from "../../types/knowledge.js";
+import type { DecisionRecord } from "../../base/types/knowledge.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { randomUUID } from "node:crypto";
 

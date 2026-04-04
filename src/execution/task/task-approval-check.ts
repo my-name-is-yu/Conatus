@@ -1,4 +1,4 @@
-import type { Task } from "../../types/task.js";
+import type { Task } from "../../base/types/task.js";
 import type { TrustManager } from "../../traits/trust-manager.js";
 
 /**

@@ -4,8 +4,8 @@ import type { GoalRefiner } from "./goal-refiner.js";
 import { hasValidatedDimensions } from "./goal-refiner.js";
 import type { StateAggregator } from "./state-aggregator.js";
 import type { SatisficingJudge } from "../drive/satisficing-judge.js";
-import type { GoalDecompositionConfig } from "../types/goal-tree.js";
-import type { Goal } from "../types/goal.js";
+import type { GoalDecompositionConfig } from "../base/types/goal-tree.js";
+import type { Goal } from "../base/types/goal.js";
 import { estimateDifficulty, curriculumSort } from "./subgoal-curriculum.js";
 
 /**

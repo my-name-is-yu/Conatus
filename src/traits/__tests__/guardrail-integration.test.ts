@@ -15,8 +15,8 @@ import type {
   LLMRequestOptions,
   LLMResponse,
 } from "../../base/llm/llm-client.js";
-import type { IGuardrailHook, GuardrailContext } from "../../types/guardrail.js";
-import type { Task } from "../../types/task.js";
+import type { IGuardrailHook, GuardrailContext } from "../../base/types/guardrail.js";
+import type { Task } from "../../base/types/task.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───

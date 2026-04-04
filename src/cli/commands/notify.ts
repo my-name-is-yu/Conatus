@@ -3,8 +3,8 @@
 import { parseArgs } from "node:util";
 import * as path from "node:path";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import { NotificationConfigSchema } from "../../types/notification.js";
-import type { NotificationConfig, NotificationChannel } from "../../types/notification.js";
+import { NotificationConfigSchema } from "../../base/types/notification.js";
+import type { NotificationConfig, NotificationChannel } from "../../base/types/notification.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 
 function getNotificationConfigPath(baseDir?: string): string {

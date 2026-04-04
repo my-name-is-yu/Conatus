@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { runEveningCatchup } from "../evening-catchup.js";
-import type { Goal } from "../../types/goal.js";
+import type { Goal } from "../../base/types/goal.js";
 
 // ─── Fixtures ───
 

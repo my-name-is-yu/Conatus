@@ -7,7 +7,7 @@ import {
   type HookConfig,
   type HookEventType,
   type HookPayload,
-} from "../types/hook.js";
+} from "../base/types/hook.js";
 
 // ─── HookManager ───
 

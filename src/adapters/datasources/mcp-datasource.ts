@@ -13,12 +13,12 @@ import type {
   DataSourceConfig,
   DataSourceQuery,
   DataSourceResult,
-} from "../../types/data-source.js";
+} from "../../base/types/data-source.js";
 import type {
   MCPServerConfig,
   MCPToolMapping,
   IMCPConnection,
-} from "../../types/mcp.js";
+} from "../../base/types/mcp.js";
 
 // ─── Glob pattern matcher ───
 

@@ -8,7 +8,7 @@ import {
   CheckpointSchema,
   CheckpointIndex,
   CheckpointIndexSchema,
-} from '../types/checkpoint.js';
+} from '../base/types/checkpoint.js';
 import type { IPromptGateway } from '../prompt/gateway.js';
 
 interface LLMClient {

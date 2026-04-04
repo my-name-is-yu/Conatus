@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as path from "node:path";
 import { PluginLoader, parseSemver, compareSemver, satisfiesRange } from "../plugin-loader.js";
 import { NotifierRegistry } from "../notifier-registry.js";
-import { PluginManifestSchema, PluginStateSchema } from "../../types/plugin.js";
-import type { INotifier, NotificationEvent, NotificationEventType, PluginManifest } from "../../types/plugin.js";
+import { PluginManifestSchema, PluginStateSchema } from "../../base/types/plugin.js";
+import type { INotifier, NotificationEvent, NotificationEventType, PluginManifest } from "../../base/types/plugin.js";
 import type { AdapterRegistry, IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
 import type { DataSourceRegistry, IDataSourceAdapter } from "../../observation/data-source-adapter.js";
 

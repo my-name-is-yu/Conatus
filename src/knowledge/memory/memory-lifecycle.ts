@@ -9,7 +9,7 @@ import {
   LessonEntrySchema,
   RetentionConfigSchema,
   StatisticalSummarySchema,
-} from "../../types/memory-lifecycle.js";
+} from "../../base/types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   LessonEntry,
@@ -18,7 +18,7 @@ import type {
   CompressionResult,
   RetentionConfig,
   MemoryDataType,
-} from "../../types/memory-lifecycle.js";
+} from "../../base/types/memory-lifecycle.js";
 import type { IDriveScorer } from "../drive-score-adapter.js";
 export type { IDriveScorer } from "../drive-score-adapter.js";
 export { DriveScoreAdapter } from "../drive-score-adapter.js";

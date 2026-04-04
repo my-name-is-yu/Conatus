@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NotificationBatcher } from "../notification-batcher.js";
-import type { Report } from "../../types/report.js";
+import type { Report } from "../../base/types/report.js";
 
 // ─── Helpers ───
 

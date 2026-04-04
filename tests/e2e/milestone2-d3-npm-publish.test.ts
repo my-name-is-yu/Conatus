@@ -43,11 +43,11 @@ import { createMockLLMClient } from "../helpers/mock-llm.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Types ───
-import type { Goal, Dimension } from "../../src/types/goal.js";
-import type { ObservationMethod } from "../../src/types/core.js";
+import type { Goal, Dimension } from "../../src/base/types/goal.js";
+import type { ObservationMethod } from "../../src/base/types/core.js";
 import type { ILLMClient } from "../../src/base/llm/llm-client.js";
 import type { IDataSourceAdapter } from "../../src/observation/data-source-adapter.js";
-import type { DataSourceConfig } from "../../src/types/data-source.js";
+import type { DataSourceConfig } from "../../src/base/types/data-source.js";
 
 // ─── MockAdapter ───
 

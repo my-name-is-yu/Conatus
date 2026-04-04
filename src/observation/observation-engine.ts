@@ -1,8 +1,8 @@
-import { ObservationLogSchema } from "../types/state.js";
-import type { ObservationLogEntry, ObservationLog } from "../types/state.js";
-import type { ObservationLayer, ObservationMethod } from "../types/core.js";
+import { ObservationLogSchema } from "../base/types/state.js";
+import type { ObservationLogEntry, ObservationLog } from "../base/types/state.js";
+import type { ObservationLayer, ObservationMethod } from "../base/types/core.js";
 import type { StateManager } from "../base/state/state-manager.js";
-import type { KnowledgeGapSignal } from "../types/knowledge.js";
+import type { KnowledgeGapSignal } from "../base/types/knowledge.js";
 import type { IDataSourceAdapter } from "./data-source-adapter.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { Logger } from "../runtime/logger.js";
@@ -11,7 +11,7 @@ import type { HookManager } from "../runtime/hook-manager.js";
 import {
   observeForTask as _observeForTask,
 } from "./observation-task.js";
-import type { TaskDomain } from "../types/pipeline.js";
+import type { TaskDomain } from "../base/types/pipeline.js";
 import type { AgentTask } from "../execution/adapter-layer.js";
 import type { TaskObservationContext } from "./observation-task.js";
 export type { TaskObservationContext } from "./observation-task.js";

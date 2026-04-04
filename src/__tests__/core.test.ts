@@ -21,8 +21,8 @@ import {
   StallDetector,
   TaskLifecycle,
 } from "../index.js";
-import type { Goal } from "../types/goal.js";
-import type { DriveConfig, DriveContext } from "../types/drive.js";
+import type { Goal } from "../base/types/goal.js";
+import type { DriveConfig, DriveContext } from "../base/types/drive.js";
 import type {
   ILLMClient,
   LLMMessage,

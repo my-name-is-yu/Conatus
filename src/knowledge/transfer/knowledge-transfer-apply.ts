@@ -5,8 +5,8 @@ import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { LearningPipeline } from "../learning/learning-pipeline.js";
 import type { EthicsGate } from "../../traits/ethics-gate.js";
 import type { StateManager } from "../../base/state/state-manager.js";
-import { TransferCandidateSchema, TransferResultSchema } from "../../types/cross-portfolio.js";
-import type { TransferCandidate, TransferResult } from "../../types/cross-portfolio.js";
+import { TransferCandidateSchema, TransferResultSchema } from "../../base/types/cross-portfolio.js";
+import type { TransferCandidate, TransferResult } from "../../base/types/cross-portfolio.js";
 import type { TransferTrustManager } from "./transfer-trust.js";
 import {
   AdaptationResponseSchema,

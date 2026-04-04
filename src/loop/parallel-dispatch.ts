@@ -8,7 +8,7 @@
  * Updates result.taskResult with a synthetic entry reflecting the parallel outcome.
  */
 
-import type { Goal } from "../types/goal.js";
+import type { Goal } from "../base/types/goal.js";
 import type { CoreLoopDeps } from "./core-loop-types.js";
 import type { LoopIterationResult } from "./core-loop-types.js";
 import type { ParallelExecutionResult } from "../execution/parallel-executor.js";
@@ -37,7 +37,7 @@ export async function tryRunParallel(
     ? await deps.contextProvider(goalId, topDimension).catch(() => undefined)
     : undefined;
 
-  let group: import("../types/index.js").TaskGroup | null = null;
+  let group: import("../base/types/index.js").TaskGroup | null = null;
   try {
     group = await generateTaskGroupFn({
       goalDescription: goal.title ?? goal.id,

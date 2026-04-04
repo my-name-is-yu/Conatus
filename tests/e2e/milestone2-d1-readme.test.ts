@@ -34,8 +34,8 @@ import * as GapCalculator from "../../src/drive/gap-calculator.js";
 import * as DriveScorer from "../../src/drive/drive-scorer.js";
 
 // ─── Types ───
-import type { Goal } from "../../src/types/goal.js";
-import type { ObservationMethod } from "../../src/types/core.js";
+import type { Goal } from "../../src/base/types/goal.js";
+import type { ObservationMethod } from "../../src/base/types/core.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
 import type { ZodSchema } from "zod";
 

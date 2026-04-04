@@ -1,5 +1,5 @@
-import type { Report } from "../../types/report.js";
-import type { NotificationResult, WebhookChannel } from "../../types/notification.js";
+import type { Report } from "../../base/types/report.js";
+import type { NotificationResult, WebhookChannel } from "../../base/types/notification.js";
 import { httpPost } from "./http-post.js";
 
 function truncate(str: string, maxLen: number): string {

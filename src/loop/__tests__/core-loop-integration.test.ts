@@ -35,7 +35,7 @@ import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Types ───
-import type { Goal } from "../../types/goal.js";
+import type { Goal } from "../../base/types/goal.js";
 
 // ─── MockAdapter ───
 

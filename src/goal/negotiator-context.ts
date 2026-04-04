@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { EthicsVerdict } from "../types/ethics.js";
+import type { EthicsVerdict } from "../base/types/ethics.js";
 import type { Logger } from "../runtime/logger.js";
 
 const execFileAsync = promisify(execFile);

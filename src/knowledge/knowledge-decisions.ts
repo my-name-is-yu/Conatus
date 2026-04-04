@@ -1,8 +1,8 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import { DecisionRecordSchema } from "../types/knowledge.js";
-import type { DecisionRecord } from "../types/knowledge.js";
+import { DecisionRecordSchema } from "../base/types/knowledge.js";
+import type { DecisionRecord } from "../base/types/knowledge.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { StateManager } from "../base/state/state-manager.js";

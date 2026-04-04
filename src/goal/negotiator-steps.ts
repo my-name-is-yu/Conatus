@@ -14,15 +14,15 @@ import {
   DimensionDecompositionSchema,
   FeasibilityResultSchema,
   CapabilityCheckLogSchema,
-} from "../types/negotiation.js";
+} from "../base/types/negotiation.js";
 import type {
   DimensionDecomposition,
   FeasibilityResult,
   NegotiationLog,
   NegotiationResponse,
-} from "../types/negotiation.js";
-import type { Dimension } from "../types/goal.js";
-import type { CharacterConfig } from "../types/character.js";
+} from "../base/types/negotiation.js";
+import type { Dimension } from "../base/types/goal.js";
+import type { CharacterConfig } from "../base/types/character.js";
 import {
   buildDecompositionPrompt,
   buildFeasibilityPrompt,

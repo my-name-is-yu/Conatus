@@ -9,9 +9,9 @@ import {
   HIGH_CONFIDENCE_THRESHOLD,
   TRUST_SUCCESS_DELTA,
   TRUST_FAILURE_DELTA,
-} from "../../types/trust.js";
-import { PluginManifestSchema, PluginStateSchema } from "../../types/plugin.js";
-import type { PluginState, PluginMatchResult } from "../../types/plugin.js";
+} from "../../base/types/trust.js";
+import { PluginManifestSchema, PluginStateSchema } from "../../base/types/plugin.js";
+import type { PluginState, PluginMatchResult } from "../../base/types/plugin.js";
 import type { PluginLoader } from "../../runtime/plugin-loader.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 

@@ -1,4 +1,4 @@
-import type { Goal } from "../types/goal.js";
+import type { Goal } from "../base/types/goal.js";
 export { sanitizeThresholdTypes, sanitizeThresholdValues } from "../base/llm/json-sanitizer.js";
 
 /**

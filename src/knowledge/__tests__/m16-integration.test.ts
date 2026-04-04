@@ -16,7 +16,7 @@ import {
   type BudgetAllocation,
 } from "../../execution/context/context-budget.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import type { LearnedPattern } from "../../types/learning.js";
+import type { LearnedPattern } from "../../base/types/learning.js";
 
 // ─── Helpers ───
 

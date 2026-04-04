@@ -19,7 +19,7 @@ import type {
   DataSourceConfig,
   DataSourceQuery,
   DataSourceResult,
-} from "../../types/data-source.js";
+} from "../../base/types/data-source.js";
 
 export class FileExistenceDataSourceAdapter implements IDataSourceAdapter {
   readonly sourceType: DataSourceType = "file_existence";

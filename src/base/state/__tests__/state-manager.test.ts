@@ -8,9 +8,9 @@ import {
   evaluatePace,
   generateRescheduleOptions,
 } from "../../../goal/milestone-evaluator.js";
-import type { Goal, GoalTree } from "../../../types/goal.js";
-import type { ObservationLogEntry } from "../../../types/state.js";
-import type { GapHistoryEntry } from "../../../types/gap.js";
+import type { Goal, GoalTree } from "../../types/goal.js";
+import type { ObservationLogEntry } from "../../types/state.js";
+import type { GapHistoryEntry } from "../../types/gap.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal, makeDimension } from "../../../../tests/helpers/fixtures.js";
 

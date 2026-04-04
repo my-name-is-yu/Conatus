@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { NegotiationResponseTypeEnum } from "../../types/core.js";
+import { NegotiationResponseTypeEnum } from "../../base/types/core.js";
 
 export const NegotiationStepEnum = z.enum([
   "ethics_check",

@@ -23,8 +23,8 @@ import {
 } from "../../goal/goal-validation.js";
 import { MockEmbeddingClient } from "../../knowledge/embedding-client.js";
 import { StateManager } from "../../base/state/state-manager.js";
-import type { Dimension, Goal } from "../../types/goal.js";
-import type { Threshold } from "../../types/core.js";
+import type { Dimension, Goal } from "../../base/types/goal.js";
+import type { Threshold } from "../../base/types/core.js";
 
 function makeDimension(
   name: string,

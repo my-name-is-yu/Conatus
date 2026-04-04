@@ -8,8 +8,8 @@
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { Logger } from "../runtime/logger.js";
-import { ImpactAnalysisSchema } from "../types/pipeline.js";
-import type { ImpactAnalysis } from "../types/pipeline.js";
+import { ImpactAnalysisSchema } from "../base/types/pipeline.js";
+import type { ImpactAnalysis } from "../base/types/pipeline.js";
 
 export interface ImpactAnalyzerDeps {
   llmClient: ILLMClient;

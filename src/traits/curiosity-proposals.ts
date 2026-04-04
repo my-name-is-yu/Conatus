@@ -10,15 +10,15 @@ import {
   CuriosityTriggerSchema,
   CuriosityProposalSchema,
   CuriosityConfigSchema,
-} from "../types/curiosity.js";
+} from "../base/types/curiosity.js";
 import type {
   CuriosityTrigger,
   CuriosityProposal,
   CuriosityConfig,
   CuriosityState,
   LearningRecord,
-} from "../types/curiosity.js";
-import type { Goal } from "../types/goal.js";
+} from "../base/types/curiosity.js";
+import type { Goal } from "../base/types/goal.js";
 
 // ─── LLM Proposal Schema (for parsing LLM output) ───
 

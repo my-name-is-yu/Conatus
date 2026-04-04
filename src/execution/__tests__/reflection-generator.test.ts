@@ -5,11 +5,11 @@ import {
   getReflectionsForGoal,
   formatReflectionsForPrompt,
 } from "../reflection-generator.js";
-import { ReflectionNoteSchema, type ReflectionNote } from "../../types/reflection.js";
+import { ReflectionNoteSchema, type ReflectionNote } from "../../base/types/reflection.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import type { Task, VerificationResult } from "../../types/task.js";
+import type { Task, VerificationResult } from "../../base/types/task.js";
 import type { KnowledgeManager } from "../../knowledge/knowledge-manager.js";
-import type { KnowledgeEntry } from "../../types/knowledge.js";
+import type { KnowledgeEntry } from "../../base/types/knowledge.js";
 
 // ─── Helpers ───
 

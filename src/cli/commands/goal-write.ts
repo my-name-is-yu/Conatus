@@ -18,7 +18,7 @@ import {
   autoRegisterShellDataSources,
 } from "./goal-utils.js";
 import { cmdDatasourceDedup } from "./config.js";
-import type { RefineResult } from "../../types/goal-refiner.js";
+import type { RefineResult } from "../../base/types/goal-refiner.js";
 
 // ─── Display helpers ───
 

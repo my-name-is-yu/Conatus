@@ -14,7 +14,7 @@ import {
   type PluginState,
   type PluginType,
   type INotifier,
-} from "../types/plugin.js";
+} from "../base/types/plugin.js";
 import type { AdapterRegistry, IAdapter } from "../execution/adapter-layer.js";
 import type { DataSourceRegistry, IDataSourceAdapter } from "../observation/data-source-adapter.js";
 import type { NotifierRegistry } from "./notifier-registry.js";

@@ -1,6 +1,6 @@
 import { StateManager } from "../base/state/state-manager.js";
 import { dimensionProgress } from "./gap-calculator.js";
-import type { Goal, Dimension } from "../types/goal.js";
+import type { Goal, Dimension } from "../base/types/goal.js";
 import type {
   CompletionJudgment,
   DimensionSatisfaction,
@@ -9,7 +9,7 @@ import type {
   MappingProposal,
   ConvergenceJudgment,
   SatisficingStatus,
-} from "../types/satisficing.js";
+} from "../base/types/satisficing.js";
 import type { IEmbeddingClient } from "../knowledge/embedding-client.js";
 import {
   toNumber,
@@ -537,7 +537,7 @@ export class SatisficingJudge {
   async propagateSubgoalCompletion(
     subgoalId: string,
     parentGoalId: string,
-    subgoalDimensions?: import("../types/goal.js").Dimension[]
+    subgoalDimensions?: import("../base/types/goal.js").Dimension[]
   ): Promise<void> {
     await propagateSubgoalCompletionFn(
       subgoalId,

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { Task } from "../../types/task.js";
-import type { VerificationResult } from "../../types/task.js";
+import type { Task } from "../../base/types/task.js";
+import type { VerificationResult } from "../../base/types/task.js";
 import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
 import type { VerifierDeps } from "./task-verifier-types.js";
 

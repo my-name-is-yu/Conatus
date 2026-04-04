@@ -7,9 +7,9 @@ import { TrustManager } from "../../traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
-import type { Task } from "../../types/task.js";
-import type { GapVector } from "../../types/gap.js";
-import type { DriveContext } from "../../types/drive.js";
+import type { Task } from "../../base/types/task.js";
+import type { GapVector } from "../../base/types/gap.js";
+import type { DriveContext } from "../../base/types/drive.js";
 import type {
   ILLMClient,
   LLMMessage,
@@ -186,7 +186,7 @@ describe("TaskLifecycle", async () => {
 
   describe("runTaskCycle — ethics means check", async () => {
     // Shared helper: a mock EthicsGate with controllable checkMeans
-    function makeMockEthicsGate(checkMeansImpl: () => Promise<import("../../types/ethics.js").EthicsVerdict>) {
+    function makeMockEthicsGate(checkMeansImpl: () => Promise<import("../../base/types/ethics.js").EthicsVerdict>) {
       return {
         check: vi.fn().mockResolvedValue({
           verdict: "pass",
@@ -439,7 +439,7 @@ describe("TaskLifecycle", async () => {
     });
 
     it("ethics pass with high confidence: task completes and cycle returns completed", async () => {
-      const highConfidencePass: import("../../types/ethics.js").EthicsVerdict = {
+      const highConfidencePass: import("../../base/types/ethics.js").EthicsVerdict = {
         verdict: "pass",
         category: "safe",
         reasoning: "Fully safe operation",

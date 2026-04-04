@@ -6,15 +6,15 @@ import { GoalDependencyGraph } from "../../goal/goal-dependency-graph.js";
 import { VectorIndex } from "../../knowledge/vector-index.js";
 import { MockEmbeddingClient } from "../../knowledge/embedding-client.js";
 import { CrossGoalPortfolio } from "../cross-goal-portfolio.js";
-import { GoalSchema } from "../../types/goal.js";
-import type { Goal } from "../../types/goal.js";
+import { GoalSchema } from "../../base/types/goal.js";
+import type { Goal } from "../../base/types/goal.js";
 import type {
   GoalPriorityFactors,
   CrossGoalAllocation,
   MomentumInfo,
   AllocationStrategy,
   DependencySchedule,
-} from "../../types/cross-portfolio.js";
+} from "../../base/types/cross-portfolio.js";
 
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 

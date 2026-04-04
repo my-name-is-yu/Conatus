@@ -16,9 +16,9 @@ import type { StallDetector } from "../../drive/stall-detector.js";
 import type { StrategyManager } from "../../strategy/strategy-manager.js";
 import type { DriveSystem } from "../../drive/drive-system.js";
 import type { AdapterRegistry, IAdapter } from "../../execution/adapter-layer.js";
-import type { GapVector } from "../../types/gap.js";
-import type { CompletionJudgment } from "../../types/satisficing.js";
-import type { DriveScore } from "../../types/drive.js";
+import type { GapVector } from "../../base/types/gap.js";
+import type { CompletionJudgment } from "../../base/types/satisficing.js";
+import type { DriveScore } from "../../base/types/drive.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal, makeDimension } from "../../../tests/helpers/fixtures.js";
 

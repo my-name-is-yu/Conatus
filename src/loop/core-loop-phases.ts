@@ -9,9 +9,9 @@
  */
 
 import type { Logger } from "../runtime/logger.js";
-import type { Goal } from "../types/goal.js";
-import type { GapVector } from "../types/gap.js";
-import type { DriveScore } from "../types/drive.js";
+import type { Goal } from "../base/types/goal.js";
+import type { GapVector } from "../base/types/gap.js";
+import type { DriveScore } from "../base/types/drive.js";
 import {
   buildDriveContext,
   type CoreLoopDeps,

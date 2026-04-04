@@ -11,10 +11,10 @@ import { TrustManager } from "../../traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { selectTargetDimension as _selectTargetDimension } from "../context/dimension-selector.js";
-import type { Task, VerificationResult } from "../../types/task.js";
-import type { GapVector } from "../../types/gap.js";
-import type { DriveContext } from "../../types/drive.js";
-import type { Dimension } from "../../types/goal.js";
+import type { Task, VerificationResult } from "../../base/types/task.js";
+import type { GapVector } from "../../base/types/gap.js";
+import type { DriveContext } from "../../base/types/drive.js";
+import type { Dimension } from "../../base/types/goal.js";
 import type { EthicsGate } from "../../traits/ethics-gate.js";
 import type { CapabilityDetector } from "../../observation/capability-detector.js";
 import {
@@ -37,7 +37,7 @@ import { AdapterRegistry } from "../adapter-layer.js";
 export type { AgentTask, AgentResult, IAdapter };
 export { AdapterRegistry };
 
-import type { TaskPipeline, TaskDomain } from "../../types/pipeline.js";
+import type { TaskPipeline, TaskDomain } from "../../base/types/pipeline.js";
 import type { ObservationEngine } from "../../observation/observation-engine.js";
 
 export { LLMGeneratedTaskSchema } from "./task-generation.js";

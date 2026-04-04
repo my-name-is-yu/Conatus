@@ -749,7 +749,7 @@ describe("GoalNegotiator CharacterConfig integration", () => {
 
       const goalIds = await stateManager.listGoalIds();
       const loadedGoals2 = await Promise.all(goalIds.map((goalId) => stateManager.loadGoal(goalId)));
-      const goals = loadedGoals2.filter((goal): goal is import("../../types/goal.js").Goal => goal !== null);
+      const goals = loadedGoals2.filter((goal): goal is import("../../base/types/goal.js").Goal => goal !== null);
 
       expect(goalIds).toEqual(expect.arrayContaining([first.goal.id, second.goal.id]));
       expect(goals).toHaveLength(2);

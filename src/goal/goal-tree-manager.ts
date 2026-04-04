@@ -6,14 +6,14 @@ import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
 import type { GoalDependencyGraph } from "./goal-dependency-graph.js";
-import { GoalSchema } from "../types/goal.js";
-import type { Goal } from "../types/goal.js";
+import { GoalSchema } from "../base/types/goal.js";
+import type { Goal } from "../base/types/goal.js";
 import type {
   GoalDecompositionConfig,
   DecompositionResult,
   GoalTreeState,
   ConcretenessScore,
-} from "../types/goal-tree.js";
+} from "../base/types/goal-tree.js";
 import { scoreConcreteness as _scoreConcreteness } from "./goal-tree-quality.js";
 import { buildThreshold } from "./goal-validation.js";
 

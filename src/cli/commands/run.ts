@@ -6,7 +6,7 @@ import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import type { LoopConfig } from "../../loop/core-loop.js";
-import type { Task } from "../../types/task.js";
+import type { Task } from "../../base/types/task.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";

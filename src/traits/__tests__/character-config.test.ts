@@ -6,8 +6,8 @@ import { CharacterConfigManager } from "../character-config.js";
 import {
   CharacterConfigSchema,
   DEFAULT_CHARACTER_CONFIG,
-} from "../../types/character.js";
-import type { CharacterConfig } from "../../types/character.js";
+} from "../../base/types/character.js";
+import type { CharacterConfig } from "../../base/types/character.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Test Setup ───

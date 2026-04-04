@@ -5,22 +5,22 @@ import type { StallDetector } from "../drive/stall-detector.js";
 import type { DriveSystem } from "../drive/drive-system.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
 import type { KnowledgeTransfer } from "../knowledge/transfer/knowledge-transfer.js";
-import type { TransferCandidate } from "../types/cross-portfolio.js";
-import type { Goal } from "../types/goal.js";
+import type { TransferCandidate } from "../base/types/cross-portfolio.js";
+import type { Goal } from "../base/types/goal.js";
 import {
   CuriosityStateSchema,
   CuriosityTriggerSchema,
   CuriosityProposalSchema,
   CuriosityConfigSchema,
   LearningRecordSchema,
-} from "../types/curiosity.js";
+} from "../base/types/curiosity.js";
 import type {
   CuriosityState,
   CuriosityTrigger,
   CuriosityProposal,
   CuriosityConfig,
   LearningRecord,
-} from "../types/curiosity.js";
+} from "../base/types/curiosity.js";
 import {
   buildProposalPrompt,
   computeProposalHash,

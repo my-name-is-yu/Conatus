@@ -6,8 +6,8 @@ import { StrategyTemplateRegistry } from "../strategy-template-registry.js";
 import { VectorIndex } from "../../knowledge/vector-index.js";
 import { MockEmbeddingClient } from "../../knowledge/embedding-client.js";
 import type { IEmbeddingClient } from "../../knowledge/embedding-client.js";
-import { StrategySchema } from "../../types/strategy.js";
-import type { Strategy } from "../../types/strategy.js";
+import { StrategySchema } from "../../base/types/strategy.js";
+import type { Strategy } from "../../base/types/strategy.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 
 // ─── Fixtures ───

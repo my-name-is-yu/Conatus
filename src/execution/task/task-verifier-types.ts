@@ -19,12 +19,12 @@ export interface ExecutorReport {
 
 export interface VerdictResult {
   action: "completed" | "keep" | "discard" | "escalate";
-  task: import("../../types/task.js").Task;
+  task: import("../../base/types/task.js").Task;
 }
 
 export interface FailureResult {
   action: "keep" | "discard" | "escalate";
-  task: import("../../types/task.js").Task;
+  task: import("../../base/types/task.js").Task;
 }
 
 // ─── CompletionJudgerResponseSchema: Zod schema for LLM completion judgment response ───

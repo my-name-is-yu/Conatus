@@ -7,14 +7,14 @@ import {
   ShortTermEntrySchema,
   LessonEntrySchema,
   RetentionConfigSchema,
-} from "../../types/memory-lifecycle.js";
+} from "../../base/types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   LessonEntry,
   CompressionResult,
   RetentionConfig,
   MemoryDataType,
-} from "../../types/memory-lifecycle.js";
+} from "../../base/types/memory-lifecycle.js";
 import type { IDriveScorer } from "../drive-score-adapter.js";
 import {
   atomicWriteAsync,

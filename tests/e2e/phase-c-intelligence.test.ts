@@ -26,7 +26,7 @@ import { StateManager } from "../../src/base/state/state-manager.js";
 import { makeTempDir, cleanupTempDir } from "../helpers/temp-dir.js";
 import { createMockLLMClient } from "../helpers/mock-llm.js";
 import { makeGoal } from "../helpers/fixtures.js";
-import type { Report } from "../../src/types/report.js";
+import type { Report } from "../../src/base/types/report.js";
 
 // ─── Test fixtures ───
 

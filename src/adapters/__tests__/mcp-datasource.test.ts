@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MCPDataSourceAdapter } from "../datasources/mcp-datasource.js";
-import type { IMCPConnection } from "../../types/mcp.js";
-import type { MCPServerConfig } from "../../types/mcp.js";
+import type { IMCPConnection } from "../../base/types/mcp.js";
+import type { MCPServerConfig } from "../../base/types/mcp.js";
 
 // ─── Helpers ───
 

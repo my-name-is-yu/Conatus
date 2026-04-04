@@ -9,8 +9,8 @@ import type {
   TransferCandidate,
   TransferResult,
   TransferEffectivenessRecord,
-} from "../../types/cross-portfolio.js";
-import type { CrossGoalPattern, StructuralFeedbackType } from "../../types/learning.js";
+} from "../../base/types/cross-portfolio.js";
+import type { CrossGoalPattern, StructuralFeedbackType } from "../../base/types/learning.js";
 import { TransferTrustManager } from "./transfer-trust.js";
 import type { TransferContext, PatternEffectivenessTracker } from "./knowledge-transfer-types.js";
 

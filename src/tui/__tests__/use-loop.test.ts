@@ -5,7 +5,7 @@ import { LoopController, calcDimensionProgress } from "../use-loop.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import type { CoreLoop, LoopResult } from "../../loop/core-loop.js";
 import type { TrustManager } from "../../traits/trust-manager.js";
-import type { Threshold } from "../../types/core.js";
+import type { Threshold } from "../../base/types/core.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 

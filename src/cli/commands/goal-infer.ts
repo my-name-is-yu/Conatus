@@ -3,7 +3,7 @@
 import { z } from "zod";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getCliLogger } from "../cli-logger.js";
-import { ThresholdTypeEnum } from "../../types/core.js";
+import { ThresholdTypeEnum } from "../../base/types/core.js";
 
 // ─── Types ───
 

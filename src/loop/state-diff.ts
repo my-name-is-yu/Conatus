@@ -1,4 +1,4 @@
-import type { Goal } from "../types/goal.js";
+import type { Goal } from "../base/types/goal.js";
 
 // ─── Types ───
 

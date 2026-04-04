@@ -5,7 +5,7 @@ import {
   TaskStatusEnum,
   DurationSchema,
   ObservationLayerEnum,
-} from "../../types/core.js";
+} from "../../base/types/core.js";
 
 // --- Success Criterion ---
 

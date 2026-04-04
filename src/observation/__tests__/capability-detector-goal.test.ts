@@ -7,7 +7,7 @@ import { ReportingEngine } from "../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../observation/capability-detector.js";
 import type {
   Capability,
-} from "../../types/capability.js";
+} from "../../base/types/capability.js";
 import type { LLMMessage } from "../../base/llm/llm-client.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 

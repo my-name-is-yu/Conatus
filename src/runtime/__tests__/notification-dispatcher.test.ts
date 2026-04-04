@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as http from "node:http";
 import { NotificationDispatcher } from "../notification-dispatcher.js";
-import type { Report } from "../../types/report.js";
-import type { NotificationConfig } from "../../types/notification.js";
+import type { Report } from "../../base/types/report.js";
+import type { NotificationConfig } from "../../base/types/notification.js";
 
 // ─── nodemailer mock ───
 const { mockSendMail, mockCreateTransport } = vi.hoisted(() => {

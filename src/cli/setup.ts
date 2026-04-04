@@ -8,7 +8,7 @@ import { getPulseedDirPath, getDatasourcesDir } from "../base/utils/paths.js";
 import { readJsonFile } from "../base/utils/json-io.js";
 
 import { StateManager } from "../base/state/state-manager.js";
-import type { DataSourceConfig } from "../types/data-source.js";
+import type { DataSourceConfig } from "../base/types/data-source.js";
 import type { IDataSourceAdapter } from "../observation/data-source-adapter.js";
 import { FileDataSourceAdapter, HttpApiDataSourceAdapter } from "../observation/data-source-adapter.js";
 import { GitHubIssueDataSourceAdapter } from "../adapters/datasources/github-issue-datasource.js";
@@ -43,7 +43,7 @@ import { CharacterConfigManager } from "../traits/character-config.js";
 import * as GapCalculator from "../drive/gap-calculator.js";
 import * as DriveScorer from "../drive/drive-scorer.js";
 import type { GapCalculatorModule, DriveScorerModule, LoopConfig } from "../loop/core-loop.js";
-import type { Task } from "../types/task.js";
+import type { Task } from "../base/types/task.js";
 import type { ProgressEvent } from "../loop/core-loop.js";
 import { Logger } from "../runtime/logger.js";
 import { HookManager } from "../runtime/hook-manager.js";

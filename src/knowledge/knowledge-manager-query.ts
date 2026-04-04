@@ -4,17 +4,17 @@ import { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { Logger } from "../runtime/logger.js";
-import { TaskSchema } from "../types/task.js";
-import type { Task } from "../types/task.js";
+import { TaskSchema } from "../base/types/task.js";
+import type { Task } from "../base/types/task.js";
 import {
   KnowledgeGapSignalSchema,
   ContradictionResultSchema,
-} from "../types/knowledge.js";
+} from "../base/types/knowledge.js";
 import type {
   KnowledgeEntry,
   KnowledgeGapSignal,
   ContradictionResult,
-} from "../types/knowledge.js";
+} from "../base/types/knowledge.js";
 import { loadDomainKnowledge } from "./knowledge-search.js";
 
 // ─── Deps interface ───

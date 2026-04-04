@@ -3,8 +3,8 @@
 import * as fs from "node:fs";
 import { spawnSync } from "node:child_process";
 
-import { SuggestOutputSchema } from "../../types/suggest.js";
-import type { SuggestOutput, Suggestion } from "../../types/suggest.js";
+import { SuggestOutputSchema } from "../../base/types/suggest.js";
+import type { SuggestOutput, Suggestion } from "../../base/types/suggest.js";
 import type { GoalSuggestion } from "../../goal/goal-negotiator.js";
 import type { CapabilityDetector } from "../../observation/capability-detector.js";
 import { buildTodoLikeMarkerInventory, formatTodoLikeMarkerInventory } from "./goal-utils.js";

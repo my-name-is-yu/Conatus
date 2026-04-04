@@ -4,7 +4,7 @@ import { StateManager } from "../../base/state/state-manager.js";
 import { buildTaskGenerationPrompt } from "../task/task-prompt-builder.js";
 import { handleVerdict } from "../task/task-verifier.js";
 import type { VerifierDeps } from "../task/task-verifier.js";
-import type { Task, VerificationResult } from "../../types/task.js";
+import type { Task, VerificationResult } from "../../base/types/task.js";
 import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../traits/trust-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";

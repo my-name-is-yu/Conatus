@@ -9,7 +9,7 @@ import { StateManager } from "../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import type { LearnedPattern } from "../../types/learning.js";
+import type { LearnedPattern } from "../../base/types/learning.js";
 
 // ─── Helpers ───
 

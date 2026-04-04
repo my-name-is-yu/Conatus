@@ -8,7 +8,7 @@ import { CapabilityDetector } from "../../observation/capability-detector.js";
 import type {
   CapabilityDependency,
   CapabilityGap,
-} from "../../types/capability.js";
+} from "../../base/types/capability.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 
 // ─── Fixtures ───

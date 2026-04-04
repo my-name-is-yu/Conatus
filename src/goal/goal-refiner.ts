@@ -13,19 +13,19 @@ import type { ObservationEngine } from "../observation/observation-engine.js";
 import type { GoalNegotiator } from "./goal-negotiator.js";
 import type { GoalTreeManager } from "./goal-tree-manager.js";
 import type { EthicsGate } from "../traits/ethics-gate.js";
-import { GoalSchema } from "../types/goal.js";
-import type { Goal, Dimension } from "../types/goal.js";
-import type { FeasibilityResult } from "../types/negotiation.js";
+import { GoalSchema } from "../base/types/goal.js";
+import type { Goal, Dimension } from "../base/types/goal.js";
+import type { FeasibilityResult } from "../base/types/negotiation.js";
 import {
   RefineConfigSchema,
   LeafTestResultSchema,
-} from "../types/goal-refiner.js";
+} from "../base/types/goal-refiner.js";
 import type {
   RefineConfig,
   LeafTestResult,
   LeafDimension,
   RefineResult,
-} from "../types/goal-refiner.js";
+} from "../base/types/goal-refiner.js";
 import { buildLeafTestPrompt } from "./refiner-prompts.js";
 import { evaluateQualitatively, DEFAULT_TIME_HORIZON_DAYS } from "./negotiator-steps.js";
 

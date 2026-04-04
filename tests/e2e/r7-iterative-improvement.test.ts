@@ -37,16 +37,16 @@ import * as GapCalculator from "../../src/drive/gap-calculator.js";
 import * as DriveScorer from "../../src/drive/drive-scorer.js";
 
 // ─── Types ───
-import type { Goal } from "../../src/types/goal.js";
-import type { ObservationMethod } from "../../src/types/core.js";
+import type { Goal } from "../../src/base/types/goal.js";
+import type { ObservationMethod } from "../../src/base/types/core.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
 import type { ZodSchema } from "zod";
-import type { CompletionJudgment } from "../../src/types/satisficing.js";
-import type { GapVector } from "../../src/types/gap.js";
-import type { DriveScore } from "../../src/types/drive.js";
+import type { CompletionJudgment } from "../../src/base/types/satisficing.js";
+import type { GapVector } from "../../src/base/types/gap.js";
+import type { DriveScore } from "../../src/base/types/drive.js";
 import type { TaskCycleResult } from "../../src/execution/task/task-lifecycle.js";
 import type { IDataSourceAdapter } from "../../src/observation/data-source-adapter.js";
-import type { DataSourceConfig, DataSourceResult, DataSourceQuery } from "../../src/types/data-source.js";
+import type { DataSourceConfig, DataSourceResult, DataSourceQuery } from "../../src/base/types/data-source.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 
 vi.setConfig({ testTimeout: 15000 });

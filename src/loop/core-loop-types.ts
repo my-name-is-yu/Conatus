@@ -4,7 +4,7 @@ import type { Logger } from "../runtime/logger.js";
 import type { StrategyTemplateRegistry } from "../strategy/strategy-template-registry.js";
 import type { TrustManager } from "../traits/trust-manager.js";
 import type { KnowledgeTransfer } from "../knowledge/transfer/knowledge-transfer.js";
-import type { TransferCandidate } from "../types/cross-portfolio.js";
+import type { TransferCandidate } from "../base/types/cross-portfolio.js";
 import type { CrossGoalPortfolio } from "../strategy/cross-goal-portfolio.js";
 import type { GoalTreeManager } from "../goal/goal-tree-manager.js";
 import type { StateAggregator } from "../goal/state-aggregator.js";
@@ -19,7 +19,7 @@ import type { DriveSystem } from "../drive/drive-system.js";
 import type { AdapterRegistry, IAdapter } from "../execution/adapter-layer.js";
 import type { KnowledgeManager } from "../knowledge/knowledge-manager.js";
 import type { CapabilityDetector } from "../observation/capability-detector.js";
-import type { CapabilityAcquisitionTask } from "../types/capability.js";
+import type { CapabilityAcquisitionTask } from "../base/types/capability.js";
 import type { PortfolioManager } from "../strategy/portfolio-manager.js";
 import type { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
 import type { LearningPipeline } from "../knowledge/learning/learning-pipeline.js";
@@ -27,11 +27,11 @@ import { DriveScoreAdapter } from "../knowledge/memory/memory-lifecycle.js";
 import type { MemoryLifecycleManager } from "../knowledge/memory/memory-lifecycle.js";
 import type { ParallelExecutor } from "../execution/parallel-executor.js";
 import type { GoalRefiner } from "../goal/goal-refiner.js";
-import type { Goal } from "../types/goal.js";
-import type { GapVector } from "../types/gap.js";
-import type { DriveContext, DriveScore } from "../types/drive.js";
-import type { CompletionJudgment } from "../types/satisficing.js";
-import type { StallReport, StallAnalysis } from "../types/stall.js";
+import type { Goal } from "../base/types/goal.js";
+import type { GapVector } from "../base/types/gap.js";
+import type { DriveContext, DriveScore } from "../base/types/drive.js";
+import type { CompletionJudgment } from "../base/types/satisficing.js";
+import type { StallReport, StallAnalysis } from "../base/types/stall.js";
 
 // ─── GapCalculator module interface (pure functions) ───
 
@@ -287,7 +287,7 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
     gap: number;
     availableAdapters: string[];
     contextBlock?: string;
-  }) => Promise<import("../types/index.js").TaskGroup | null>;
+  }) => Promise<import("../base/types/index.js").TaskGroup | null>;
   logger?: Logger;
   /**
    * Optional progress callback. Called at key phases during each iteration so

@@ -15,7 +15,7 @@ import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../traits/trust-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { verifyTask, type VerifierDeps } from "../task/task-verifier.js";
-import type { Task } from "../../types/task.js";
+import type { Task } from "../../base/types/task.js";
 import type { AgentResult } from "../adapter-layer.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../base/llm/llm-client.js";
 import type { z } from "zod";

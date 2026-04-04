@@ -1,4 +1,4 @@
-import type { Dimension } from "../types/goal.js";
+import type { Dimension } from "../base/types/goal.js";
 
 // ─── Pure Helper: aggregateValues ───
 

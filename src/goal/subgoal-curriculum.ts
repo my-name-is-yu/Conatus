@@ -3,7 +3,7 @@
  * Prioritizes medium-complexity (0.3-0.7) subgoals using gap × (1 - confidence).
  */
 
-import type { Goal } from "../types/goal.js";
+import type { Goal } from "../base/types/goal.js";
 import {
   calculateDimensionGap,
   aggregateGaps,

@@ -8,7 +8,7 @@ import { TrustManager } from "../../traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
-import type { Task } from "../../types/task.js";
+import type { Task } from "../../base/types/task.js";
 import type {
   ILLMClient,
   LLMMessage,

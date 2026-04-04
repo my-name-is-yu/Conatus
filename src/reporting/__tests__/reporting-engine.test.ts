@@ -3,8 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../base/state/state-manager.js";
 import { ReportingEngine } from "../reporting-engine.js";
-import type { Report } from "../../types/report.js";
-import type { CharacterConfig } from "../../types/character.js";
+import type { Report } from "../../base/types/report.js";
+import type { CharacterConfig } from "../../base/types/character.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Test helpers ───

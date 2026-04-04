@@ -7,8 +7,8 @@ import { TrustManager } from "../../traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
-import type { GapVector } from "../../types/gap.js";
-import type { DriveContext } from "../../types/drive.js";
+import type { GapVector } from "../../base/types/gap.js";
+import type { DriveContext } from "../../base/types/drive.js";
 import type {
   ILLMClient,
   LLMMessage,
@@ -16,7 +16,7 @@ import type {
   LLMResponse,
 } from "../../base/llm/llm-client.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import type { Dimension } from "../../types/goal.js";
+import type { Dimension } from "../../base/types/goal.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Spy LLM Client ───
@@ -133,7 +133,7 @@ describe("TaskLifecycle", async () => {
   function createLifecycle(
     llmClient: ILLMClient,
     options?: {
-      approvalFn?: (task: import("../../types/task.js").Task) => Promise<boolean>;
+      approvalFn?: (task: import("../../base/types/task.js").Task) => Promise<boolean>;
       logger?: import("../../runtime/logger.js").Logger;
       adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;

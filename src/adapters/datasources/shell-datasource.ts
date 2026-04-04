@@ -22,7 +22,7 @@ import type {
   DataSourceConfig,
   DataSourceQuery,
   DataSourceResult,
-} from "../../types/data-source.js";
+} from "../../base/types/data-source.js";
 import type { Logger } from "../../runtime/logger.js";
 
 const execFileAsync = promisify(execFile);

@@ -1,4 +1,4 @@
-import type { Report } from "../types/report.js";
+import type { Report } from "../base/types/report.js";
 
 type Priority = "immediate" | "batchable" | "digest_only";
 

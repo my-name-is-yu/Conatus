@@ -7,7 +7,7 @@ import { KnowledgeManager } from "../knowledge-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../base/llm/llm-client.js";
-import type { KnowledgeEntry } from "../../types/knowledge.js";
+import type { KnowledgeEntry } from "../../base/types/knowledge.js";
 import type { ZodSchema } from "zod";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { randomUUID } from "node:crypto";

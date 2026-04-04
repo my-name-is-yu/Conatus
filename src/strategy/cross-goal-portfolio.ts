@@ -6,7 +6,7 @@ import { scoreDeadline } from "../drive/drive-scorer.js";
 import { computeRawGap, normalizeGap } from "../drive/gap-calculator.js";
 import {
   CrossGoalPortfolioConfigSchema,
-} from "../types/cross-portfolio.js";
+} from "../base/types/cross-portfolio.js";
 import type {
   CrossGoalAllocation,
   CrossGoalPortfolioConfig,
@@ -18,8 +18,8 @@ import type {
   DependencySchedule,
   AllocationStrategy,
   RebalanceAction,
-} from "../types/cross-portfolio.js";
-import type { Goal } from "../types/goal.js";
+} from "../base/types/cross-portfolio.js";
+import type { Goal } from "../base/types/goal.js";
 import { buildDependencySchedule } from "./portfolio-scheduling.js";
 import { allocateResources } from "./portfolio-allocation.js";
 import { calculateMomentum } from "./portfolio-momentum.js";

@@ -5,8 +5,8 @@ import * as path from "node:path";
 import { parseArgs } from "node:util";
 
 import { StateManager } from "../../base/state/state-manager.js";
-import { TaskSchema } from "../../types/task.js";
-import type { Task } from "../../types/task.js";
+import { TaskSchema } from "../../base/types/task.js";
+import type { Task } from "../../base/types/task.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 

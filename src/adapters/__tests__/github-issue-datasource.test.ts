@@ -16,7 +16,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { GitHubIssueDataSourceAdapter } from "../datasources/github-issue-datasource.js";
-import type { DataSourceConfig, DataSourceQuery } from "../../types/data-source.js";
+import type { DataSourceConfig, DataSourceQuery } from "../../base/types/data-source.js";
 
 // ─── Helpers ───
 

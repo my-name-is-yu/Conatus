@@ -7,7 +7,7 @@ import { TrustManager } from "../../traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
-import type { Task } from "../../types/task.js";
+import type { Task } from "../../base/types/task.js";
 import type {
   ILLMClient,
   LLMMessage,
@@ -138,8 +138,8 @@ describe("TaskLifecycle", async () => {
 
   describe("handleVerdict", async () => {
     function makeVerificationResult(
-      overrides: Partial<import("../../types/task.js").VerificationResult> = {}
-    ): import("../../types/task.js").VerificationResult {
+      overrides: Partial<import("../../base/types/task.js").VerificationResult> = {}
+    ): import("../../base/types/task.js").VerificationResult {
       return {
         task_id: "task-1",
         verdict: "pass",
@@ -565,8 +565,8 @@ describe("TaskLifecycle", async () => {
 
   describe("handleFailure", async () => {
     function makeVerificationResult(
-      overrides: Partial<import("../../types/task.js").VerificationResult> = {}
-    ): import("../../types/task.js").VerificationResult {
+      overrides: Partial<import("../../base/types/task.js").VerificationResult> = {}
+    ): import("../../base/types/task.js").VerificationResult {
       return {
         task_id: "task-1",
         verdict: "fail",

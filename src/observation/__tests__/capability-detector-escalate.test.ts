@@ -9,8 +9,8 @@ import type {
   Capability,
   CapabilityGap,
   CapabilityAcquisitionTask,
-} from "../../types/capability.js";
-import type { Task } from "../../types/task.js";
+} from "../../base/types/capability.js";
+import type { Task } from "../../base/types/task.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 
 // ─── Fixtures ───

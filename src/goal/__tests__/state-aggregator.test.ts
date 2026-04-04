@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { StateManager } from "../../base/state/state-manager.js";
 import { SatisficingJudge } from "../../drive/satisficing-judge.js";
 import { StateAggregator } from "../state-aggregator.js";
-import type { Goal, Dimension } from "../../types/goal.js";
-import type { StateAggregationRule } from "../../types/goal-tree.js";
+import type { Goal, Dimension } from "../../base/types/goal.js";
+import type { StateAggregationRule } from "../../base/types/goal-tree.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 

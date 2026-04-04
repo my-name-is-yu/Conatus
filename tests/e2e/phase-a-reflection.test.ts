@@ -22,7 +22,7 @@ import { runMorningPlanning } from "../../src/reflection/morning-planning.js";
 import { runEveningCatchup } from "../../src/reflection/evening-catchup.js";
 import { runDreamConsolidation } from "../../src/reflection/dream-consolidation.js";
 import { runWeeklyReview } from "../../src/reflection/weekly-review.js";
-import type { Goal } from "../../src/types/goal.js";
+import type { Goal } from "../../src/base/types/goal.js";
 import { makeTempDir, cleanupTempDir } from "../helpers/temp-dir.js";
 import { createMockLLMClient } from "../helpers/mock-llm.js";
 

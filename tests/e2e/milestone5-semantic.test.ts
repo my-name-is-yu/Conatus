@@ -38,8 +38,8 @@ import * as GapCalculator from "../../src/drive/gap-calculator.js";
 import * as DriveScorer from "../../src/drive/drive-scorer.js";
 
 // ─── Types ───
-import type { Goal } from "../../src/types/goal.js";
-import type { KnowledgeEntry } from "../../src/types/knowledge.js";
+import type { Goal } from "../../src/base/types/goal.js";
+import type { KnowledgeEntry } from "../../src/base/types/knowledge.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
 import type { ZodSchema } from "zod";
 import { makeTempDir } from "../helpers/temp-dir.js";

@@ -42,7 +42,7 @@ import { getCliLogger } from "../cli/cli-logger.js";
 import { ensureProviderConfig } from "../cli/ensure-api-key.js";
 import { ActionHandler } from "./actions.js";
 import { IntentRecognizer } from "./intent-recognizer.js";
-import type { Task } from "../types/task.js";
+import type { Task } from "../base/types/task.js";
 
 // ─── Dependency Wiring ───
 

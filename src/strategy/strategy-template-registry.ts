@@ -8,14 +8,14 @@ import type { Logger } from "../runtime/logger.js";
 import type { IEmbeddingClient } from "../knowledge/embedding-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import { VectorIndex } from "../knowledge/vector-index.js";
-import { StrategyTemplateSchema } from "../types/cross-portfolio.js";
+import { StrategyTemplateSchema } from "../base/types/cross-portfolio.js";
 import type {
   StrategyTemplate,
   EmbeddingRecommendation,
   HybridRecommendation,
-} from "../types/cross-portfolio.js";
-import { StrategySchema } from "../types/strategy.js";
-import type { Strategy } from "../types/strategy.js";
+} from "../base/types/cross-portfolio.js";
+import { StrategySchema } from "../base/types/strategy.js";
+import type { Strategy } from "../base/types/strategy.js";
 
 // ─── LLM Response Schemas ───
 

@@ -1,4 +1,4 @@
-export * from "./types/index.js";
+export * from "./base/types/index.js";
 export { LLMError, AdapterError, ValidationError, StateError } from "./base/utils/errors.js";
 export { StateManager } from "./base/state/state-manager.js";
 export {
@@ -33,10 +33,10 @@ export type { OllamaClientConfig } from "./base/llm/ollama-client.js";
 export { OpenAILLMClient } from "./base/llm/openai-client.js";
 export type { OpenAIClientConfig } from "./base/llm/openai-client.js";
 export { EthicsGate } from "./traits/ethics-gate.js";
-export * from "./types/guardrail.js";
+export * from "./base/types/guardrail.js";
 export { GuardrailRunner } from "./traits/guardrail-runner.js";
 export { generateReflection, saveReflectionAsKnowledge, getReflectionsForGoal, formatReflectionsForPrompt } from "./execution/reflection-generator.js";
-export * from "./types/reflection.js";
+export * from "./base/types/reflection.js";
 export { SessionManager } from "./execution/session-manager.js";
 export { StrategyManager } from "./strategy/strategy-manager.js";
 export { GoalNegotiator, EthicsRejectedError } from "./goal/goal-negotiator.js";
@@ -80,8 +80,8 @@ export { NotificationDispatcher } from "./runtime/notification-dispatcher.js";
 export type { INotificationDispatcher } from "./runtime/notification-dispatcher.js";
 export { MemoryLifecycleManager } from "./knowledge/memory/memory-lifecycle.js";
 export { CharacterConfigManager } from "./traits/character-config.js";
-export { CharacterConfigSchema, DEFAULT_CHARACTER_CONFIG } from "./types/character.js";
-export type { CharacterConfig } from "./types/character.js";
+export { CharacterConfigSchema, DEFAULT_CHARACTER_CONFIG } from "./base/types/character.js";
+export type { CharacterConfig } from "./base/types/character.js";
 export { CuriosityEngine } from "./traits/curiosity-engine.js";
 export { GoalDependencyGraph } from "./goal/goal-dependency-graph.js";
 export { KnowledgeGraph } from "./knowledge/knowledge-graph.js";
@@ -94,7 +94,7 @@ export {
   CuriosityConfigSchema,
   LearningRecordSchema,
   CuriosityStateSchema,
-} from "./types/curiosity.js";
+} from "./base/types/curiosity.js";
 export type {
   CuriosityTriggerType,
   CuriosityTrigger,
@@ -103,12 +103,12 @@ export type {
   CuriosityConfig,
   LearningRecord,
   CuriosityState,
-} from "./types/curiosity.js";
+} from "./base/types/curiosity.js";
 
 // --- Embedding ---
 export { type IEmbeddingClient, MockEmbeddingClient, OllamaEmbeddingClient, OpenAIEmbeddingClient, cosineSimilarity } from "./knowledge/embedding-client.js";
 export { VectorIndex } from "./knowledge/vector-index.js";
-export type { EmbeddingConfig, EmbeddingEntry, VectorSearchResult } from "./types/embedding.js";
+export type { EmbeddingConfig, EmbeddingEntry, VectorSearchResult } from "./base/types/embedding.js";
 
 // --- Data source ---
 export { DataSourceRegistry, FileDataSourceAdapter, HttpApiDataSourceAdapter, getNestedValue } from "./observation/data-source-adapter.js";
@@ -139,7 +139,7 @@ export {
   A2APartSchema,
   A2AJsonRpcResponseSchema,
   A2A_TERMINAL_STATES,
-} from "./types/a2a.js";
+} from "./base/types/a2a.js";
 export type {
   A2AAgentCard,
   A2ATask,
@@ -150,7 +150,7 @@ export type {
   A2ASkill,
   A2APart,
   A2AJsonRpcResponse,
-} from "./types/a2a.js";
+} from "./base/types/a2a.js";
 
 // --- Plugin architecture (M12) ---
 export { NotifierRegistry } from "./runtime/notifier-registry.js";

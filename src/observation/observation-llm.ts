@@ -3,10 +3,10 @@ import { execFile as execFileCb } from "child_process";
 import { promisify } from "util";
 import * as fsPromises from "node:fs/promises";
 import * as nodePath from "node:path";
-import { ObservationLogEntrySchema } from "../types/state.js";
+import { ObservationLogEntrySchema } from "../base/types/state.js";
 
 const execFile = promisify(execFileCb);
-import type { ObservationLogEntry } from "../types/state.js";
+import type { ObservationLogEntry } from "../base/types/state.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { LLMObservationResponseSchema } from "./observation-helpers.js";
 import type { ObservationEngineOptions } from "./observation-helpers.js";

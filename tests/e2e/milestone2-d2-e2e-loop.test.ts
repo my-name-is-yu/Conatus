@@ -37,8 +37,8 @@ import { createMockLLMClient } from "../helpers/mock-llm.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Types ───
-import type { Goal } from "../../src/types/goal.js";
-import type { DataSourceConfig } from "../../src/types/data-source.js";
+import type { Goal } from "../../src/base/types/goal.js";
+import type { DataSourceConfig } from "../../src/base/types/data-source.js";
 import type { ILLMClient } from "../../src/base/llm/llm-client.js";
 import type { IDataSourceAdapter } from "../../src/observation/data-source-adapter.js";
 

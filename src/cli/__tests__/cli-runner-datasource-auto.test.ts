@@ -113,7 +113,7 @@ import { CLIRunner } from "../cli-runner.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { GoalNegotiator } from "../../goal/goal-negotiator.js";
 import { GoalRefiner } from "../../goal/goal-refiner.js";
-import type { Goal } from "../../types/goal.js";
+import type { Goal } from "../../base/types/goal.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 

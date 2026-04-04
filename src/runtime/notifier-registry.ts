@@ -1,4 +1,4 @@
-import type { INotifier, NotificationEventType } from "../types/plugin.js";
+import type { INotifier, NotificationEventType } from "../base/types/plugin.js";
 
 // ─── NotifierRegistry ───
 

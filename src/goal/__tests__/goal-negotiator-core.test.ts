@@ -355,7 +355,7 @@ describe("GoalNegotiator", () => {
 
       const goalIds = await stateManager.listGoalIds();
       const loadedGoals = await Promise.all(goalIds.map((goalId) => stateManager.loadGoal(goalId)));
-      const goals = loadedGoals.filter((goal): goal is import("../../types/goal.js").Goal => goal !== null);
+      const goals = loadedGoals.filter((goal): goal is import("../../base/types/goal.js").Goal => goal !== null);
 
       expect(goals).toHaveLength(2);
       expect(goals.map((goal) => goal.id)).toEqual(

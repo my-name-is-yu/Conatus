@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SlackNotifier } from "../src/index.js";
-import type { NotificationEvent } from "../../../src/types/plugin.js";
+import type { NotificationEvent } from "../../../src/base/types/plugin.js";
 
 // ─── Helpers ───
 

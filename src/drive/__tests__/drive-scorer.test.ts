@@ -8,8 +8,8 @@ import {
   scoreAllDimensions,
   rankDimensions,
 } from "../drive-scorer.js";
-import type { DriveConfig, DriveContext } from "../../types/drive.js";
-import type { GapVector } from "../../types/gap.js";
+import type { DriveConfig, DriveContext } from "../../base/types/drive.js";
+import type { GapVector } from "../../base/types/gap.js";
 
 // Shared default config values (mirrors DriveConfigSchema defaults)
 const DEFAULT_CONFIG: DriveConfig = {
@@ -416,7 +416,7 @@ describe("scoreAllDimensions", () => {
 // ─── rankDimensions ───
 
 describe("rankDimensions", () => {
-  const makeScore = (name: string, finalScore: number): import("../../types/drive.js").DriveScore => ({
+  const makeScore = (name: string, finalScore: number): import("../../base/types/drive.js").DriveScore => ({
     dimension_name: name,
     dissatisfaction: finalScore,
     deadline: 0,
@@ -465,7 +465,7 @@ describe("rankDimensions", () => {
 
   it("two elements with identical name and score maintain stable relative order (comparator returns 0)", () => {
     // Exercises the `0` branch of the ternary: a.dimension_name === b.dimension_name
-    const s1: import("../../types/drive.js").DriveScore = {
+    const s1: import("../../base/types/drive.js").DriveScore = {
       dimension_name: "same",
       dissatisfaction: 0.5,
       deadline: 0,
@@ -473,7 +473,7 @@ describe("rankDimensions", () => {
       final_score: 0.5,
       dominant_drive: "dissatisfaction",
     };
-    const s2: import("../../types/drive.js").DriveScore = {
+    const s2: import("../../base/types/drive.js").DriveScore = {
       dimension_name: "same",
       dissatisfaction: 0.5,
       deadline: 0,

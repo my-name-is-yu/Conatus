@@ -3,25 +3,25 @@ import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { EthicsGate } from "../traits/ethics-gate.js";
 import { ObservationEngine } from "../observation/observation-engine.js";
-import { GoalSchema } from "../types/goal.js";
-import type { Goal } from "../types/goal.js";
+import { GoalSchema } from "../base/types/goal.js";
+import type { Goal } from "../base/types/goal.js";
 import {
   NegotiationLogSchema,
   FeasibilityResultSchema,
-} from "../types/negotiation.js";
+} from "../base/types/negotiation.js";
 import type {
   FeasibilityResult,
   NegotiationLog,
   NegotiationResponse,
-} from "../types/negotiation.js";
-import type { CharacterConfig } from "../types/character.js";
-import { DEFAULT_CHARACTER_CONFIG } from "../types/character.js";
+} from "../base/types/negotiation.js";
+import type { CharacterConfig } from "../base/types/character.js";
+import { DEFAULT_CHARACTER_CONFIG } from "../base/types/character.js";
 import type { SatisficingJudge } from "../drive/satisficing-judge.js";
 import type { GoalTreeManager } from "./goal-tree-manager.js";
 import type {
   GoalDecompositionConfig,
   DecompositionResult,
-} from "../types/goal-tree.js";
+} from "../base/types/goal-tree.js";
 import type { CapabilityDetector } from "../observation/capability-detector.js";
 import { decompositionToDimension } from "./goal-validation.js";
 import {
@@ -493,7 +493,7 @@ export class GoalNegotiator {
     return determineResponseType(feasibilityResults, baselineObservations, timeHorizonDays);
   }
 
-  private estimateChangeRate(dimension: import("../types/goal.js").Dimension): number | null {
+  private estimateChangeRate(dimension: import("../base/types/goal.js").Dimension): number | null {
     return estimateChangeRate(dimension);
   }
 

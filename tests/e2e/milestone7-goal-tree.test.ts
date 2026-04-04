@@ -29,7 +29,7 @@ import { MockEmbeddingClient } from "../../src/knowledge/embedding-client.js";
 import { SatisficingJudge } from "../../src/drive/satisficing-judge.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
 import type { ZodSchema } from "zod";
-import type { Goal } from "../../src/types/goal.js";
+import type { Goal } from "../../src/base/types/goal.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Helpers ───

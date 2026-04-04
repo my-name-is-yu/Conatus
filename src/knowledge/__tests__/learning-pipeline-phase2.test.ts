@@ -10,7 +10,7 @@ import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import type {
   StructuralFeedback,
   StructuralFeedbackType,
-} from "../../types/learning.js";
+} from "../../base/types/learning.js";
 
 // ─── Helpers ───
 
