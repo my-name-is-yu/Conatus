@@ -22,11 +22,13 @@ export class TavilySearchClient implements ISearchClient {
   async search(query: string, maxResults = 5): Promise<SearchResult[]> {
     const response = await fetch("https://api.tavily.com/search", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
       body: JSON.stringify({
-        api_key: this.apiKey,
         query,
-        max_results: maxResults,
+        max_results: maxResults ?? 5,
         include_answer: false,
       }),
     });
