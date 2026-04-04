@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { VectorIndex } from "../vector-index.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 describe("VectorIndex", () => {
   let tmpDir: string;

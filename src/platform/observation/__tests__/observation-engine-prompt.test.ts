@@ -6,7 +6,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { z } from "zod";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { randomUUID } from "node:crypto";
 
 // ─── Prompt Capture Mock ───

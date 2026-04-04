@@ -5,9 +5,9 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import type { KnowledgeEntry, SharedKnowledgeEntry } from "../../../base/types/knowledge.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { randomUUID } from "node:crypto";
 
 function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeEntry {

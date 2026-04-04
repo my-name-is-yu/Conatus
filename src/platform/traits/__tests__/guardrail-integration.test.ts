@@ -17,7 +17,7 @@ import type {
 } from "../../../base/llm/llm-client.js";
 import type { IGuardrailHook, GuardrailContext } from "../../../base/types/guardrail.js";
 import type { Task } from "../../../base/types/task.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───
 

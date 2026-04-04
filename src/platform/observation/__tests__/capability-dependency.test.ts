@@ -9,7 +9,7 @@ import type {
   CapabilityDependency,
   CapabilityGap,
 } from "../../../base/types/capability.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 // ─── Fixtures ───
 

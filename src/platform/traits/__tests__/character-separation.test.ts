@@ -15,8 +15,8 @@ import { StallDetector } from "../../drive/stall-detector.js";
 import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import type { CharacterConfig } from "../../../base/types/character.js";
 import { DEFAULT_CHARACTER_CONFIG } from "../../../base/types/character.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 function removeDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });

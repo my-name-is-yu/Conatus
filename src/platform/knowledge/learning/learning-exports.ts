@@ -6,7 +6,7 @@ export type {
   ParameterTuning,
   CrossGoalPattern,
   PatternSharingResult,
-} from "../../base/types/learning.js";
+} from "../../../base/types/learning.js";
 export {
   getStructuralFeedback,
   recordStructuralFeedback,

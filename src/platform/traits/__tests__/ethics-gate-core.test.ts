@@ -3,13 +3,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { EthicsGate } from "../ethics-gate.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import {
   PASS_VERDICT_JSON,
   REJECT_VERDICT_JSON,
   FLAG_VERDICT_JSON,
-} from "../../../tests/helpers/ethics-fixtures.js";
+} from "../../../../tests/helpers/ethics-fixtures.js";
 
 const LOW_CONFIDENCE_PASS_JSON = JSON.stringify({
   verdict: "pass",

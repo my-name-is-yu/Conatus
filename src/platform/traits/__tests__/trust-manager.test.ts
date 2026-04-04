@@ -13,7 +13,7 @@ import {
 import { PluginManifestSchema, PluginStateSchema } from "../../../base/types/plugin.js";
 import type { PluginState, PluginMatchResult } from "../../../base/types/plugin.js";
 import type { PluginLoader } from "../../../runtime/plugin-loader.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 describe("TrustManager", () => {
   let tmpDir: string;

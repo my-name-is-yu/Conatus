@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { StallDetector } from "../stall-detector.js";
 import type { StallTaskHistoryEntry } from "../stall-detector.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 let tempDir: string;
 let stateManager: StateManager;

@@ -3,8 +3,8 @@ import { ObservationEngine } from "../observation-engine.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { Logger } from "../../../runtime/logger.js";
-import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Helpers ───
 

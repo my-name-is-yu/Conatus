@@ -9,7 +9,7 @@ import type {
   Capability,
 } from "../../../base/types/capability.js";
 import type { LLMMessage } from "../../../base/llm/llm-client.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 // ─── Fixtures ───
 

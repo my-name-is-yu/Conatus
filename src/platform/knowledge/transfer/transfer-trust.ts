@@ -1,9 +1,9 @@
-import type { StateManager } from "../../base/state/state-manager.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
 import {
   TransferTrustScoreSchema,
-} from "../../base/types/cross-portfolio.js";
-import type { TransferTrustScore } from "../../base/types/cross-portfolio.js";
-import type { TransferEffectiveness } from "../../base/types/cross-portfolio.js";
+} from "../../../base/types/cross-portfolio.js";
+import type { TransferTrustScore } from "../../../base/types/cross-portfolio.js";
+import type { TransferEffectiveness } from "../../../base/types/cross-portfolio.js";
 
 /** How many recent outcomes to store for shouldInvalidate check */
 const HISTORY_WINDOW = 3;

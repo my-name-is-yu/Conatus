@@ -8,7 +8,7 @@ import {
   DEFAULT_CHARACTER_CONFIG,
 } from "../../../base/types/character.js";
 import type { CharacterConfig } from "../../../base/types/character.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Test Setup ───
 

@@ -12,7 +12,7 @@ import type {
 } from "../../../base/types/capability.js";
 import type { Task } from "../../../base/types/task.js";
 import type { LLMMessage } from "../../../base/llm/llm-client.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 // ─── Fixtures ───
 

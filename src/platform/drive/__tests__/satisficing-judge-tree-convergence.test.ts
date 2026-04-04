@@ -3,8 +3,8 @@ import * as fs from "node:fs";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SatisficingJudge } from "../satisficing-judge.js";
 import type { SatisficingStatus } from "../../../base/types/satisficing.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal, makeDimension } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal, makeDimension } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Setup ───
 

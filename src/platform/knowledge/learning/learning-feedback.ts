@@ -2,15 +2,15 @@ import { randomUUID } from "node:crypto";
 import {
   StructuralFeedbackSchema,
   StructuralFeedbackTypeEnum,
-} from "../../base/types/learning.js";
+} from "../../../base/types/learning.js";
 import type {
   StructuralFeedback,
   StructuralFeedbackType,
   FeedbackAggregation,
   ParameterTuning,
-} from "../../base/types/learning.js";
-import type { StateManager } from "../../base/state/state-manager.js";
-import type { LearningPipelineConfig } from "../../base/types/learning.js";
+} from "../../../base/types/learning.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import type { LearningPipelineConfig } from "../../../base/types/learning.js";
 
 // ─── Deps ───
 

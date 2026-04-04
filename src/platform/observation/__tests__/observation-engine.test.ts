@@ -9,8 +9,8 @@ import type { ObservationLayer, ObservationMethod, ObservationTrigger } from "..
 import type { KnowledgeGapSignal } from "../../../base/types/knowledge.js";
 import type { IDataSourceAdapter } from "../data-source-adapter.js";
 import type { DataSourceConfig } from "../../../base/types/data-source.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { randomUUID } from "node:crypto";
 
 // ─── Helpers ───

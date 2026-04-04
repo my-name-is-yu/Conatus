@@ -3,11 +3,11 @@ import { z } from "zod";
 import type { VectorIndex } from "../vector-index.js";
 import {
   ShortTermEntrySchema,
-} from "../../base/types/memory-lifecycle.js";
+} from "../../../base/types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   LessonEntry,
-} from "../../base/types/memory-lifecycle.js";
+} from "../../../base/types/memory-lifecycle.js";
 import type { IDriveScorer } from "../drive-score-adapter.js";
 import {
   readJsonFileAsync,

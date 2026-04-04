@@ -8,7 +8,7 @@ import {
   DataSourceRegistry,
 } from "../data-source-adapter.js";
 import type { DataSourceConfig } from "../../../base/types/data-source.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───
 

@@ -3,7 +3,7 @@ import { CuriosityEngine } from "../curiosity-engine.js";
 import type { CuriosityEngineDeps } from "../curiosity-engine.js";
 import type { CuriosityTrigger } from "../../../base/types/curiosity.js";
 import type { StallState } from "../../../base/types/stall.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Helper Factories ───
 

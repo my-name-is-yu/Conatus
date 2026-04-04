@@ -7,7 +7,7 @@ import { KnowledgeTransfer } from "../transfer/knowledge-transfer.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import type { StructuralFeedback, CrossGoalPattern } from "../../../base/types/learning.js";
 import { CrossGoalPatternSchema } from "../../../base/types/learning.js";
 

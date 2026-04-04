@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { StallDetector } from "../stall-detector.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 function makeGaps(values: number[]): Array<{ normalized_gap: number }> {
   return values.map((v) => ({ normalized_gap: v }));

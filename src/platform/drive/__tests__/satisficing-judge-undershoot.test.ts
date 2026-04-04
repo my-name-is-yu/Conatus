@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SatisficingJudge } from "../satisficing-judge.js";
 import type { Goal, Dimension } from "../../../base/types/goal.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Fixtures ───
 

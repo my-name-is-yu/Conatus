@@ -6,7 +6,7 @@ import { LearningPipeline } from "../learning/learning-pipeline.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import type { LearnedPattern, FeedbackEntry } from "../../../base/types/learning.js";
 
 // ─── Fixtures ───

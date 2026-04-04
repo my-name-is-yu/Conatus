@@ -4,7 +4,7 @@ import type {
   MemoryIndexEntry,
   MemoryTier,
   TierBudget,
-} from "../../base/types/memory-lifecycle.js";
+} from "../../../base/types/memory-lifecycle.js";
 
 // ─── Constants ───
 

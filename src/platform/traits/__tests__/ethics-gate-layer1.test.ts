@@ -4,13 +4,13 @@ import { z } from "zod";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { EthicsGate } from "../ethics-gate.js";
 import type { ILLMClient, LLMResponse } from "../../../base/llm/llm-client.js";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import {
   PASS_VERDICT_JSON,
   REJECT_VERDICT_JSON,
   FLAG_VERDICT_JSON,
-} from "../../../tests/helpers/ethics-fixtures.js";
+} from "../../../../tests/helpers/ethics-fixtures.js";
 
 // Malformed JSON to test parse failure
 const MALFORMED_JSON = "This is not JSON at all.";

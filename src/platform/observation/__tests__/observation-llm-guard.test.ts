@@ -6,7 +6,7 @@ import { LLMObservationResponseSchema } from "../observation-helpers.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { ObservationLogEntry } from "../../../base/types/state.js";
 import type { Logger } from "../../../runtime/logger.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 

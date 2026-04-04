@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import type { ILLMClient } from "../../base/llm/llm-client.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { IEmbeddingClient } from "../embedding-client.js";
 import type { VectorIndex } from "../vector-index.js";
 import {
@@ -9,7 +9,7 @@ import {
   LessonEntrySchema,
   RetentionConfigSchema,
   StatisticalSummarySchema,
-} from "../../base/types/memory-lifecycle.js";
+} from "../../../base/types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   LessonEntry,
@@ -18,7 +18,7 @@ import type {
   CompressionResult,
   RetentionConfig,
   MemoryDataType,
-} from "../../base/types/memory-lifecycle.js";
+} from "../../../base/types/memory-lifecycle.js";
 import type { IDriveScorer } from "../drive-score-adapter.js";
 export type { IDriveScorer } from "../drive-score-adapter.js";
 export { DriveScoreAdapter } from "../drive-score-adapter.js";

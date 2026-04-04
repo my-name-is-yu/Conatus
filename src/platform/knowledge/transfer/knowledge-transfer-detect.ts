@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { KnowledgeManager } from "../knowledge-manager.js";
 import type { VectorIndex } from "../vector-index.js";
 import type { LearningPipeline } from "../learning/learning-pipeline.js";
-import type { StateManager } from "../../base/state/state-manager.js";
-import { TransferCandidateSchema } from "../../base/types/cross-portfolio.js";
-import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
-import type { LearnedPattern } from "../../base/types/learning.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import { TransferCandidateSchema } from "../../../base/types/cross-portfolio.js";
+import type { TransferCandidate } from "../../../base/types/cross-portfolio.js";
+import type { LearnedPattern } from "../../../base/types/learning.js";
 import type { TransferTrustManager } from "./transfer-trust.js";
 import type { PatternEffectivenessTracker } from "./knowledge-transfer-types.js";
 

@@ -6,8 +6,8 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { DriveSystem } from "../drive-system.js";
 import type { PulSeedEvent, GoalSchedule } from "../../../base/types/drive.js";
 import type { Goal } from "../../../base/types/goal.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { randomUUID } from "node:crypto";
 
 function makeEvent(overrides: Partial<PulSeedEvent> = {}): PulSeedEvent {

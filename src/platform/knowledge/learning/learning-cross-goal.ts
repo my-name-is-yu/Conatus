@@ -2,15 +2,15 @@ import { randomUUID } from "node:crypto";
 import {
   CrossGoalPatternSchema,
   StructuralFeedbackSchema,
-} from "../../base/types/learning.js";
+} from "../../../base/types/learning.js";
 import type {
   StructuralFeedback,
   StructuralFeedbackType,
   CrossGoalPattern,
   PatternSharingResult,
   LearningPipelineConfig,
-} from "../../base/types/learning.js";
-import type { StateManager } from "../../base/state/state-manager.js";
+} from "../../../base/types/learning.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
 import {
   getStructuralFeedback,
   recordStructuralFeedback,
