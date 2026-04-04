@@ -209,7 +209,7 @@ export class ToolExecutor {
       const obj = input as Record<string, unknown>;
       const cmd = obj["command"];
       if (typeof cmd === "string") {
-        const dangerous = ["; rm ", "; curl ", "| bash", "eval ", "$(", "\`"];
+        const dangerous = ["; rm ", "; curl ", "| bash", "eval ", "$(", "\`", "&&", "||", "> /", ">> ", "\n"];
         for (const pattern of dangerous) {
           if (cmd.includes(pattern)) {
             return `Potentially dangerous shell command detected: "${pattern}"`;
