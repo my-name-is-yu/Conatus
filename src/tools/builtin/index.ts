@@ -16,6 +16,8 @@ export { ProgressHistoryTool } from "./progress-history.js";
 export { WebSearchTool, createWebSearchClient } from "./web-search.js";
 export type { ISearchClient, SearchResult } from "./web-search.js";
 export { ToolSearchTool } from "./tool-search.js";
+export { EnvTool } from "./env.js";
+export { GitDiffTool } from "./git-diff.js";
 
 import { GlobTool } from "./glob.js";
 import { GrepTool } from "./grep.js";
@@ -34,6 +36,8 @@ import { KnowledgeQueryTool } from "./knowledge-query.js";
 import { ProgressHistoryTool } from "./progress-history.js";
 import { WebSearchTool, createWebSearchClient } from "./web-search.js";
 import { ToolSearchTool } from "./tool-search.js";
+import { EnvTool } from "./env.js";
+import { GitDiffTool } from "./git-diff.js";
 import type { ITool } from "../types.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
