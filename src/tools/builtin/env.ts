@@ -112,10 +112,13 @@ export class EnvTool implements ITool<EnvInput, EnvOutput> {
       }
 
       const output: EnvOutput = { query: input.query, result };
+      const summaryData = input.query === "env_var"
+        ? `${input.varName}=[present]`
+        : JSON.stringify(result).slice(0, 100);
       return {
         success: true,
         data: output,
-        summary: `env_info(${input.query}) -> ${JSON.stringify(result).slice(0, 100)}`,
+        summary: `env_info(${input.query}) -> ${summaryData}`,
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
