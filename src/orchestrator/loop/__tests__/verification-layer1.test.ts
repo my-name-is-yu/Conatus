@@ -58,6 +58,7 @@ describe("verifyWithTools", () => {
       expect(result.mechanicalPassed).toBe(true);
       expect(result.details).toHaveLength(0);
       expect(executor.executeBatch).not.toHaveBeenCalled();
+      expect(executor.execute).not.toHaveBeenCalled();
     });
   });
 
@@ -66,9 +67,10 @@ describe("verifyWithTools", () => {
       const criterion = makeCriterion("run npx vitest");
       const executor = makeExecutor([passResult()]);
       const result = await verifyWithTools([criterion], executor, baseContext);
-      expect(executor.executeBatch).toHaveBeenCalledWith(
-        [{ toolName: "shell", input: { command: "npx vitest" } }],
-        baseContext,
+      expect(executor.execute).toHaveBeenCalledWith(
+        "shell",
+        { command: "npx vitest" },
+        { ...baseContext, preApproved: false },
       );
       expect(result.details[0].toolName).toBe("shell");
     });
@@ -111,8 +113,9 @@ describe("verifyWithTools", () => {
       const criterion = makeCriterion("check file dist/index.js");
       const executor = makeExecutor([passResult()]);
       const result = await verifyWithTools([criterion], executor, baseContext);
-      expect(executor.executeBatch).toHaveBeenCalledWith(
-        [{ toolName: "glob", input: { pattern: "dist/index.js" } }],
+      expect(executor.execute).toHaveBeenCalledWith(
+        "glob",
+        { pattern: "dist/index.js" },
         baseContext,
       );
       expect(result.details[0].toolName).toBe("glob");
@@ -131,8 +134,9 @@ describe("verifyWithTools", () => {
       const criterion = makeCriterion("read README.md");
       const executor = makeExecutor([passResult()]);
       const result = await verifyWithTools([criterion], executor, baseContext);
-      expect(executor.executeBatch).toHaveBeenCalledWith(
-        [{ toolName: "read", input: { file_path: "README.md" } }],
+      expect(executor.execute).toHaveBeenCalledWith(
+        "read",
+        { file_path: "README.md" },
         baseContext,
       );
       expect(result.details[0].toolName).toBe("read");
@@ -151,8 +155,9 @@ describe("verifyWithTools", () => {
       const criterion = makeCriterion("fetch http://localhost:3000/health");
       const executor = makeExecutor([passResult()]);
       const result = await verifyWithTools([criterion], executor, baseContext);
-      expect(executor.executeBatch).toHaveBeenCalledWith(
-        [{ toolName: "http_fetch", input: { url: "http://localhost:3000/health", method: "GET" } }],
+      expect(executor.execute).toHaveBeenCalledWith(
+        "http_fetch",
+        { url: "http://localhost:3000/health", method: "GET" },
         baseContext,
       );
       expect(result.details[0].toolName).toBe("http_fetch");
@@ -163,6 +168,25 @@ describe("verifyWithTools", () => {
       const executor = makeExecutor([passResult()]);
       const result = await verifyWithTools([criterion], executor, baseContext);
       expect(result.details[0].toolName).toBe("http_fetch");
+    });
+
+    it("rejects file:// scheme (SSRF protection)", async () => {
+      const criterion = makeCriterion("fetch file:///etc/passwd");
+      const executor = makeExecutor([passResult()]);
+      const result = await verifyWithTools([criterion], executor, baseContext);
+      // file:// is not verifiable — treated as non-verifiable, falls through to Layer 2
+      expect(result.mechanicalPassed).toBe(true);
+      expect(result.details).toHaveLength(0);
+      expect(executor.execute).not.toHaveBeenCalled();
+    });
+
+    it("rejects ftp:// scheme (SSRF protection)", async () => {
+      const criterion = makeCriterion("check endpoint ftp://internal.host/file");
+      const executor = makeExecutor([passResult()]);
+      const result = await verifyWithTools([criterion], executor, baseContext);
+      expect(result.mechanicalPassed).toBe(true);
+      expect(result.details).toHaveLength(0);
+      expect(executor.execute).not.toHaveBeenCalled();
     });
   });
 

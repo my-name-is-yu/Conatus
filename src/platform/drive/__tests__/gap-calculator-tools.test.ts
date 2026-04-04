@@ -249,6 +249,36 @@ describe("measureDirectly", () => {
       expect(result!.toolUsed).toBe("http_fetch");
     });
 
+    it("returns true for 201 status (created)", async () => {
+      const dim = makeDimension({
+        observation_method: {
+          type: "api_query",
+          source: "http",
+          schedule: null,
+          endpoint: "http://localhost:3000/resource",
+          confidence_tier: "mechanical",
+        },
+      });
+      const executor = makeExecutor(makeToolResult({ data: { statusCode: 201, body: "created" } }));
+      const result = await measureDirectly(dim, executor, baseContext);
+      expect(result!.value).toBe(true);
+    });
+
+    it("returns true for 204 status (no content)", async () => {
+      const dim = makeDimension({
+        observation_method: {
+          type: "api_query",
+          source: "http",
+          schedule: null,
+          endpoint: "http://localhost:3000/resource",
+          confidence_tier: "mechanical",
+        },
+      });
+      const executor = makeExecutor(makeToolResult({ data: { statusCode: 204, body: "" } }));
+      const result = await measureDirectly(dim, executor, baseContext);
+      expect(result!.value).toBe(true);
+    });
+
     it("returns false for non-200 status", async () => {
       const dim = makeDimension({
         observation_method: {
