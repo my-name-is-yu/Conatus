@@ -119,9 +119,9 @@ function parseToolOutput(
     return stdout;
   }
 
-  // HttpFetch: { statusCode, ... } -> true if 200
+  // HttpFetch: { statusCode, ... } -> true if 2xx
   if (isHttpOutput(data)) {
-    return data.statusCode === 200;
+    return data.statusCode >= 200 && data.statusCode < 300;
   }
 
   return String(data ?? "");
