@@ -145,7 +145,7 @@ describe("buildWorkspaceContext (integration)", () => {
   it("includes file content sections when grep finds matches", async () => {
     const realFile = path.join(
       projectRoot,
-      "src/observation/context-provider.ts"
+      "src/platform/observation/context-provider.ts"
     );
     execFileMock.mockImplementation(
       makeExecFileMock((file) => {
@@ -203,7 +203,7 @@ describe("buildWorkspaceContext (integration)", () => {
   it("respects maxFileContentLines option by limiting lines per file", async () => {
     const realFile = path.join(
       projectRoot,
-      "src/observation/context-provider.ts"
+      "src/platform/observation/context-provider.ts"
     );
     execFileMock.mockImplementation(
       makeExecFileMock((file) => {
