@@ -13,6 +13,7 @@ export { TrustStateTool } from "./trust-state.js";
 export { SessionHistoryTool } from "./session-history.js";
 export { KnowledgeQueryTool } from "./knowledge-query.js";
 export { ProgressHistoryTool } from "./progress-history.js";
+export { ToolSearchTool } from "./tool-search.js";
 
 import { GlobTool } from "./glob.js";
 import { GrepTool } from "./grep.js";
@@ -29,13 +30,16 @@ import { TrustStateTool } from "./trust-state.js";
 import { SessionHistoryTool } from "./session-history.js";
 import { KnowledgeQueryTool } from "./knowledge-query.js";
 import { ProgressHistoryTool } from "./progress-history.js";
+import { ToolSearchTool } from "./tool-search.js";
 import type { ITool } from "../types.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
+import type { ToolRegistry } from "../registry.js";
 
 export interface BuiltinToolDeps {
   stateManager?: StateManager;
   knowledgeManager?: KnowledgeManager;
+  registry?: ToolRegistry;
 }
 
 /** All built-in tools, sorted alphabetically by name. */
@@ -64,6 +68,10 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
 
   if (deps?.knowledgeManager) {
     tools.push(new KnowledgeQueryTool(deps.knowledgeManager));
+  }
+
+  if (deps?.registry) {
+    tools.push(new ToolSearchTool(deps.registry));
   }
 
   return tools;
