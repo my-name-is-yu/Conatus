@@ -6,7 +6,7 @@
  *   - Typed objects (no suffix)     — for direct mock injection (e.g. vi.fn().mockResolvedValue)
  */
 
-import type { EthicsVerdict } from "../../src/types/ethics.js";
+import type { EthicsVerdict } from "../../src/base/types/ethics.js";
 
 // ─── Typed object fixtures ────────────────────────────────────────────────────
 

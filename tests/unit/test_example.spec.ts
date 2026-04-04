@@ -4,13 +4,13 @@ import {
   applyConfidenceWeight,
   computeRawGap,
   normalizeGap,
-} from "../../src/drive/gap-calculator.js";
-import { formatOperationError } from "../../src/cli/utils.js";
+} from "../../src/platform/drive/gap-calculator.js";
+import { formatOperationError } from "../../src/interface/cli/utils.js";
 import {
   buildThreshold,
   deduplicateDimensionKeys,
   findBestDimensionMatch,
-} from "../../src/goal/goal-validation.js";
+} from "../../src/orchestrator/goal/goal-validation.js";
 
 describe("test_example", () => {
   describe("buildThreshold", () => {

@@ -1,5 +1,5 @@
-import type { Report } from "../../types/report.js";
-import type { NotificationResult, EmailChannel } from "../../types/notification.js";
+import type { Report } from "../../base/types/report.js";
+import type { NotificationResult, EmailChannel } from "../../base/types/notification.js";
 
 /** Escape user-controlled strings before embedding in HTML to prevent XSS. */
 function escapeHtml(s: string): string {

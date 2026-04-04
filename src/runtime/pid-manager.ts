@@ -1,6 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { writeJsonFile } from "../utils/json-io.js";
+import { writeJsonFile } from "../base/utils/json-io.js";
 
 export class PIDManager {
   private pidPath: string;

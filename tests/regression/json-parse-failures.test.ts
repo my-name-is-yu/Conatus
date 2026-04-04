@@ -2,19 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { StateManager } from "../../src/state/state-manager.js";
-import { DriveSystem } from "../../src/drive/drive-system.js";
-import { observeWithLLM } from "../../src/observation/observation-llm.js";
-import { verifyTask, type VerifierDeps } from "../../src/execution/task/task-verifier.js";
-import { SessionManager } from "../../src/execution/session-manager.js";
-import { TrustManager } from "../../src/traits/trust-manager.js";
-import { StallDetector } from "../../src/drive/stall-detector.js";
+import { StateManager } from "../../src/base/state/state-manager.js";
+import { DriveSystem } from "../../src/platform/drive/drive-system.js";
+import { observeWithLLM } from "../../src/platform/observation/observation-llm.js";
+import { verifyTask, type VerifierDeps } from "../../src/orchestrator/execution/task/task-verifier.js";
+import { SessionManager } from "../../src/orchestrator/execution/session-manager.js";
+import { TrustManager } from "../../src/platform/traits/trust-manager.js";
+import { StallDetector } from "../../src/platform/drive/stall-detector.js";
 import type { Logger } from "../../src/runtime/logger.js";
 import { createMockLLMClient } from "../helpers/mock-llm.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 import { makeGoal } from "../helpers/fixtures.js";
-import type { Task } from "../../src/types/task.js";
-import type { PulSeedEvent } from "../../src/types/drive.js";
+import type { Task } from "../../src/base/types/task.js";
+import type { PulSeedEvent } from "../../src/base/types/drive.js";
 
 function makeLogger(): Logger {
   return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;

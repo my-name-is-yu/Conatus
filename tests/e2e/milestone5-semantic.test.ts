@@ -15,32 +15,32 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // ─── Real implementations ───
-import { StateManager } from "../../src/state/state-manager.js";
-import { KnowledgeManager } from "../../src/knowledge/knowledge-manager.js";
-import { VectorIndex } from "../../src/knowledge/vector-index.js";
-import { MockEmbeddingClient } from "../../src/knowledge/embedding-client.js";
-import { MemoryLifecycleManager } from "../../src/knowledge/memory/memory-lifecycle.js";
-import type { IDriveScorer } from "../../src/knowledge/memory/memory-lifecycle.js";
-import { SessionManager } from "../../src/execution/session-manager.js";
-import { GoalDependencyGraph } from "../../src/goal/goal-dependency-graph.js";
-import { ObservationEngine } from "../../src/observation/observation-engine.js";
-import { TaskLifecycle } from "../../src/execution/task/task-lifecycle.js";
-import { SatisficingJudge } from "../../src/drive/satisficing-judge.js";
-import { StallDetector } from "../../src/drive/stall-detector.js";
-import { StrategyManager } from "../../src/strategy/strategy-manager.js";
+import { StateManager } from "../../src/base/state/state-manager.js";
+import { KnowledgeManager } from "../../src/platform/knowledge/knowledge-manager.js";
+import { VectorIndex } from "../../src/platform/knowledge/vector-index.js";
+import { MockEmbeddingClient } from "../../src/platform/knowledge/embedding-client.js";
+import { MemoryLifecycleManager } from "../../src/platform/knowledge/memory/memory-lifecycle.js";
+import type { IDriveScorer } from "../../src/platform/knowledge/memory/memory-lifecycle.js";
+import { SessionManager } from "../../src/orchestrator/execution/session-manager.js";
+import { GoalDependencyGraph } from "../../src/orchestrator/goal/goal-dependency-graph.js";
+import { ObservationEngine } from "../../src/platform/observation/observation-engine.js";
+import { TaskLifecycle } from "../../src/orchestrator/execution/task/task-lifecycle.js";
+import { SatisficingJudge } from "../../src/platform/drive/satisficing-judge.js";
+import { StallDetector } from "../../src/platform/drive/stall-detector.js";
+import { StrategyManager } from "../../src/orchestrator/strategy/strategy-manager.js";
 import { ReportingEngine } from "../../src/reporting/reporting-engine.js";
-import { DriveSystem } from "../../src/drive/drive-system.js";
-import { TrustManager } from "../../src/traits/trust-manager.js";
-import { CoreLoop } from "../../src/loop/core-loop.js";
-import { AdapterRegistry } from "../../src/execution/adapter-layer.js";
-import type { IAdapter, AgentTask, AgentResult } from "../../src/execution/adapter-layer.js";
-import * as GapCalculator from "../../src/drive/gap-calculator.js";
-import * as DriveScorer from "../../src/drive/drive-scorer.js";
+import { DriveSystem } from "../../src/platform/drive/drive-system.js";
+import { TrustManager } from "../../src/platform/traits/trust-manager.js";
+import { CoreLoop } from "../../src/orchestrator/loop/core-loop.js";
+import { AdapterRegistry } from "../../src/orchestrator/execution/adapter-layer.js";
+import type { IAdapter, AgentTask, AgentResult } from "../../src/orchestrator/execution/adapter-layer.js";
+import * as GapCalculator from "../../src/platform/drive/gap-calculator.js";
+import * as DriveScorer from "../../src/platform/drive/drive-scorer.js";
 
 // ─── Types ───
-import type { Goal } from "../../src/types/goal.js";
-import type { KnowledgeEntry } from "../../src/types/knowledge.js";
-import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/llm/llm-client.js";
+import type { Goal } from "../../src/base/types/goal.js";
+import type { KnowledgeEntry } from "../../src/base/types/knowledge.js";
+import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
 import type { ZodSchema } from "zod";
 import { makeTempDir } from "../helpers/temp-dir.js";
 

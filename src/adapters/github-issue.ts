@@ -8,10 +8,10 @@
 //   PULSEED_GITHUB_REPO — "owner/name", overrides auto-detection
 
 import { spawn } from "node:child_process";
-import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
+import type { IAdapter, AgentTask, AgentResult } from "../orchestrator/execution/adapter-layer.js";
 import { spawnWithTimeout } from "./spawn-helper.js";
 import type { Logger } from "../runtime/logger.js";
-import type { Task } from "../types/task.js";
+import type { Task } from "../base/types/task.js";
 
 // ─── Config ───
 

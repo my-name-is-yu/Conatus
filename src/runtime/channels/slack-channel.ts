@@ -1,5 +1,5 @@
-import type { Report } from "../../types/report.js";
-import type { NotificationResult, SlackChannel } from "../../types/notification.js";
+import type { Report } from "../../base/types/report.js";
+import type { NotificationResult, SlackChannel } from "../../base/types/notification.js";
 import { httpPost } from "./http-post.js";
 
 type SlackBlock =

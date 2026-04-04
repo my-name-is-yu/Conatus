@@ -13,16 +13,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { StateManager } from "../../src/state/state-manager.js";
-import { DriveSystem } from "../../src/drive/drive-system.js";
+import { StateManager } from "../../src/base/state/state-manager.js";
+import { DriveSystem } from "../../src/platform/drive/drive-system.js";
 import { DaemonRunner } from "../../src/runtime/daemon-runner.js";
 import { PIDManager } from "../../src/runtime/pid-manager.js";
 import { Logger } from "../../src/runtime/logger.js";
 import { EventServer } from "../../src/runtime/event-server.js";
 import type { DaemonDeps } from "../../src/runtime/daemon-runner.js";
-import type { DaemonState } from "../../src/types/daemon.js";
-import { DaemonStateSchema } from "../../src/types/daemon.js";
-import type { LoopResult } from "../../src/loop/core-loop.js";
+import type { DaemonState } from "../../src/base/types/daemon.js";
+import { DaemonStateSchema } from "../../src/base/types/daemon.js";
+import type { LoopResult } from "../../src/orchestrator/loop/core-loop.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Helpers ───
@@ -60,7 +60,7 @@ function buildDaemonRunner(
   const coreLoop = coreLoopOverride ?? makeMockCoreLoop();
 
   const deps: DaemonDeps = {
-    coreLoop: coreLoop as unknown as import("../../src/loop/core-loop.js").CoreLoop,
+    coreLoop: coreLoop as unknown as import("../../src/orchestrator/loop/core-loop.js").CoreLoop,
     driveSystem,
     stateManager,
     pidManager,

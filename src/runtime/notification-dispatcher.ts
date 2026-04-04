@@ -1,5 +1,5 @@
 import type { Logger } from "./logger.js";
-import type { Report } from "../types/report.js";
+import type { Report } from "../base/types/report.js";
 import type {
   NotificationChannel,
   NotificationConfig,
@@ -7,9 +7,9 @@ import type {
   SlackChannel,
   EmailChannel,
   WebhookChannel,
-} from "../types/notification.js";
-import { NotificationConfigSchema } from "../types/notification.js";
-import type { NotificationEvent, NotificationEventType } from "../types/plugin.js";
+} from "../base/types/notification.js";
+import { NotificationConfigSchema } from "../base/types/notification.js";
+import type { NotificationEvent, NotificationEventType } from "../base/types/plugin.js";
 import type { NotifierRegistry } from "./notifier-registry.js";
 import { sendSlack } from "./channels/slack-channel.js";
 import { sendEmail } from "./channels/email-channel.js";

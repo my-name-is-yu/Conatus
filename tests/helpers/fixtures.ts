@@ -1,4 +1,4 @@
-import type { Goal, Dimension } from "../../src/types/goal.js";
+import type { Goal, Dimension } from "../../src/base/types/goal.js";
 
 export function makeDimension(overrides: Partial<Dimension> = {}): Dimension {
   const now = new Date().toISOString();

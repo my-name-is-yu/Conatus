@@ -2,7 +2,7 @@ import type {
   INotifier,
   NotificationEvent,
   NotificationEventType,
-} from "../../../src/types/plugin.js";
+} from "../../../src/base/types/plugin.js";
 
 // ─── Supported events (must match plugin.yaml) ───
 

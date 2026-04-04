@@ -3,9 +3,9 @@ import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as url from "node:url";
 import yaml from "js-yaml";
-import { getPluginsDir } from "../utils/paths.js";
-import { writeJsonFileAtomic } from "../utils/json-io.js";
-import { ValidationError } from "../utils/errors.js";
+import { getPluginsDir } from "../base/utils/paths.js";
+import { writeJsonFileAtomic } from "../base/utils/json-io.js";
+import { ValidationError } from "../base/utils/errors.js";
 import type { Logger } from "./logger.js";
 import {
   PluginManifestSchema,
@@ -14,9 +14,9 @@ import {
   type PluginState,
   type PluginType,
   type INotifier,
-} from "../types/plugin.js";
-import type { AdapterRegistry, IAdapter } from "../execution/adapter-layer.js";
-import type { DataSourceRegistry, IDataSourceAdapter } from "../observation/data-source-adapter.js";
+} from "../base/types/plugin.js";
+import type { AdapterRegistry, IAdapter } from "../orchestrator/execution/adapter-layer.js";
+import type { DataSourceRegistry, IDataSourceAdapter } from "../platform/observation/data-source-adapter.js";
 import type { NotifierRegistry } from "./notifier-registry.js";
 
 // ─── PluginLoader ───

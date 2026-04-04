@@ -22,11 +22,11 @@ import { NotificationDispatcher } from "../../src/runtime/notification-dispatche
 import { AgentProfileLoader } from "../../src/adapters/agents/agent-profile-loader.js";
 import { TriggerMapper } from "../../src/runtime/trigger-mapper.js";
 import { runWeeklyReview } from "../../src/reflection/weekly-review.js";
-import { StateManager } from "../../src/state/state-manager.js";
+import { StateManager } from "../../src/base/state/state-manager.js";
 import { makeTempDir, cleanupTempDir } from "../helpers/temp-dir.js";
 import { createMockLLMClient } from "../helpers/mock-llm.js";
 import { makeGoal } from "../helpers/fixtures.js";
-import type { Report } from "../../src/types/report.js";
+import type { Report } from "../../src/base/types/report.js";
 
 // ─── Test fixtures ───
 

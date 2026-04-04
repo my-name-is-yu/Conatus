@@ -1,8 +1,8 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { TriggerMappingsConfigSchema } from "../types/trigger.js";
-import type { TriggerEvent, TriggerMapping } from "../types/trigger.js";
-import type { ILLMClient } from "../llm/llm-client.js";
+import { TriggerMappingsConfigSchema } from "../base/types/trigger.js";
+import type { TriggerEvent, TriggerMapping } from "../base/types/trigger.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
 
 export type TriggerAction = "observe" | "create_task" | "notify" | "wake" | "none";
 
