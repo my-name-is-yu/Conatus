@@ -4,6 +4,8 @@ import * as path from "node:path";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../types.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 
+// NOTE: fs.readdirSync is used only for listing filenames (safe). All file READS go through stateManager.readRaw().
+
 export const SessionHistoryInputSchema = z.object({
   goalId: z.string().optional(),
   limit: z.number().int().positive().default(5),
@@ -71,17 +73,17 @@ export class SessionHistoryTool implements ITool<SessionHistoryInput, unknown> {
       return [];
     }
 
-    let files = fs
+    // Listing filenames is safe; all file READS go through stateManager.readRaw() (path traversal protection).
+    const files = fs
       .readdirSync(sessionsDir)
-      .filter((f) => f.endsWith(".json"))
-      .sort();
+      .filter((f) => f.endsWith(".json"));
 
     // Filter by goalId if provided
     const summaries: SessionSummary[] = [];
     for (const file of files) {
-      const filePath = path.join(sessionsDir, file);
       try {
-        const raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>;
+        const raw = await this.stateManager.readRaw(`sessions/${file}`) as Record<string, unknown> | null;
+        if (raw == null) continue;
         const session = this._toSummary(raw, input.includeObservations);
         if (!session) continue;
         if (input.goalId && session.goalId !== input.goalId) continue;
@@ -91,8 +93,9 @@ export class SessionHistoryTool implements ITool<SessionHistoryInput, unknown> {
       }
     }
 
-    // Return most recent N
-    return summaries.slice(-input.limit).reverse();
+    // Sort by actual timestamp descending (ISO 8601 strings sort lexicographically), then take limit
+    summaries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    return summaries.slice(0, input.limit);
   }
 
   private _toSummary(raw: Record<string, unknown>, includeObservations: boolean): SessionSummary | null {
