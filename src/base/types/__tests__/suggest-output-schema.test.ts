@@ -105,7 +105,7 @@ vi.mock("../../reporting/reporting-engine.js", async (importOriginal) => {
 import { CLIRunner } from "../../../cli/cli-runner.js";
 import { GoalNegotiator } from "../../../goal/goal-negotiator.js";
 import { SuggestOutputSchema } from "../suggest.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 let tmpDir: string;
 let origApiKey: string | undefined;
