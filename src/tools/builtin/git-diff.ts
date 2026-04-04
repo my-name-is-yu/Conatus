@@ -1,9 +1,6 @@
 import { z } from "zod";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../types.js";
-
-const execFileAsync = promisify(execFile);
+import { execFileNoThrow } from "../../base/utils/execFileNoThrow.js";
 
 export const GitDiffInputSchema = z.object({
   target: z.enum(["staged", "unstaged", "commit", "branch"]).default("unstaged"),
@@ -77,46 +74,41 @@ export class GitDiffTool implements ITool<GitDiffInput, string> {
     }
 
     const args = buildDiffArgs(input);
+    const result = await execFileNoThrow("git", args, { cwd: context.cwd, timeoutMs: 15_000 });
 
-    try {
-      const { stdout } = await execFileAsync("git", args, {
-        cwd: context.cwd,
-        timeout: 15_000,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-
-      const raw = stdout ?? "";
-      if (!raw.trim()) {
-        return {
-          success: true,
-          data: "",
-          summary: "No changes found",
-          durationMs: Date.now() - startTime,
-        };
-      }
-
-      const lines = raw.split("\n");
-      const truncated = lines.length > input.maxLines;
-      const output = truncated
-        ? lines.slice(0, input.maxLines).join("\n") + "\n[truncated]"
-        : raw;
-
-      return {
-        success: true,
-        data: output,
-        summary: `git diff (${input.target}): ${lines.length} lines${truncated ? ` (truncated to ${input.maxLines})` : ""}`,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (err) {
-      const message = (err as NodeJS.ErrnoException & { stderr?: string }).stderr ?? (err as Error).message;
+    if (result.exitCode !== 0) {
       return {
         success: false,
         data: "",
-        summary: `git diff failed: ${message.slice(0, 200)}`,
-        error: message.slice(0, 500),
+        summary: `git diff failed: ${result.stderr.slice(0, 200)}`,
+        error: result.stderr.slice(0, 500),
         durationMs: Date.now() - startTime,
       };
     }
+
+    const raw = result.stdout ?? "";
+    if (!raw.trim()) {
+      return {
+        success: true,
+        data: "",
+        summary: "No changes found",
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    const NL = "\n";
+    const lines = raw.split(NL);
+    const truncated = lines.length > input.maxLines;
+    const output = truncated
+      ? lines.slice(0, input.maxLines).join(NL) + NL + "[truncated]"
+      : raw;
+
+    return {
+      success: true,
+      data: output,
+      summary: `git diff (${input.target}): ${lines.length} lines${truncated ? ` (truncated to ${input.maxLines})` : ""}`,
+      durationMs: Date.now() - startTime,
+    };
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -136,7 +128,6 @@ function buildDiffArgs(input: GitDiffInput): string[] {
       args.push("--cached");
       break;
     case "unstaged":
-      // no extra flag
       break;
     case "commit":
       if (input.ref) {
