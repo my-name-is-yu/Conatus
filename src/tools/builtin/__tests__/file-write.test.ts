@@ -92,15 +92,14 @@ describe("FileWriteTool", () => {
     expect(vi.mocked(fsMock.writeFile)).not.toHaveBeenCalled();
   });
 
-  it("dry-run returns preview without writing", async () => {
-    const ctx = makeContext({ dryRun: true } as Partial<ToolCallContext>);
+  it("returns bytesWritten in result data", async () => {
     const result = await tool.call(
       { path: "output.txt", content: "hello", createDirs: false },
-      ctx as ToolCallContext,
+      makeContext(),
     );
     expect(result.success).toBe(true);
-    expect(result.summary).toContain("dry-run");
-    expect(vi.mocked(fsMock.writeFile)).not.toHaveBeenCalled();
+    const data = result.data as { bytesWritten: number };
+    expect(data.bytesWritten).toBeGreaterThan(0);
   });
 
   it("handles write errors gracefully", async () => {

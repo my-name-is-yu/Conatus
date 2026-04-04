@@ -27,15 +27,6 @@ function countOccurrences(text: string, search: string): number {
   return count;
 }
 
-function previewAround(text: string, searchText: string, contextLines = 3): string {
-  const lines = text.split("\n");
-  const idx = lines.findIndex((l) => l.includes(searchText));
-  if (idx === -1) return "";
-  const start = Math.max(0, idx - contextLines);
-  const end = Math.min(lines.length, idx + contextLines + 1);
-  return lines.slice(start, end).join("\n");
-}
-
 export class FileEditTool implements ITool<FileEditInput, FileEditOutput> {
   readonly metadata: ToolMetadata = {
     name: "file_edit",
@@ -98,16 +89,6 @@ export class FileEditTool implements ITool<FileEditInput, FileEditOutput> {
         data: null,
         summary: `Found ${matchCount} matches — use replaceAll or provide more context to make match unique`,
         error: `Found ${matchCount} matches — use replaceAll or provide more context to make match unique`,
-        durationMs: Date.now() - startTime,
-      };
-    }
-
-    if (context.dryRun) {
-      const preview = previewAround(content, input.oldText);
-      return {
-        success: true,
-        data: { path: resolved, matchesReplaced: matchCount, bytesWritten: 0 },
-        summary: `dry-run: would replace ${matchCount} match(es)\n${preview}`,
         durationMs: Date.now() - startTime,
       };
     }

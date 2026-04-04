@@ -83,16 +83,15 @@ describe("FileEditTool", () => {
     expect(data.matchesReplaced).toBe(2);
   });
 
-  it("dry-run returns preview without writing", async () => {
+  it("returns matchesReplaced count in result data", async () => {
     vi.mocked(fsMock.readFile).mockResolvedValueOnce("line1\nhello world\nline3" as any);
-    const ctx = { ...makeContext(), dryRun: true } as unknown as ToolCallContext;
     const result = await tool.call(
       { path: "file.txt", oldText: "hello world", newText: "hi", replaceAll: false },
-      ctx,
+      makeContext(),
     );
     expect(result.success).toBe(true);
-    expect(result.summary).toContain("dry-run");
-    expect(vi.mocked(fsMock.writeFile)).not.toHaveBeenCalled();
+    const data = result.data as { matchesReplaced: number };
+    expect(data.matchesReplaced).toBe(1);
   });
 
   it("blocks path traversal", async () => {
