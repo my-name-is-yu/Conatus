@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseToolOutput } from "./parse-tool-output.js";
+import { parseToolOutput } from "../parse-tool-output.js";
 
 describe("parseToolOutput", () => {
   describe("shell stdout parsing", () => {
