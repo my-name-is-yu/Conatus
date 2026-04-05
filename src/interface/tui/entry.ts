@@ -271,16 +271,15 @@ export async function startTUI(): Promise<void> {
   const intentRecognizer = new IntentRecognizer(llmClient);
 
   // 4. Handle SIGINT/SIGTERM gracefully before rendering.
-  // Require two Ctrl-C presses within 2s to exit (prevent accidental quit).
-  let lastSigint = 0;
+  // Require two Ctrl-C presses to exit (prevent accidental quit).
+  let sigintPending = false;
   const handleSigint = () => {
-    const now = Date.now();
-    if (now - lastSigint < 2000) {
+    if (sigintPending) {
       coreLoop.stop();
       process.exit(0);
     }
-    lastSigint = now;
-    process.stderr.write("\n(Press Ctrl-C again to quit)\n");
+    sigintPending = true;
+    process.stderr.write("\n(Press Ctrl-C once more to quit)\n");
   };
   process.on("SIGINT", handleSigint);
   process.on("SIGTERM", () => { coreLoop.stop(); process.exit(0); });
