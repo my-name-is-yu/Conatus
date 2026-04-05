@@ -292,6 +292,8 @@ export function Chat({
   // ── Message selection & copy ──
   const [selectedMsgIndex, setSelectedMsgIndex] = useState<number | null>(null);
   const [copyToast, setCopyToast] = useState(false);
+  const isMountedRef = React.useRef(true);
+  React.useEffect(() => () => { isMountedRef.current = false; }, []);
   const emptyHintTimer = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -304,8 +306,9 @@ export function Chat({
     setSelectedMsgIndex(index);
     if (index !== null && messages[index]) {
       copyToClipboard(messages[index].text).then(() => {
+        if (!isMountedRef.current) return;
         setCopyToast(true);
-        setTimeout(() => setCopyToast(false), 1200);
+        setTimeout(() => { if (isMountedRef.current) setCopyToast(false); }, 1200);
       });
     }
   }, [messages]);
