@@ -308,8 +308,9 @@ export function Chat({
     if (index !== null && messages[index]) {
       const text = messages[index].text;
       // Set toast synchronously — don't wait for clipboard promise
-      // (async .then() may not trigger Ink re-render reliably)
-      setCopyToast(`copied ${text.length} chars to clipboard`);
+      const toastMsg = `copied ${text.length} chars to clipboard`;
+      process.stderr.write(`[DEBUG] selectAndCopy: index=${index}, textLen=${text.length}, toast="${toastMsg}"\n`);
+      setCopyToast(toastMsg);
       if (copyToastTimer.current) clearTimeout(copyToastTimer.current);
       copyToastTimer.current = setTimeout(() => {
         if (isMountedRef.current) setCopyToast(null);
@@ -651,6 +652,7 @@ export function Chat({
               placeholder="/ for commands"
             />
           </Box>
+          {(() => { process.stderr.write(`[DEBUG render] copyToast=${JSON.stringify(copyToast)}\n`); return null; })()}
           {copyToast && (
             <Box justifyContent="flex-end">
               <Text color="cyan">{copyToast}</Text>
