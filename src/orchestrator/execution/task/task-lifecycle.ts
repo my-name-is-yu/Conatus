@@ -482,6 +482,7 @@ export class TaskLifecycle {
       onTaskComplete: this.onTaskComplete,
       durationToMs: durationToMs,
       completionJudgerConfig: this.completionJudgerConfig,
+      toolExecutor: this.toolExecutor,
     };
   }
 
