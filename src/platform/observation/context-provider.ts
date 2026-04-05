@@ -161,7 +161,7 @@ async function collectContextItems(
     goalId: goalId ?? "context-provider",
     trustBalance: 0,
     preApproved: true, // all reads are safe
-    approvalFn: async () => false,
+    approvalFn: async () => true,
     ...(toolContext ?? {}),
   };
 
@@ -363,7 +363,7 @@ export async function buildChatContext(
     goalId: "context-provider",
     trustBalance: 0,
     preApproved: true,
-    approvalFn: async () => false,
+    approvalFn: async () => true,
     ...(toolContext ?? {}),
   };
 
