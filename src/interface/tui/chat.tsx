@@ -258,7 +258,6 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
 
   React.useEffect(() => {
     if (!isProcessing) return;
-    setSpinnerVerb(pickSpinnerVerb());
     const interval = setInterval(() => {
       setSpinnerVerb(pickSpinnerVerb());
     }, 3000);
@@ -300,26 +299,29 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
   }, { isActive: !isProcessing });
 
   // Reset selected index when matches change
+  const matchKey = matches.map(m => m.name).join(",");
   React.useEffect(() => {
     setSelectedIdx(0);
-  }, [matches.map(m => m.name).join(",")]);
+  }, [matchKey]);
 
   // IME cursor positioning: report cursor x position so the IME candidate window
   // appears next to the input caret instead of at the top-left corner.
   const { setCursorPosition } = useCursor();
   React.useEffect(() => {
-    // Compute display width of input string; CJK chars (codepoint > 0x2E7F) count as 2 columns
+    if (isProcessing) {
+      setCursorPosition(undefined);
+      return;
+    }
     let displayWidth = 0;
     for (const ch of input) {
       const cp = ch.codePointAt(0) ?? 0;
       displayWidth += cp > 0x2E7F ? 2 : 1;
     }
-    // Prompt prefix "❧ " is 2 visible columns wide
     const x = 2 + displayWidth;
-    // Input line is near the bottom of the terminal
     const y = Math.max(0, (process.stdout.rows ?? 24) - 2);
     setCursorPosition({ x, y });
-  }, [input, setCursorPosition]);
+    return () => { setCursorPosition(undefined); };
+  }, [input, isProcessing, setCursorPosition]);
 
   const handleSubmit = (value: string) => {
     if (hasMatches) return; // let useInput handle enter when suggestions are shown
