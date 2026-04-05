@@ -507,6 +507,20 @@ describe("collectContextItems with toolExecutor", () => {
     expect(typeof result).toBe("string");
     expect(result).not.toMatch(/\[Test status\]/);
   });
+
+  it("handles truncated test-runner output (string data)", async () => {
+    const executor = createMockExecutor({
+      "test-runner": { success: true, data: "truncated: { passed: 5 ...", summary: "truncated", durationMs: 100 },
+    });
+    const items = await buildWorkspaceContextItems("goal-1", "coverage", {
+      cwd: "/fake",
+      toolExecutor: executor,
+      toolContext: {},
+    });
+    // Should not throw, and should include test status from raw string
+    const testItem = items.find((i) => i.label.includes("Test"));
+    expect(testItem).toBeDefined();
+  });
 });
 
 describe("buildChatContext with toolExecutor", () => {
