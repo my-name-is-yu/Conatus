@@ -1,19 +1,13 @@
 import { z } from "zod";
 import fs from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../types.js";
-
-const PLAN_ID_RE = /^[a-zA-Z0-9-]+$/;
+import { PLAN_ID_RE, decisionsDir } from "./plan-utils.js";
 
 export const ReadPlanInputSchema = z.object({
   plan_id: z.string().min(1, "plan_id is required").regex(PLAN_ID_RE, "plan_id must be alphanumeric with hyphens only"),
 });
 export type ReadPlanInput = z.infer<typeof ReadPlanInputSchema>;
-
-function decisionsDir(): string {
-  return path.join(homedir(), ".pulseed", "decisions");
-}
 
 export class ReadPlanTool implements ITool<ReadPlanInput, unknown> {
   readonly metadata: ToolMetadata = {
