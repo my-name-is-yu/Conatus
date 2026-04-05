@@ -11,7 +11,7 @@ function spawnWithStdin(cmd: string, args: string[], text: string): Promise<bool
 
 function writeOsc52(text: string): boolean {
   const b64 = Buffer.from(text).toString("base64");
-  process.stdout.write(`]52;c;${b64}`);
+  process.stdout.write(`]52;c;${b64}`);
   return true;
 }
 
@@ -27,4 +27,26 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 
   return writeOsc52(text);
+}
+
+function readClipboard(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    const proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    proc.stdout.on("data", (data: Buffer) => { output += data.toString(); });
+    proc.on("error", () => resolve(""));
+    proc.on("close", (code) => resolve(code === 0 ? output : ""));
+  });
+}
+
+export async function getClipboardContent(): Promise<string> {
+  if (process.platform === "darwin") {
+    return readClipboard("pbpaste", []);
+  }
+  if (process.platform === "linux") {
+    const result = await readClipboard("xclip", ["-selection", "clipboard", "-o"]);
+    if (result) return result;
+    return readClipboard("xsel", ["--clipboard", "--output"]);
+  }
+  return "";
 }
