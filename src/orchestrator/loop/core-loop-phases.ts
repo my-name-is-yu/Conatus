@@ -187,6 +187,31 @@ export async function calculateGapOrComplete(
   let gapVector: GapVector;
   let gapAggregate: number;
   try {
+    // Refresh stale dimensions via tool measurement before gap calculation
+    if (ctx.toolExecutor && goal.dimensions) {
+      const { needsDirectMeasurement, measureDirectly } = await import("../../platform/drive/gap-calculator-tools.js");
+      for (const dim of goal.dimensions) {
+        if (needsDirectMeasurement(dim)) {
+          try {
+            const refreshed = await measureDirectly(dim, ctx.toolExecutor, {
+              cwd: process.cwd(),
+              goalId,
+              trustBalance: 0,
+              preApproved: true,
+              approvalFn: async () => false,
+            });
+            if (refreshed !== null) {
+              dim.current_value = refreshed.value;
+              dim.confidence = refreshed.confidence;
+              dim.last_observed = new Date().toISOString();
+              ctx.logger?.debug(`[GapRefresh] Refreshed stale dimension ${dim.name}: confidence ${dim.confidence}`);
+            }
+          } catch (err) {
+            ctx.logger?.warn(`[GapRefresh] Failed to refresh ${dim.name}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
+    }
     gapVector = ctx.deps.gapCalculator.calculateGapVector(
       goalId,
       goal.dimensions,
