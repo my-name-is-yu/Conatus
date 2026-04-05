@@ -6,6 +6,7 @@
 // Routes chat input through IntentRecognizer → ActionHandler.
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import { randomUUID } from "node:crypto";
 import { Box, Text, useInput, useStdout } from "ink";
 import { theme } from "./theme.js";
 import { Dashboard, statusLabel } from "./dashboard.js";
@@ -86,6 +87,7 @@ export function App({
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
+      id: randomUUID(),
       role: "pulseed",
       text: "What would you like to do? Type '/help' for available commands.",
       timestamp: new Date(),
@@ -153,7 +155,7 @@ export function App({
     async (input: string) => {
       if (isProcessing) return;
       // Add user message
-      setMessages((prev) => [...prev, { role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
+      setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
       setIsProcessing(true);
 
       try {
@@ -181,6 +183,7 @@ export function App({
           setMessages((prev) => [
             ...prev,
             ...result.messages.map((text) => ({
+              id: randomUUID(),
               role: "pulseed" as const,
               text,
               timestamp: new Date(),
@@ -210,7 +213,7 @@ export function App({
           // Free-form text goes through ChatRunner for live LLM chat
           setMessages((prev) => [
             ...prev,
-            { role: "pulseed" as const, text: "Thinking...", timestamp: new Date(), messageType: "info" as const },
+            { id: randomUUID(), role: "pulseed" as const, text: "Thinking...", timestamp: new Date(), messageType: "info" as const },
           ].slice(-MAX_MESSAGES));
 
           const result = await chatRunner.execute(input, process.cwd());
@@ -219,6 +222,7 @@ export function App({
           setMessages((prev) => [
             ...prev.slice(0, -1),
             {
+              id: randomUUID(),
               role: "pulseed" as const,
               text: result.output || "(no response)",
               timestamp: new Date(),
@@ -232,6 +236,7 @@ export function App({
           setMessages((prev) => [
             ...prev,
             ...result.messages.map((text) => ({
+              id: randomUUID(),
               role: "pulseed" as const,
               text,
               timestamp: new Date(),
@@ -244,6 +249,7 @@ export function App({
         setMessages((prev) => [
           ...prev.slice(0, -1),
           {
+            id: randomUUID(),
             role: "pulseed" as const,
             text: `Error: ${message}`,
             timestamp: new Date(),
