@@ -293,6 +293,7 @@ export function Chat({
   const [selectedMsgIndex, setSelectedMsgIndex] = useState<number | null>(null);
   const [copyToast, setCopyToast] = useState<string | null>(null);
   const isMountedRef = React.useRef(true);
+  const copyToastTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   React.useEffect(() => () => { isMountedRef.current = false; }, []);
   const emptyHintTimer = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -306,11 +307,14 @@ export function Chat({
     setSelectedMsgIndex(index);
     if (index !== null && messages[index]) {
       const text = messages[index].text;
-      copyToClipboard(text).then(() => {
-        if (!isMountedRef.current) return;
-        setCopyToast(`copied ${text.length} chars to clipboard`);
-        setTimeout(() => { if (isMountedRef.current) setCopyToast(null); }, 1200);
-      });
+      // Set toast synchronously — don't wait for clipboard promise
+      // (async .then() may not trigger Ink re-render reliably)
+      setCopyToast(`copied ${text.length} chars to clipboard`);
+      if (copyToastTimer.current) clearTimeout(copyToastTimer.current);
+      copyToastTimer.current = setTimeout(() => {
+        if (isMountedRef.current) setCopyToast(null);
+      }, 1500);
+      copyToClipboard(text);
     }
   }, [messages]);
 
