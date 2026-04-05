@@ -59,7 +59,7 @@ const StatusBar: React.FC<{
       Active: {goalCount}  Trust: {trustScore >= 0 ? "+" : ""}
       {trustScore}  Status: {statusLabel(status)}  Iter: {iteration}
     </Text>
-    <Text dimColor>d:dashboard  ?:help  Ctrl-C:quit</Text>
+    <Text dimColor>d:dashboard  ?:help  Ctrl-C×2:quit</Text>
   </Box>
 );
 

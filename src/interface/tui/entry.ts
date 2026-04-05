@@ -271,13 +271,19 @@ export async function startTUI(): Promise<void> {
   const intentRecognizer = new IntentRecognizer(llmClient);
 
   // 4. Handle SIGINT/SIGTERM gracefully before rendering.
-  // Stop the core loop directly (same effect as LoopController.stop()).
-  const shutdown = () => {
-    coreLoop.stop();
-    process.exit(0);
+  // Require two Ctrl-C presses within 2s to exit (prevent accidental quit).
+  let lastSigint = 0;
+  const handleSigint = () => {
+    const now = Date.now();
+    if (now - lastSigint < 2000) {
+      coreLoop.stop();
+      process.exit(0);
+    }
+    lastSigint = now;
+    process.stderr.write("\n(Press Ctrl-C again to quit)\n");
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", handleSigint);
+  process.on("SIGTERM", () => { coreLoop.stop(); process.exit(0); });
 
   // 5. Compute breadcrumb context for the header
   const providerConfig = await loadProviderConfig();
