@@ -82,10 +82,10 @@ describe("getMutationToolDefinitions()", () => {
     const tools = getMutationToolDefinitions();
     const deleteGoal = tools.find((t) => t.function.name === "delete_goal");
     expect(deleteGoal).toBeDefined();
-    expect(deleteGoal!.function.description).toContain("Effects");
-    expect(deleteGoal!.function.description).toContain("Risks");
-    expect(deleteGoal!.function.description).toContain("Revert");
-    expect(deleteGoal!.function.description).toContain("cannot be undone");
+    expect(deleteGoal!.function.description).toContain("影響");
+    expect(deleteGoal!.function.description).toContain("リスク");
+    expect(deleteGoal!.function.description).toContain("復元");
+    expect(deleteGoal!.function.description).toContain("元に戻せない");
   });
 });
 

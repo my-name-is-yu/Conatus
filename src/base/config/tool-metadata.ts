@@ -102,14 +102,14 @@ export function buildMutationToolDescription(toolName: string): string {
   return [
     `## ${m.label}`,
     m.description, "",
-    "IMPORTANT: Before calling this tool, you MUST:",
-    "1. Explain what will be deleted/affected",
-    "2. List the risks",
-    "3. State that this cannot be undone",
-    "4. Get explicit user confirmation",
-    "Only call this tool after the user confirms.", "",
-    "### Effects", bullet(m.effects), "",
-    "### Risks", bullet(m.risks), "",
-    "### Revert", m.revert,
+    "重要: このツールを呼び出す前に、必ず以下を行ってください:",
+    "1. 削除・影響の対象を具体的に説明する",
+    "2. リスクを一覧で提示する",
+    "3. この操作は元に戻せないことを明示する",
+    "4. ユーザーの明示的な確認を得る",
+    "ユーザーが確認するまでこのツールを呼び出さないでください。", "",
+    "### 影響", bullet(m.effects), "",
+    "### リスク", bullet(m.risks), "",
+    "### 復元", m.revert,
   ].join("\n");
 }

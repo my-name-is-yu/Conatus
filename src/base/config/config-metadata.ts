@@ -5,4 +5,7 @@ export {
   CONFIG_METADATA,
   buildConfigKeyDescription,
   buildConfigToolDescription,
+  MutationToolMeta,
+  MUTATION_TOOL_METADATA,
+  buildMutationToolDescription,
 } from "./tool-metadata.js";
