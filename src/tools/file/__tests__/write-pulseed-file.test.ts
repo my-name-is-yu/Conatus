@@ -4,7 +4,8 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { ToolCallContext } from "../../types.js";
 
-const mockHomedir = vi.fn();
+const mockHomedir = vi.hoisted(() => vi.fn<[], string>());
+
 vi.mock("node:os", async (importOriginal) => {
   const orig = await importOriginal<typeof import("node:os")>();
   return { ...orig, homedir: mockHomedir };
@@ -38,10 +39,10 @@ describe("WritePulseedFileTool", () => {
   it("writes a file to ~/.pulseed/", async () => {
     const { WritePulseedFileTool } = await import("../write-pulseed-file.js");
     const tool = new WritePulseedFileTool();
-    const result = await tool.call({ path: "config.json", content: "{"key":"value"}" }, makeContext());
+    const result = await tool.call({ path: "config.json", content: '{"key":"value"}' }, makeContext());
     expect(result.success).toBe(true);
     const written = await fs.readFile(path.join(pulseedDir, "config.json"), "utf-8");
-    expect(written).toBe("{"key":"value"}");
+    expect(written).toBe('{"key":"value"}');
   });
 
   it("creates parent directories as needed", async () => {
@@ -56,8 +57,7 @@ describe("WritePulseedFileTool", () => {
   it("summary includes byte count and path", async () => {
     const { WritePulseedFileTool } = await import("../write-pulseed-file.js");
     const tool = new WritePulseedFileTool();
-    const content = "hello world";
-    const result = await tool.call({ path: "hello.txt", content }, makeContext());
+    const result = await tool.call({ path: "hello.txt", content: "hello world" }, makeContext());
     expect(result.success).toBe(true);
     expect(result.summary).toContain("bytes");
     expect(result.summary).toContain("hello.txt");

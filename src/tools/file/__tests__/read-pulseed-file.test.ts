@@ -4,19 +4,13 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { ToolCallContext } from "../../types.js";
 
-// Mock homedir so ~/.pulseed points to our temp dir
-const mockHomedir = vi.fn();
+// vi.hoisted ensures mockHomedir is available at module-level before vi.mock() runs
+const mockHomedir = vi.hoisted(() => vi.fn<[], string>());
+
 vi.mock("node:os", async (importOriginal) => {
   const orig = await importOriginal<typeof import("node:os")>();
   return { ...orig, homedir: mockHomedir };
 });
-
-// Re-import after mock is set up
-async function importTool(homeDir: string) {
-  mockHomedir.mockReturnValue(homeDir);
-  const mod = await import("../read-pulseed-file.js?t=" + homeDir);
-  return mod.ReadPulseedFileTool;
-}
 
 function makeContext(): ToolCallContext {
   return {
@@ -36,7 +30,7 @@ describe("ReadPulseedFileTool", () => {
     tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "read-pulseed-test-"));
     pulseedDir = path.join(tmpHome, ".pulseed");
     await fs.mkdir(pulseedDir, { recursive: true });
-    await fs.writeFile(path.join(pulseedDir, "provider.json"), JSON.stringify({ model: "gpt-4" }), "utf-8");
+    await fs.writeFile(path.join(pulseedDir, "provider.json"), '{"model":"gpt-4"}', "utf-8");
     await fs.mkdir(path.join(pulseedDir, "decisions"), { recursive: true });
     await fs.writeFile(path.join(pulseedDir, "decisions", "plan-001.md"), "# Plan", "utf-8");
     mockHomedir.mockReturnValue(tmpHome);
