@@ -6,7 +6,7 @@ vi.mock("child_process", () => ({
 }));
 
 import { spawn } from "child_process";
-import { copyToClipboard } from "../src/interface/tui/clipboard.js";
+import { copyToClipboard } from "../clipboard.js";
 
 function makeFakeProc(exitCode: number) {
   const proc = new EventEmitter() as any;
