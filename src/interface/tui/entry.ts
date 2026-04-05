@@ -1,53 +1,99 @@
 #!/usr/bin/env node
 // ─── TUI Entry Point ───
 //
-// Wires all PulSeed dependencies (mirrors CLIRunner.buildDeps pattern) and
-// renders the Ink-based TUI. Use `pulseed tui` or `npm run tui` to launch.
+// Reads daemon_mode from global config and routes to:
+//   - Standalone mode (default): wires all deps in-process
+//   - Daemon mode: connects to a running PulSeed daemon via SSE
 
-import { render } from "ink";
-import React from "react";
 import os from "os";
+import path from "path";
 import { execFileSync } from "child_process";
 
 import { StateManager } from "../../base/state/state-manager.js";
-import { buildLLMClient, buildAdapterRegistry } from "../../base/llm/provider-factory.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
-import { createWorkspaceContextProvider } from "../../platform/observation/workspace-context.js";
-import { TrustManager } from "../../platform/traits/trust-manager.js";
-import { DriveSystem } from "../../platform/drive/drive-system.js";
-import { ObservationEngine } from "../../platform/observation/observation-engine.js";
-import { StallDetector } from "../../platform/drive/stall-detector.js";
-import { ProgressPredictor } from "../../platform/drive/progress-predictor.js";
-import { SatisficingJudge } from "../../platform/drive/satisficing-judge.js";
-import { EthicsGate } from "../../platform/traits/ethics-gate.js";
-import { SessionManager } from "../../orchestrator/execution/session-manager.js";
-import { StrategyManager } from "../../orchestrator/strategy/strategy-manager.js";
-import { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
-import { TaskLifecycle } from "../../orchestrator/execution/task/task-lifecycle.js";
-import { ReportingEngine } from "../../reporting/reporting-engine.js";
-import { CoreLoop } from "../../orchestrator/loop/core-loop.js";
-import { GoalTreeManager } from "../../orchestrator/goal/goal-tree-manager.js";
-import { StateAggregator } from "../../orchestrator/goal/state-aggregator.js";
-import { GoalDependencyGraph } from "../../orchestrator/goal/goal-dependency-graph.js";
-import { TreeLoopOrchestrator } from "../../orchestrator/goal/tree-loop-orchestrator.js";
-import { MemoryLifecycleManager, DriveScoreAdapter } from "../../platform/knowledge/memory/memory-lifecycle.js";
-import { CharacterConfigManager } from "../../platform/traits/character-config.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
-import * as GapCalculator from "../../platform/drive/gap-calculator.js";
-import * as DriveScorer from "../../platform/drive/drive-scorer.js";
-import type { GapCalculatorModule, DriveScorerModule } from "../../orchestrator/loop/core-loop.js";
-
 import { App, type ApprovalRequest } from "./app.js";
 import { getCliLogger } from "../cli/cli-logger.js";
 import { ensureProviderConfig } from "../cli/ensure-api-key.js";
-import { ActionHandler } from "./actions.js";
-import { ChatRunner } from "../../interface/chat/chat-runner.js";
-import { IntentRecognizer } from "./intent-recognizer.js";
 import type { Task } from "../../base/types/task.js";
 
-// ─── Dependency Wiring ───
+// ─── Breadcrumb helpers ───
+
+function getCwd(): string {
+  const raw = process.cwd();
+  const home = os.homedir();
+  return raw.startsWith(home) ? "~" + raw.slice(home.length) : raw;
+}
+
+function getGitBranch(): string {
+  try {
+    return execFileSync("git", ["branch", "--show-current"], { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+// ─── Daemon auto-start helpers ───
+
+async function startDaemonDetached(baseDir: string): Promise<void> {
+  const { spawn } = await import("node:child_process");
+  const scriptPath = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname),
+    "..",
+    "cli",
+    "cli-runner.js"
+  );
+
+  const child = spawn(process.execPath, [scriptPath, "daemon", "start", "--detach"], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, PULSEED_HOME: baseDir },
+  });
+  child.unref();
+}
+
+async function waitForDaemon(baseDir: string, timeoutMs: number): Promise<number> {
+  const { isDaemonRunning } = await import("../../runtime/daemon-client.js");
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const { running, port } = await isDaemonRunning(baseDir);
+    if (running) return port;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("Daemon failed to start within timeout");
+}
+
+// ─── Standalone dep wiring ───
 
 async function buildDeps() {
+  const { buildLLMClient, buildAdapterRegistry } = await import("../../base/llm/provider-factory.js");
+  const { createWorkspaceContextProvider } = await import("../../platform/observation/workspace-context.js");
+  const { TrustManager } = await import("../../platform/traits/trust-manager.js");
+  const { DriveSystem } = await import("../../platform/drive/drive-system.js");
+  const { ObservationEngine } = await import("../../platform/observation/observation-engine.js");
+  const { StallDetector } = await import("../../platform/drive/stall-detector.js");
+  const { ProgressPredictor } = await import("../../platform/drive/progress-predictor.js");
+  const { SatisficingJudge } = await import("../../platform/drive/satisficing-judge.js");
+  const { EthicsGate } = await import("../../platform/traits/ethics-gate.js");
+  const { SessionManager } = await import("../../orchestrator/execution/session-manager.js");
+  const { StrategyManager } = await import("../../orchestrator/strategy/strategy-manager.js");
+  const { GoalNegotiator } = await import("../../orchestrator/goal/goal-negotiator.js");
+  const { TaskLifecycle } = await import("../../orchestrator/execution/task/task-lifecycle.js");
+  const { ReportingEngine } = await import("../../reporting/reporting-engine.js");
+  const { CoreLoop } = await import("../../orchestrator/loop/core-loop.js");
+  const { GoalTreeManager } = await import("../../orchestrator/goal/goal-tree-manager.js");
+  const { StateAggregator } = await import("../../orchestrator/goal/state-aggregator.js");
+  const { GoalDependencyGraph } = await import("../../orchestrator/goal/goal-dependency-graph.js");
+  const { TreeLoopOrchestrator } = await import("../../orchestrator/goal/tree-loop-orchestrator.js");
+  const { MemoryLifecycleManager, DriveScoreAdapter } = await import("../../platform/knowledge/memory/memory-lifecycle.js");
+  const { CharacterConfigManager } = await import("../../platform/traits/character-config.js");
+  const { ChatRunner } = await import("../../interface/chat/chat-runner.js");
+  const { ActionHandler } = await import("./actions.js");
+  const { IntentRecognizer } = await import("./intent-recognizer.js");
+  const GapCalculator = await import("../../platform/drive/gap-calculator.js");
+  const DriveScorer = await import("../../platform/drive/drive-scorer.js");
+
   const stateManager = new StateManager();
   const characterConfigManager = new CharacterConfigManager(stateManager);
   const characterConfig = await characterConfigManager.load();
@@ -96,9 +142,6 @@ async function buildDeps() {
   const adapterRegistry = await buildAdapterRegistry(llmClient);
 
   // TUI approval: routed through ApprovalOverlay in the Ink render loop.
-  // requestApproval is set once the App component mounts and calls onApprovalReady.
-  // pendingApprovals holds requests that arrive before the UI is ready; they are
-  // drained in FIFO order the moment the handler is registered.
   let requestApproval: ((req: ApprovalRequest) => void) | null = null;
   const pendingApprovals: ApprovalRequest[] = [];
 
@@ -107,7 +150,6 @@ async function buildDeps() {
       if (requestApproval) {
         requestApproval({ task, resolve });
       } else {
-        // UI not ready yet — queue and dispatch once the handler is registered
         pendingApprovals.push({ task, resolve });
       }
     });
@@ -134,8 +176,8 @@ async function buildDeps() {
   );
 
   const pulseedBaseDir = getPulseedDirPath();
-  let memoryLifecycleManager: MemoryLifecycleManager | undefined;
-  let driveScoreAdapter: DriveScoreAdapter | undefined;
+  let memoryLifecycleManager: InstanceType<typeof MemoryLifecycleManager> | undefined;
+  let driveScoreAdapter: InstanceType<typeof DriveScoreAdapter> | undefined;
   try {
     driveScoreAdapter = new DriveScoreAdapter();
     memoryLifecycleManager = new MemoryLifecycleManager(
@@ -153,14 +195,13 @@ async function buildDeps() {
     driveScoreAdapter = undefined;
   }
 
-  // Wrap pure-function modules to satisfy GapCalculatorModule / DriveScorerModule
-  const gapCalculator: GapCalculatorModule = {
+  const gapCalculator = {
     calculateGapVector: GapCalculator.calculateGapVector,
     aggregateGaps: GapCalculator.aggregateGaps,
   };
 
-  const driveScorer: DriveScorerModule = {
-    scoreAllDimensions: (gapVector, context, _config) =>
+  const driveScorer = {
+    scoreAllDimensions: (gapVector: Parameters<typeof DriveScorer.scoreAllDimensions>[0], context: Parameters<typeof DriveScorer.scoreAllDimensions>[1], _config: unknown) =>
       DriveScorer.scoreAllDimensions(gapVector, context),
     rankDimensions: DriveScorer.rankDimensions,
   };
@@ -199,56 +240,35 @@ async function buildDeps() {
 
   const setRequestApproval = (fn: (req: ApprovalRequest) => void) => {
     requestApproval = fn;
-    // Drain any requests that arrived before the UI was ready
     while (pendingApprovals.length > 0) {
       const pending = pendingApprovals.shift()!;
       requestApproval(pending);
     }
   };
 
-  // Build ChatRunner for live chat in TUI
-  let chatRunner: ChatRunner | undefined;
+  let chatRunner: InstanceType<typeof ChatRunner> | undefined;
   try {
     const provConfig = await loadProviderConfig();
     const adapterType = provConfig.adapter ?? "claude_code_cli";
     const adapter = adapterRegistry.getAdapter(adapterType);
-    // Note: escalationHandler omitted — TUI handles /track via ActionHandler
     chatRunner = new ChatRunner({ stateManager, adapter, llmClient, trustManager });
   } catch (err) {
     getCliLogger().warn(`[pulseed] ChatRunner init failed — free-form chat disabled: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  return { stateManager, llmClient, trustManager, coreLoop, goalNegotiator, reportingEngine, setRequestApproval, chatRunner };
+  const actionHandler = new ActionHandler({
+    stateManager,
+    goalNegotiator,
+    reportingEngine,
+  });
+  const intentRecognizer = new IntentRecognizer(llmClient);
+
+  return { stateManager, llmClient, trustManager, coreLoop, goalNegotiator, reportingEngine, setRequestApproval, chatRunner, actionHandler, intentRecognizer };
 }
 
-// ─── Breadcrumb helpers ───
+// ─── Standalone mode ───
 
-function getCwd(): string {
-  const raw = process.cwd();
-  const home = os.homedir();
-  return raw.startsWith(home) ? "~" + raw.slice(home.length) : raw;
-}
-
-function getGitBranch(): string {
-  try {
-    return execFileSync("git", ["branch", "--show-current"], { encoding: "utf-8" }).trim();
-  } catch {
-    return "";
-  }
-}
-
-// ─── TUI Entry ───
-
-export async function startTUI(): Promise<void> {
-  // 1. Check API key requirements
-  try {
-    await ensureProviderConfig();
-  } catch (err) {
-    getCliLogger().error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-
-  // 2. Wire all dependencies
+async function startTUIStandaloneMode(): Promise<void> {
   let deps: Awaited<ReturnType<typeof buildDeps>>;
   try {
     deps = await buildDeps();
@@ -258,24 +278,10 @@ export async function startTUI(): Promise<void> {
     process.exit(1);
   }
 
-  const { stateManager, llmClient, trustManager, coreLoop, goalNegotiator, reportingEngine, setRequestApproval, chatRunner } = deps;
+  const { stateManager, llmClient, trustManager, coreLoop, actionHandler, intentRecognizer, setRequestApproval, chatRunner } = deps;
 
-  // 3. Create TUI-specific instances
-  // Note: LoopController is no longer instantiated here — App uses the
-  // useLoop() hook internally and creates the controller inside React.
-  const actionHandler = new ActionHandler({
-    stateManager,
-    goalNegotiator,
-    reportingEngine,
-  });
-  const intentRecognizer = new IntentRecognizer(llmClient);
-
-  // 4. Handle SIGTERM gracefully before rendering.
-  // Note: SIGINT (Ctrl-C) is handled via useInput in app.tsx because Ink
-  // holds the terminal in raw mode and SIGINT does not fire.
   process.on("SIGTERM", () => { coreLoop.stop(); process.exit(0); });
 
-  // 5. Compute breadcrumb context for the header
   const providerConfig = await loadProviderConfig();
   const breadcrumb = {
     cwd: getCwd(),
@@ -283,7 +289,9 @@ export async function startTUI(): Promise<void> {
     providerName: providerConfig.provider,
   };
 
-  // 6. Render Ink app — loop deps passed directly; App calls useLoop() internally
+  const { render } = await import("ink");
+  const React = await import("react");
+
   const { waitUntilExit } = render(
     React.createElement(App, {
       coreLoop,
@@ -299,6 +307,82 @@ export async function startTUI(): Promise<void> {
   );
 
   await waitUntilExit();
+}
+
+// ─── Daemon mode ───
+
+async function startTUIDaemonMode(): Promise<void> {
+  const { DaemonClient, isDaemonRunning } = await import("../../runtime/daemon-client.js");
+  const baseDir = process.env.PULSEED_HOME ?? getPulseedDirPath();
+
+  let daemonClient: InstanceType<typeof DaemonClient>;
+
+  try {
+    const { running, port } = await isDaemonRunning(baseDir);
+
+    if (running) {
+      daemonClient = new DaemonClient({ host: "127.0.0.1", port });
+    } else {
+      await startDaemonDetached(baseDir);
+      const readyPort = await waitForDaemon(baseDir, 10_000);
+      daemonClient = new DaemonClient({ host: "127.0.0.1", port: readyPort });
+    }
+
+    daemonClient.connect();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    getCliLogger().error(`Error: Failed to connect to daemon: ${message}`);
+    process.exit(1);
+  }
+
+  const stateManager = new StateManager(baseDir);
+  await stateManager.init();
+
+  const providerConfig = await loadProviderConfig();
+  const cwd = getCwd();
+  const gitBranch = getGitBranch();
+  const providerName = providerConfig.provider;
+
+  process.on("SIGTERM", () => {
+    daemonClient.disconnect();
+    process.exit(0);
+  });
+
+  const { render } = await import("ink");
+  const React = await import("react");
+
+  const { waitUntilExit } = render(
+    React.createElement(App, {
+      daemonClient,
+      stateManager,
+      cwd,
+      gitBranch,
+      providerName,
+    }),
+    { exitOnCtrlC: false }
+  );
+
+  await waitUntilExit();
+}
+
+// ─── Main entry ───
+
+export async function startTUI(): Promise<void> {
+  try {
+    await ensureProviderConfig();
+  } catch (err) {
+    getCliLogger().error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  const { loadGlobalConfig } = await import("../../base/config/global-config.js");
+  const config = await loadGlobalConfig();
+
+  if (config.daemon_mode) {
+    await startTUIDaemonMode();
+  } else {
+    await startTUIStandaloneMode();
+  }
 }
 
 // ─── CLI entry (when run directly as a binary) ───

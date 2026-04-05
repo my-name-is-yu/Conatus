@@ -1,4 +1,4 @@
-import { loadProviderConfig, saveProviderConfig } from "../../base/llm/provider-config.js";
+import { getConfigKeys, updateGlobalConfig } from "../../base/config/global-config.js";
 
 export type { ApprovalLevel, MutationToolDeps } from "./mutation-tool-defs.js";
 export { getMutationToolDefinitions } from "./mutation-tool-defs.js";
@@ -192,54 +192,41 @@ async function handleTogglePlugin(
 
 async function handleUpdateConfig(
   args: Record<string, unknown>,
-  deps: MutationToolDeps
+  _deps: MutationToolDeps
 ): Promise<string> {
-  const hasAnyField =
-    typeof args.provider === "string" ||
-    typeof args.model === "string" ||
-    typeof args.api_key === "string";
+  const key = args.key;
+  const value = args.value;
 
-  if (!hasAnyField) {
-    return JSON.stringify({ error: "At least one field (provider, model, api_key) is required" });
+  if (typeof key !== "string" || !key.trim()) {
+    return JSON.stringify({ error: "key is required" });
+  }
+  if (value === undefined) {
+    return JSON.stringify({ error: "value is required" });
   }
 
-  const approval = await checkApproval(
-    "update_config",
-    "Update provider configuration",
-    deps
-  );
-  if (!approval.approved) {
-    return JSON.stringify({ error: approval.error });
+  // Validate key against known config keys
+  const validKeys = getConfigKeys();
+  if (!validKeys.includes(key)) {
+    return JSON.stringify({
+      error: `Unknown config key: "${key}". Available: ${validKeys.join(", ")}`,
+    });
   }
 
+  // Apply the change (no checkApproval — LLM handled confirmation conversationally)
   try {
-    const current = await loadProviderConfig();
-    const updated = { ...current };
+    const updated = await updateGlobalConfig({ [key]: value });
+    const newValue = (updated as Record<string, unknown>)[key];
 
-    if (typeof args.provider === "string") {
-      const validProviders = ["openai", "anthropic", "ollama"];
-      if (!validProviders.includes(args.provider)) {
-        return JSON.stringify({
-          error: `Invalid provider: ${args.provider}. Must be one of: ${validProviders.join(", ")}`,
-        });
-      }
-      updated.provider = args.provider as typeof updated.provider;
-    }
-    if (typeof args.model === "string") {
-      updated.model = args.model;
-    }
-    if (typeof args.api_key === "string") {
-      updated.api_key = args.api_key;
-    }
+    const { CONFIG_METADATA } = await import("../../base/config/config-metadata.js");
+    const meta = CONFIG_METADATA[key];
+    const timing = meta?.appliesAt === "next_session" ? "次回起動時" : "即座に";
 
-    await saveProviderConfig(updated);
-
-    const changed: Record<string, string> = {};
-    if (typeof args.provider === "string") changed.provider = args.provider;
-    if (typeof args.model === "string") changed.model = args.model;
-    if (typeof args.api_key === "string") changed.api_key_updated = "true";
-
-    return JSON.stringify({ success: true, updated_fields: changed, message: "Provider configuration updated." });
+    return JSON.stringify({
+      success: true,
+      key,
+      value: newValue,
+      message: `${key}を${JSON.stringify(newValue)}に変更しました。${timing}から適用されます。`,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return JSON.stringify({ error: `Failed to update config: ${message}` });
