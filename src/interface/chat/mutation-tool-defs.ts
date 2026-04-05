@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../../base/llm/llm-client.js";
 import { buildConfigToolDescription, CONFIG_METADATA } from "../../base/config/config-metadata.js";
+import { buildMutationToolDescription } from "../../base/config/tool-metadata.js";
 
 // ─── Approval ───
 
@@ -9,7 +10,7 @@ export const DEFAULT_APPROVAL: Record<string, ApprovalLevel> = {
   set_goal: "none",
   update_goal: "none",
   archive_goal: "required",
-  delete_goal: "required",
+  delete_goal: "none",
   toggle_plugin: "required",
   update_config: "none",
   reset_trust: "required",
@@ -116,7 +117,7 @@ export function getMutationToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "delete_goal",
-        description: "Permanently delete a goal and all its children. Requires user approval.",
+        description: buildMutationToolDescription("delete_goal"),
         parameters: {
           type: "object",
           properties: {
