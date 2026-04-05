@@ -63,10 +63,12 @@ describe("DimensionPreChecker", () => {
     });
   });
 
-  describe("check() — git_diff strategy with ToolExecutor", () => {
-    it("returns changed=false when both staged and unstaged are empty", async () => {
+  describe("check() — git_diff strategy with ToolExecutor (ShellTool)", () => {
+    it("returns changed=false when git status --short is empty", async () => {
       const mockExecutor = {
-        execute: vi.fn().mockResolvedValue({ success: true, data: "", summary: "", durationMs: 5 }),
+        execute: vi.fn().mockResolvedValue({
+          success: true, data: { stdout: "", stderr: "", exitCode: 0 }, summary: "", durationMs: 5,
+        }),
       };
 
       const checker = new DimensionPreChecker({
@@ -76,14 +78,21 @@ describe("DimensionPreChecker", () => {
       const obs = makeObs();
       const result = await checker.check(mockDimension, obs, { workspace_path: "/fake/path" });
       expect(result.changed).toBe(false);
-      expect(mockExecutor.execute).toHaveBeenCalledTimes(2);
+      expect(mockExecutor.execute).toHaveBeenCalledTimes(1);
+      expect(mockExecutor.execute).toHaveBeenCalledWith(
+        "shell",
+        expect.objectContaining({ command: "git status --short" }),
+        expect.anything()
+      );
     });
 
-    it("returns changed=true when unstaged diff is non-empty", async () => {
+    it("returns changed=true when workspace has modified files", async () => {
       const mockExecutor = {
-        execute: vi.fn()
-          .mockResolvedValueOnce({ success: true, data: "M some-file.ts", summary: "", durationMs: 5 })
-          .mockResolvedValueOnce({ success: true, data: "", summary: "", durationMs: 5 }),
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          data: { stdout: " M some-file.ts\n?? new-untracked.ts", stderr: "", exitCode: 0 },
+          summary: "", durationMs: 5,
+        }),
       };
 
       const checker = new DimensionPreChecker({
@@ -96,11 +105,13 @@ describe("DimensionPreChecker", () => {
       expect(result.hint).toContain("M some-file.ts");
     });
 
-    it("returns changed=true when staged diff is non-empty", async () => {
+    it("detects untracked files (git diff would miss these)", async () => {
       const mockExecutor = {
-        execute: vi.fn()
-          .mockResolvedValueOnce({ success: true, data: "", summary: "", durationMs: 5 })
-          .mockResolvedValueOnce({ success: true, data: "A new-file.ts", summary: "", durationMs: 5 }),
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          data: { stdout: "?? brand-new-file.ts", stderr: "", exitCode: 0 },
+          summary: "", durationMs: 5,
+        }),
       };
 
       const checker = new DimensionPreChecker({
@@ -110,6 +121,7 @@ describe("DimensionPreChecker", () => {
       const obs = makeObs();
       const result = await checker.check(mockDimension, obs, { workspace_path: "/fake/path" });
       expect(result.changed).toBe(true);
+      expect(result.hint).toContain("brand-new-file.ts");
     });
 
     it("falls back to execFile when ToolExecutor throws", async () => {
@@ -117,15 +129,13 @@ describe("DimensionPreChecker", () => {
         execute: vi.fn().mockRejectedValue(new Error("tool error")),
       };
 
-      // No real git repo at /tmp/nonexistent-repo — execFile will throw too, so result is null
-      // → no applicable strategy → changed=true
       const checker = new DimensionPreChecker({
         strategies: ["git_diff"],
         toolExecutor: mockExecutor as any,
       });
       const obs = makeObs();
       const result = await checker.check(mockDimension, obs, { workspace_path: "/tmp/nonexistent-repo-xyz" });
-      // Both ToolExecutor and execFile failed → no result → changed=true
+      // Both ToolExecutor and execFile failed -> no result -> changed=true
       expect(result.changed).toBe(true);
     });
 
@@ -137,7 +147,6 @@ describe("DimensionPreChecker", () => {
       });
       const obs = makeObs();
       const result = await checker.check(mockDimension, obs, {});
-      // no workspace_path → git_diff strategy skipped → no applicable → changed=true
       expect(result.changed).toBe(true);
       expect(mockExecutor.execute).not.toHaveBeenCalled();
     });
@@ -146,7 +155,9 @@ describe("DimensionPreChecker", () => {
   describe("check() — combined strategies", () => {
     it("returns changed=true if git_diff signals change even when age says unchanged", async () => {
       const mockExecutor = {
-        execute: vi.fn().mockResolvedValue({ success: true, data: "M file.ts", summary: "", durationMs: 5 }),
+        execute: vi.fn().mockResolvedValue({
+          success: true, data: { stdout: "M file.ts", stderr: "", exitCode: 0 }, summary: "", durationMs: 5,
+        }),
       };
 
       const checker = new DimensionPreChecker({
@@ -163,7 +174,9 @@ describe("DimensionPreChecker", () => {
 
     it("returns changed=false when all strategies agree no change", async () => {
       const mockExecutor = {
-        execute: vi.fn().mockResolvedValue({ success: true, data: "", summary: "", durationMs: 5 }),
+        execute: vi.fn().mockResolvedValue({
+          success: true, data: { stdout: "", stderr: "", exitCode: 0 }, summary: "", durationMs: 5,
+        }),
       };
 
       const checker = new DimensionPreChecker({
