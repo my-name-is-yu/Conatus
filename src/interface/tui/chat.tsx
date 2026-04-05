@@ -451,7 +451,7 @@ export function Chat({
       } else {
         // ── Input history: ↑↓ when no suggestions ──
         if (key.upArrow) {
-          process.stderr.write(\`[DEBUG ↑] input=\${JSON.stringify(input)} historyIdx=\${historyIdx} msgLen=\${messages.length} hasMatches=\${hasMatches}\n\`);
+          process.stderr.write(`[DEBUG ↑] input=${JSON.stringify(input)} historyIdx=${historyIdx} msgLen=${messages.length} hasMatches=${hasMatches}\n`);
           // Empty input + no history navigation in progress → start message selection
           if (input === "" && historyIdx === -1 && messages.length > 0) {
             const idx = messages.length - 1;
