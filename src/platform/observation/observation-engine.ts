@@ -356,7 +356,7 @@ export class ObservationEngine {
               approvalFn: async () => false,
             };
             const toolResult = await this.observeWithTools(dim, toolContext);
-            if (toolResult !== null) {
+            if (toolResult !== null && toolResult.parsedValue !== null && toolResult.parsedValue !== undefined) {
               const toolEntry = createObservationEntry({
                 goalId,
                 dimensionName: dim.name,
