@@ -1,5 +1,7 @@
 import { z } from "zod";
-import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../types.js";
+import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
+import { DESCRIPTION } from "./prompt.js";
+import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 
 export const ArchitectureToolInputSchema = z.object({
   module: z.string().optional(),
@@ -45,19 +47,19 @@ export class ArchitectureTool implements ITool<ArchitectureToolInput, unknown> {
   readonly metadata: ToolMetadata = {
     name: "get_architecture",
     aliases: ["architecture", "system_architecture"],
-    permissionLevel: "read_only",
+    permissionLevel: PERMISSION_LEVEL,
     isReadOnly: true,
     isDestructive: false,
     shouldDefer: true,
     alwaysLoad: false,
     maxConcurrency: 0,
-    maxOutputChars: 8000,
-    tags: ["architecture", "self-knowledge"],
+    maxOutputChars: MAX_OUTPUT_CHARS,
+    tags: [...TAGS],
   };
   readonly inputSchema = ArchitectureToolInputSchema;
 
   description(_context?: ToolDescriptionContext): string {
-    return "Returns PulSeed system architecture: layer structure, module responsibilities, core loop, 4-element model, and execution boundary. Optionally filter by module name.";
+    return DESCRIPTION;
   }
 
   async call(input: ArchitectureToolInput, _context: ToolCallContext): Promise<ToolResult> {
