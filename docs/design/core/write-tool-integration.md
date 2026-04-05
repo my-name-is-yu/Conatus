@@ -111,11 +111,11 @@ export class ToolDispatcher {
 
 ### Phase B: Mutation Tool Expansion
 
-**Goal**: Complete stubs, expand config coverage, rich descriptions for all tools.
+**Goal**: Complete stubs, expand config coverage, add rich descriptions only for irreversible/damaging operations.
 
 1. **Complete `toggle_plugin`**: implement actual plugin enable/disable via `PluginLoader`.
 2. **Expand `update_config`**: read all supported keys from `CONFIG_METADATA` (defined in `src/base/config/config-metadata.ts`, which re-exports from `tool-metadata.ts`). Validate value type per key before writing.
-3. **Rich descriptions**: expand `tool-metadata.ts` so every tool matches `delete_goal` quality.
+3. **Rich descriptions**: add `MutationToolMeta` only for irreversible or potentially damaging operations (`delete_goal`, `reset_trust`). Other mutation tools (`set_goal`, `update_goal`, `update_config`, etc.) proceed without rich descriptions to maintain execution speed.
 4. **Unify approval**: remove old `checkApproval` calls; all approval via `ToolDispatcher`.
 5. **PreToolUse semantic hook**: add semantic validation (e.g., reject `archive_goal` if goal is running).
 
