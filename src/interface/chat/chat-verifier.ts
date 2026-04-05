@@ -36,7 +36,7 @@ export async function verifyChatAction(
   // Step 1: Check for git changes (use HEAD comparison)
   const diffResult = await toolExecutor.execute(
     "git_diff",
-    { target: "unstaged", ref: "HEAD", maxLines: 1 },
+    { target: "head", maxLines: 1 },
     ctx,
   ).catch(() => null);
 
