@@ -17,6 +17,7 @@ export const DaemonConfigSchema = z.object({
   }).default({}),
   goal_intervals: z.record(z.string(), z.number().int().positive()).optional(), // goal_id -> interval_ms override
   iterations_per_cycle: z.number().int().positive().default(10), // max CoreLoop iterations per daemon cycle
+  event_server_port: z.number().int().positive().default(41700), // EventServer HTTP port
   proactive_mode: z.boolean().default(false),
   proactive_interval_ms: z.number().default(3_600_000), // 1 hour minimum between proactive ticks
   adaptive_sleep: z.object({

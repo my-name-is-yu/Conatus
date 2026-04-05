@@ -61,6 +61,7 @@ function buildDaemonRunner(
     config: {
       check_interval_ms: 50,
       crash_recovery: { enabled: true, max_retries: 3, retry_delay_ms: 10 },
+      event_server_port: 0,
       ...options.configOverride,
     },
     llmClient: options.llmClient,

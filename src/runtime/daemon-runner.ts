@@ -145,14 +145,15 @@ export class DaemonRunner {
 
     // 2c. Start EventServer (always-on) and file watcher
     if (!this.eventServer) {
+      const esPort = this.config.event_server_port ?? 41700;
       this.eventServer = new EventServer(this.driveSystem, {
-        port: 41700,
+        port: esPort,
         stateManager: this.stateManager,
       }, this.logger);
     }
     await this.eventServer.start();
     this.eventServer.startFileWatcher();
-    this.logger.info("EventServer started", { port: 41700 });
+    this.logger.info("EventServer started", { port: this.eventServer.getPort() });
 
     // Wire approval bridge if not already provided
     if (!this.approvalFn && this.eventServer) {
