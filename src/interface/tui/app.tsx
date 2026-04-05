@@ -19,6 +19,7 @@ import { HelpOverlay } from "./help-overlay.js";
 import { SettingsOverlay } from "./settings-overlay.js";
 import { ApprovalOverlay } from "./approval-overlay.js";
 import { ReportView } from "./report-view.js";
+import { FlickerOverlay } from "./flicker-overlay.js";
 import type { Report } from "../../base/types/report.js";
 import { useLoop } from "./use-loop.js";
 import type { LoopState } from "./use-loop.js";
@@ -53,6 +54,7 @@ interface AppProps {
   cwd?: string;
   gitBranch?: string;
   providerName?: string;
+  noFlicker?: boolean;
 }
 
 const StatusBar: React.FC<{
@@ -102,6 +104,7 @@ export function App({
   cwd,
   gitBranch,
   providerName,
+  noFlicker,
 }: AppProps) {
   const isDaemonMode = daemonClient !== undefined && coreLoop === undefined;
 
@@ -192,6 +195,7 @@ export function App({
   const [isProcessing, setIsProcessing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showFlicker, setShowFlicker] = useState(false);
   const [goalNames, setGoalNames] = useState<string[]>([]);
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
@@ -288,6 +292,13 @@ export function App({
       setIsProcessing(true);
 
       try {
+        // Local-only commands — no LLM round-trip needed
+        const trimmedInput = input.trim().toLowerCase();
+        if (trimmedInput === "/flicker") {
+          setShowFlicker(true);
+          return;
+        }
+
         // Slash commands go through IntentRecognizer -> ActionHandler (standalone)
         // or through daemon REST API (daemon mode)
         if (input.startsWith("/") && intentRecognizer && actionHandler) {
@@ -299,8 +310,6 @@ export function App({
             return;
           }
 
-          // Handle /settings command
-          const trimmedInput = input.trim().toLowerCase();
           if (trimmedInput === "/settings" || trimmedInput === "/config") {
             setShowSettings(true);
             return;
@@ -346,6 +355,8 @@ export function App({
             setShowSettings(true);
           } else if (trimmed === "/dashboard" || trimmed === "/d") {
             setShowSidebar(prev => !prev);
+          } else if (trimmed === "/flicker") {
+            setShowFlicker(true);
           } else if (trimmed.startsWith("/start ")) {
             const goalId = input.slice(7).trim();
             if (goalId) {
@@ -474,12 +485,14 @@ export function App({
             />
           ) : showSettings ? (
             <SettingsOverlay onClose={() => setShowSettings(false)} />
+          ) : showFlicker ? (
+            <FlickerOverlay onClose={() => setShowFlicker(false)} />
           ) : reportToShow !== null ? (
             <ReportView report={reportToShow} onDismiss={() => setReportToShow(null)} />
           ) : showHelp ? (
             <HelpOverlay onDismiss={() => setShowHelp(false)} />
           ) : (
-            <Chat messages={messages} onSubmit={handleInput} onClear={handleClear} isProcessing={isProcessing} goalNames={goalNames} />
+            <Chat messages={messages} onSubmit={handleInput} onClear={handleClear} isProcessing={isProcessing} goalNames={goalNames} noFlicker={noFlicker} />
           )}
         </Box>
       </Box>
