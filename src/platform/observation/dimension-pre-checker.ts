@@ -86,13 +86,12 @@ async function checkGitDiff(
 
       const hint = [unstaged.data, staged.data]
         .filter(Boolean)
-        .join("
-")
+        .join("\n")
         .trim()
         .slice(0, 200);
       return { changed: true, hint: hint || undefined };
     } catch {
-      // ToolExecutor call failed — fall through to execFile fallback
+      // ToolExecutor call failed -- fall through to execFile fallback
     }
   }
 
@@ -109,7 +108,7 @@ async function checkGitDiff(
     }
     return { changed: true, hint: stdout.trim().slice(0, 200) };
   } catch {
-    // Not a git repo or git unavailable — skip this strategy
+    // Not a git repo or git unavailable -- skip this strategy
     return null;
   }
 }
@@ -132,7 +131,7 @@ async function checkFileStat(
     }
     return { changed: true, hint: `Workspace mtime changed since last observation` };
   } catch {
-    // stat failed (path does not exist, permissions) — skip
+    // stat failed (path does not exist, permissions) -- skip
     return null;
   }
 }
