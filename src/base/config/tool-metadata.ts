@@ -45,31 +45,24 @@ export const CONFIG_METADATA: Record<string, ConfigKeyMeta> = {
 /** Build a rich description string for a single config key. */
 export function buildConfigKeyDescription(key: string): string {
   const m = CONFIG_METADATA[key];
-  if (!m) return ;
-  const bullet = (arr: string[]) => arr.map(s => ).join("
-");
+  if (!m) return `Unknown config key: ${key}`;
+  const bullet = (arr: string[]) => arr.map(s => `- ${s}`).join("\n");
   const timing = m.appliesAt === "next_session" ? "次のセッション（再起動後）から適用" : "即座に適用";
-  return [, m.description, "", "### 効果", bullet(m.effects), "",
+  return [`## ${m.label} (${key})`, m.description, "", "### 効果", bullet(m.effects), "",
     "### 必要な環境", bullet(m.requirements), "", "### リスク", bullet(m.risks), "",
-    "### 元に戻す方法", m.revert, "", "### 適用タイミング", timing].join("
-");
+    "### 元に戻す方法", m.revert, "", "### 適用タイミング", timing].join("\n");
 }
 
-/** Build the full tool description with all config keys metadata injected. */
+/** Build the full tool description with all config keys' metadata injected. */
 export function buildConfigToolDescription(): string {
-  const descs = Object.keys(CONFIG_METADATA).map(k => buildConfigKeyDescription(k)).join("
-
----
-
-");
+  const descs = Object.keys(CONFIG_METADATA).map(k => buildConfigKeyDescription(k)).join("\n\n---\n\n");
   return ["PulSeedの設定を変更する。", "",
-    "「重要ルール」このツールを呼ぶ前に、必ず以下の手順を踏むこと：",
-    "1. 変更する設定の「効果」「必要な環境」「リスク」「元に戻す方法」「適用タイミング」をすべてユーザーに説明する",
-    "2. ユーザーの明示的な同意（「はい」「OK」「大丈夫」等）を得る",
+    "【重要ルール】このツールを呼ぶ前に、必ず以下の手順を踏むこと：",
+    "1. 変更する設定の『効果』『必要な環境』『リスク』『元に戻す方法』『適用タイミング』をすべてユーザーに説明する",
+    "2. ユーザーの明示的な同意（『はい』『OK』『大丈夫』等）を得る",
     "3. 同意を得てからこのツールを呼び出す",
     "4. 同意が得られない場合は呼び出さない", "",
-    "「利用可能な設定キー」", "", descs].join("
-");
+    "【利用可能な設定キー】", "", descs].join("\n");
 }
 
 // ─── Mutation Tool Metadata (generic) ───
@@ -104,11 +97,10 @@ export const MUTATION_TOOL_METADATA: Record<string, MutationToolMeta> = {
 /** Build a rich description string for a mutation tool. */
 export function buildMutationToolDescription(toolName: string): string {
   const m = MUTATION_TOOL_METADATA[toolName];
-  if (!m) return ;
-  const bullet = (arr: string[]) => arr.map(s => ).join("
-");
+  if (!m) return `Unknown mutation tool: ${toolName}`;
+  const bullet = (arr: string[]) => arr.map(s => `- ${s}`).join("\n");
   return [
-    ,
+    `## ${m.label}`,
     m.description, "",
     "IMPORTANT: Before calling this tool, you MUST:",
     "1. Explain what will be deleted/affected",
@@ -119,6 +111,5 @@ export function buildMutationToolDescription(toolName: string): string {
     "### Effects", bullet(m.effects), "",
     "### Risks", bullet(m.risks), "",
     "### Revert", m.revert,
-  ].join("
-");
+  ].join("\n");
 }
