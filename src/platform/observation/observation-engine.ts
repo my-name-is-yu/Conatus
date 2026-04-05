@@ -348,7 +348,14 @@ export class ObservationEngine {
         const methodType = dim.observation_method?.type;
         if (methodType === 'file_check' || methodType === 'mechanical' || methodType === 'api_query') {
           try {
-            const toolResult = await this.observeWithTools(dim, { goalId });
+            const toolContext: import('../../tools/types.js').ToolCallContext = {
+              cwd: process.cwd(),
+              goalId,
+              trustBalance: 0,
+              preApproved: false,
+              approvalFn: async () => false,
+            };
+            const toolResult = await this.observeWithTools(dim, toolContext);
             if (toolResult !== null) {
               const toolEntry = createObservationEntry({
                 goalId,
