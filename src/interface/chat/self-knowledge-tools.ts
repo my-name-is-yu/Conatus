@@ -2,14 +2,6 @@ import * as fs from "fs";
 import * as path from "path";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ToolDefinition } from "../../base/llm/llm-client.js";
-import { toToolDefinitions } from "../../tools/tool-definition-adapter.js";
-import { GoalStateTool } from "../../tools/state/goal-state.js";
-import { TrustStateTool } from "../../tools/state/trust-state.js";
-import { SessionHistoryTool } from "../../tools/state/session-history.js";
-import { ConfigTool } from "../../tools/state/config-tool.js";
-import { PluginStateTool } from "../../tools/state/plugin-state-tool.js";
-import { ArchitectureTool } from "../../tools/state/architecture-tool.js";
-import type { ITool } from "../../tools/types.js";
 export type { ToolDefinition };
 
 // ─── Dependencies ───
@@ -25,17 +17,71 @@ export interface SelfKnowledgeDeps {
 
 /**
  * @deprecated Use ToolRegistry.listAll() + toToolDefinitions() instead.
- * This function is a backward-compatibility shim.
+ * This function is a backward-compatibility shim that returns hardcoded definitions.
  */
 export function getSelfKnowledgeToolDefinitions(): ToolDefinition[] {
-  // Build a minimal set of read-only tools for backward compat
-  // Note: some tools require deps that are not available here.
-  // For full registry-based usage, prefer ToolRegistry path.
-  const tools: ITool[] = [
-    new ConfigTool(),
-    new ArchitectureTool(),
+  return [
+    {
+      type: "function",
+      function: {
+        name: "get_goals",
+        description:
+          "Returns detailed information about all goals: title, description, thresholds, status, loop_status, confidence, current_state, and gap_score.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_sessions",
+        description:
+          "Returns recent session history including goal_id, adapter, status, duration, and created_at.",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Number of recent sessions to return (default: 5)" },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_trust_state",
+        description:
+          "Returns the current trust state: trust_score, balance range, delta_success, delta_failure, high_trust_threshold, ethics_gate_level, and execution_boundary.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_config",
+        description:
+          "Returns runtime configuration: provider, model, default_adapter, and pulseed_home_dir.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_plugins",
+        description:
+          "Returns the list of installed plugins with name, type, and enabled status.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_architecture",
+        description:
+          "Returns a static description of PulSeed architecture, layer structure, core loop, 4-element model, and execution boundary.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
   ];
-  return toToolDefinitions(tools);
 }
 
 // ─── Handlers ───
