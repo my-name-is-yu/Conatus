@@ -19,6 +19,7 @@ import { HelpOverlay } from "./help-overlay.js";
 import { SettingsOverlay } from "./settings-overlay.js";
 import { ApprovalOverlay } from "./approval-overlay.js";
 import { ReportView } from "./report-view.js";
+import { FlickerOverlay } from "./flicker-overlay.js";
 import type { Report } from "../../base/types/report.js";
 import { useLoop } from "./use-loop.js";
 import type { LoopState } from "./use-loop.js";
@@ -194,6 +195,7 @@ export function App({
   const [isProcessing, setIsProcessing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showFlicker, setShowFlicker] = useState(false);
   const [goalNames, setGoalNames] = useState<string[]>([]);
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
@@ -293,20 +295,7 @@ export function App({
         // Local-only commands — no LLM round-trip needed
         const trimmedInput = input.trim().toLowerCase();
         if (trimmedInput === "/flicker") {
-          const { loadGlobalConfig, updateGlobalConfig } = await import("../../base/config/global-config.js");
-          const config = await loadGlobalConfig();
-          const newValue = !config.no_flicker;
-          await updateGlobalConfig({ no_flicker: newValue });
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: randomUUID(),
-              role: "pulseed" as const,
-              text: `No-flicker mode ${newValue ? "enabled" : "disabled"}. Takes effect on next TUI launch.`,
-              timestamp: new Date(),
-              messageType: "success" as const,
-            },
-          ].slice(-MAX_MESSAGES));
+          setShowFlicker(true);
           return;
         }
 
@@ -367,15 +356,7 @@ export function App({
           } else if (trimmed === "/dashboard" || trimmed === "/d") {
             setShowSidebar(prev => !prev);
           } else if (trimmed === "/flicker") {
-            const { loadGlobalConfig, updateGlobalConfig } = await import("../../base/config/global-config.js");
-            const config = await loadGlobalConfig();
-            const newValue = !config.no_flicker;
-            await updateGlobalConfig({ no_flicker: newValue });
-            setMessages((prev) => [...prev, {
-              id: randomUUID(), role: "pulseed" as const,
-              text: `No-flicker mode ${newValue ? "enabled" : "disabled"}. Takes effect on next TUI launch.`,
-              timestamp: new Date(), messageType: "success" as const,
-            }].slice(-MAX_MESSAGES));
+            setShowFlicker(true);
           } else if (trimmed.startsWith("/start ")) {
             const goalId = input.slice(7).trim();
             if (goalId) {
@@ -504,6 +485,8 @@ export function App({
             />
           ) : showSettings ? (
             <SettingsOverlay onClose={() => setShowSettings(false)} />
+          ) : showFlicker ? (
+            <FlickerOverlay onClose={() => setShowFlicker(false)} />
           ) : reportToShow !== null ? (
             <ReportView report={reportToShow} onDismiss={() => setReportToShow(null)} />
           ) : showHelp ? (
