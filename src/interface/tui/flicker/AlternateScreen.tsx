@@ -9,7 +9,7 @@ import {
 } from "./dec.js";
 
 interface AlternateScreenProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   /** When false, renders children without alt-screen (pass-through) */
   enabled?: boolean;
 }
