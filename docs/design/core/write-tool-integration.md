@@ -79,7 +79,7 @@ function buildTool<TInput, TOutput>(def: ToolDef<TInput, TOutput>): Tool<TInput,
 
 ## 3. Tool Inventory
 
-13 tools across 6 categories. Granularity is CC-level: primitive operations, not domain-composite.
+13 tools across 8 categories. Granularity is CC-level: primitive operations, not domain-composite.
 
 ### State (read)
 
@@ -94,7 +94,7 @@ function buildTool<TInput, TOutput>(def: ToolDef<TInput, TOutput>): Tool<TInput,
 |------|------------|----------|-----------|------------|
 | WriteState | Create, update, delete, or archive a goal/config/trust | false | false | Updating |
 
-Note: only irreversible/damaging operations (delete, reset_trust) get rich LLM descriptions with risk warnings (MutationToolMeta). Other mutations proceed without extra description to maintain execution speed.
+Note: only irreversible/damaging operations (delete, reset_trust) get rich LLM descriptions with risk warnings. Other mutations proceed without extra description to maintain execution speed.
 
 ### Execution
 
@@ -175,6 +175,8 @@ Each tool's `statusVerb` + `statusArgKey` generates a one-line status emitted vi
 ⚡ Searching knowledge:test patterns
 ```
 
+For ReadState with `statusArgKey: 'target'` and input `{ target: 'goal', id: 'improve-coverage' }`, the status displays: `⚡ Reading goal:improve-coverage`
+
 Separate from spinner verbs (shown during LLM thinking). New TUI component:
 
 ```typescript
@@ -198,7 +200,7 @@ Scope: create tool layer, wire into ChatRunner (AgentLoop foundation).
 - Implement: ReadState, ListStates, WriteState (migrate from self-knowledge-tools + mutation-tool-defs)
 - Wire into ChatRunner's `executeWithTools`
 - Create `src/interface/tui/tool-status.tsx`
-- Files: 5 new, 3 modified | Tests: tool-types.test.ts + per-tool unit tests
+- Files: 6 new, 1 modified | Tests: tool-types.test.ts + per-tool unit tests
 
 Migration: self-knowledge-tools.ts and mutation-tool-defs.ts become shims re-exporting from new tool layer. No breaking changes.
 
@@ -260,7 +262,7 @@ Scope: performance optimizations, no API changes.
 | src/tools/create-plan.ts | B | Create |
 | src/tools/read-plan.ts | B | Create |
 | src/orchestrator/loop/core-loop.ts | C | Modify |
-| src/orchestrator/observation/observation-engine.ts | C | Modify |
+| src/platform/observation/observation-engine.ts | C | Modify |
 
 ---
 
