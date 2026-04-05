@@ -152,11 +152,6 @@ export function App({
   const handleInput = useCallback(
     async (input: string) => {
       if (isProcessing) return;
-      // Dismiss report overlay on any input
-      if (reportToShow !== null) {
-        setReportToShow(null);
-        return;
-      }
       // Add user message
       setMessages((prev) => [...prev, { role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
       setIsProcessing(true);
@@ -259,7 +254,7 @@ export function App({
         setIsProcessing(false);
       }
     },
-    [intentRecognizer, actionHandler, chatRunner, start, stop, isProcessing, reportToShow]
+    [intentRecognizer, actionHandler, chatRunner, start, stop, isProcessing]
   );
 
   // Expose controller for SIGINT shutdown in entry.ts
@@ -318,7 +313,7 @@ export function App({
               }}
             />
           ) : reportToShow !== null ? (
-            <ReportView report={reportToShow} />
+            <ReportView report={reportToShow} onDismiss={() => setReportToShow(null)} />
           ) : showHelp ? (
             <HelpOverlay onDismiss={() => setShowHelp(false)} />
           ) : (
