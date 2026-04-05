@@ -515,10 +515,15 @@ export function Chat({
         !isProcessingRef.current
       ) {
         if (noFlicker) {
-          // No-flicker mode: concatenate cursor escape INTO the frame
-          // so it lands inside the BSU/ESU atomic block
+          // No-flicker mode: write frame first (goes through frame-writer BSU/ESU),
+          // then write cursor escape AFTER — parkCursor in frame-writer would
+          // overwrite cursor position if we concatenated it into the frame.
+          const result = (original as any)(chunk, ...args);
           const cursorEsc = buildCursorEscape(chunk, inputRef.current);
-          return (original as any)(chunk + (cursorEsc ?? ""), ...args);
+          if (cursorEsc) {
+            (original as any)(cursorEsc);
+          }
+          return result;
         }
         // Standard mode: write frame, then position cursor separately
         const result = (original as any)(chunk, ...args);
@@ -617,7 +622,7 @@ export function Chat({
 
         {/* Input area with borders — always at bottom */}
         <Box flexDirection="column">
-          <Box>
+          <Box flexDirection="row">
             <Box
               borderStyle="single"
               borderColor={theme.border}
