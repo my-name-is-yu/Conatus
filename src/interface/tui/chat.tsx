@@ -332,6 +332,17 @@ export function Chat({ messages, onSubmit, onClear, isProcessing, goalNames = []
 
   // IME cursor positioning: report cursor x position so the IME candidate window
   // appears next to the input caret instead of at the top-left corner.
+  // Layout (0-indexed rows from top):
+  //   row 0:          header
+  //   rows 1..N:      Chat area (flexGrow=1)
+  //   rows N+1..N+3:  StatusBar (borderStyle="single" = top border + content + bottom border)
+  //   row N+4:        optional ctrlCPending hint
+  // Within the Chat input area (bottom of Chat, from bottom up):
+  //   row termRows-4:  bottom separator border (borderTop=false)
+  //   row termRows-5:  input row  ← cursor is here in the baseline case
+  //   row termRows-6:  top separator border (borderBottom=false)
+  // When emptyHint or hasMatches are showing, additional rows appear below the
+  // input row pushing it further up.
   const { setCursorPosition } = useCursor();
   React.useEffect(() => {
     if (isProcessing) {
@@ -343,11 +354,14 @@ export function Chat({ messages, onSubmit, onClear, isProcessing, goalNames = []
       const cp = ch.codePointAt(0) ?? 0;
       displayWidth += cp > 0x2E7F ? 2 : 1;
     }
+    // x: prompt prefix "❧ " = 2 columns (U+2767 is 1 col, space is 1 col)
     const x = 2 + displayWidth;
-    const y = Math.max(0, (process.stdout.rows ?? 24) - 2);
+    // y: bottom separator (1) + rows below input for hints/suggestions
+    const rowsBelow = 1 + (emptyHint ? 1 : 0) + (hasMatches ? matches.length + 1 : 0);
+    const y = Math.max(0, termRows - 4 - rowsBelow);
     setCursorPosition({ x, y });
     return () => { setCursorPosition(undefined); };
-  }, [input, isProcessing, setCursorPosition]);
+  }, [input, isProcessing, setCursorPosition, termRows, emptyHint, hasMatches, matches.length]);
 
   const handleSubmit = (value: string) => {
     if (hasMatches) return; // let useInput handle enter when suggestions are shown
