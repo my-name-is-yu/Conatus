@@ -176,8 +176,8 @@ async function buildDeps() {
   );
 
   const pulseedBaseDir = getPulseedDirPath();
-  let memoryLifecycleManager: MemoryLifecycleManager | undefined;
-  let driveScoreAdapter: DriveScoreAdapter | undefined;
+  let memoryLifecycleManager: InstanceType<typeof MemoryLifecycleManager> | undefined;
+  let driveScoreAdapter: InstanceType<typeof DriveScoreAdapter> | undefined;
   try {
     driveScoreAdapter = new DriveScoreAdapter();
     memoryLifecycleManager = new MemoryLifecycleManager(
