@@ -1,6 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ScheduleEngine } from "../schedule-engine.js";
+import { detectChange } from "../change-detector.js";
 import type { ScheduleEntry } from "../types/schedule.js";
+import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 let tempDir: string;
@@ -295,5 +297,511 @@ describe("Schedule computation", () => {
     // "every minute" -- next fire must be within the next 60 seconds
     expect(nextFire).toBeGreaterThan(before);
     expect(nextFire).toBeLessThanOrEqual(before + 60_000);
+  });
+});
+
+// ─── ChangeDetector ───
+
+describe("ChangeDetector", () => {
+  it("threshold mode detects value exceeding threshold", () => {
+    const result = detectChange("threshold", 150, [], 100);
+    expect(result.changed).toBe(true);
+    expect(result.details).toContain("threshold exceeded");
+  });
+
+  it("threshold mode returns no change when below threshold", () => {
+    const result = detectChange("threshold", 50, [], 100);
+    expect(result.changed).toBe(false);
+    expect(result.details).toContain("threshold ok");
+  });
+
+  it("diff mode detects changed result vs baseline", () => {
+    const result = detectChange("diff", { count: 2 }, [{ count: 1 }]);
+    expect(result.changed).toBe(true);
+    expect(result.details).toContain("changed");
+  });
+
+  it("diff mode returns no change when result matches baseline", () => {
+    const result = detectChange("diff", { count: 1 }, [{ count: 1 }]);
+    expect(result.changed).toBe(false);
+  });
+
+  it("diff mode returns no change when no baseline", () => {
+    const result = detectChange("diff", { count: 1 }, []);
+    expect(result.changed).toBe(false);
+    expect(result.details).toContain("no baseline");
+  });
+
+  it("presence mode detects non-empty result", () => {
+    const result = detectChange("presence", "some data", []);
+    expect(result.changed).toBe(true);
+    expect(result.details).toContain("non-empty");
+  });
+
+  it("presence mode returns no change for empty result", () => {
+    const result = detectChange("presence", "", []);
+    expect(result.changed).toBe(false);
+  });
+
+  it("presence mode returns no change for null result", () => {
+    const result = detectChange("presence", null, []);
+    expect(result.changed).toBe(false);
+  });
+});
+
+// ─── Probe execution ───
+
+function makeMockAdapter(value: unknown): IDataSourceAdapter {
+  return {
+    sourceId: "test-source",
+    sourceType: "file",
+    config: { id: "test-source", type: "file", connection: {}, enabled: true, refresh_interval_seconds: 60 },
+    connect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn().mockResolvedValue(undefined),
+    healthCheck: vi.fn().mockResolvedValue(true),
+    query: vi.fn().mockResolvedValue({
+      value,
+      raw: value,
+      timestamp: new Date().toISOString(),
+      source_id: "test-source",
+    }),
+  };
+}
+
+function makeProbeEntry(overrides: Partial<ScheduleEntry> = {}): Omit<
+  ScheduleEntry,
+  "id" | "created_at" | "updated_at" | "last_fired_at" | "next_fire_at" |
+  "consecutive_failures" | "last_escalation_at" | "baseline_results" |
+  "total_executions" | "total_tokens_used"
+> {
+  return {
+    name: "test-probe",
+    layer: "probe",
+    trigger: { type: "interval", seconds: 60 },
+    enabled: true,
+    probe: {
+      data_source_id: "test-source",
+      query_params: {},
+      change_detector: { mode: "diff", baseline_window: 5 },
+      llm_on_change: false,
+    },
+    ...overrides,
+  };
+}
+
+describe("Probe execution", () => {
+  it("executeProbe returns ok when no change detected", async () => {
+    const adapter = makeMockAdapter("same-value");
+    const registry = new Map([["test-source", adapter]]);
+    const eng = new ScheduleEngine({ baseDir: tempDir, dataSourceRegistry: registry });
+
+    const entry = await eng.addEntry(makeProbeEntry());
+
+    // Pre-populate baseline so diff sees "no change"
+    const entries = eng.getEntries();
+    entries[0]!.baseline_results = ["same-value"];
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result).toBeDefined();
+    expect(result!.status).toBe("ok");
+    expect(result!.change_detected).toBe(false);
+  });
+
+  it("executeProbe detects threshold change", async () => {
+    const adapter = makeMockAdapter(200);
+    const registry = new Map([["test-source", adapter]]);
+    const eng = new ScheduleEngine({ baseDir: tempDir, dataSourceRegistry: registry });
+
+    const entry = await eng.addEntry(makeProbeEntry({
+      probe: {
+        data_source_id: "test-source",
+        query_params: {},
+        change_detector: { mode: "threshold", threshold_value: 100, baseline_window: 5 },
+        llm_on_change: false,
+      },
+    }));
+
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result!.status).toBe("ok");
+    expect(result!.change_detected).toBe(true);
+  });
+
+  it("executeProbe detects diff change", async () => {
+    const adapter = makeMockAdapter({ count: 2 });
+    const registry = new Map([["test-source", adapter]]);
+    const eng = new ScheduleEngine({ baseDir: tempDir, dataSourceRegistry: registry });
+
+    const entry = await eng.addEntry(makeProbeEntry());
+
+    const entries = eng.getEntries();
+    entries[0]!.baseline_results = [{ count: 1 }];
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result!.status).toBe("ok");
+    expect(result!.change_detected).toBe(true);
+  });
+
+  it("executeProbe detects presence change", async () => {
+    const adapter = makeMockAdapter("new alert");
+    const registry = new Map([["test-source", adapter]]);
+    const eng = new ScheduleEngine({ baseDir: tempDir, dataSourceRegistry: registry });
+
+    const entry = await eng.addEntry(makeProbeEntry({
+      probe: {
+        data_source_id: "test-source",
+        query_params: {},
+        change_detector: { mode: "presence", baseline_window: 5 },
+        llm_on_change: false,
+      },
+    }));
+
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result!.status).toBe("ok");
+    expect(result!.change_detected).toBe(true);
+  });
+
+  it("executeProbe calls LLM on change when llm_on_change is true", async () => {
+    const adapter = makeMockAdapter({ count: 5 });
+    const registry = new Map([["test-source", adapter]]);
+    const mockLlm = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: "Significant change detected.",
+        usage: { total_tokens: 42 },
+      }),
+      parseJSON: vi.fn(),
+    };
+
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      dataSourceRegistry: registry,
+      llmClient: mockLlm as unknown as import("../../base/llm/llm-client.js").ILLMClient,
+    });
+
+    const entry = await eng.addEntry(makeProbeEntry({
+      probe: {
+        data_source_id: "test-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: true,
+      },
+    }));
+
+    const entries = eng.getEntries();
+    entries[0]!.baseline_results = [{ count: 1 }];
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result!.status).toBe("ok");
+    expect(result!.change_detected).toBe(true);
+    expect(result!.tokens_used).toBeGreaterThan(0);
+    expect(mockLlm.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("executeProbe skips LLM when llm_on_change is false", async () => {
+    const adapter = makeMockAdapter({ count: 5 });
+    const registry = new Map([["test-source", adapter]]);
+    const mockLlm = {
+      sendMessage: vi.fn().mockResolvedValue({ content: "ok", usage: { total_tokens: 10 } }),
+      parseJSON: vi.fn(),
+    };
+
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      dataSourceRegistry: registry,
+      llmClient: mockLlm as unknown as import("../../base/llm/llm-client.js").ILLMClient,
+    });
+
+    const entry = await eng.addEntry(makeProbeEntry({
+      probe: {
+        data_source_id: "test-source",
+        query_params: {},
+        change_detector: { mode: "presence", baseline_window: 5 },
+        llm_on_change: false,
+      },
+    }));
+
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    await eng.tick();
+    expect(mockLlm.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("executeProbe returns error when data source not found", async () => {
+    const eng = new ScheduleEngine({ baseDir: tempDir });
+
+    const entry = await eng.addEntry(makeProbeEntry());
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result!.status).toBe("error");
+    expect(result!.error_message).toContain("not found");
+  });
+
+  it("executeProbe updates baseline_results", async () => {
+    const adapter = makeMockAdapter("new-value");
+    const registry = new Map([["test-source", adapter]]);
+    const eng = new ScheduleEngine({ baseDir: tempDir, dataSourceRegistry: registry });
+
+    const entry = await eng.addEntry(makeProbeEntry());
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    await eng.tick();
+
+    const updated = eng.getEntries().find((e) => e.id === entry.id)!;
+    expect(updated.baseline_results).toHaveLength(1);
+    expect(updated.baseline_results[0]).toBe("new-value");
+  });
+});
+
+// ─── Escalation ───
+
+describe("Escalation", () => {
+  it("circuit breaker disables entry after threshold failures", async () => {
+    const eng = new ScheduleEngine({ baseDir: tempDir });
+
+    const entry = await eng.addEntry({
+      name: "failing-probe",
+      layer: "probe",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      probe: {
+        data_source_id: "missing-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+      escalation: {
+        enabled: true,
+        circuit_breaker_threshold: 2,
+        cooldown_minutes: 0,
+        max_per_hour: 100,
+      },
+    });
+
+    // Fire twice to hit circuit breaker threshold
+    const setDue = () => {
+      const entries = eng.getEntries();
+      const idx = entries.findIndex((e) => e.id === entry.id);
+      if (idx !== -1) entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    };
+
+    setDue();
+    await eng.saveEntries();
+    await eng.loadEntries();
+    await eng.tick();
+
+    setDue();
+    await eng.saveEntries();
+    await eng.loadEntries();
+    await eng.tick();
+
+    const updated = eng.getEntries().find((e) => e.id === entry.id)!;
+    expect(updated.enabled).toBe(false);
+  });
+
+  it("escalation triggers on consecutive failures", async () => {
+    const notifications: Record<string, unknown>[] = [];
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      notificationDispatcher: {
+        dispatch: async (r) => { notifications.push(r); },
+      },
+    });
+
+    await eng.addEntry({
+      name: "failing-entry",
+      layer: "probe",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      probe: {
+        data_source_id: "missing-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+      escalation: {
+        enabled: true,
+        circuit_breaker_threshold: 10,
+        cooldown_minutes: 0,
+        max_per_hour: 100,
+      },
+    });
+
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    expect(results[0]!.status).toBe("escalated");
+    expect(notifications.some((n) => n["report_type"] === "schedule_escalation")).toBe(true);
+  });
+
+  it("escalation respects cooldown", async () => {
+    const notifications: Record<string, unknown>[] = [];
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      notificationDispatcher: {
+        dispatch: async (r) => { notifications.push(r); },
+      },
+    });
+
+    const entry = await eng.addEntry({
+      name: "cooldown-entry",
+      layer: "probe",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      probe: {
+        data_source_id: "missing-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+      escalation: {
+        enabled: true,
+        circuit_breaker_threshold: 100,
+        cooldown_minutes: 60,
+        max_per_hour: 100,
+      },
+    });
+
+    // Set last_escalation_at to recent (within cooldown)
+    const entries = eng.getEntries();
+    const idx = entries.findIndex((e) => e.id === entry.id);
+    entries[idx]!.last_escalation_at = new Date(Date.now() - 60 * 1000).toISOString(); // 1 min ago
+    entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    // Should NOT escalate due to cooldown
+    expect(results[0]!.status).not.toBe("escalated");
+    const escalationNotifications = notifications.filter((n) => n["report_type"] === "schedule_escalation");
+    expect(escalationNotifications).toHaveLength(0);
+  });
+
+  it("escalation respects max_per_hour rate limit", async () => {
+    const notifications: Record<string, unknown>[] = [];
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      notificationDispatcher: {
+        dispatch: async (r) => { notifications.push(r); },
+      },
+    });
+
+    const entry = await eng.addEntry({
+      name: "rate-limited-entry",
+      layer: "probe",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      probe: {
+        data_source_id: "missing-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+      escalation: {
+        enabled: true,
+        circuit_breaker_threshold: 100,
+        cooldown_minutes: 0,
+        max_per_hour: 1,  // Only 1 per hour
+      },
+    });
+
+    // Set last_escalation_at to recent (within 1-hour rate window)
+    const entries = eng.getEntries();
+    const idx = entries.findIndex((e) => e.id === entry.id);
+    entries[idx]!.last_escalation_at = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 min ago
+    entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    // Should NOT escalate due to rate limit (max 1 per hour = 60 min interval, last was 5 min ago)
+    expect(results[0]!.status).not.toBe("escalated");
+  });
+
+  it("escalation activates target entry", async () => {
+    const eng = new ScheduleEngine({ baseDir: tempDir });
+
+    // Create a probe target entry
+    const targetEntry = await eng.addEntry({
+      name: "probe-target",
+      layer: "probe",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: false, // starts disabled
+      probe: {
+        data_source_id: "some-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+    });
+
+    // Create escalating entry
+    const escalatingEntry = await eng.addEntry({
+      name: "escalating-entry",
+      layer: "probe",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      probe: {
+        data_source_id: "missing-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+      escalation: {
+        enabled: true,
+        circuit_breaker_threshold: 100,
+        cooldown_minutes: 0,
+        max_per_hour: 100,
+        target_entry_id: targetEntry.id,
+        target_layer: "probe",
+      },
+    });
+
+    const entries = eng.getEntries();
+    const idx = entries.findIndex((e) => e.id === escalatingEntry.id);
+    entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    await eng.tick();
+
+    const updatedTarget = eng.getEntries().find((e) => e.id === targetEntry.id)!;
+    expect(updatedTarget.enabled).toBe(true);
   });
 });
