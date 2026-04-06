@@ -204,17 +204,15 @@ describe("no_deadline goal", () => {
   });
 
   it("velocity_declining emits sustainable_pace_declining", () => {
-    // Historical velocity fast, recent slow
-    const fastPart = makeHistory([0.9, 0.7, 0.5, 0.3], 1);
-    // append recent slow observations
-    const lastTs = new Date(fastPart[3].timestamp).getTime();
-    const slowPart: GapObservation[] = [
-      { timestamp: new Date(lastTs + 1 * 3_600_000).toISOString(), normalizedGap: 0.29 },
-      { timestamp: new Date(lastTs + 2 * 3_600_000).toISOString(), normalizedGap: 0.28 },
-      { timestamp: new Date(lastTs + 3 * 3_600_000).toISOString(), normalizedGap: 0.275 },
-    ];
-    const history = [...fastPart, ...slowPart];
-    const result = engine.evaluatePacing("g1", 0.275, null, history);
+    // Need >10 fast observations (to exceed window_size=10) then slow ones so
+    // historical EMA > recent EMA by >30%
+    // 14 fast obs: gap drops 0.1/h; then 10 slow obs: gap drops 0.005/h
+    const fastGaps = Array.from({ length: 15 }, (_, i) => 1.0 - i * 0.1);
+    const slowGaps = Array.from({ length: 10 }, (_, i) => fastGaps[14] - (i + 1) * 0.005);
+    const allGaps = [...fastGaps, ...slowGaps];
+    const history = makeHistory(allGaps, 1);
+    const last = allGaps[allGaps.length - 1];
+    const result = engine.evaluatePacing("g1", last, null, history);
     expect(result.status).toBe("no_deadline");
     expect(result.recommendation).toBe("sustainable_pace_declining");
   });
