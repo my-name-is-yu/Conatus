@@ -183,6 +183,7 @@ export async function cmdStart(
     llmClient: deps.llmClient,
     coreLoop: deps.coreLoop,
     stateManager: deps.stateManager,
+    notificationDispatcher,
   });
   await scheduleEngine.loadEntries();
 
