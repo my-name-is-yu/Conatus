@@ -296,7 +296,7 @@ describe("lintAgentMemory", () => {
       await lintAgentMemory({ km, llmCall, categories: ["work"] });
 
       // LLM should only see 2 work entries (not personal)
-      const userPrompt = llmCall.mock.calls[0]![1] as string;
+      const userPrompt = llmCall.mock.calls[0]![0] as string;
       expect(userPrompt).toContain("work-1");
       expect(userPrompt).toContain("work-2");
       expect(userPrompt).not.toContain("personal-1");
