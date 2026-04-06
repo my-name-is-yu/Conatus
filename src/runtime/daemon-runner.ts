@@ -635,7 +635,7 @@ export class DaemonRunner {
     try {
       const results = await this.scheduleEngine.tick();
       for (const result of results) {
-        if (result.status === "failure") {
+        if (result.status === "error") {
           this.logger?.warn?.(`Schedule entry ${result.entry_id} failed: ${result.error_message}`);
         }
       }
