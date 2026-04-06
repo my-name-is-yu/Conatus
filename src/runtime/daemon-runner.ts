@@ -70,6 +70,8 @@ export interface DaemonDeps {
   cronScheduler?: CronScheduler;
   scheduleEngine?: ScheduleEngine;
   gateway?: IngressGateway;
+  eventBus?: EventBus;
+  commandBus?: CommandBus;
 }
 
 export class DaemonRunner {
@@ -97,6 +99,8 @@ export class DaemonRunner {
   private scheduleEngine: ScheduleEngine | undefined;
   private consecutiveIdleCycles: number = 0;
   private gateway: IngressGateway | undefined;
+  private eventBus: EventBus | undefined;
+  private commandBus: CommandBus | undefined;
 
   constructor(deps: DaemonDeps) {
     this.coreLoop = deps.coreLoop;
