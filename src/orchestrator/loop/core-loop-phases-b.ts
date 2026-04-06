@@ -584,10 +584,10 @@ export async function runTaskCycleWithContext(
 
         // Feed execution results back to strategy for scoring
         if (typeof ctx.deps.strategyManager.recordExecutionFeedback === 'function') {
-          const activeStrategy = goal.active_strategy;
-          if (activeStrategy) {
+          const activeStrat = await ctx.deps.strategyManager.getActiveStrategy(goalId);
+          if (activeStrat) {
             ctx.deps.strategyManager.recordExecutionFeedback({
-              strategyId: activeStrategy,
+              strategyId: activeStrat.hypothesis,
               taskId: taskResult.task?.id ?? 'unknown',
               success: taskResult.action === 'completed',
               verificationPassed: verificationResult.mechanicalPassed,
