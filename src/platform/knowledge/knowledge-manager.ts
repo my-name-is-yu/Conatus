@@ -23,6 +23,7 @@ import type {
 } from "../../base/types/knowledge.js";
 import type { VectorIndex } from "./vector-index.js";
 import type { IEmbeddingClient } from "./embedding-client.js";
+import { cosineSimilarity } from "./embedding-client.js";
 import {
   searchKnowledge,
   searchAcrossGoals,
