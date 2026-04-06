@@ -31,7 +31,7 @@ interface ScheduleEngineDeps {
   // the full Report pipeline (which requires Report schema fields like id, goal_id, generated_at).
   // Using Record<string,unknown> here allows ScheduleEngine to dispatch without constructing
   // a full Report object. Full Report integration deferred to Phase 4.
-  notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<void> };
+  notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
   coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> };
   stateManager?: { loadGoal(goalId: string): Promise<any> };
 }
@@ -48,7 +48,7 @@ export class ScheduleEngine {
   private logger: NonNullable<ScheduleEngineDeps["logger"]>;
   private dataSourceRegistry?: Map<string, IDataSourceAdapter> | DataSourceRegistry;
   private llmClient?: ILLMClient;
-  private notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<void> };
+  private notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
   private coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> };
   private stateManager?: { loadGoal(goalId: string): Promise<any> };
 

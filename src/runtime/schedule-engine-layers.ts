@@ -15,7 +15,7 @@ import { detectChange } from "./change-detector.js";
 interface LayerDeps {
   dataSourceRegistry?: Map<string, IDataSourceAdapter> | DataSourceRegistry;
   llmClient?: ILLMClient;
-  notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<void> };
+  notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
   coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> };
   stateManager?: { loadGoal(goalId: string): Promise<any> };
   logger: {
