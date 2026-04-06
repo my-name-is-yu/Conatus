@@ -179,6 +179,12 @@ export interface LoopIterationResult {
   toolVerification?: VerificationLayer1Result;
   /** Tool-based workspace evidence gathered during stall detection (Phase 6). */
   toolStallEvidence?: import("./stall-evidence.js").StallEvidence;
+  /** True when stall detection was suppressed by an active WaitStrategy plateau_until. */
+  waitSuppressed?: boolean;
+  /** True when a WaitStrategy reached its wait_until expiry this iteration. */
+  waitExpired?: boolean;
+  /** Strategy ID of the active WaitStrategy, if any. */
+  waitStrategyId?: string;
 }
 
 /**
