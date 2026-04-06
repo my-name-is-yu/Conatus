@@ -1932,8 +1932,16 @@ describe("PluginLoader schedule_source interface validation (Phase 4)", () => {
     // Valid impl — should not throw
     expect(() => loader.validateInterface("schedule_source", scheduleSource)).not.toThrow();
 
-    // Register it
-    loader.registerImpl("schedule_source", scheduleSource);
+    // Register it via registerPlugin with a schedule_source manifest
+    const { PluginManifestSchema } = await import("../../base/types/plugin.js");
+    const manifest = PluginManifestSchema.parse({
+      name: "my-schedule-source",
+      version: "1.0.0",
+      type: "schedule_source",
+      capabilities: ["custom_schedule"],
+      description: "Test schedule source plugin",
+    });
+    await loader.registerPlugin(manifest, scheduleSource, "/tmp/plugins/my-schedule-source");
     const sources = loader.getScheduleSources();
     expect(sources).toHaveLength(1);
     expect(sources[0]!.id).toBe("my-schedule-source");
