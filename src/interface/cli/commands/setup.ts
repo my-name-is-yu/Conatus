@@ -119,6 +119,9 @@ Options:
   --model <name>      Model name (e.g., gpt-5.4-mini)
   --adapter <name>    Execution adapter (openai_codex_cli, claude_code_cli, etc.)
   --help, -h          Show this help
+
+Note: Non-interactive mode only configures provider settings. Identity files
+(SEED.md, ROOT.md, USER.md) are only configured in interactive mode.
 `;
 
 // ─── Public entry point ───
