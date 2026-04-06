@@ -17,6 +17,7 @@ function createMockSocket(): WsSocketLike & {
       listeners[event].push(cb);
     },
     send: vi.fn(),
+    close: vi.fn(),
     simulateMessage(data: unknown) {
       listeners["message"]?.forEach((cb) => cb(data));
     },
@@ -36,7 +37,6 @@ function createMockWss(): WsLike & {
   simulateClose(): void;
 } {
   const listeners: Record<string, ((...args: any[]) => void)[]> = {};
-  let closeCallback: (() => void) | undefined;
 
   return {
     on(event: string, cb: (...args: any[]) => void) {
@@ -44,8 +44,6 @@ function createMockWss(): WsLike & {
       listeners[event].push(cb);
     },
     close(cb?: () => void) {
-      closeCallback = cb;
-      // Immediately invoke to simulate synchronous close
       cb?.();
     },
     simulateConnection(socket: WsSocketLike) {
@@ -68,7 +66,7 @@ describe("WsChannelAdapter", () => {
     adapter = new WsChannelAdapter(wss);
   });
 
-  it("has name \'websocket\'", () => {
+  it("has name 'websocket'", () => {
     expect(adapter.name).toBe("websocket");
   });
 
@@ -151,7 +149,7 @@ describe("WsChannelAdapter", () => {
       expect(envelope.payload).toMatchObject({ type: "event", name: "tick", foo: "bar" });
     });
 
-    it("uses \'ws_message\' as default name", () => {
+    it("uses 'ws_message' as default name", () => {
       const handler = vi.fn();
       adapter.onEnvelope(handler);
 
@@ -200,6 +198,49 @@ describe("WsChannelAdapter", () => {
     });
   });
 
+  describe("invalid type/priority validation", () => {
+    beforeEach(async () => {
+      await adapter.start();
+    });
+
+    it("falls back to 'event' type when client sends invalid type", () => {
+      const handler = vi.fn();
+      adapter.onEnvelope(handler);
+
+      const socket = createMockSocket();
+      wss.simulateConnection(socket);
+      socket.simulateMessage(JSON.stringify({ type: "invalid", name: "test", payload: {} }));
+
+      const [envelope] = handler.mock.calls[0];
+      expect(envelope.type).toBe("event");
+    });
+
+    it("falls back to 'normal' priority when client sends invalid priority", () => {
+      const handler = vi.fn();
+      adapter.onEnvelope(handler);
+
+      const socket = createMockSocket();
+      wss.simulateConnection(socket);
+      socket.simulateMessage(JSON.stringify({ type: "command", name: "test", priority: "urgent", payload: {} }));
+
+      const [envelope] = handler.mock.calls[0];
+      expect(envelope.priority).toBe("normal");
+    });
+
+    it("accepts valid type and priority values without fallback", () => {
+      const handler = vi.fn();
+      adapter.onEnvelope(handler);
+
+      const socket = createMockSocket();
+      wss.simulateConnection(socket);
+      socket.simulateMessage(JSON.stringify({ type: "command", name: "test", priority: "critical", payload: {} }));
+
+      const [envelope] = handler.mock.calls[0];
+      expect(envelope.type).toBe("command");
+      expect(envelope.priority).toBe("critical");
+    });
+  });
+
   describe("ReplyChannel", () => {
     beforeEach(async () => {
       await adapter.start();
@@ -230,6 +271,21 @@ describe("WsChannelAdapter", () => {
       socket.simulateMessage(JSON.stringify({ type: "event", name: "test", payload: {} }));
 
       expect(handler.mock.calls[0][1]).toBeDefined();
+    });
+
+    it("reply.close() calls socket.close()", () => {
+      let capturedReply: any;
+      adapter.onEnvelope((_env, reply) => {
+        capturedReply = reply;
+      });
+
+      const socket = createMockSocket();
+      wss.simulateConnection(socket);
+      socket.simulateMessage(JSON.stringify({ type: "event", name: "test", payload: {} }));
+
+      expect(capturedReply).toBeDefined();
+      capturedReply.close();
+      expect(socket.close).toHaveBeenCalledOnce();
     });
   });
 
