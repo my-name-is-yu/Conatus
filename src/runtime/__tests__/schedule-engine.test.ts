@@ -713,7 +713,7 @@ describe("Escalation", () => {
     expect(escalationNotifications).toHaveLength(0);
   });
 
-  it("escalation respects max_per_hour rate limit", async () => {
+  it("escalation respects minimum escalation interval (simplified max_per_hour check)", async () => {
     const notifications: Record<string, unknown>[] = [];
     const eng = new ScheduleEngine({
       baseDir: tempDir,
