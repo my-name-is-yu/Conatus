@@ -23,6 +23,7 @@ import type { Envelope } from "./types/envelope.js";
 import { createEnvelope } from "./types/envelope.js";
 import { EventBus } from "./queue/event-bus.js";
 import { CommandBus } from "./queue/command-bus.js";
+import { LoopSupervisor } from "./executor/index.js";
 import { PulSeedEventSchema } from "../base/types/drive.js";
 
 // Re-exports for callers that imported these from daemon-runner
@@ -72,6 +73,9 @@ export interface DaemonDeps {
   gateway?: IngressGateway;
   eventBus?: EventBus;
   commandBus?: CommandBus;
+  supervisor?: LoopSupervisor;
+  /** Factory to create fresh CoreLoop instances for LoopSupervisor workers. */
+  coreLoopFactory?: () => CoreLoop;
 }
 
 export class DaemonRunner {
@@ -101,8 +105,13 @@ export class DaemonRunner {
   private gateway: IngressGateway | undefined;
   private eventBus: EventBus | undefined;
   private commandBus: CommandBus | undefined;
+  private supervisor: LoopSupervisor | null = null;
+  private cronScheduleInterval: ReturnType<typeof setInterval> | null = null;
+  private shutdownResolve: (() => void) | null = null;
+  private readonly deps: DaemonDeps;
 
   constructor(deps: DaemonDeps) {
+    this.deps = deps;
     this.coreLoop = deps.coreLoop;
     this.driveSystem = deps.driveSystem;
     this.stateManager = deps.stateManager;
@@ -115,6 +124,7 @@ export class DaemonRunner {
     this.gateway = deps.gateway;
     this.eventBus = deps.eventBus;
     this.commandBus = deps.commandBus;
+    this.supervisor = deps.supervisor ?? null;
     this.lastProactiveTickAt = Date.now();
 
     // Parse config with defaults via DaemonConfigSchema.parse()
@@ -297,9 +307,52 @@ export class DaemonRunner {
       check_interval_ms: this.config.check_interval_ms,
     });
 
-    // 7. Run main loop
+    // 7. Create supervisor if not already provided and eventBus is configured
+    if (!this.supervisor && this.eventBus) {
+      const factory = this.deps.coreLoopFactory ?? (() => this.coreLoop);
+      this.supervisor = new LoopSupervisor(
+        {
+          coreLoopFactory: factory,
+          eventBus: this.eventBus,
+          driveSystem: this.driveSystem,
+          stateManager: this.stateManager,
+          logger: this.logger,
+          onEscalation: (goalId, crashCount, lastError) => {
+            this.logger.error(`Goal ${goalId} suspended after ${crashCount} crashes: ${lastError}`);
+          },
+        },
+        { iterationsPerCycle: this.config.iterations_per_cycle }
+      );
+    }
+
+    // 8. Run main loop — supervisor mode when supervisor is injected via deps,
+    //    fallback to sequential runLoop otherwise (preserves backward compat for
+    //    tests that provide eventBus without a supervisor)
     try {
-      await this.runLoop(mergedGoalIds);
+      if (this.supervisor && this.eventBus) {
+        // Supervisor handles goal execution; cron/schedule must also run in this mode.
+        await this.supervisor.start(mergedGoalIds);
+
+        // Run cron/schedule processing once immediately, then on a periodic interval.
+        const cronIntervalMs = this.config.base_interval_ms ?? this.config.check_interval_ms;
+        await this.processCronTasks();
+        await this.processScheduleEntries();
+        this.cronScheduleInterval = setInterval(async () => {
+          if (this.shuttingDown) return;
+          await this.processCronTasks();
+          await this.processScheduleEntries();
+        }, cronIntervalMs);
+
+        // Block until stop() is called.
+        await new Promise<void>((resolve) => {
+          this.shutdownResolve = resolve;
+          // If already stopped before we get here, resolve immediately.
+          if (!this.running) resolve();
+        });
+      } else {
+        // Fallback: sequential mode
+        await this.runLoop(mergedGoalIds);
+      }
     } finally {
       // Cancel the force-stop timer if it's still pending
       if (forceStopTimer !== null) {
@@ -314,6 +367,11 @@ export class DaemonRunner {
       }
       // Stop file watcher and EventServer
       clearInterval(heartbeatInterval);
+      if (this.cronScheduleInterval !== null) {
+        clearInterval(this.cronScheduleInterval);
+        this.cronScheduleInterval = null;
+      }
+      await this.supervisor?.shutdown();
       this.driveSystem.stopWatcher();
       if (this.gateway) {
         await this.gateway.stop();
@@ -346,6 +404,7 @@ export class DaemonRunner {
    */
   stop(): void {
     this.running = false;
+    this.shutdownResolve?.();
     this.sleepAbortController?.abort();
     this.state.status = "stopping";
     // Save current active_goals as interrupted_goals for state restoration
