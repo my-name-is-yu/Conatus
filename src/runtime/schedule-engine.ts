@@ -104,6 +104,7 @@ export class ScheduleEngine {
       | "max_tokens_per_day"
       | "tokens_used_today"
       | "budget_reset_at"
+      | "escalation_timestamps"
     >
   ): Promise<ScheduleEntry> {
     const now = new Date().toISOString();
