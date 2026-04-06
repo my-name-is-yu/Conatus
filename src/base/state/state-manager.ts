@@ -13,6 +13,10 @@ import type { PaceSnapshot } from "../types/goal.js";
 import { LoopCheckpointSchema } from "../types/checkpoint.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import { initDirs, atomicWrite, atomicRead } from "./state-persistence.js";
+import { acquireLock, releaseLock } from "./state-lock.js";
+import { appendWALRecord, replayWAL, compactWAL } from "./state-wal.js";
+import type { WALIntent } from "./state-wal.js";
+import { writeSnapshot } from "./state-snapshot.js";
 
 export { initDirs, atomicWrite, atomicRead };
 
@@ -34,15 +38,99 @@ export { initDirs, atomicWrite, atomicRead };
 export class StateManager {
   private readonly baseDir: string;
   private readonly logger?: Logger;
+  private readonly walEnabled: boolean;
+  private writeCount: Map<string, number> = new Map();
 
-  constructor(baseDir?: string, logger?: Logger) {
+  constructor(baseDir?: string, logger?: Logger, options?: { walEnabled?: boolean }) {
     this.baseDir = baseDir ?? getPulseedDirPath();
     this.logger = logger;
+    this.walEnabled = options?.walEnabled ?? true;
   }
 
   /** Create required subdirectories. Must be called after construction before first use. */
   async init(): Promise<void> {
     await initDirs(this.baseDir);
+    if (this.walEnabled) {
+      await this.recoverWAL();
+    }
+  }
+
+  /** Scan all goals for uncommitted WAL entries and replay them. */
+  private async recoverWAL(): Promise<void> {
+    const goalIds = await this.listGoalIds();
+    for (const goalId of goalIds) {
+      const replayed = await replayWAL(goalId, this.baseDir, async (intent) => {
+        await this.replayIntent(intent);
+      });
+      if (replayed > 0) {
+        this.logger?.info(`[StateManager] Replayed ${replayed} WAL entries for goal ${goalId}`);
+      }
+    }
+  }
+
+  /** Map a WAL intent op back to the appropriate file write. */
+  private async replayIntent(intent: WALIntent): Promise<void> {
+    const data = intent.data as Record<string, unknown>;
+    switch (intent.op) {
+      case "save_goal": {
+        const goalId = data?.id as string;
+        if (goalId) {
+          const dir = path.join(this.baseDir, "goals", goalId);
+          await fsp.mkdir(dir, { recursive: true });
+          await atomicWrite(path.join(dir, "goal.json"), data);
+        }
+        break;
+      }
+      case "save_observation": {
+        const goalId = data?.goal_id as string;
+        if (goalId) {
+          const dir = path.join(this.baseDir, "goals", goalId);
+          await fsp.mkdir(dir, { recursive: true });
+          await atomicWrite(path.join(dir, "observations.json"), data);
+        }
+        break;
+      }
+      case "append_observation": {
+        const goalId = data?.goal_id as string;
+        if (goalId) {
+          const dir = path.join(this.baseDir, "goals", goalId);
+          await fsp.mkdir(dir, { recursive: true });
+          await atomicWrite(path.join(dir, "observations.json"), data);
+        }
+        break;
+      }
+      case "save_gap_history":
+      case "append_gap_entry": {
+        const goalId = data?.goalId as string;
+        if (goalId) {
+          const dir = path.join(this.baseDir, "goals", goalId);
+          await fsp.mkdir(dir, { recursive: true });
+          await atomicWrite(path.join(dir, "gap-history.json"), data?.entries ?? data);
+        }
+        break;
+      }
+      case "save_pace_snapshot": {
+        const goalId = data?.id as string;
+        if (goalId) {
+          const dir = path.join(this.baseDir, "goals", goalId);
+          await fsp.mkdir(dir, { recursive: true });
+          await atomicWrite(path.join(dir, "goal.json"), data);
+        }
+        break;
+      }
+      case "write_raw": {
+        const relativePath = data?.path as string;
+        const payload = data?.payload;
+        if (relativePath && payload !== undefined) {
+          const resolved = path.resolve(this.baseDir, relativePath);
+          await fsp.mkdir(path.dirname(resolved), { recursive: true });
+          await atomicWrite(resolved, payload);
+        }
+        break;
+      }
+      default:
+        this.logger?.warn(`[StateManager] Unknown WAL intent op: ${intent.op}`);
+    }
   }
 
   /** Returns the base directory path */
@@ -71,12 +159,32 @@ export class StateManager {
     return atomicRead<T>(filePath, this.logger);
   }
 
+  /** Wrap a goal write with lock + WAL + snapshot cycle. */
+  private async protectedWrite(goalId: string, op: string, data: unknown, writeFn: () => Promise<void>): Promise<void> {
+    if (!this.walEnabled) { await writeFn(); return; }
+    await acquireLock(goalId, this.baseDir);
+    try {
+      const ts = new Date().toISOString();
+      await appendWALRecord(goalId, this.baseDir, { op, data, ts });
+      await writeFn();
+      await appendWALRecord(goalId, this.baseDir, { op: "commit", ref_ts: ts, ts: new Date().toISOString() });
+      this.writeCount.set(goalId, (this.writeCount.get(goalId) || 0) + 1);
+      const count = this.writeCount.get(goalId)!;
+      if (count % 50 === 0) await writeSnapshot(goalId, this.baseDir, data);
+      if (count % 100 === 0) await compactWAL(goalId, this.baseDir);
+    } finally {
+      await releaseLock(goalId, this.baseDir);
+    }
+  }
+
   // ─── Goal CRUD ───
 
   async saveGoal(goal: Goal): Promise<void> {
     const parsed = GoalSchema.parse(goal);
     const dir = await this.goalDir(parsed.id);
-    await this.atomicWrite(path.join(dir, "goal.json"), parsed);
+    await this.protectedWrite(parsed.id, "save_goal", parsed, async () => {
+      await this.atomicWrite(path.join(dir, "goal.json"), parsed);
+    });
   }
 
   async loadGoal(goalId: string): Promise<Goal | null> {
@@ -307,7 +415,9 @@ export class StateManager {
   async saveObservationLog(log: ObservationLog): Promise<void> {
     const parsed = ObservationLogSchema.parse(log);
     const dir = await this.goalDir(parsed.goal_id);
-    await this.atomicWrite(path.join(dir, "observations.json"), parsed);
+    await this.protectedWrite(parsed.goal_id, "save_observation", parsed, async () => {
+      await this.atomicWrite(path.join(dir, "observations.json"), parsed);
+    });
   }
 
   async loadObservationLog(goalId: string): Promise<ObservationLog | null> {
@@ -335,7 +445,11 @@ export class StateManager {
     }
     log.entries.push(parsed);
     log.entries = log.entries.slice(-500);
-    await this.saveObservationLog(log);
+    const finalLog = log;
+    await this.protectedWrite(goalId, "append_observation", finalLog, async () => {
+      const dir = await this.goalDir(goalId);
+      await this.atomicWrite(path.join(dir, "observations.json"), finalLog);
+    });
   }
 
   // ─── Gap History ───
@@ -343,7 +457,9 @@ export class StateManager {
   async saveGapHistory(goalId: string, history: GapHistoryEntry[]): Promise<void> {
     const parsed = history.map((e) => GapHistoryEntrySchema.parse(e));
     const dir = await this.goalDir(goalId);
-    await this.atomicWrite(path.join(dir, "gap-history.json"), parsed);
+    await this.protectedWrite(goalId, "save_gap_history", { goalId, entries: parsed }, async () => {
+      await this.atomicWrite(path.join(dir, "gap-history.json"), parsed);
+    });
   }
 
   async loadGapHistory(goalId: string): Promise<GapHistoryEntry[]> {
@@ -362,7 +478,11 @@ export class StateManager {
     const parsed = GapHistoryEntrySchema.parse(entry);
     const history = await this.loadGapHistory(goalId);
     history.push(parsed);
-    await this.saveGapHistory(goalId, history.slice(-500));
+    const trimmed = history.slice(-500);
+    const dir = await this.goalDir(goalId);
+    await this.protectedWrite(goalId, "append_gap_entry", { goalId, entries: trimmed }, async () => {
+      await this.atomicWrite(path.join(dir, "gap-history.json"), trimmed);
+    });
   }
 
   /**
@@ -374,7 +494,10 @@ export class StateManager {
       throw new StateError(`savePaceSnapshot: goal "${goalId}" not found`);
     }
     const updated: Goal = { ...goal, pace_snapshot: snapshot };
-    await this.saveGoal(updated);
+    const dir = await this.goalDir(goalId);
+    await this.protectedWrite(goalId, "save_pace_snapshot", updated, async () => {
+      await this.atomicWrite(path.join(dir, "goal.json"), GoalSchema.parse(updated));
+    });
   }
 
   // ─── Goal Tree Traversal ───
@@ -550,6 +673,14 @@ export class StateManager {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
-    await this.atomicWrite(filePath, data);
+    // Use protectedWrite only for goal-scoped paths
+    if (relativePath.startsWith("goals/")) {
+      const goalId = relativePath.split("/")[1];
+      await this.protectedWrite(goalId, "write_raw", { path: relativePath, payload: data }, async () => {
+        await this.atomicWrite(filePath, data);
+      });
+    } else {
+      await this.atomicWrite(filePath, data);
+    }
   }
 }
