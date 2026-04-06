@@ -302,7 +302,7 @@ export class DaemonClient {
 export async function isDaemonRunning(baseDir: string): Promise<{ running: boolean; port: number }> {
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
-  const DEFAULT_PORT = 41700;
+  // DEFAULT_PORT imported from port-utils
 
   try {
     const statePath = path.join(baseDir, "daemon-state.json");
