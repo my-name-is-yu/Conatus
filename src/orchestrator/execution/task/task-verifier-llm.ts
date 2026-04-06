@@ -64,7 +64,7 @@ export async function runLLMReview(
   knowledgeBlock = "",
   stateBlock = "",
   modelTier: 'main' | 'light' = 'light'
-): Promise<{ passed: boolean; partial: boolean; description: string; confidence: number; criteria_met?: number; criteria_total?: number }> {
+): Promise<{ passed: boolean; partial: boolean; description: string; confidence: number; criteria_met?: number; criteria_total?: number; tokensUsed: number }> {
   const timeoutMs = deps.completionJudgerConfig?.timeoutMs ?? 30_000;
   const maxRetries = deps.completionJudgerConfig?.maxRetries ?? 2;
   const retryBackoffMs = deps.completionJudgerConfig?.retryBackoffMs ?? 1_000;
@@ -137,6 +137,7 @@ Return JSON:
         partial: false,
         description: `completion_judger failed after ${maxRetries + 1} attempt(s): ${msg}`,
         confidence: 0.0,
+        tokensUsed: 0,
       };
     }
     const verdictStr = parsed.verdict;
@@ -147,7 +148,9 @@ Return JSON:
       confidence: verdictStr === "pass" ? 0.8 : verdictStr === "partial" ? 0.6 : 0.8,
       criteria_met: parsed.criteria_met,
       criteria_total: parsed.criteria_total,
+      tokensUsed: 0, // TODO: PromptGateway does not expose usage data
     };
+    if (deps._tokenAccumulator) deps._tokenAccumulator.tokensUsed += result.tokensUsed;
     await deps.sessionManager.endSession(reviewSession.id, `LLM review: ${verdictStr}`);
     return result;
   }
@@ -181,7 +184,15 @@ Return JSON:
       partial: false,
       description: `completion_judger failed after ${maxRetries + 1} attempt(s): ${msg}`,
       confidence: 0.0,
+      tokensUsed: 0,
     };
+  }
+
+  const verifierTokens = response.usage ? (response.usage.input_tokens + response.usage.output_tokens) : 0;
+
+  // ALWAYS write to accumulator, even if parsing fails afterward
+  if (deps._tokenAccumulator) {
+    deps._tokenAccumulator.tokensUsed = (deps._tokenAccumulator.tokensUsed ?? 0) + verifierTokens;
   }
 
   try {
@@ -195,6 +206,7 @@ Return JSON:
         partial: false,
         description: "Failed to parse LLM review result",
         confidence: 0.3,
+        tokensUsed: verifierTokens,
       };
     }
     const parsed = parseResult.data;
@@ -206,6 +218,7 @@ Return JSON:
       confidence: verdictStr === "pass" ? 0.8 : verdictStr === "partial" ? 0.6 : 0.8,
       criteria_met: parsed.criteria_met,
       criteria_total: parsed.criteria_total,
+      tokensUsed: verifierTokens,
     };
     await deps.sessionManager.endSession(reviewSession.id, `LLM review: ${verdictStr}`);
     return result;
@@ -217,6 +230,7 @@ Return JSON:
       partial: false,
       description: "Failed to parse LLM review result",
       confidence: 0.3,
+      tokensUsed: verifierTokens,
     };
   }
 }

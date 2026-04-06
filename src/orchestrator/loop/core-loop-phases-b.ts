@@ -544,6 +544,7 @@ export async function runTaskCycleWithContext(
     );
     ctx.logger?.info("CoreLoop: task cycle result", { action: taskResult.action, taskId: taskResult.task.id });
     result.taskResult = taskResult;
+    result.tokensUsed = (result.tokensUsed ?? 0) + (taskResult.tokensUsed ?? 0);
     ctx.deps.onProgress?.({
       iteration: loopIndex + 1,
       maxIterations: ctx.config.maxIterations,
