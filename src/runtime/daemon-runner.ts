@@ -20,6 +20,9 @@ import { generateCronEntry } from "./daemon-signals.js";
 import { rotateDaemonLog, calculateAdaptiveInterval as calcAdaptiveInterval } from "./daemon-health.js";
 import { IngressGateway, HttpChannelAdapter } from "./gateway/index.js";
 import type { Envelope } from "./types/envelope.js";
+import { createEnvelope } from "./types/envelope.js";
+import { EventBus } from "./queue/event-bus.js";
+import { CommandBus } from "./queue/command-bus.js";
 import { PulSeedEventSchema } from "../base/types/drive.js";
 
 // Re-exports for callers that imported these from daemon-runner
@@ -67,6 +70,8 @@ export interface DaemonDeps {
   cronScheduler?: CronScheduler;
   scheduleEngine?: ScheduleEngine;
   gateway?: IngressGateway;
+  eventBus?: EventBus;
+  commandBus?: CommandBus;
 }
 
 export class DaemonRunner {
@@ -94,6 +99,8 @@ export class DaemonRunner {
   private scheduleEngine: ScheduleEngine | undefined;
   private consecutiveIdleCycles: number = 0;
   private gateway: IngressGateway | undefined;
+  private eventBus: EventBus | undefined;
+  private commandBus: CommandBus | undefined;
 
   constructor(deps: DaemonDeps) {
     this.coreLoop = deps.coreLoop;
@@ -106,6 +113,8 @@ export class DaemonRunner {
     this.cronScheduler = deps.cronScheduler;
     this.scheduleEngine = deps.scheduleEngine;
     this.gateway = deps.gateway;
+    this.eventBus = deps.eventBus;
+    this.commandBus = deps.commandBus;
     this.lastProactiveTickAt = Date.now();
 
     // Parse config with defaults via DaemonConfigSchema.parse()
@@ -168,6 +177,16 @@ export class DaemonRunner {
       const httpAdapter = new HttpChannelAdapter(this.eventServer);
       this.gateway.registerAdapter(httpAdapter);
       this.gateway.onEnvelope(async (envelope: Envelope) => {
+        // Route by envelope type when buses are configured
+        if (envelope.type === "command" && this.commandBus) {
+          this.commandBus.push(envelope);
+          return;
+        }
+        if (envelope.type === "event" && this.eventBus) {
+          this.eventBus.push(envelope);
+          return;
+        }
+        // Fallback: no bus configured — keep legacy driveSystem.writeEvent() behavior
         const payload = envelope.payload as Record<string, unknown>;
         try {
           const event = PulSeedEventSchema.parse(payload);
@@ -179,6 +198,9 @@ export class DaemonRunner {
           });
         }
       });
+      // Wire onHighPriority to abort sleep — done via the abortSleep() public method.
+      // Callers who construct buses should pass: onHighPriority: () => daemon.abortSleep()
+      // The daemon provides abortSleep() below for this purpose.
       await this.gateway.start();
       this.logger.info("Gateway started with HTTP adapter", { port: this.eventServer.getPort() });
     } else {
@@ -307,6 +329,15 @@ export class DaemonRunner {
   /** Expose approvalFn for callers (e.g. cmdStart) to wire into TaskLifecycle */
   getApprovalFn(): ((task: Record<string, unknown>) => Promise<boolean>) | undefined {
     return this.approvalFn;
+  }
+
+  /**
+   * Abort the current sleep cycle immediately.
+   * Intended for use as the onHighPriority callback when constructing EventBus/CommandBus:
+   *   new EventBus({ onHighPriority: () => daemon.abortSleep() })
+   */
+  abortSleep(): void {
+    this.sleepAbortController?.abort();
   }
 
   /**
@@ -633,21 +664,36 @@ export class DaemonRunner {
           type: task.type,
         });
 
-        try {
-          // Log the task prompt and type for observability; actual execution
-          // varies by type but all are currently handled as fire-and-log.
-          this.logger.info(`Executing cron task: ${task.type}`, {
-            prompt: task.prompt,
+        if (this.eventBus) {
+          // Push to eventBus — markFired happens when the envelope is consumed, not at push time
+          const envelope = createEnvelope({
+            type: "event",
+            name: "cron_task_due",
+            source: "cron-scheduler",
+            priority: "normal",
+            payload: task,
+            dedupe_key: `cron-${task.id}`,
           });
+          this.eventBus.push(envelope);
+          this.logger.info(`Cron task enqueued to eventBus: ${task.id}`);
+        } else {
+          // Fallback: no eventBus — execute and markFired directly (legacy behavior)
+          try {
+            // Log the task prompt and type for observability; actual execution
+            // varies by type but all are currently handled as fire-and-log.
+            this.logger.info(`Executing cron task: ${task.type}`, {
+              prompt: task.prompt,
+            });
 
-          await this.cronScheduler.markFired(task.id);
-          this.logger.info(`Cron task fired: ${task.id}`);
-        } catch (err) {
-          this.logger.warn(`Cron task ${task.id} failed`, {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          // Still mark as fired to avoid retry-storms
-          await this.cronScheduler.markFired(task.id);
+            await this.cronScheduler.markFired(task.id);
+            this.logger.info(`Cron task fired: ${task.id}`);
+          } catch (err) {
+            this.logger.warn(`Cron task ${task.id} failed`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            // Still mark as fired to avoid retry-storms
+            await this.cronScheduler.markFired(task.id);
+          }
         }
       }
     } catch (err) {
@@ -668,6 +714,22 @@ export class DaemonRunner {
       for (const result of results) {
         if (result.status === "error") {
           this.logger?.warn?.(`Schedule entry ${result.entry_id} failed: ${result.error_message}`);
+        } else if (this.eventBus) {
+          // Push activated schedule entries to eventBus as envelopes
+          const goalId = (result as Record<string, unknown>)["goal_id"] as string | undefined;
+          if (!goalId) {
+            this.logger.warn("schedule_activated envelope missing goal_id", { entry_id: (result as Record<string, unknown>)["entry_id"] });
+          }
+          const envelope = createEnvelope({
+            type: "event",
+            name: "schedule_activated",
+            source: "schedule-engine",
+            goal_id: goalId,
+            priority: "normal",
+            payload: result,
+            dedupe_key: result.entry_id,
+          });
+          this.eventBus.push(envelope);
         }
       }
     } catch (error) {
