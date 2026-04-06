@@ -170,7 +170,10 @@ export class StateManager {
       await appendWALRecord(goalId, this.baseDir, { op: "commit", ref_ts: ts, ts: new Date().toISOString() });
       this.writeCount.set(goalId, (this.writeCount.get(goalId) || 0) + 1);
       const count = this.writeCount.get(goalId)!;
-      if (count % 50 === 0) await writeSnapshot(goalId, this.baseDir, data);
+      if (count % 50 === 0) {
+        const fullGoal = await this.loadGoal(goalId);
+        if (fullGoal !== null) await writeSnapshot(goalId, this.baseDir, fullGoal);
+      }
       if (count % 100 === 0) await compactWAL(goalId, this.baseDir);
     } finally {
       await releaseLock(goalId, this.baseDir);
