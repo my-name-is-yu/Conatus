@@ -61,18 +61,15 @@ export class CoreLoopLearning {
     const intervalMs = await this.getPeriodicReviewInterval(goalId, deps.stateManager);
     if (now - this.lastLearningReviewAt >= intervalMs) {
       try {
-        let additionalContext: string | undefined;
         if (toolExecutor) {
           const toolCtx = { cwd: ".", goalId, trustBalance: 0, preApproved: true, approvalFn: async () => false };
           const evidence = await gatherLearningEvidence(toolExecutor, toolCtx);
-          if (evidence.recentChanges || evidence.artifactCount > 0) {
-            additionalContext = `artifacts:${evidence.artifactCount} changes:${evidence.recentChanges.slice(0, 200)}`;
-          }
           if (evidence.errors.length > 0) {
             logger?.warn("CoreLoop: evidence gathering errors", { goalId, errors: evidence.errors });
           }
+          logger?.debug("CoreLoop: periodic review evidence", { goalId, artifactCount: evidence.artifactCount, changesLen: evidence.recentChanges.length });
         }
-        await deps.learningPipeline.onPeriodicReview(goalId, additionalContext);
+        await deps.learningPipeline.onPeriodicReview(goalId);
         this.lastLearningReviewAt = now;
       } catch (err) {
         // non-fatal: learning pipeline failure should not block main loop
