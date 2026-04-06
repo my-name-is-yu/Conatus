@@ -743,10 +743,13 @@ describe("Escalation", () => {
       },
     });
 
-    // Set last_escalation_at to recent (within 1-hour rate window)
+    // Set last_escalation_at and escalation_timestamps to recent (within 1-hour rate window)
+    // The rolling-window rate-limit checks escalation_timestamps; we need to set it too.
     const entries = eng.getEntries();
     const idx = entries.findIndex((e) => e.id === entry.id);
-    entries[idx]!.last_escalation_at = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 min ago
+    const recentTs = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 min ago
+    entries[idx]!.last_escalation_at = recentTs;
+    entries[idx]!.escalation_timestamps = [recentTs]; // fills the 1-slot window (max_per_hour=1)
     entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
     await eng.saveEntries();
     await eng.loadEntries();
