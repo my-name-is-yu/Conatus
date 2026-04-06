@@ -255,7 +255,6 @@ export class ChatRunner {
 
     const normalized = input.trim().toLowerCase();
     const confirmed = normalized === "" || normalized === "y" || normalized === "yes";
-    const cancelled = normalized === "n" || normalized === "no";
 
     if (!confirmed) {
       // Bug 2: treat any non-y/yes/empty/n/no input as cancellation too
@@ -286,6 +285,7 @@ export class ChatRunner {
     }
 
     // Subscribe to EventServer progress notifications (non-blocking)
+    const { goalId, maxIterations } = pending;
     if (this.deps.daemonBaseUrl && !this.activeSubscribers.has(goalId)) {
       const subscriber = new EventSubscriber(this.deps.daemonBaseUrl, goalId, "normal");
       this.activeSubscribers.set(goalId, subscriber);
@@ -303,10 +303,11 @@ export class ChatRunner {
       });
     }
 
+    const iterNote = maxIterations !== undefined ? ` (max ${maxIterations} iterations)` : "";
     const shortId = goalId.length > 12 ? goalId.slice(0, 12) : goalId;
     return {
       success: true,
-      output: `[tend] ${shortId}: Started — daemon is now tending your goal.\nRun 'pulseed status' to check progress.`,
+      output: `[tend] ${shortId}: Started — daemon is now tending your goal${iterNote}.\nRun 'pulseed status' to check progress.`,
       elapsed_ms: Date.now() - start,
     };
   }
