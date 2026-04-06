@@ -11,11 +11,10 @@ import {
   type ScheduleEntry,
   type ScheduleResult,
 } from "./types/schedule.js";
-import { executeCron, executeGoalTrigger } from "./schedule-engine-layers.js";
+import { executeCron, executeGoalTrigger, executeProbe } from "./schedule-engine-layers.js";
 import type { IDataSourceAdapter } from "../platform/observation/data-source-adapter.js";
 import type { DataSourceRegistry } from "../platform/observation/data-source-adapter.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
-import { detectChange } from "./change-detector.js";
 
 const SCHEDULES_FILE = "schedules.json";
 
@@ -242,130 +241,20 @@ export class ScheduleEngine {
   // ─── Probe execution (Phase 2) ───
 
   async executeProbe(entry: ScheduleEntry): Promise<ScheduleResult> {
-    const firedAt = new Date().toISOString();
-    const start = Date.now();
-    const cfg = entry.probe;
-
-    if (!cfg) {
-      return ScheduleResultSchema.parse({
-        entry_id: entry.id,
-        status: "error",
-        duration_ms: 0,
-        error_message: "No probe config",
-        fired_at: firedAt,
-      });
-    }
-
-    // Look up data source adapter
-    let adapter: IDataSourceAdapter | undefined;
-    if (this.dataSourceRegistry) {
-      if (this.dataSourceRegistry instanceof Map) {
-        adapter = this.dataSourceRegistry.get(cfg.data_source_id);
-      } else {
-        try {
-          adapter = (this.dataSourceRegistry as DataSourceRegistry).getSource(cfg.data_source_id);
-        } catch {
-          adapter = undefined;
+    return executeProbe(entry, {
+      ...this.layerDeps(),
+      updateBaseline: (entryId, value, windowSize) => {
+        const idx = this.entries.findIndex((e) => e.id === entryId);
+        if (idx !== -1) {
+          const updated = [...this.entries[idx].baseline_results, value];
+          this.entries[idx] = {
+            ...this.entries[idx],
+            baseline_results: updated.slice(-windowSize),
+          };
         }
-      }
-    }
-    if (!adapter) {
-      return ScheduleResultSchema.parse({
-        entry_id: entry.id,
-        status: "error",
-        duration_ms: 0,
-        error_message: `Data source not found: ${cfg.data_source_id}`,
-        fired_at: firedAt,
-      });
-    }
-
-    try {
-      // Execute probe query
-      // dimension_name comes AFTER query_params spread so it is authoritative and cannot be
-      // accidentally overridden by user-supplied query_params.
-      const queryResult = await adapter.query({
-        timeout_ms: 10000,
-        ...cfg.query_params,
-        dimension_name: cfg.data_source_id,
-      } as Parameters<typeof adapter.query>[0]);
-
-      const currentValue = queryResult.value ?? queryResult.raw;
-
-      // Detect change
-      const { changed, details } = detectChange(
-        cfg.change_detector.mode,
-        currentValue,
-        entry.baseline_results,
-        cfg.change_detector.threshold_value
-      );
-
-      this.logger.info(`Probe "${entry.name}": ${details}`);
-
-      let tokensUsed = 0;
-      let outputSummary: string | undefined;
-
-      // Optional LLM analysis on change
-      if (changed && cfg.llm_on_change && this.llmClient) {
-        const prompt = cfg.llm_prompt_template
-          ? cfg.llm_prompt_template.replace("{{result}}", JSON.stringify(currentValue))
-          : `A scheduled probe detected a change. Current result: ${JSON.stringify(currentValue)}. Previous baselines: ${JSON.stringify(entry.baseline_results.slice(-3))}. Is this change significant? Respond concisely.`;
-
-        try {
-          const llmResponse = await this.llmClient.sendMessage(
-            [{ role: "user", content: prompt }],
-            { model_tier: "light" }
-          );
-          tokensUsed = (llmResponse.usage?.input_tokens ?? 0) + (llmResponse.usage?.output_tokens ?? 0);
-          outputSummary = llmResponse.content;
-        } catch (err) {
-          this.logger.warn(`Probe "${entry.name}" LLM analysis failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // Update baseline_results
-      const windowSize = cfg.change_detector.baseline_window;
-      const idx = this.entries.findIndex((e) => e.id === entry.id);
-      if (idx !== -1) {
-        const updated = [...this.entries[idx].baseline_results, currentValue];
-        this.entries[idx] = {
-          ...this.entries[idx],
-          baseline_results: updated.slice(-windowSize),
-        };
-      }
-
-      // Dispatch change notification
-      if (changed) {
-        await this.dispatchNotification({
-          report_type: "schedule_change",
-          entry_id: entry.id,
-          entry_name: entry.name,
-          details,
-          output_summary: outputSummary,
-        });
-      }
-
-      return ScheduleResultSchema.parse({
-        entry_id: entry.id,
-        status: "ok",
-        duration_ms: Date.now() - start,
-        fired_at: firedAt,
-        tokens_used: tokensUsed,
-        change_detected: changed,
-        output_summary: outputSummary,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Probe "${entry.name}" failed: ${msg}`);
-      return ScheduleResultSchema.parse({
-        entry_id: entry.id,
-        status: "error",
-        duration_ms: Date.now() - start,
-        error_message: msg,
-        fired_at: firedAt,
-      });
-    }
+      },
+    });
   }
-
 
   // ─── Cron execution (Phase 3) ───
 
