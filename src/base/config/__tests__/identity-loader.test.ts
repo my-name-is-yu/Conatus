@@ -34,6 +34,9 @@ const {
 
 function noFiles(): void {
   mockExistsSync.mockReturnValue(false);
+  mockReadFileSync.mockImplementation((p: string) => {
+    throw new Error(`ENOENT: no such file or directory: ${p}`);
+  });
 }
 
 function withFile(filename: string, content: string): void {
@@ -212,10 +215,9 @@ I prefer concise answers.`;
   });
 
   it("omits user section when USER.md is just the template/comments", () => {
-    // Template-only USER.md: starts with comment lines and no real content
+    // Template-only USER.md: only HTML comments, no real content
     const templateUser =
-      `# USER.md
-<!-- This file is auto-generated. Add your preferences below. -->`;
+      `<!-- This file is auto-generated. Add your preferences below. -->`;
     withFile("USER.md", templateUser);
     clearIdentityCache();
     const result = getUserFacingIdentity();
@@ -223,15 +225,12 @@ I prefer concise answers.`;
     expect(result).not.toContain("auto-generated");
   });
 
-  it("omits user section when DEFAULT_USER is unchanged", () => {
-    noFiles(); // USER.md will be DEFAULT_USER
+  it("returns a non-empty prompt even when no user files exist", () => {
+    noFiles(); // falls back to defaults
     const result = getUserFacingIdentity();
-    // If the default is template content, verify it is skipped
-    if (DEFAULT_USER.includes("<!--") || DEFAULT_USER.trim() === "") {
-      expect(result).not.toContain(DEFAULT_USER);
-    } else {
-      // Non-template default: it should appear
-      expect(result).toContain(DEFAULT_USER);
-    }
+    // Should always contain the default seed and root content
+    expect(result).toContain(DEFAULT_SEED.trim());
+    expect(result).toContain(DEFAULT_ROOT.trim());
+    expect(result.length).toBeGreaterThan(0);
   });
 });
