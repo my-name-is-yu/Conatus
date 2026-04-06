@@ -43,6 +43,10 @@ export const TimeBudgetSchema = z.object({
 });
 export type TimeBudget = z.infer<typeof TimeBudgetSchema>;
 
+export type TimeBudgetWithWait = TimeBudget & {
+  canAffordWait(waitHours: number): boolean;
+};
+
 export const PacingAlertSchema = z.object({
   type: z.literal("PACING_ALERT"),
   goalId: z.string(),
