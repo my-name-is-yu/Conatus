@@ -18,6 +18,7 @@ function makeSupervisor(coreLoopImpl?: () => Promise<LoopResult> | never, extra:
   const mockCoreLoop = { run: vi.fn().mockImplementation(coreLoopImpl ?? (() => Promise.resolve(makeLoopResult()))), stop: vi.fn() };
   const deps = {
     coreLoop: mockCoreLoop as any,
+    coreLoopFactory: () => mockCoreLoop as any,
     eventBus,
     driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
     stateManager: { getBaseDir: vi.fn().mockReturnValue(os.tmpdir()) } as any,
@@ -82,6 +83,7 @@ describe("LoopSupervisor", () => {
     const sv = new LoopSupervisor(
       {
         coreLoop: crashingLoop as any,
+        coreLoopFactory: () => crashingLoop as any,
         eventBus,
         driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
         stateManager: { getBaseDir: vi.fn().mockReturnValue(os.tmpdir()) } as any,
@@ -123,6 +125,7 @@ describe("LoopSupervisor", () => {
     const sv = new LoopSupervisor(
       {
         coreLoop: { run: wrappedRun, stop: vi.fn() } as any,
+        coreLoopFactory: () => ({ run: wrappedRun, stop: vi.fn() }) as any,
         eventBus,
         driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
         stateManager: { getBaseDir: vi.fn().mockReturnValue(os.tmpdir()) } as any,
