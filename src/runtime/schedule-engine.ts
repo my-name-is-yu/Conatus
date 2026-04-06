@@ -11,6 +11,7 @@ import {
   type ScheduleEntry,
   type ScheduleResult,
 } from "./types/schedule.js";
+import { executeCron, executeGoalTrigger } from "./schedule-engine-layers.js";
 import type { IDataSourceAdapter } from "../platform/observation/data-source-adapter.js";
 import type { DataSourceRegistry } from "../platform/observation/data-source-adapter.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
@@ -32,6 +33,8 @@ interface ScheduleEngineDeps {
   // Using Record<string,unknown> here allows ScheduleEngine to dispatch without constructing
   // a full Report object. Full Report integration deferred to Phase 4.
   notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<void> };
+  coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> };
+  stateManager?: { loadGoal(goalId: string): Promise<any> };
 }
 
 const noopLogger = {
@@ -47,6 +50,8 @@ export class ScheduleEngine {
   private dataSourceRegistry?: Map<string, IDataSourceAdapter> | DataSourceRegistry;
   private llmClient?: ILLMClient;
   private notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<void> };
+  private coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> };
+  private stateManager?: { loadGoal(goalId: string): Promise<any> };
 
   constructor(deps: ScheduleEngineDeps) {
     this.schedulesPath = path.join(deps.baseDir, SCHEDULES_FILE);
@@ -54,6 +59,8 @@ export class ScheduleEngine {
     this.dataSourceRegistry = deps.dataSourceRegistry;
     this.llmClient = deps.llmClient;
     this.notificationDispatcher = deps.notificationDispatcher;
+    this.coreLoop = deps.coreLoop;
+    this.stateManager = deps.stateManager;
   }
 
   // ─── Persistence ───
@@ -92,6 +99,9 @@ export class ScheduleEngine {
       | "baseline_results"
       | "total_executions"
       | "total_tokens_used"
+      | "max_tokens_per_day"
+      | "tokens_used_today"
+      | "budget_reset_at"
     >
   ): Promise<ScheduleEntry> {
     const now = new Date().toISOString();
@@ -131,6 +141,19 @@ export class ScheduleEngine {
   }
 
   async tick(): Promise<ScheduleResult[]> {
+    // Reset daily budget for entries whose budget_reset_at is null or in the past
+    const nowMs = Date.now();
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i]!;
+      if (!e.budget_reset_at || new Date(e.budget_reset_at).getTime() <= nowMs) {
+        this.entries[i] = {
+          ...e,
+          tokens_used_today: 0,
+          budget_reset_at: new Date(nowMs + 24 * 60 * 60 * 1000).toISOString(),
+        };
+      }
+    }
+
     const due = await this.getDueEntries();
     const results: ScheduleResult[] = [];
 
@@ -141,6 +164,10 @@ export class ScheduleEngine {
         result = await this.executeHeartbeat(entry);
       } else if (entry.layer === "probe") {
         result = await this.executeProbe(entry);
+      } else if (entry.layer === "cron") {
+        result = await this.executeCron(entry);
+      } else if (entry.layer === "goal_trigger") {
+        result = await this.executeGoalTrigger(entry);
       } else {
         result = ScheduleResultSchema.parse({
           entry_id: entry.id,
@@ -148,7 +175,7 @@ export class ScheduleEngine {
           duration_ms: 0,
           fired_at: new Date().toISOString(),
         });
-        this.logger.info(`Skipping non-heartbeat/probe entry: ${entry.name} (layer=${entry.layer})`);
+        this.logger.info(`Skipping unknown layer entry: ${entry.name} (layer=${entry.layer})`);
       }
 
       // Update entry state
@@ -167,6 +194,7 @@ export class ScheduleEngine {
           updated_at: new Date().toISOString(),
           total_executions: e.total_executions + 1,
           total_tokens_used: e.total_tokens_used + (result.tokens_used ?? 0),
+          tokens_used_today: (e.tokens_used_today ?? 0) + (result.tokens_used ?? 0),
           consecutive_failures: newFailures,
         };
 
@@ -338,7 +366,31 @@ export class ScheduleEngine {
     }
   }
 
-  // ─── Escalation logic ───
+
+  // ─── Cron execution (Phase 3) ───
+
+  async executeCron(entry: ScheduleEntry): Promise<ScheduleResult> {
+    return executeCron(entry, this.layerDeps());
+  }
+
+  // ─── GoalTrigger execution (Phase 3) ───
+
+  async executeGoalTrigger(entry: ScheduleEntry): Promise<ScheduleResult> {
+    return executeGoalTrigger(entry, this.layerDeps());
+  }
+
+  private layerDeps() {
+    return {
+      dataSourceRegistry: this.dataSourceRegistry,
+      llmClient: this.llmClient,
+      notificationDispatcher: this.notificationDispatcher,
+      coreLoop: this.coreLoop,
+      stateManager: this.stateManager,
+      logger: this.logger,
+    };
+  }
+
+    // ─── Escalation logic ───
 
   private async checkEscalation(
     entry: ScheduleEntry,
