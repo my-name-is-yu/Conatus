@@ -28,6 +28,7 @@ import {
   maskKey,
 } from "./setup-shared.js";
 import type { Provider } from "./setup-shared.js";
+import { findAvailablePort, isPortAvailable, DEFAULT_PORT } from "../../../runtime/port-utils.js";
 
 // ─── Guard helper ───
 
@@ -231,14 +232,46 @@ async function stepApiKey(
   return key;
 }
 
-async function stepDaemon(): Promise<boolean> {
-  const daemon = guardCancel(
+async function stepDaemon(): Promise<{ start: boolean; port: number }> {
+  const start = guardCancel(
     await p.confirm({
       message: "Start PulSeed as a background daemon after setup?",
       initialValue: false,
     })
   );
-  return daemon;
+
+  if (!start) return { start: false, port: DEFAULT_PORT };
+
+  // Auto-detect available port
+  let suggestedPort = DEFAULT_PORT;
+  const defaultAvailable = await isPortAvailable(DEFAULT_PORT);
+  if (!defaultAvailable) {
+    try {
+      suggestedPort = await findAvailablePort(DEFAULT_PORT);
+      p.log.warn(
+        `Port ${DEFAULT_PORT} is in use. Suggested available port: ${suggestedPort}`
+      );
+    } catch {
+      p.log.warn("Could not auto-detect an available port. You can set one manually.");
+    }
+  }
+
+  const portInput = guardCancel(
+    await p.text({
+      message: "EventServer port for the daemon:",
+      placeholder: String(suggestedPort),
+      defaultValue: String(suggestedPort),
+      validate: (v) => {
+        const n = parseInt(v, 10);
+        if (isNaN(n) || !Number.isInteger(n)) return "Port must be a whole number.";
+        if (n < 1024 || n > 65535) return "Port must be between 1024 and 65535.";
+        return undefined;
+      },
+    })
+  );
+
+  const port = parseInt(portInput, 10);
+  return { start: true, port };
 }
 
 // ─── Config writers ───
@@ -319,7 +352,7 @@ export async function runSetupWizard(): Promise<number> {
   const apiKey = await stepApiKey(provider, detectedKeys);
 
   // Step 8: Daemon
-  const startDaemon = await stepDaemon();
+  const { start: startDaemon, port: daemonPort } = await stepDaemon();
 
   // Step 9: Confirm
   const summaryLines = [
@@ -330,7 +363,7 @@ export async function runSetupWizard(): Promise<number> {
     `Model:     ${model}`,
     `Adapter:   ${adapter}`,
     `API Key:   ${maskKey(apiKey)}`,
-    `Daemon:    ${startDaemon ? "yes" : "no"}`,
+    `Daemon:    ${startDaemon ? `yes (port ${daemonPort})` : "no"}`,
   ];
   p.note(summaryLines.join("\n"), "Configuration Summary");
 
@@ -367,7 +400,19 @@ export async function runSetupWizard(): Promise<number> {
   clearIdentityCache();
 
   if (startDaemon) {
-    p.log.info("To start the daemon, run: pulseed start --goal <goal-id> --detach");
+    // Persist the chosen port into daemon.json so DaemonRunner picks it up
+    const daemonConfigPath = path.join(dir, "daemon.json");
+    try {
+      let existing: Record<string, unknown> = {};
+      if (fs.existsSync(daemonConfigPath)) {
+        existing = JSON.parse(fs.readFileSync(daemonConfigPath, "utf-8")) as Record<string, unknown>;
+      }
+      existing["event_server_port"] = daemonPort;
+      fs.writeFileSync(daemonConfigPath, JSON.stringify(existing, null, 2), "utf-8");
+    } catch {
+      p.log.warn("Could not save daemon port to daemon.json");
+    }
+    p.log.info(`Daemon port ${daemonPort} saved. To start: pulseed start --goal <goal-id> --detach`);
   }
 
   p.outro("\ud83c\udf31 Seeds planted. Time to grow.");
