@@ -31,6 +31,9 @@ import {
 } from "./setup-shared.js";
 import type { Provider } from "./setup-shared.js";
 import { findAvailablePort, isPortAvailable, DEFAULT_PORT } from "../../../runtime/port-utils.js";
+import { isDaemonRunning } from "../../../runtime/daemon-client.js";
+import { PIDManager } from "../../../runtime/pid-manager.js";
+import { homedir } from "node:os";
 import { SEEDY_PIXEL } from "../../tui/seedy-art.js";
 
 // ─── Guard helper ───
@@ -326,6 +329,51 @@ async function stepApiKey(
 }
 
 async function stepDaemon(): Promise<{ start: boolean; port: number }> {
+  const baseDir = path.join(homedir(), '.pulseed');
+
+  // Check if daemon is already running
+  const { running: alreadyRunning, port: currentPort } = await isDaemonRunning(baseDir);
+
+  if (alreadyRunning) {
+    const action = guardCancel(
+      await p.select({
+        message: `A daemon is already running on port ${currentPort}. What would you like to do?`,
+        options: [
+          {
+            value: 'stop' as const,
+            label: 'Stop and reconfigure',
+            hint: 'stop the running daemon, then configure a new one',
+          },
+          {
+            value: 'keep' as const,
+            label: 'Keep running (skip daemon setup)',
+            hint: 'leave daemon as-is and continue',
+          },
+        ],
+      })
+    );
+
+    if (action === 'keep') {
+      return { start: false, port: currentPort };
+    }
+
+    // Stop the running daemon
+    const pidManager = new PIDManager(baseDir);
+    const pidInfo = await pidManager.readPID();
+    if (pidInfo !== null) {
+      try {
+        process.kill(pidInfo.pid, 'SIGTERM');
+        // Wait briefly for process to exit
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await pidManager.cleanup();
+        p.log.success('Daemon stopped.');
+      } catch {
+        p.log.warn('Could not stop daemon. It may have already exited.');
+        await pidManager.cleanup();
+      }
+    }
+  }
+
   const start = guardCancel(
     await p.confirm({
       message: "Start PulSeed as a background daemon after setup?",
