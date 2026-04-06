@@ -1,14 +1,14 @@
 import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
 import type { EventServer } from "../event-server.js";
-import type { Envelope } from "../types/envelope.js";
 import { createEnvelope } from "../types/envelope.js";
+import type { Envelope } from "../types/envelope.js";
 
 /**
  * HttpChannelAdapter wraps the existing EventServer and converts
  * incoming HTTP events into Envelopes for the Gateway.
  *
  * In Phase A, this is the only ChannelAdapter.
- * The EventServer retains all existing functionality (SSE, approval, goals API).
+ * The EventServer retains all its existing functionality (SSE, approval, goals API).
  * The adapter intercepts POST /events to route through the Envelope path.
  */
 export class HttpChannelAdapter implements ChannelAdapter {
