@@ -805,3 +805,142 @@ describe("Escalation", () => {
     expect(updatedTarget.enabled).toBe(true);
   });
 });
+
+// ─── Additional Phase 2 tests ───
+
+describe('ChangeDetector threshold mode edge cases', () => {
+  it('threshold mode with undefined threshold_value returns changed true (surfaces misconfiguration)', () => {
+    const result = detectChange('threshold', 50, [], undefined);
+    expect(result.changed).toBe(true);
+    expect(result.details).toContain('non-numeric result cannot be evaluated against threshold');
+  });
+});
+
+describe('Probe execution edge cases', () => {
+  it('executeProbe skips LLM when llmClient not injected even if llm_on_change is true', async () => {
+    const adapter = makeMockAdapter({ count: 2 });
+    const registry = new Map([['test-source', adapter]]);
+    // No llmClient provided
+    const eng = new ScheduleEngine({ baseDir: tempDir, dataSourceRegistry: registry });
+
+    const entry = await eng.addEntry(makeProbeEntry({
+      probe: {
+        data_source_id: 'test-source',
+        query_params: {},
+        change_detector: { mode: 'diff', baseline_window: 5 },
+        llm_on_change: true, // true but no client
+      },
+    }));
+
+    const entries = eng.getEntries();
+    entries[0]!.baseline_results = [{ count: 1 }];
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result!.status).toBe('ok');
+    expect(result!.change_detected).toBe(true);
+    // tokens_used should be 0 since no llmClient was injected
+    expect(result!.tokens_used).toBe(0);
+  });
+
+  it('executeProbe dispatches schedule_change notification on change', async () => {
+    const notifications: Record<string, unknown>[] = [];
+    const adapter = makeMockAdapter({ count: 2 });
+    const registry = new Map([['test-source', adapter]]);
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      dataSourceRegistry: registry,
+      notificationDispatcher: {
+        dispatch: async (r) => { notifications.push(r); },
+      },
+    });
+
+    const entry = await eng.addEntry(makeProbeEntry());
+
+    const entries = eng.getEntries();
+    entries[0]!.baseline_results = [{ count: 1 }];
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result!.change_detected).toBe(true);
+    expect(notifications.some((n) => n['report_type'] === 'schedule_change')).toBe(true);
+  });
+
+  it('executeProbe returns error when entry has no probe config', async () => {
+    const adapter = makeMockAdapter('value');
+    const registry = new Map([['test-source', adapter]]);
+    const eng = new ScheduleEngine({ baseDir: tempDir, dataSourceRegistry: registry });
+
+    // Add entry without probe config (use heartbeat layer to get a raw entry then override)
+    const entry = await eng.addEntry({
+      name: 'no-probe-config',
+      layer: 'probe',
+      trigger: { type: 'interval', seconds: 60 },
+      enabled: true,
+      // probe field intentionally omitted
+    });
+
+    // Call executeProbe directly with an entry that has no probe config
+    const result = await (eng as any).executeProbe({ ...entry, probe: undefined });
+    expect(result.status).toBe('error');
+    expect(result.error_message).toContain('No probe config');
+  });
+
+  it('escalation sets target entry next_fire_at for immediate firing', async () => {
+    const eng = new ScheduleEngine({ baseDir: tempDir });
+
+    const targetEntry = await eng.addEntry({
+      name: 'target-probe',
+      layer: 'probe',
+      trigger: { type: 'interval', seconds: 3600 },
+      enabled: false,
+      probe: {
+        data_source_id: 'some-source',
+        query_params: {},
+        change_detector: { mode: 'diff', baseline_window: 5 },
+        llm_on_change: false,
+      },
+    });
+
+    const escalatingEntry = await eng.addEntry({
+      name: 'escalating-entry',
+      layer: 'probe',
+      trigger: { type: 'interval', seconds: 60 },
+      enabled: true,
+      probe: {
+        data_source_id: 'missing-source',
+        query_params: {},
+        change_detector: { mode: 'diff', baseline_window: 5 },
+        llm_on_change: false,
+      },
+      escalation: {
+        enabled: true,
+        circuit_breaker_threshold: 100,
+        cooldown_minutes: 0,
+        max_per_hour: 100,
+        target_entry_id: targetEntry.id,
+        target_layer: 'probe',
+      },
+    });
+
+    const entries = eng.getEntries();
+    const idx = entries.findIndex((e) => e.id === escalatingEntry.id);
+    entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const beforeTick = Date.now();
+    await eng.tick();
+
+    const updatedTarget = eng.getEntries().find((e) => e.id === targetEntry.id)!;
+    expect(updatedTarget.enabled).toBe(true);
+    // next_fire_at should have been set to a time <= now (i.e., immediate firing)
+    expect(new Date(updatedTarget.next_fire_at).getTime()).toBeLessThanOrEqual(beforeTick + 5000);
+  });
+});
