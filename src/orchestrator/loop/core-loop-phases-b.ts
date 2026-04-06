@@ -19,6 +19,9 @@ import {
   getMilestones,
   evaluatePace,
 } from "../goal/milestone-evaluator.js";
+import { gatherStallEvidence } from "./stall-evidence.js";
+import { verifyWithTools } from "./verification-layer1.js";
+import { buildLoopToolContext } from "./core-loop-phases.js";
 
 // ─── Phase 5 ───
 
@@ -114,6 +117,26 @@ export async function detectStallsAndRebalance(
 ): Promise<void> {
   try {
     const gapHistory = await ctx.deps.stateManager.loadGapHistory(goalId);
+
+    // Gather tool-based workspace evidence for stall detection (Phase 6)
+    if (ctx.toolExecutor) {
+      try {
+        const toolContext = {
+          cwd: process.cwd(),
+          goalId,
+          trustBalance: 0,
+          preApproved: true,
+          approvalFn: async () => false,
+        };
+        const evidence = await gatherStallEvidence(ctx.toolExecutor, toolContext);
+        result.toolStallEvidence = evidence;
+        if (!evidence.hasWorkspaceChanges) {
+          ctx.logger?.info("CoreLoop: stall evidence — no workspace changes detected", { goalId, toolErrors: evidence.toolErrors });
+        }
+      } catch {
+        // Non-fatal: evidence gathering failure does not block stall detection
+      }
+    }
 
     // Per-dimension stall check
     for (const dim of goal.dimensions) {
@@ -420,6 +443,7 @@ export async function runTaskCycleWithContext(
 ): Promise<boolean> {
   const { handleCapabilityAcquisition, incrementTransferCounter, tryGenerateReport } = callbacks;
   try {
+    const taskStartTime = Date.now();
     const driveContext = buildDriveContext(goal);
     const adapter = ctx.deps.adapterRegistry.getAdapter(ctx.config.adapterType);
 
@@ -541,6 +565,41 @@ export async function runTaskCycleWithContext(
         ctx.deps.portfolioManager.recordTaskCompletion(taskResult.task.strategy_id);
       } catch {
         // Non-fatal
+      }
+    }
+
+    // Phase 7: tool-based verification (Layer 1)
+    if (ctx.toolExecutor && taskResult.task.success_criteria.length > 0) {
+      try {
+        const toolCtx = await buildLoopToolContext(ctx, goalId);
+        const verificationResult = await verifyWithTools(taskResult.task.success_criteria, ctx.toolExecutor, toolCtx);
+        if (!verificationResult.mechanicalPassed) {
+          taskResult.verificationResult = { ...taskResult.verificationResult, verdict: "fail" };
+          ctx.logger?.info("CoreLoop Phase 7: tool verification failed", {
+            taskId: taskResult.task.id,
+            details: verificationResult.details,
+          });
+        }
+        result.toolVerification = verificationResult;
+
+        // Feed execution results back to strategy for scoring
+        if (typeof ctx.deps.strategyManager.recordExecutionFeedback === 'function') {
+          const activeStrat = await ctx.deps.strategyManager.getActiveStrategy(goalId);
+          if (activeStrat) {
+            ctx.deps.strategyManager.recordExecutionFeedback({
+              strategyId: activeStrat.hypothesis,
+              taskId: taskResult.task?.id ?? 'unknown',
+              success: taskResult.action === 'completed',
+              verificationPassed: verificationResult.mechanicalPassed,
+              duration_ms: Date.now() - taskStartTime,
+              timestamp: Date.now(),
+            });
+          }
+        }
+      } catch (err) {
+        ctx.logger?.warn("CoreLoop Phase 7: tool verification threw (non-fatal)", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
