@@ -10,7 +10,10 @@ export const ExternalScheduleEntrySchema = z.object({
     type: z.enum(['cron', 'interval']),
     expression: z.string().optional(),  // for cron type
     seconds: z.number().optional(),     // for interval type
-  }),
+  }).refine(
+    (t) => (t.type === 'cron' ? !!t.expression : !!t.seconds),
+    { message: 'cron trigger requires expression, interval trigger requires seconds' }
+  ),
   metadata: z.record(z.unknown()).default({}), // source-specific data
   synced_at: z.string().datetime(),
 });
