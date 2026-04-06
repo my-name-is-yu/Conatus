@@ -74,24 +74,24 @@ describe("loadIdentity()", () => {
   });
 
   it("reads SEED.md when it exists", () => {
-    const custom = "# MySeed
-Custom seed content.";
+    const custom = `# MySeed
+Custom seed content.`;
     withFile("SEED.md", custom);
     const identity = loadIdentity();
     expect(identity.seed).toBe(custom);
   });
 
   it("reads ROOT.md when it exists", () => {
-    const custom = "# MyRoot
-Custom root content.";
+    const custom = `# MyRoot
+Custom root content.`;
     withFile("ROOT.md", custom);
     const identity = loadIdentity();
     expect(identity.root).toBe(custom);
   });
 
   it("reads USER.md when it exists", () => {
-    const custom = "# User
-Custom user content.";
+    const custom = `# User
+Custom user content.`;
     withFile("USER.md", custom);
     const identity = loadIdentity();
     expect(identity.user).toBe(custom);
@@ -150,8 +150,8 @@ describe("getAgentName()", () => {
   });
 
   it("returns custom name from SEED.md heading", () => {
-    withFile("SEED.md", "# Pebble
-Some content.");
+    withFile("SEED.md", `# Pebble
+Some content.`);
     expect(getAgentName()).toBe("Pebble");
   });
 
@@ -181,8 +181,8 @@ describe("getInternalIdentityPrefix()", () => {
   });
 
   it("uses custom agent name when SEED.md sets one", () => {
-    withFile("SEED.md", "# Pebble
-Content here.");
+    withFile("SEED.md", `# Pebble
+Content here.`);
     clearIdentityCache();
     const result = getInternalIdentityPrefix("planner");
     expect(result).toContain("Pebble");
@@ -204,8 +204,8 @@ describe("getUserFacingIdentity()", () => {
   });
 
   it("includes user content when USER.md has real content", () => {
-    const customUser = "# User preferences
-I prefer concise answers.";
+    const customUser = `# User preferences
+I prefer concise answers.`;
     withFile("USER.md", customUser);
     const result = getUserFacingIdentity();
     expect(result).toContain(customUser);
@@ -214,8 +214,8 @@ I prefer concise answers.";
   it("omits user section when USER.md is just the template/comments", () => {
     // Template-only USER.md: starts with comment lines and no real content
     const templateUser =
-      "# USER.md
-<!-- This file is auto-generated. Add your preferences below. -->";
+      `# USER.md
+<!-- This file is auto-generated. Add your preferences below. -->`;
     withFile("USER.md", templateUser);
     clearIdentityCache();
     const result = getUserFacingIdentity();
