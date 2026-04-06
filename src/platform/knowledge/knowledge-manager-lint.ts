@@ -66,9 +66,7 @@ export async function lintAgentMemory(opts: {
   for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
     const chunk = entries.slice(i, i + CHUNK_SIZE);
     const userPrompt = buildUserPrompt(chunk);
-    const raw = await llmCall(LINT_SYSTEM_PROMPT + "
-
-" + userPrompt);
+    const raw = await llmCall(LINT_SYSTEM_PROMPT + "\n\n" + userPrompt);
 
     // Sanitize: strip markdown fences
     const cleaned = raw
@@ -87,7 +85,6 @@ export async function lintAgentMemory(opts: {
 
   // 3. Apply repairs if autoRepair is enabled
   let repairsApplied = 0;
-  let entriesFlagged = 0;
 
   for (const finding of allFindings) {
     if (!autoRepair) {
