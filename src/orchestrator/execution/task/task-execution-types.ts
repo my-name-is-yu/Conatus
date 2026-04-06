@@ -12,6 +12,8 @@ export interface TaskCycleResult {
   verificationResult: VerificationResult;
   action: "completed" | "keep" | "discard" | "escalate" | "approval_denied" | "capability_acquiring";
   acquisition_task?: CapabilityAcquisitionTask;
+  /** Total tokens consumed by LLM calls during this task cycle (generation + verification). */
+  tokensUsed?: number;
 }
 
 /**
