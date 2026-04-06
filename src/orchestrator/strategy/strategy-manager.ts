@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { StrategySchema, WaitStrategySchema } from "../../base/types/strategy.js";
+import { StrategySchema, WaitStrategySchema, parseStrategy } from "../../base/types/strategy.js";
 import type { Strategy } from "../../base/types/strategy.js";
 import { redistributeAllocation } from "./strategy-helpers.js";
 import { StrategyManagerBase } from "./strategy-manager-base.js";
@@ -70,7 +70,7 @@ export class StrategyManager extends StrategyManagerBase {
     const updatedStrategies = portfolio.strategies.map((s) => {
       if (!strategyIds.includes(s.id)) return s;
 
-      const updated = StrategySchema.parse({
+      const updated = parseStrategy({
         ...s,
         state: "active",
         started_at: now,
@@ -169,7 +169,7 @@ export class StrategyManager extends StrategyManagerBase {
     const now = new Date().toISOString();
     const freedAllocation = strategy.allocation;
 
-    const terminated = StrategySchema.parse({
+    const terminated = parseStrategy({
       ...strategy,
       state: "terminated",
       completed_at: now,
@@ -233,18 +233,12 @@ export class StrategyManager extends StrategyManagerBase {
     });
 
     const portfolio = await this.loadOrCreatePortfolio(goalId);
-    // WaitStrategy is a superset of Strategy; store as Strategy (base fields) in portfolio
-    portfolio.strategies.push(StrategySchema.parse(waitStrategy));
+    // Store WaitStrategy with all extension fields preserved
+    portfolio.strategies.push(waitStrategy);
     await this.savePortfolio(goalId, portfolio);
 
-    // Persist wait-specific fields in a sidecar so activateMultiple can read wait_until
-    await this.stateManager.writeRaw(
-      `strategies/${goalId}/wait-meta/${waitStrategy.id}.json`,
-      { wait_until: params.wait_until }
-    );
-
     this.strategyIndex.set(waitStrategy.id, goalId);
-    return StrategySchema.parse(waitStrategy);
+    return waitStrategy;
   }
 
   /**
@@ -266,7 +260,7 @@ export class StrategyManager extends StrategyManagerBase {
     }
 
     const freedAllocation = strategy.allocation;
-    const suspended = StrategySchema.parse({
+    const suspended = parseStrategy({
       ...strategy,
       state: "suspended",
       allocation: 0,
@@ -304,7 +298,7 @@ export class StrategyManager extends StrategyManagerBase {
       );
     }
 
-    const resumed = StrategySchema.parse({
+    const resumed = parseStrategy({
       ...strategy,
       state: "active",
       allocation,
@@ -324,7 +318,7 @@ export class StrategyManager extends StrategyManagerBase {
         totalOtherAlloc > 0
           ? (s.allocation / totalOtherAlloc) * remaining
           : remaining / others.length;
-      return StrategySchema.parse({ ...s, allocation: newAlloc });
+      return parseStrategy({ ...s, allocation: newAlloc });
     });
 
     await this.savePortfolio(goalId, portfolio);
@@ -363,7 +357,7 @@ export class StrategyManager extends StrategyManagerBase {
     }
 
     portfolio.strategies = portfolio.strategies.map((s) =>
-      s.id === strategyId ? StrategySchema.parse({ ...s, allocation: newAllocation }) : s
+      s.id === strategyId ? parseStrategy({ ...s, allocation: newAllocation }) : s
     );
     await this.savePortfolio(goalId, portfolio);
   }
