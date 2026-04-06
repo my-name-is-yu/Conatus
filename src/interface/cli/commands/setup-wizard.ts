@@ -221,10 +221,10 @@ async function stepAdapter(model: string, provider: Provider): Promise<string> {
 async function runCodexOAuthLogin(): Promise<string | undefined> {
   p.log.info("Opening browser for OAuth login...");
 
-  // Try npx @openai/codex --login first, then npx codex --login as fallback
+  // Try npx @openai/codex login first, then npx codex --login as fallback
   const attempts = [
-    ["npx", ["--yes", "@openai/codex", "--login"]],
-    ["npx", ["--yes", "codex", "--login"]],
+    ["npx", ["--yes", "@openai/codex", "login"]],
+    ["npx", ["--yes", "codex", "login"]],
   ] as [string, string[]][];
 
   for (const [cmd, args] of attempts) {
@@ -277,7 +277,7 @@ async function stepApiKey(
       {
         value: "login" as const,
         label: "Login with OAuth (opens browser via Codex CLI)",
-        hint: "runs npx @openai/codex --login",
+        hint: "runs npx @openai/codex login",
       },
     ];
 
