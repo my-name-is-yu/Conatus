@@ -16,7 +16,7 @@ const LATENCY_DEFAULTS: Record<string, number> = {
 export interface EffectLatencyEstimate {
   actionType: string;
   estimatedHours: number;
-  confidence: "high" | "medium" | "low";
+  confidence: "high" | "low";
   suggestedWaitUntil: string; // ISO datetime
 }
 
@@ -42,4 +42,14 @@ export function estimateEffectLatency(
 /** Register custom latency for an action type (for plugins/extensions). */
 export function registerLatencyDefault(actionType: string, hours: number): void {
   LATENCY_DEFAULTS[actionType.toLowerCase().trim()] = hours;
+}
+
+/** Reset LATENCY_DEFAULTS to the original built-in values. Used in tests for isolation. */
+const ORIGINAL_LATENCY_DEFAULTS: Record<string, number> = { ...LATENCY_DEFAULTS };
+
+export function resetLatencyDefaults(): void {
+  for (const key of Object.keys(LATENCY_DEFAULTS)) {
+    delete LATENCY_DEFAULTS[key];
+  }
+  Object.assign(LATENCY_DEFAULTS, ORIGINAL_LATENCY_DEFAULTS);
 }

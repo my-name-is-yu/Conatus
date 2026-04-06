@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   estimateEffectLatency,
   registerLatencyDefault,
+  resetLatencyDefaults,
 } from "../effect-latency-estimator.js";
 
 describe("estimateEffectLatency", () => {
@@ -76,6 +77,8 @@ describe("estimateEffectLatency", () => {
 });
 
 describe("registerLatencyDefault", () => {
+  beforeEach(() => resetLatencyDefaults());
+
   it("registers a custom action type and returns it on next call", () => {
     registerLatencyDefault("custom_action", 99);
     const result = estimateEffectLatency("custom_action");
