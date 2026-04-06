@@ -34,6 +34,7 @@ import type { CompletionJudgment } from "../../base/types/satisficing.js";
 import type { StallReport, StallAnalysis } from "../../base/types/stall.js";
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolRegistry } from "../../tools/registry.js";
+import type { VerificationLayer1Result } from "./verification-layer1.js";
 
 
 // ─── GapCalculator module interface (pure functions) ───
@@ -162,6 +163,10 @@ export interface LoopIterationResult {
   skipped?: boolean;
   /** Reason for the skip, when skipped=true. */
   skipReason?: string;
+  /** Result from Phase 7 tool-based verification (Layer 1). Present when toolExecutor is set and task has success_criteria. */
+  toolVerification?: VerificationLayer1Result;
+  /** Tool-based workspace evidence gathered during stall detection (Phase 6). */
+  toolStallEvidence?: import("./stall-evidence.js").StallEvidence;
 }
 
 /**

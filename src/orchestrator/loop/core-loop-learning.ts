@@ -8,6 +8,8 @@
 
 import type { Logger } from "../../runtime/logger.js";
 import type { CoreLoopDeps } from "./core-loop-types.js";
+import type { ToolExecutor } from "../../tools/executor.js";
+import { gatherLearningEvidence } from "./learning-evidence.js";
 
 export class CoreLoopLearning {
   private lastLearningReviewAt: number = Date.now();
@@ -50,7 +52,8 @@ export class CoreLoopLearning {
   async checkPeriodicReview(
     goalId: string,
     deps: CoreLoopDeps,
-    logger: Logger | undefined
+    logger: Logger | undefined,
+    toolExecutor?: ToolExecutor,
   ): Promise<void> {
     if (!deps.learningPipeline) return;
 
@@ -58,6 +61,14 @@ export class CoreLoopLearning {
     const intervalMs = await this.getPeriodicReviewInterval(goalId, deps.stateManager);
     if (now - this.lastLearningReviewAt >= intervalMs) {
       try {
+        if (toolExecutor) {
+          const toolCtx = { cwd: ".", goalId, trustBalance: 0, preApproved: true, approvalFn: async () => false };
+          const evidence = await gatherLearningEvidence(toolExecutor, toolCtx);
+          if (evidence.errors.length > 0) {
+            logger?.warn("CoreLoop: evidence gathering errors", { goalId, errors: evidence.errors });
+          }
+          logger?.debug("CoreLoop: periodic review evidence", { goalId, artifactCount: evidence.artifactCount, changesLen: evidence.recentChanges.length });
+        }
         await deps.learningPipeline.onPeriodicReview(goalId);
         this.lastLearningReviewAt = now;
       } catch (err) {
@@ -77,11 +88,21 @@ export class CoreLoopLearning {
   async onGoalCompleted(
     goalId: string,
     deps: CoreLoopDeps,
-    logger: Logger | undefined
+    logger: Logger | undefined,
+    toolExecutor?: ToolExecutor,
   ): Promise<void> {
     if (!deps.learningPipeline) return;
 
     try {
+      if (toolExecutor) {
+        const toolCtx = { cwd: ".", goalId, trustBalance: 0, preApproved: true, approvalFn: async () => false };
+        const evidence = await gatherLearningEvidence(toolExecutor, toolCtx);
+        if (evidence.errors.length > 0) {
+          logger?.warn("CoreLoop: evidence gathering errors", { goalId, errors: evidence.errors });
+        }
+        // Evidence is informational — log artifact count for observability
+        logger?.debug("CoreLoop: goal completed evidence", { goalId, artifactCount: evidence.artifactCount });
+      }
       await deps.learningPipeline.onGoalCompleted(goalId);
     } catch (err) {
       // non-fatal
