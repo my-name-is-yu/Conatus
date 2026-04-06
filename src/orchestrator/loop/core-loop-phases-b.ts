@@ -443,6 +443,7 @@ export async function runTaskCycleWithContext(
 ): Promise<boolean> {
   const { handleCapabilityAcquisition, incrementTransferCounter, tryGenerateReport } = callbacks;
   try {
+    const taskStartTime = Date.now();
     const driveContext = buildDriveContext(goal);
     const adapter = ctx.deps.adapterRegistry.getAdapter(ctx.config.adapterType);
 
@@ -580,6 +581,21 @@ export async function runTaskCycleWithContext(
           });
         }
         result.toolVerification = verificationResult;
+
+        // Feed execution results back to strategy for scoring
+        if (typeof ctx.deps.strategyManager.recordExecutionFeedback === 'function') {
+          const activeStrategy = goal.active_strategy;
+          if (activeStrategy) {
+            ctx.deps.strategyManager.recordExecutionFeedback({
+              strategyId: activeStrategy,
+              taskId: taskResult.task?.id ?? 'unknown',
+              success: taskResult.action === 'completed',
+              verificationPassed: verificationResult.mechanicalPassed,
+              duration_ms: Date.now() - taskStartTime,
+              timestamp: Date.now(),
+            });
+          }
+        }
       } catch (err) {
         ctx.logger?.warn("CoreLoop Phase 7: tool verification threw (non-fatal)", {
           error: err instanceof Error ? err.message : String(err),
