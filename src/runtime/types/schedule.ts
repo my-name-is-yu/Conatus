@@ -58,7 +58,7 @@ export const ScheduleEntrySchema = z.object({
   last_fired_at: z.string().datetime().nullable().default(null),
   next_fire_at: z.string().datetime(),
   consecutive_failures: z.number().int().default(0),
-  last_escalation_at: z.string().nullable().default(null),
+  last_escalation_at: z.string().datetime().nullable().default(null),
   total_executions: z.number().int().default(0),
   total_tokens_used: z.number().int().default(0),
 });
