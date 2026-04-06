@@ -150,6 +150,7 @@ Return JSON:
       criteria_total: parsed.criteria_total,
       tokensUsed: 0, // TODO: PromptGateway does not expose usage data
     };
+    if (deps._tokenAccumulator) deps._tokenAccumulator.tokensUsed += result.tokensUsed;
     await deps.sessionManager.endSession(reviewSession.id, `LLM review: ${verdictStr}`);
     return result;
   }
@@ -213,6 +214,7 @@ Return JSON:
       criteria_total: parsed.criteria_total,
       tokensUsed: verifierTokens,
     };
+    if (deps._tokenAccumulator) deps._tokenAccumulator.tokensUsed += result.tokensUsed;
     await deps.sessionManager.endSession(reviewSession.id, `LLM review: ${verdictStr}`);
     return result;
   } catch {
