@@ -685,9 +685,10 @@ export class StateManager {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
-    // Use protectedWrite only for goal-scoped paths
-    if (relativePath.startsWith("goals/")) {
-      const goalId = relativePath.split("/")[1];
+    // Use protectedWrite only for goal-scoped paths like goals/<goalId>/<filename>
+    const parts = relativePath.split("/");
+    if (relativePath.startsWith("goals/") && parts.length >= 3) {
+      const goalId = parts[1];
       await this.protectedWrite(goalId, "write_raw", { path: relativePath, payload: data }, async () => {
         await this.atomicWrite(filePath, data);
       });
