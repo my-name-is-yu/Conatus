@@ -15,7 +15,7 @@ vi.mock("node:fs", () => ({
 }));
 
 vi.mock("../../../base/utils/paths.js", () => ({
-  getPulseedHome: () => "/tmp/fake-pulseed-home",
+  getPulseedDirPath: () => "/tmp/fake-pulseed-home",
 }));
 
 // Import AFTER mocks are set up (vi.mock is hoisted by vitest)
