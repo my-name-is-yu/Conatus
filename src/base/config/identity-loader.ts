@@ -105,9 +105,5 @@ export function getUserFacingIdentity(): string {
   if (isUserContentMeaningful(user)) {
     parts.push(user.trim());
   }
-  return parts.join("
-
----
-
-");
+  return parts.join("\n\n---\n\n");
 }
