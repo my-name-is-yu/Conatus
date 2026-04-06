@@ -48,11 +48,11 @@ describe("SlackChannelAdapter — properties", () => {
 // ---------------------------------------------------------------------------
 
 describe("SlackChannelAdapter — URL verification", () => {
-  it("returns challenge for url_verification type (no signature required)", () => {
+  it("returns challenge for url_verification type (valid signature required)", () => {
     const adapter = makeAdapter();
     const body = JSON.stringify({ type: "url_verification", challenge: "abc-xyz-123" });
-    // No headers needed for challenge
-    const res = adapter.handleRequest(body, {});
+    const headers = buildHeaders(body);
+    const res = adapter.handleRequest(body, headers);
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ challenge: "abc-xyz-123" });
   });
@@ -60,8 +60,16 @@ describe("SlackChannelAdapter — URL verification", () => {
   it("returns challenge value as-is", () => {
     const adapter = makeAdapter();
     const body = JSON.stringify({ type: "url_verification", challenge: "random_token_42" });
-    const res = adapter.handleRequest(body, {});
+    const headers = buildHeaders(body);
+    const res = adapter.handleRequest(body, headers);
     expect(JSON.parse(res.body).challenge).toBe("random_token_42");
+  });
+
+  it("rejects url_verification with missing signature (401)", () => {
+    const adapter = makeAdapter();
+    const body = JSON.stringify({ type: "url_verification", challenge: "abc-xyz-123" });
+    const res = adapter.handleRequest(body, {});
+    expect(res.status).toBe(401);
   });
 });
 
