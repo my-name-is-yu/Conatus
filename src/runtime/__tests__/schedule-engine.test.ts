@@ -239,7 +239,7 @@ describe("Heartbeat execution", () => {
     expect(updated.consecutive_failures).toBe(0);
   });
 
-  it("tick skips non-heartbeat layers in Phase 1", async () => {
+  it("tick routes cron entry without config to error (Phase 3)", async () => {
     const entry = await engine.addEntry({
       name: "cron-entry",
       layer: "cron",
@@ -256,7 +256,9 @@ describe("Heartbeat execution", () => {
     const results = await engine.tick();
     const result = results.find((r) => r.entry_id === entry.id);
     expect(result).toBeDefined();
-    expect(result!.status).toBe("skipped");
+    // Phase 3: cron entries are now executed — without a cron config they return error
+    expect(result!.status).toBe("error");
+    expect(result!.error_message).toContain("No cron config");
   });
 });
 
