@@ -33,6 +33,7 @@ import type { Provider } from "./setup-shared.js";
 import { findAvailablePort, isPortAvailable, DEFAULT_PORT } from "../../../runtime/port-utils.js";
 import { isDaemonRunning } from "../../../runtime/daemon-client.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
+import { DaemonStateSchema } from "../../../runtime/types/daemon.js";
 import { homedir } from "node:os";
 import { SEEDY_PIXEL } from "../../tui/seedy-art.js";
 
@@ -335,6 +336,25 @@ async function stepDaemon(): Promise<{ start: boolean; port: number }> {
   const { running: alreadyRunning, port: currentPort } = await isDaemonRunning(baseDir);
 
   if (alreadyRunning) {
+    // Try to read daemon-state.json to show active goals
+    try {
+      const stateFile = path.join(baseDir, 'daemon-state.json');
+      if (fs.existsSync(stateFile)) {
+        const stateContent = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
+        const parseResult = DaemonStateSchema.safeParse(stateContent);
+        if (parseResult.success) {
+          const activeGoals = parseResult.data.active_goals;
+          if (activeGoals.length > 0) {
+            p.log.info(`Active goals: ${activeGoals.join(', ')}`);
+          } else {
+            p.log.info('(no active goals)');
+          }
+        }
+      }
+    } catch {
+      // Silently ignore errors reading/parsing daemon state
+    }
+
     const action = guardCancel(
       await p.select({
         message: `A daemon is already running on port ${currentPort}. What would you like to do?`,
