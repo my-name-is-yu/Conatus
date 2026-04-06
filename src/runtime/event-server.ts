@@ -10,6 +10,7 @@ import { getEventsDir } from "../base/utils/paths.js";
 import type { Logger } from "./logger.js";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { TriggerMapper } from "./trigger-mapper.js";
+import { findAvailablePort, DEFAULT_PORT, MAX_PORT_ATTEMPTS } from "./port-utils.js";
 
 export interface EventServerConfig {
   host?: string; // default: "127.0.0.1" (localhost only!)
@@ -38,7 +39,7 @@ export class EventServer {
   constructor(driveSystem: DriveSystem, config?: EventServerConfig, logger?: Logger) {
     this.driveSystem = driveSystem;
     this.host = config?.host ?? "127.0.0.1";
-    this.port = config?.port ?? 41700;
+    this.port = config?.port ?? DEFAULT_PORT;
     // Default events directory: ~/.pulseed/events/
     this.eventsDir = config?.eventsDir ?? getEventsDir();
     this.logger = logger;
@@ -46,21 +47,43 @@ export class EventServer {
     this.triggerMapper = config?.triggerMapper;
   }
 
-  /** Start HTTP server */
+  /** Start HTTP server, auto-retrying on EADDRINUSE up to MAX_PORT_ATTEMPTS times */
   async start(): Promise<void> {
     await fsp.mkdir(this.eventsDir, { recursive: true });
+    // If a specific non-zero port was requested, find the first available port
+    // starting from it. Port 0 means OS-assigned — skip auto-detection.
+    const startPort = this.port === 0 ? 0 : await findAvailablePort(this.port);
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       const server = this.server;
-      server.listen(this.port, this.host, () => {
-        // When port 0 is used, capture the OS-assigned port
+      server.listen(startPort, this.host, () => {
+        // Capture the actual bound port (important for port 0 and auto-retry cases)
         const addr = server.address();
         if (addr && typeof addr === "object") {
           this.port = addr.port;
         }
+        this.logger?.info(`EventServer listening on ${this.host}:${this.port}`);
         resolve();
       });
-      this.server.on("error", reject);
+      this.server.on("error", (err: NodeJS.ErrnoException) => {
+        // EADDRINUSE should not reach here since findAvailablePort pre-checks,
+        // but guard against a race condition.
+        if (err.code === "EADDRINUSE" && startPort !== 0) {
+          const fallbackStart = startPort + MAX_PORT_ATTEMPTS;
+          findAvailablePort(fallbackStart).then((fallback) => {
+            server.listen(fallback, this.host, () => {
+              const addr = server.address();
+              if (addr && typeof addr === "object") {
+                this.port = addr.port;
+              }
+              this.logger?.info(`EventServer listening on ${this.host}:${this.port} (fallback)`);
+              resolve();
+            });
+          }).catch(reject);
+        } else {
+          reject(err);
+        }
+      });
     });
   }
 
