@@ -80,16 +80,23 @@ Integration map:
 
 ```text
 CLI / ScheduleEngine / DaemonRunner idle / Importance threshold
-  -> DreamEngine
-    -> importance buffer pass
-    -> log readers
-    -> analyzers
-    -> consolidators
-    -> knowledge outputs
-      -> state files
-      -> archives
-      -> strategy knowledge
-      -> schedule hints
+  -> DreamEngine.run({ tier })
+    -> Light Dream (Nap)
+      -> importance buffer pass
+      -> active-goal memory tidy
+      -> agent memory lint
+      -> recent-iteration quick scan
+      -> stale knowledge flags
+    -> Deep Dream
+      -> full importance buffer pass
+      -> log readers
+      -> analyzers
+      -> consolidators
+      -> knowledge outputs
+        -> state files
+        -> archives
+        -> strategy knowledge
+        -> schedule hints
 
 Phase 4 runtime consumers
   -> CoreLoop / context builder / task + strategy paths
@@ -105,6 +112,32 @@ existing runtime systems do not depend on dream internals
 ```
 
 This keeps Dream Mode a clean addition. Nothing existing should need to depend on `src/platform/dream/` in order to function.
+
+## 3.1 Execution Tiers
+
+Dream Mode has two execution tiers with different triggers, budgets, and scope.
+
+### Light Dream (Nap)
+
+- Triggered by idle detection (`30m+` with no activity) or importance buffer threshold crossing
+- Runs every few hours when enabled
+- Uses a small token budget, defaulting to about `15k`
+- Processes the importance buffer first, but only for high-signal items
+- Runs lightweight memory tidy through retention policy for active goals only
+- Runs a quick agent memory lint pass with auto-fix for high-confidence findings
+- Runs a quick pattern scan over only the most recent `N` iterations, default `50`
+- Flags stale knowledge for later revalidation, but does not perform full revalidation
+- Target duration is about `30-60s`
+
+### Deep Dream
+
+- Triggered by nightly schedule or manual CLI invocation
+- Runs daily or weekly depending on config
+- Uses a much larger token budget, defaulting to about `200k`
+- Runs the full Phase A-F pipeline, including all eleven categories plus schedule discovery, archive postmortems, cross-goal transfer, and full report generation
+- Target duration is about `5-10m`
+
+`DreamEngine.run()` becomes a dispatcher: `runLight()` for Nap runs and `runDeep()` for full runs.
 
 ---
 
@@ -170,7 +203,7 @@ Persist raw traces that currently vanish, and introduce runtime importance taggi
 
 ### Phase 2: Analysis Pipeline
 
-Build analyzers that mine patterns, discover timing regularities, and extract candidate structures from the collected logs.
+Build analyzers that mine patterns, discover timing regularities, and extract candidate structures from the collected logs. Stage 2 rollout implements both Light Dream and Deep Dream entry points: Light Dream runs a reduced analysis pass, while Deep Dream runs the full pipeline.
 
 ### Phase 3: Consolidation
 
@@ -184,23 +217,28 @@ Wire Dream outputs back into eight capabilities: six existing underutilized runt
 
 ## 6. Trigger Modes
 
-Dream Mode can start through four trigger paths:
+Dream Mode can start through four trigger paths, but each path maps to a tier:
 
 ### 6.1 CLI
 
 Manual execution through the Dream command.
 
+- `pulseed dream` runs Deep Dream
+- `pulseed dream --light` runs Light Dream
+- `pulseed dream --dry-run` analyzes without writing for either tier
+- `pulseed dream status` shows the last light and deep run times plus pending importance buffer size
+
 ### 6.2 ScheduleEngine
 
-A cron-backed schedule entry can run Dream Mode nightly. This is disabled by default so activation remains an explicit choice.
+A cron-backed schedule entry runs Deep Dream nightly by default at `0 3 * * *`. This remains configurable so scheduled activation is still an explicit choice.
 
 ### 6.3 DaemonRunner Idle Activation
 
-When the daemon detects a sufficiently idle window, it can opportunistically run Dream Mode instead of leaving unused compute time empty.
+When the daemon detects a sufficiently idle window, it can opportunistically run Light Dream instead of leaving unused compute time empty.
 
 ### 6.4 Importance Threshold
 
-When accumulated importance in the runtime buffer exceeds a configured threshold `N`, Dream Mode can trigger early to process unusually salient events before the next scheduled cycle.
+When accumulated importance in the runtime buffer exceeds a configured threshold `N`, Light Dream can trigger early to process unusually salient events before the next Deep Dream cycle.
 
 ---
 
@@ -215,6 +253,12 @@ Dream Mode configuration is intentionally light at the overview level. Full sche
 Expected configuration areas:
 
 - enable or disable Dream Mode globally
+- `lightDream.enabled`
+- `lightDream.tokenBudget`
+- `lightDream.recentIterationWindow`
+- `lightDream.importanceThreshold`
+- `deepDream.schedule.expression`
+- `deepDream.tokenBudget`
 - enable or disable trigger modes independently
 - thresholds for importance-triggered activation
 - log retention and rotation limits

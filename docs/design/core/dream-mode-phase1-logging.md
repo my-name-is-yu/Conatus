@@ -148,6 +148,8 @@ Buffer path:
 ~/.pulseed/dream/importance-buffer.jsonl
 ```
 
+Light Dream consumes this buffer more frequently than Deep Dream. The logging contract stays the same, but idle-triggered Nap runs should drain high-signal items every few hours instead of waiting for the nightly full pass.
+
 ### 3.3 Integration Points
 
 Importance extraction is added to normal runtime paths.

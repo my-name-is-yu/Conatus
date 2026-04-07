@@ -37,10 +37,27 @@ type ConsolidationCategoryResult = {
 };
 ```
 
+### 2.1 Tier Scope
+
+Phase 3 runs different consolidation scope depending on dream tier.
+
+Light Dream runs only:
+
+- Memory for active goals only
+- Agent memory lint with quick auto-fix for high-confidence findings
+- Stale knowledge check in flag-only mode
+
+Deep Dream runs the full consolidation set:
+
+- all eleven Dream target categories
+- cross-goal knowledge transfer
+- archive postmortems and reusable template extraction
+- full knowledge optimization and report generation
+
 ---
 ## 3. Category: Memory (Existing, Enhanced)
 Actions:
-- call `MemoryLifecycleManager.applyRetentionPolicy()` for all goals
+- call `MemoryLifecycleManager.applyRetentionPolicy()` for all goals in Deep Dream, and for active goals only in Light Dream
 - run garbage collection on archival tier
 - call `extractPatterns()` for goals with enough data
 - call `distillLessons()` for goals with enough data
@@ -55,7 +72,7 @@ Metrics:
 ---
 ## 4. Category: Agent Memory (Existing, Enhanced)
 Actions:
-- call `KnowledgeManager.lintAgentMemory()` for all goals
+- call `KnowledgeManager.lintAgentMemory()` for all goals in Deep Dream, with a quick pass in Light Dream
 - auto-consolidate high-confidence lint findings
 - deduplicate cross-goal agent memory via embedding similarity
 Metrics:
@@ -241,7 +258,7 @@ Metrics:
 ---
 ## 16. Knowledge Optimization (Cross-Cutting)
 Cross-category actions:
-- stale knowledge revalidation through `generateRevalidationTasks`
+- stale knowledge revalidation through `generateRevalidationTasks` in Deep Dream; Light Dream only flags stale knowledge for later revalidation
 - contradiction detection across goals
 - `KnowledgeGraph` edge inference from co-occurrence in logs
 - redundancy pruning where cosine similarity is greater than `0.95` and tags match

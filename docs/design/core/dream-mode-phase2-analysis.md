@@ -15,25 +15,35 @@ Primary outputs:
 
 ---
 ## 2. `DreamEngine.run()` Orchestration
-Proposed entry point:
+Proposed entry points:
 ```ts
 type DreamRunOptions = {
   goalIds?: string[];
   phases?: Array<"A" | "B" | "C">;
+  tier?: "light" | "deep";
   dryRun?: boolean;
   tokenBudget?: number;
+  recentIterationWindow?: number;
 };
+
+class DreamEngine {
+  run(options?: DreamRunOptions) {}
+  runLight(options?: DreamRunOptions) {}
+  runDeep(options?: DreamRunOptions) {}
+}
 ```
 Execution rules:
 1. Resolve eligible goals.
 2. Prioritize goals with the most unprocessed logs first.
-3. Execute phases in fixed order: `A -> B -> C`.
-4. Stop when requested phases are complete or budget is exhausted.
-5. Persist outputs unless `dryRun` is `true`.
+3. `run()` dispatches to `runLight()` or `runDeep()` based on `options.tier`, defaulting to deep for `pulseed dream`.
+4. Light Dream executes partial Phase A plus a quick version of Phase B over only the most recent `N` iterations.
+5. Deep Dream executes full phases in fixed order: `A -> B -> C`.
+6. Stop when requested phases are complete or budget is exhausted.
+7. Persist outputs unless `dryRun` is `true`.
 Budget allocation:
-- 40% to Phase B pattern mining
-- 10% to Phase C schedule discovery
-- remaining 50% reserved for retries, importance mini-reflections, and slack
+- Light Dream: target about `10k-20k`, default `15k`, with most budget reserved for importance-first quick analysis
+- Deep Dream: target about `200k`
+- Deep Dream budget allocation: 40% to Phase B pattern mining, 10% to Phase C schedule discovery, remaining 50% reserved for retries, importance mini-reflections, and slack
 Budget enforcement:
 ```ts
 if (remainingBudget <= 0) {
@@ -45,6 +55,7 @@ Rules:
 - estimate token cost before each LLM call
 - skip calls that exceed phase or total budget
 - early-exit on exhaustion instead of failing the run
+- Light Dream does not run Phase C schedule discovery
 
 ---
 ## 3. Phase A: Log Ingestion
@@ -56,6 +67,7 @@ Responsibilities:
 - group records into configurable batches
 - process the importance buffer before bulk logs
 - correlate importance-tagged items with surrounding iteration context
+- in Light Dream, restrict ingestion to high-signal importance items plus recent iterations only
 Default batching:
 - `100` iterations per batch
 Watermark semantics:
@@ -74,6 +86,7 @@ Importance-first flow:
 1. Drain the importance buffer.
 2. Enrich each high-importance item with nearby iteration context.
 3. Queue those windows ahead of regular batches.
+4. In Light Dream, skip older regular batches outside the recent iteration window.
 Token cost:
 - zero
 Output shape:
@@ -98,6 +111,8 @@ Processing rules:
 - send iteration windows, not individual log items
 - importance-first windows get deeper analysis
 - prefer fewer richer synthesis calls over many shallow calls
+- Light Dream runs only a quick scan on the most recent `N` iterations, default `50`, to surface immediate insights
+- Deep Dream runs the full pattern-mining pass across the eligible corpus
 Output:
 - `LearnedPattern[]` with `embedding_id`, persisted through `LearningPipeline`
 ```ts
