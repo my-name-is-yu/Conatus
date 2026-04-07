@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LearnedPatternSchema } from "../knowledge/types/learning.js";
 
 export const DreamSourceSchema = z.enum([
   "observation",
@@ -154,6 +155,100 @@ export type DreamLogCollectionConfig = z.infer<typeof DreamLogCollectionConfigSc
 
 export const DreamLogConfigSchema = z.object({
   logCollection: DreamLogCollectionConfigSchema.default({}),
+  analysis: z.object({
+    batchSize: z.number().int().positive().default(100),
+    minIterationsForAnalysis: z.number().int().positive().default(20),
+    maxGoalsPerRun: z.number().int().positive().default(25),
+    patternConfidenceThreshold: z.number().min(0).max(1).default(0.7),
+    lightRecentIterationWindow: z.number().int().positive().default(50),
+    lightTokenBudget: z.number().int().positive().default(15_000),
+    deepTokenBudget: z.number().int().positive().default(200_000),
+  }).default({}),
 });
 
 export type DreamLogConfig = z.infer<typeof DreamLogConfigSchema>;
+
+export const DreamPhaseSchema = z.enum(["A", "B", "C"]);
+export type DreamPhase = z.infer<typeof DreamPhaseSchema>;
+
+export const DreamTierSchema = z.enum(["light", "deep"]);
+export type DreamTier = z.infer<typeof DreamTierSchema>;
+
+export const IterationWindowSchema = z.object({
+  goalId: z.string(),
+  startIteration: z.number().int().nonnegative(),
+  endIteration: z.number().int().nonnegative(),
+  iterations: z.array(IterationLogSchema),
+  evidenceRefs: z.array(z.string()).default([]),
+  importance: z.number().min(0).max(1).optional(),
+  source: z.enum(["importance", "recent", "regular"]).default("regular"),
+});
+
+export type IterationWindow = z.infer<typeof IterationWindowSchema>;
+
+export const IngestionStatsSchema = z.object({
+  linesRead: z.number().int().nonnegative(),
+  malformedLines: z.number().int().nonnegative(),
+  batchesBuilt: z.number().int().nonnegative(),
+});
+
+export type IngestionStats = z.infer<typeof IngestionStatsSchema>;
+
+export const IngestionOutputSchema = z.object({
+  prioritizedBatches: z.array(IterationWindowSchema),
+  regularBatches: z.array(IterationWindowSchema),
+  importanceEntries: z.array(ImportanceEntrySchema),
+  sessionLogs: z.array(SessionLogSchema),
+  stats: IngestionStatsSchema,
+});
+
+export type IngestionOutput = z.infer<typeof IngestionOutputSchema>;
+
+export const DreamPatternCandidateSchema = z.object({
+  pattern_type: z.string(),
+  goal_id: z.string().optional(),
+  confidence: z.number().min(0).max(1),
+  summary: z.string(),
+  evidence_refs: z.array(z.string()).default([]),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export type DreamPatternCandidate = z.infer<typeof DreamPatternCandidateSchema>;
+
+export const DreamPatternResponseSchema = z.object({
+  patterns: z.array(DreamPatternCandidateSchema).default([]),
+});
+
+export type DreamPatternResponse = z.infer<typeof DreamPatternResponseSchema>;
+
+export const ScheduleSuggestionSchema = z.object({
+  type: z.enum(["cron", "goal_trigger", "cleanup", "dream_cron"]),
+  goalId: z.string().optional(),
+  confidence: z.number().min(0).max(1),
+  reason: z.string(),
+  proposal: z.string(),
+});
+
+export type ScheduleSuggestion = z.infer<typeof ScheduleSuggestionSchema>;
+
+export const ScheduleSuggestionFileSchema = z.object({
+  generated_at: z.string(),
+  suggestions: z.array(ScheduleSuggestionSchema).default([]),
+});
+
+export type ScheduleSuggestionFile = z.infer<typeof ScheduleSuggestionFileSchema>;
+
+export const DreamRunReportSchema = z.object({
+  tier: DreamTierSchema,
+  phasesCompleted: z.array(DreamPhaseSchema),
+  goalsProcessed: z.array(z.string()),
+  patternsPersisted: z.number().int().nonnegative(),
+  scheduleSuggestions: z.number().int().nonnegative(),
+  tokensEstimated: z.number().int().nonnegative(),
+  partial: z.boolean().default(false),
+  stats: IngestionStatsSchema,
+  learnedPatterns: z.array(LearnedPatternSchema).default([]),
+  suggestions: z.array(ScheduleSuggestionSchema).default([]),
+});
+
+export type DreamRunReport = z.infer<typeof DreamRunReportSchema>;
