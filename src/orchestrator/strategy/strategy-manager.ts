@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import * as fsp from "node:fs/promises";
+import * as path from "node:path";
 import { StrategySchema, WaitStrategySchema, parseStrategy } from "../../base/types/strategy.js";
 import { isWaitStrategy } from "./portfolio-allocation.js";
 import type { Strategy } from "../../base/types/strategy.js";
@@ -107,33 +109,54 @@ export class StrategyManager extends StrategyManagerBase {
         const waitUntil = strategy.wait_until;
         if (!waitUntil) continue;
 
-        // WaitStrategy has allocation=0 and generates no tasks, so tasks_generated is always
-        // empty. Instead, find the goal's current active task from the task-history log.
-        // task-history.json holds an array ordered oldest→newest; scan from the end for the
-        // most recent running, in-progress, or pending entry, falling back to the last entry overall.
-        const rawHistory = await this.stateManager.readRaw(
-          `tasks/${goalId}/task-history.json`
-        );
-        if (!Array.isArray(rawHistory) || rawHistory.length === 0) continue;
+        // Bug 3 fix: task-history.json only has finalized records. A currently running task
+        // exists only as tasks/{goalId}/{taskId}.json with status="running". Scan directory first.
+        let taskId: string | undefined;
+        const tasksDir = path.join(this.stateManager.getBaseDir(), "tasks", goalId);
+        try {
+          const files = await fsp.readdir(tasksDir);
+          for (const file of files) {
+            if (!file.endsWith(".json") || file === "task-history.json") continue;
+            const raw = await this.stateManager.readRaw(
+              `tasks/${goalId}/${file}`
+            ) as Record<string, unknown> | null;
+            if (raw && raw["status"] === "running" && typeof raw["id"] === "string") {
+              taskId = raw["id"] as string;
+              break;
+            }
+          }
+        } catch {
+          // Directory may not exist yet — fall through to history scan
+        }
 
-        const history = rawHistory as Array<Record<string, unknown>>;
-        // Prefer the most recent running/in_progress task; fall back to the very last entry
-        let targetTask: Record<string, unknown> | undefined;
-        for (let i = history.length - 1; i >= 0; i--) {
-          const entry = history[i];
-          if (!entry) continue;
-          if (entry["status"] === "running" || entry["status"] === "in_progress" || entry["status"] === "pending") {
-            targetTask = entry;
-            break;
+        // Fall back to task-history.json scan (Bug 1 fix: use task_id not id)
+        if (!taskId) {
+          const rawHistory = await this.stateManager.readRaw(
+            `tasks/${goalId}/task-history.json`
+          );
+          if (Array.isArray(rawHistory) && rawHistory.length > 0) {
+            const history = rawHistory as Array<Record<string, unknown>>;
+            let targetTask: Record<string, unknown> | undefined;
+            for (let i = history.length - 1; i >= 0; i--) {
+              const entry = history[i];
+              if (!entry) continue;
+              if (entry["status"] === "running" || entry["status"] === "in_progress" || entry["status"] === "pending") {
+                targetTask = entry;
+                break;
+              }
+            }
+            if (!targetTask) {
+              targetTask = history[history.length - 1];
+            }
+            if (targetTask) {
+              // Bug 1 fix: appendTaskHistory writes { task_id: task.id, ... }
+              const tid = targetTask["task_id"];
+              if (typeof tid === "string") taskId = tid;
+            }
           }
         }
-        if (!targetTask) {
-          targetTask = history[history.length - 1];
-        }
-        if (!targetTask) continue;
 
-        const taskId = targetTask["id"];
-        if (typeof taskId !== "string") continue;
+        if (!taskId) continue;
 
         const taskRaw = await this.stateManager.readRaw(
           `tasks/${goalId}/${taskId}.json`
