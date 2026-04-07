@@ -51,6 +51,7 @@ import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/kno
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import { buildEnrichedKnowledgeContext } from "./task-context-enricher.js";
 import { persistTaskCycleSideEffects } from "./task-side-effects.js";
+import { finalizeSuccessfulExecution } from "./task-post-execution.js";
 import { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
 import type { HookManager } from "../../../runtime/hook-manager.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
@@ -296,31 +297,15 @@ export class TaskLifecycle {
     this.logger?.info(`[task] executed: ${executionResult.success ? 'success' : 'failed'}`, { taskId: task.id });
     this.logger?.debug(`[DEBUG-TL] Execution result: success=${executionResult.success}, stopped=${executionResult.stopped_reason}, error=${executionResult.error}, output=${executionResult.output?.substring(0, 200)}`);
 
-    // 4b. Post-execution health check (opt-in)
-    if (executionResult.success && this.healthCheckEnabled) {
-      const healthCheck = await this.runPostExecutionHealthCheck();
-      if (!healthCheck.healthy) {
-        this.logger?.warn(`[TaskLifecycle] Post-execution health check FAILED: ${healthCheck.output}`);
-        executionResult.success = false;
-        executionResult.output = (executionResult.output || "") +
-          `\n\n[Health Check Failed]\n${healthCheck.output}`;
-      }
-    }
-
-    // 4c. Post-execution git diff verification (optional, non-blocking)
-    if (executionResult.success && this.toolExecutor) {
-      const diffCheck = await verifyExecutionWithGitDiff(this.toolExecutor, goalId);
-      this.logger?.info(
-        `[TaskLifecycle] Git diff verification: ${diffCheck.diffSummary || "no changes"}`,
-        { verified: diffCheck.verified }
-      );
-      if (!diffCheck.verified) {
-        this.logger?.warn(
-          "[TaskLifecycle] Git diff found no file changes after successful task execution",
-          { diffSummary: diffCheck.diffSummary }
-        );
-      }
-    }
+    await finalizeSuccessfulExecution({
+      executionResult,
+      goalId,
+      healthCheckEnabled: this.healthCheckEnabled,
+      runPostExecutionHealthCheck: () => this.runPostExecutionHealthCheck(),
+      verifyExecutionWithGitDiff,
+      toolExecutor: this.toolExecutor,
+      logger: this.logger,
+    });
 
     // Reload task from disk to get accurate status/started_at/completed_at set by executeTask
     const taskForVerification = await reloadTaskFromDisk(this.stateManager, task);
