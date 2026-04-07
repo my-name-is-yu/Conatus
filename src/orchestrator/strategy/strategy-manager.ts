@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { StrategySchema, WaitStrategySchema } from "../../base/types/strategy.js";
+import { StrategySchema, WaitStrategySchema, parseStrategy } from "../../base/types/strategy.js";
+import { isWaitStrategy } from "./portfolio-allocation.js";
 import type { Strategy } from "../../base/types/strategy.js";
 import { redistributeAllocation } from "./strategy-helpers.js";
 import { StrategyManagerBase } from "./strategy-manager-base.js";
@@ -70,7 +71,7 @@ export class StrategyManager extends StrategyManagerBase {
     const updatedStrategies = portfolio.strategies.map((s) => {
       if (!strategyIds.includes(s.id)) return s;
 
-      const updated = StrategySchema.parse({
+      const updated = parseStrategy({
         ...s,
         state: "active",
         started_at: now,
@@ -92,8 +93,8 @@ export class StrategyManager extends StrategyManagerBase {
   }
 
   /**
-   * For each newly activated WaitStrategy, read its wait_until from the sidecar
-   * and write it to the goal current active task plateau_until field.
+   * For each newly activated WaitStrategy, read its wait_until directly from the
+   * strategy object and write it to the goal current active task plateau_until field.
    * Non-fatal: errors are silently ignored to avoid blocking strategy activation.
    */
   private async _applyWaitStrategyPlateauUntil(
@@ -102,29 +103,46 @@ export class StrategyManager extends StrategyManagerBase {
   ): Promise<void> {
     for (const strategy of activated) {
       try {
-        const meta = await this.stateManager.readRaw(
-          `strategies/${goalId}/wait-meta/${strategy.id}.json`
-        ) as { wait_until?: string } | null;
-        if (!meta?.wait_until) continue;
+        if (!isWaitStrategy(strategy)) continue;
+        const waitUntil = strategy.wait_until;
+        if (!waitUntil) continue;
 
-        const waitUntil = meta.wait_until;
+        // WaitStrategy has allocation=0 and generates no tasks, so tasks_generated is always
+        // empty. Instead, find the goal's current active task from the task-history log.
+        // task-history.json holds an array ordered oldest→newest; scan from the end for the
+        // most recent in-progress or pending entry, falling back to the last entry overall.
+        const rawHistory = await this.stateManager.readRaw(
+          `tasks/${goalId}/task-history.json`
+        );
+        if (!Array.isArray(rawHistory) || rawHistory.length === 0) continue;
 
-        // Find the most recent task for this goal and strategy, update plateau_until
-        // Tasks are stored as tasks/<goalId>/<taskId>.json
-        // Scan tasks for this goal (strategy.tasks_generated holds the task IDs)
-        const taskIds = strategy.tasks_generated;
-        if (taskIds.length === 0) continue;
+        const history = rawHistory as Array<Record<string, unknown>>;
+        // Prefer the most recent in_progress task; fall back to the very last entry
+        let targetTask: Record<string, unknown> | undefined;
+        for (let i = history.length - 1; i >= 0; i--) {
+          const entry = history[i];
+          if (!entry) continue;
+          if (entry["status"] === "in_progress" || entry["status"] === "pending") {
+            targetTask = entry;
+            break;
+          }
+        }
+        if (!targetTask) {
+          targetTask = history[history.length - 1];
+        }
+        if (!targetTask) continue;
 
-        // Update the last task in tasks_generated (most recent)
-        const lastTaskId = taskIds[taskIds.length - 1]!;
+        const taskId = targetTask["id"];
+        if (typeof taskId !== "string") continue;
+
         const taskRaw = await this.stateManager.readRaw(
-          `tasks/${goalId}/${lastTaskId}.json`
+          `tasks/${goalId}/${taskId}.json`
         ) as Record<string, unknown> | null;
         if (!taskRaw) continue;
 
         taskRaw["plateau_until"] = waitUntil;
         await this.stateManager.writeRaw(
-          `tasks/${goalId}/${lastTaskId}.json`,
+          `tasks/${goalId}/${taskId}.json`,
           taskRaw
         );
       } catch {
@@ -149,7 +167,7 @@ export class StrategyManager extends StrategyManagerBase {
     const now = new Date().toISOString();
     const freedAllocation = strategy.allocation;
 
-    const terminated = StrategySchema.parse({
+    const terminated = parseStrategy({
       ...strategy,
       state: "terminated",
       completed_at: now,
@@ -213,8 +231,8 @@ export class StrategyManager extends StrategyManagerBase {
     });
 
     const portfolio = await this.loadOrCreatePortfolio(goalId);
-    // WaitStrategy is a superset of Strategy; store as Strategy (base fields) in portfolio
-    portfolio.strategies.push(StrategySchema.parse(waitStrategy));
+    // Store WaitStrategy with all extension fields preserved
+    portfolio.strategies.push(waitStrategy);
     await this.savePortfolio(goalId, portfolio);
 
     // Persist wait-specific fields in a sidecar so activateMultiple can read wait_until
@@ -224,7 +242,7 @@ export class StrategyManager extends StrategyManagerBase {
     );
 
     this.strategyIndex.set(waitStrategy.id, goalId);
-    return StrategySchema.parse(waitStrategy);
+    return waitStrategy;
   }
 
   /**
@@ -246,7 +264,7 @@ export class StrategyManager extends StrategyManagerBase {
     }
 
     const freedAllocation = strategy.allocation;
-    const suspended = StrategySchema.parse({
+    const suspended = parseStrategy({
       ...strategy,
       state: "suspended",
       allocation: 0,
@@ -284,7 +302,7 @@ export class StrategyManager extends StrategyManagerBase {
       );
     }
 
-    const resumed = StrategySchema.parse({
+    const resumed = parseStrategy({
       ...strategy,
       state: "active",
       allocation,
@@ -304,7 +322,7 @@ export class StrategyManager extends StrategyManagerBase {
         totalOtherAlloc > 0
           ? (s.allocation / totalOtherAlloc) * remaining
           : remaining / others.length;
-      return StrategySchema.parse({ ...s, allocation: newAlloc });
+      return parseStrategy({ ...s, allocation: newAlloc });
     });
 
     await this.savePortfolio(goalId, portfolio);
@@ -343,7 +361,7 @@ export class StrategyManager extends StrategyManagerBase {
     }
 
     portfolio.strategies = portfolio.strategies.map((s) =>
-      s.id === strategyId ? StrategySchema.parse({ ...s, allocation: newAllocation }) : s
+      s.id === strategyId ? parseStrategy({ ...s, allocation: newAllocation }) : s
     );
     await this.savePortfolio(goalId, portfolio);
   }

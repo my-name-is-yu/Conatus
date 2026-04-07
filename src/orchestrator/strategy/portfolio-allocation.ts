@@ -7,6 +7,7 @@ import type {
   RebalanceAction,
 } from "../../base/types/cross-portfolio.js";
 import type { RebalanceResult } from "../../base/types/portfolio.js";
+import type { Strategy, WaitStrategy } from "../../orchestrator/strategy/types/strategy.js";
 
 // ─── Helpers ───
 
@@ -262,11 +263,12 @@ export function rebalanceOnStall(
  * Check if a strategy is a WaitStrategy (has wait-specific fields).
  * Pure function — no class dependency.
  */
-export function isWaitStrategy(strategy: Record<string, unknown>): boolean {
+export function isWaitStrategy(strategy: Strategy | Record<string, unknown>): strategy is WaitStrategy {
+  const s = strategy as Record<string, unknown>;
   return (
-    typeof strategy["wait_reason"] === "string" &&
-    typeof strategy["wait_until"] === "string" &&
-    typeof strategy["measurement_plan"] === "string"
+    typeof s["wait_reason"] === "string" &&
+    typeof s["wait_until"] === "string" &&
+    typeof s["measurement_plan"] === "string"
   );
 }
 

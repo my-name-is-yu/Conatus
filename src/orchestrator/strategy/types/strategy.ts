@@ -71,11 +71,32 @@ export const WaitStrategySchema = StrategySchema.extend({
 });
 export type WaitStrategy = z.infer<typeof WaitStrategySchema>;
 
+// --- Parse Helpers ---
+
+/**
+ * Parse a strategy object, preserving WaitStrategy extension fields.
+ * Uses duck-typing: if the object has wait_reason or wait_until fields,
+ * it is parsed as a WaitStrategy; otherwise as a plain Strategy.
+ * Use this instead of StrategySchema.parse() to avoid stripping WaitStrategy fields.
+ */
+export function parseStrategy(data: unknown): Strategy | WaitStrategy {
+  const obj = data as Record<string, unknown>;
+  if (obj && (obj['wait_reason'] !== undefined || obj['wait_until'] !== undefined)) {
+    return WaitStrategySchema.parse(data);
+  }
+  return StrategySchema.parse(data);
+}
+
+export function parseStrategies(data: unknown[]): (Strategy | WaitStrategy)[] {
+  return data.map(d => parseStrategy(d));
+}
+
+
 // --- Portfolio ---
 
 export const PortfolioSchema = z.object({
   goal_id: z.string(),
-  strategies: z.array(StrategySchema),
+  strategies: z.array(z.unknown()).transform(items => items.map(item => parseStrategy(item))),
   rebalance_interval: DurationSchema,
   last_rebalanced_at: z.string(),
 });
