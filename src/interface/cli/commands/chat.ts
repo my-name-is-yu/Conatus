@@ -185,7 +185,7 @@ export async function cmdChat(
     const llmClient = await buildLLMClient();
     const adapterRegistry = await buildAdapterRegistry(llmClient);
     const adapter = adapterRegistry.getAdapter(adapterType);
-    const pulseedDir = process.env["PULSEED_DIR"] ?? `${process.env["HOME"] ?? "~"}/.pulseed`;
+    const pulseedDir = stateManager.getBaseDir();
     const trustManager = new TrustManager(stateManager);
     const scheduleEngine = new ScheduleEngine({ baseDir: pulseedDir });
     await scheduleEngine.loadEntries();

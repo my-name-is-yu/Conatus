@@ -145,27 +145,7 @@ describe("UpdateScheduleTool", () => {
     ).toBe(false);
   });
 
-  it("returns failure when the user denies approval", async () => {
-    vi.mocked(scheduleEngine.getEntries).mockReturnValue([
-      makeEntry("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-    ]);
-
-    const result = await tool.call(
-      UpdateScheduleInputSchema.parse({
-        schedule_id: "aaaaaaaa",
-        enabled: false,
-      }),
-      makeContext({
-        approvalFn: vi.fn().mockResolvedValue(false),
-      }),
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("denied");
-    expect(scheduleEngine.updateEntry).not.toHaveBeenCalled();
-  });
-
-  it("resolves a unique prefix and passes the patch to updateEntry", async () => {
+  it("resolves a unique prefix and passes the patch to updateEntry without prompting again", async () => {
     const entry = makeEntry("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", {
       name: "Morning digest",
       enabled: false,
@@ -176,7 +156,7 @@ describe("UpdateScheduleTool", () => {
       makeEntry("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
     ]);
     vi.mocked(scheduleEngine.updateEntry).mockResolvedValue(entry);
-    const approvalFn = vi.fn().mockResolvedValue(true);
+    const approvalFn = vi.fn().mockResolvedValue(false);
     const input = UpdateScheduleInputSchema.parse({
       schedule_id: "aaaaaaaa",
       name: "Morning digest",
@@ -193,7 +173,7 @@ describe("UpdateScheduleTool", () => {
 
     const result = await tool.call(input, makeContext({ approvalFn }));
 
-    expect(approvalFn).toHaveBeenCalledTimes(1);
+    expect(approvalFn).not.toHaveBeenCalled();
     expect(scheduleEngine.updateEntry).toHaveBeenCalledTimes(1);
     expect(scheduleEngine.updateEntry).toHaveBeenCalledWith(
       "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

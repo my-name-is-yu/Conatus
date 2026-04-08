@@ -111,41 +111,22 @@ describe("RemoveScheduleTool", () => {
     ).toBe(false);
   });
 
-  it("returns failure when the user denies approval", async () => {
-    vi.mocked(scheduleEngine.getEntries).mockReturnValue([
-      makeEntry("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-    ]);
-
-    const result = await tool.call(
-      RemoveScheduleInputSchema.parse({
-        schedule_id: "aaaaaaaa",
-      }),
-      makeContext({
-        approvalFn: vi.fn().mockResolvedValue(false),
-      }),
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("denied");
-    expect(scheduleEngine.removeEntry).not.toHaveBeenCalled();
-  });
-
-  it("resolves a unique prefix, looks up the name, and removes the canonical id", async () => {
+  it("resolves a unique prefix, looks up the name, and removes the canonical id without prompting again", async () => {
     vi.mocked(scheduleEngine.getEntries).mockReturnValue([
       makeEntry("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", { name: "Digest schedule" }),
       makeEntry("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
     ]);
     vi.mocked(scheduleEngine.removeEntry).mockResolvedValue(true);
+    const approvalFn = vi.fn().mockResolvedValue(false);
 
     const result = await tool.call(
       RemoveScheduleInputSchema.parse({
         schedule_id: "aaaaaaaa",
       }),
-      makeContext({
-        approvalFn: vi.fn().mockResolvedValue(true),
-      }),
+      makeContext({ approvalFn }),
     );
 
+    expect(approvalFn).not.toHaveBeenCalled();
     expect(scheduleEngine.removeEntry).toHaveBeenCalledTimes(1);
     expect(scheduleEngine.removeEntry).toHaveBeenCalledWith("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     expect(result.success).toBe(true);

@@ -8,13 +8,14 @@ import type { ToolCallContext } from "../../types.js";
 import type { ScheduleEngine } from "../../../runtime/schedule-engine.js";
 import { ScheduleEntrySchema } from "../../../runtime/types/schedule.js";
 
-function makeContext(): ToolCallContext {
+function makeContext(overrides: Partial<ToolCallContext> = {}): ToolCallContext {
   return {
     cwd: "/tmp",
     goalId: "test-goal",
     trustBalance: 50,
     preApproved: false,
     approvalFn: async () => false,
+    ...overrides,
   };
 }
 
@@ -140,6 +141,7 @@ describe("CreateScheduleTool", () => {
     const entry = makeScheduleEntry();
     const addEntry = vi.fn().mockResolvedValue(entry);
     const tool = new CreateScheduleTool({ addEntry } as unknown as ScheduleEngine);
+    const approvalFn = vi.fn().mockResolvedValue(false);
     const input = CreateScheduleInputSchema.parse({
       name: "daily digest",
       layer: "cron",
@@ -157,10 +159,11 @@ describe("CreateScheduleTool", () => {
       },
     });
 
-    const result = await tool.call(input, makeContext());
+    const result = await tool.call(input, makeContext({ approvalFn }));
 
     expect(addEntry).toHaveBeenCalledTimes(1);
     expect(addEntry).toHaveBeenCalledWith(input);
+    expect(approvalFn).not.toHaveBeenCalled();
     expect(result.success).toBe(true);
     expect(result.summary).toContain("daily digest");
     expect((result.data as CreateScheduleOutput).entry).toEqual(entry);

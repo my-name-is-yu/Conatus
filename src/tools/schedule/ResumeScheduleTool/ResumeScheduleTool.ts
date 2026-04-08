@@ -60,30 +60,10 @@ export class ResumeScheduleTool implements ITool<ResumeScheduleInput, ResumeSche
     return DESCRIPTION;
   }
 
-  async call(input: ResumeScheduleInput, context: ToolCallContext): Promise<ToolResult> {
+  async call(input: ResumeScheduleInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
 
     try {
-      if (!context.preApproved) {
-        const approved = await context.approvalFn({
-          toolName: this.metadata.name,
-          input,
-          reason: `Resume schedule: ${input.schedule_id}`,
-          permissionLevel: "write_local",
-          isDestructive: false,
-          reversibility: "reversible",
-        });
-        if (!approved) {
-          return {
-            success: false,
-            data: null,
-            summary: "Schedule resume denied by user",
-            error: "User denied schedule resume",
-            durationMs: Date.now() - startTime,
-          };
-        }
-      }
-
       const existingEntry = resolveScheduleEntry(this.scheduleEngine.getEntries(), input.schedule_id);
       if (!existingEntry) {
         return {
