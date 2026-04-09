@@ -19,7 +19,7 @@ export class HttpChannelAdapter implements ChannelAdapter {
   constructor(eventServer: EventServer) {
     this.eventServer = eventServer;
     this.eventServer.setEnvelopeHook((eventData: Record<string, unknown>) => {
-      this.emitEnvelope(eventData);
+      return this.emitEnvelope(eventData);
     });
   }
 

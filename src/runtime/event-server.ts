@@ -12,6 +12,7 @@ import type { StateManager } from "../base/state/state-manager.js";
 import type { TriggerMapper } from "./trigger-mapper.js";
 import { findAvailablePort, DEFAULT_PORT, MAX_PORT_ATTEMPTS } from "./port-utils.js";
 import { createEnvelope, type Envelope } from "./types/envelope.js";
+import type { ApprovalBroker } from "./approval-broker.js";
 
 export interface EventServerConfig {
   host?: string; // default: "127.0.0.1" (localhost only!)
@@ -19,6 +20,7 @@ export interface EventServerConfig {
   eventsDir?: string; // default: ~/.pulseed/events/
   stateManager?: StateManager;
   triggerMapper?: TriggerMapper;
+  approvalBroker?: ApprovalBroker;
 }
 
 export class EventServer {
@@ -36,6 +38,7 @@ export class EventServer {
   private sseClients: Set<http.ServerResponse> = new Set();
   private eventIdCounter = 0;
   private approvalQueue: Map<string, { resolve: (approved: boolean) => void; timer: ReturnType<typeof setTimeout> }> = new Map();
+  private approvalBroker?: ApprovalBroker;
   private envelopeHook?: (eventData: Record<string, unknown>) => void | Promise<void>;
   private commandEnvelopeHook?: (envelope: Envelope) => void | Promise<void>;
 
@@ -48,6 +51,7 @@ export class EventServer {
     this.logger = logger;
     this.stateManager = config?.stateManager;
     this.triggerMapper = config?.triggerMapper;
+    this.approvalBroker = config?.approvalBroker;
   }
 
   /** Start HTTP server, auto-retrying on EADDRINUSE up to MAX_PORT_ATTEMPTS times */
@@ -56,6 +60,7 @@ export class EventServer {
       return; // Already running
     }
     await fsp.mkdir(this.eventsDir, { recursive: true });
+    await this.approvalBroker?.start();
     // If a specific non-zero port was requested, find the first available port
     // starting from it. Port 0 means OS-assigned — skip auto-detection.
     const startPort = this.port === 0 ? 0 : await findAvailablePort(this.port);
@@ -96,6 +101,7 @@ export class EventServer {
   /** Stop HTTP server */
   async stop(): Promise<void> {
     this.stopFileWatcher();
+    await this.approvalBroker?.stop();
     // Close all SSE connections
     for (const client of this.sseClients) {
       try { client.end(); } catch { /* ignore */ }
@@ -227,6 +233,9 @@ export class EventServer {
 
   /** Request human approval and wait for response (5 min timeout) */
   async requestApproval(goalId: string, task: { id: string; description: string; action: string }): Promise<boolean> {
+    if (this.approvalBroker) {
+      return this.approvalBroker.requestApproval(goalId, task);
+    }
     const requestId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
@@ -240,7 +249,10 @@ export class EventServer {
   }
 
   /** Resolve a pending approval request */
-  resolveApproval(requestId: string, approved: boolean): boolean {
+  async resolveApproval(requestId: string, approved: boolean): Promise<boolean> {
+    if (this.approvalBroker) {
+      return this.approvalBroker.resolveApproval(requestId, approved, "http");
+    }
     const entry = this.approvalQueue.get(requestId);
     if (!entry) return false;
     clearTimeout(entry.timer);
@@ -259,6 +271,10 @@ export class EventServer {
   /** Set a hook to intercept command-style HTTP actions as Envelopes. */
   setCommandEnvelopeHook(hook: (envelope: Envelope) => void | Promise<void>): void {
     this.commandEnvelopeHook = hook;
+  }
+
+  setApprovalBroker(broker: ApprovalBroker): void {
+    this.approvalBroker = broker;
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -306,6 +322,9 @@ export class EventServer {
       });
       res.write(`event: connected\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
       this.sseClients.add(res);
+      for (const pending of this.approvalBroker?.getPendingApprovalEvents() ?? []) {
+        this.writeSseEvent(res, "approval_required", pending);
+      }
       req.on("close", () => { this.sseClients.delete(res); });
       const keepAlive = setInterval(() => {
         try { res.write(": keepalive\n\n"); } catch { clearInterval(keepAlive); this.sseClients.delete(res); }
@@ -368,7 +387,7 @@ export class EventServer {
           try {
             const body = await readBody(req);
             const { requestId, approved } = JSON.parse(body) as { requestId: string; approved: boolean };
-            if (!this.approvalQueue.has(requestId)) {
+            if (!this.approvalBroker && !this.approvalQueue.has(requestId)) {
               res.writeHead(404, { "Content-Type": "application/json" });
               res.end(JSON.stringify({ ok: false }));
               return;
@@ -380,7 +399,7 @@ export class EventServer {
               dedupeKey: `approval_response:${requestId}`,
               payload: { goalId, requestId, approved },
             });
-            const resolved = this.resolveApproval(requestId, approved);
+            const resolved = await this.resolveApproval(requestId, approved);
             res.writeHead(resolved ? 200 : 404, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: resolved }));
           } catch (err) {
@@ -689,6 +708,12 @@ export class EventServer {
         payload: input.payload,
       })
     );
+  }
+
+  private writeSseEvent(res: http.ServerResponse, eventType: string, data: unknown): void {
+    this.eventIdCounter++;
+    const id = String(this.eventIdCounter);
+    res.write(`id: ${id}\nevent: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 }
 

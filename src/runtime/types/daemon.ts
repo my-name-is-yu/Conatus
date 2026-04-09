@@ -2,10 +2,10 @@ import { z } from "zod";
 
 // Daemon configuration
 export const DaemonConfigSchema = z.object({
+  runtime_journal_v2: z.boolean().default(false),
   check_interval_ms: z.number().int().positive().default(300_000), // 5 min default
   pid_file: z.string().default("pulseed.pid"),
   log_dir: z.string().default("logs"),
-  runtime_journal_v2: z.boolean().default(false),
   runtime_root: z.string().optional(),
   log_rotation: z.object({
     max_size_mb: z.number().positive().default(10),

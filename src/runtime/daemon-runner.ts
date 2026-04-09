@@ -30,6 +30,7 @@ import { LeaderLockManager } from "./leader-lock-manager.js";
 import { GoalLeaseManager } from "./goal-lease-manager.js";
 import { JournalBackedQueue, type JournalBackedQueueAcceptResult } from "./queue/journal-backed-queue.js";
 import { QueueClaimSweeper } from "./queue/queue-claim-sweeper.js";
+import { ApprovalBroker } from "./approval-broker.js";
 
 // Re-exports for callers that imported these from daemon-runner
 export { generateCronEntry } from "./daemon-signals.js";
@@ -136,6 +137,7 @@ export class DaemonRunner {
   private goalLeaseManager: GoalLeaseManager | null = null;
   private journalQueue: JournalBackedQueue | null = null;
   private queueClaimSweeper: QueueClaimSweeper | null = null;
+  private approvalBroker: ApprovalBroker | null = null;
 
   constructor(deps: DaemonDeps) {
     this.deps = deps;
@@ -173,6 +175,10 @@ export class DaemonRunner {
       this.runtimeHealthStore = new RuntimeHealthStore(runtimePaths);
       this.leaderLockManager = new LeaderLockManager(this.runtimeRoot);
       this.goalLeaseManager = new GoalLeaseManager(this.runtimeRoot);
+      this.approvalBroker = new ApprovalBroker({
+        store: this.approvalStore,
+        logger: this.logger,
+      });
       this.journalQueue = new JournalBackedQueue({
         journalPath: path.join(this.runtimeRoot, "queue.json"),
       });
@@ -235,6 +241,12 @@ export class DaemonRunner {
         port: esPort,
         stateManager: this.stateManager,
       }, this.logger);
+    }
+    if (this.approvalBroker) {
+      this.approvalBroker.setBroadcast((eventType, data) => {
+        this.eventServer?.broadcast(eventType, data);
+      });
+      this.eventServer.setApprovalBroker?.(this.approvalBroker);
     }
 
     this.eventServer.setCommandEnvelopeHook?.(async (envelope: Envelope) => this.handleInboundEnvelope(envelope));
@@ -410,6 +422,7 @@ export class DaemonRunner {
     // 8. Run main loop — supervisor mode when supervisor is injected via deps,
     //    fallback to sequential runLoop otherwise (preserves backward compat for
     //    tests that provide eventBus without a supervisor)
+    let cleanupHandled = false;
     try {
       if (this.supervisor) {
         // Supervisor handles goal execution; cron/schedule must also run in this mode.
@@ -434,6 +447,7 @@ export class DaemonRunner {
       } else {
         // Fallback: sequential mode
         await this.runLoop(mergedGoalIds);
+        cleanupHandled = true;
       }
     } finally {
       // Cancel the force-stop timer if it's still pending
@@ -463,6 +477,9 @@ export class DaemonRunner {
         this.eventServer.stopFileWatcher();
         await this.eventServer.stop();
         this.logger.info("EventServer stopped");
+      }
+      if (!cleanupHandled) {
+        await this.cleanup();
       }
     }
   }
@@ -813,6 +830,9 @@ export class DaemonRunner {
     const wasCrashed = this.state.status === "crashed";
     if (!wasCrashed) {
       this.state.status = "stopped";
+      if (this.state.interrupted_goals === undefined) {
+        this.state.interrupted_goals = [...this.state.active_goals];
+      }
     }
     await this.saveDaemonState();
     await this.pidManager.cleanup();
