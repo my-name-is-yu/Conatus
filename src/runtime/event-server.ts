@@ -12,7 +12,8 @@ import type { StateManager } from "../base/state/state-manager.js";
 import type { TriggerMapper } from "./trigger-mapper.js";
 import { findAvailablePort, DEFAULT_PORT, MAX_PORT_ATTEMPTS } from "./port-utils.js";
 import { createEnvelope, type Envelope } from "./types/envelope.js";
-import type { ApprovalBroker } from "./approval-broker.js";
+import type { ApprovalBroker, ApprovalRequiredEvent } from "./approval-broker.js";
+import type { OutboxStore, OutboxRecord } from "./store/index.js";
 
 export interface EventServerConfig {
   host?: string; // default: "127.0.0.1" (localhost only!)
@@ -21,7 +22,20 @@ export interface EventServerConfig {
   stateManager?: StateManager;
   triggerMapper?: TriggerMapper;
   approvalBroker?: ApprovalBroker;
+  outboxStore?: OutboxStore;
 }
+
+export interface EventServerSnapshot {
+  daemon: Record<string, unknown> | null;
+  goals: Array<{ id: string; title: string; status: string; loop_status: string }>;
+  approvals: ApprovalRequiredEvent[];
+  active_workers: Array<Record<string, unknown>>;
+  last_outbox_seq: number;
+}
+
+type ActiveWorkersProvider = () =>
+  | Array<Record<string, unknown>>
+  | Promise<Array<Record<string, unknown>>>;
 
 export class EventServer {
   private server: http.Server | null = null;
@@ -39,8 +53,11 @@ export class EventServer {
   private eventIdCounter = 0;
   private approvalQueue: Map<string, { resolve: (approved: boolean) => void; timer: ReturnType<typeof setTimeout> }> = new Map();
   private approvalBroker?: ApprovalBroker;
+  private outboxStore?: OutboxStore;
   private envelopeHook?: (eventData: Record<string, unknown>) => void | Promise<void>;
   private commandEnvelopeHook?: (envelope: Envelope) => void | Promise<void>;
+  private broadcastChain: Promise<void> = Promise.resolve();
+  private activeWorkersProvider?: ActiveWorkersProvider;
 
   constructor(driveSystem: DriveSystem, config?: EventServerConfig, logger?: Logger) {
     this.driveSystem = driveSystem;
@@ -52,6 +69,7 @@ export class EventServer {
     this.stateManager = config?.stateManager;
     this.triggerMapper = config?.triggerMapper;
     this.approvalBroker = config?.approvalBroker;
+    this.outboxStore = config?.outboxStore;
   }
 
   /** Start HTTP server, auto-retrying on EADDRINUSE up to MAX_PORT_ATTEMPTS times */
@@ -218,17 +236,24 @@ export class EventServer {
   }
 
   /** Broadcast an SSE event to all connected clients */
-  broadcast(eventType: string, data: unknown): void {
-    this.eventIdCounter++;
-    const id = String(this.eventIdCounter);
-    const payload = `id: ${id}\nevent: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const client of this.sseClients) {
-      try {
-        client.write(payload);
-      } catch {
-        this.sseClients.delete(client);
+  async broadcast(eventType: string, data: unknown): Promise<void> {
+    await this.enqueueBroadcast(async () => {
+      let outboxRecord: OutboxRecord | null = null;
+      if (this.outboxStore) {
+        outboxRecord = await this.outboxStore.append(this.toOutboxInput(eventType, data));
       }
-    }
+
+      const id = outboxRecord ? String(outboxRecord.seq) : undefined;
+      for (const client of this.sseClients) {
+        try {
+          this.writeSseEvent(client, eventType, data, id);
+        } catch {
+          this.sseClients.delete(client);
+        }
+      }
+    }).catch((err) => {
+      this.logger?.error(`EventServer: broadcast failed for ${eventType}: ${String(err)}`);
+    });
   }
 
   /** Request human approval and wait for response (5 min timeout) */
@@ -240,11 +265,11 @@ export class EventServer {
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         this.approvalQueue.delete(requestId);
-        this.broadcast("approval_resolved", { requestId, approved: false, reason: "timeout" });
+        void this.broadcast("approval_resolved", { requestId, goalId, approved: false, reason: "timeout" });
         resolve(false);
       }, 5 * 60 * 1000);
       this.approvalQueue.set(requestId, { resolve, timer });
-      this.broadcast("approval_required", { requestId, goalId, task });
+      void this.broadcast("approval_required", { requestId, goalId, task });
     });
   }
 
@@ -258,7 +283,7 @@ export class EventServer {
     clearTimeout(entry.timer);
     this.approvalQueue.delete(requestId);
     entry.resolve(approved);
-    this.broadcast("approval_resolved", { requestId, approved });
+    void this.broadcast("approval_resolved", { requestId, approved });
     return true;
   }
 
@@ -277,8 +302,17 @@ export class EventServer {
     this.approvalBroker = broker;
   }
 
+  setOutboxStore(store: OutboxStore): void {
+    this.outboxStore = store;
+  }
+
+  setActiveWorkersProvider(provider: ActiveWorkersProvider): void {
+    this.activeWorkersProvider = provider;
+  }
+
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const urlPath = req.url?.split("?")[0] ?? "/";
+    const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+    const urlPath = requestUrl.pathname;
 
     // GET /health
     if (req.method === "GET" && urlPath === "/health") {
@@ -305,6 +339,11 @@ export class EventServer {
       return;
     }
 
+    if (req.method === "GET" && urlPath === "/snapshot") {
+      void this.handleGetSnapshot(res);
+      return;
+    }
+
     // GET /goals/:id
     const goalsMatch = /^\/goals\/([^/]+)$/.exec(urlPath);
     if (req.method === "GET" && goalsMatch) {
@@ -314,22 +353,7 @@ export class EventServer {
 
     // GET /stream — SSE event stream
     if (req.method === "GET" && urlPath === "/stream") {
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-      });
-      res.write(`event: connected\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
-      this.sseClients.add(res);
-      for (const pending of this.approvalBroker?.getPendingApprovalEvents() ?? []) {
-        this.writeSseEvent(res, "approval_required", pending);
-      }
-      req.on("close", () => { this.sseClients.delete(res); });
-      const keepAlive = setInterval(() => {
-        try { res.write(": keepalive\n\n"); } catch { clearInterval(keepAlive); this.sseClients.delete(res); }
-      }, 30_000);
-      req.on("close", () => clearInterval(keepAlive));
+      void this.handleStream(req, res, requestUrl);
       return;
     }
 
@@ -362,7 +386,7 @@ export class EventServer {
               goalId,
               payload: { goalId },
             });
-            this.broadcast("goal_start_requested", { goalId });
+            await this.broadcast("goal_start_requested", { goalId });
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true, goalId }));
           } catch (err) {
@@ -376,7 +400,7 @@ export class EventServer {
               goalId,
               payload: { goalId },
             });
-            this.broadcast("goal_stop_requested", { goalId });
+            await this.broadcast("goal_stop_requested", { goalId });
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true, goalId }));
           } catch (err) {
@@ -415,7 +439,7 @@ export class EventServer {
               goalId,
               payload: { goalId, message },
             });
-            this.broadcast("chat_message_received", { goalId, message });
+            await this.broadcast("chat_message_received", { goalId, message });
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true }));
           } catch (err) {
@@ -601,33 +625,7 @@ export class EventServer {
 
   private async handleGetGoals(res: http.ServerResponse): Promise<void> {
     try {
-      const goalsDir = path.join(path.dirname(this.eventsDir), "goals");
-      let entries: string[];
-      try {
-        entries = await fsp.readdir(goalsDir);
-      } catch {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify([]));
-        return;
-      }
-
-      const goals: Array<{ id: string; title: string; status: string; loop_status: string }> = [];
-      for (const entry of entries) {
-        const goalFile = path.join(goalsDir, entry, "goal.json");
-        try {
-          const content = await fsp.readFile(goalFile, "utf-8");
-          const raw = JSON.parse(content) as Record<string, unknown>;
-          goals.push({
-            id: String(raw["id"] ?? entry),
-            title: String(raw["title"] ?? ""),
-            status: String(raw["status"] ?? "active"),
-            loop_status: String(raw["loop_status"] ?? "idle"),
-          });
-        } catch {
-          // Skip unreadable entries
-        }
-      }
-
+      const goals = await this.readGoalSummaries();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(goals));
     } catch (err) {
@@ -689,6 +687,67 @@ export class EventServer {
     return this.eventsDir;
   }
 
+  private async handleGetSnapshot(res: http.ServerResponse): Promise<void> {
+    try {
+      const snapshot = await this.buildSnapshot();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(snapshot));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Internal error", details: String(err) }));
+    }
+  }
+
+  private async handleStream(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    requestUrl: URL
+  ): Promise<void> {
+    const afterSeq = this.resolveReplayCursor(
+      requestUrl.searchParams.get("after"),
+      req.headers["last-event-id"]
+    );
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.write(`event: connected\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
+
+    await this.enqueueBroadcast(async () => {
+      const pendingApprovals = this.approvalBroker?.getPendingApprovalEvents() ?? [];
+      const pendingApprovalIds = new Set(pendingApprovals.map((pending) => pending.requestId));
+      const replayedApprovals = await this.replayOutbox(res, afterSeq, pendingApprovalIds);
+      for (const pending of pendingApprovals) {
+        if (replayedApprovals.has(pending.requestId)) continue;
+        this.writeSseEvent(res, "approval_required", pending);
+      }
+      this.sseClients.add(res);
+    }).catch((err) => {
+      this.logger?.error(`EventServer: stream replay failed: ${String(err)}`);
+      try {
+        res.end();
+      } catch {
+        // ignore
+      }
+    });
+
+    req.on("close", () => {
+      this.sseClients.delete(res);
+    });
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(": keepalive\n\n");
+      } catch {
+        clearInterval(keepAlive);
+        this.sseClients.delete(res);
+      }
+    }, 30_000);
+    req.on("close", () => clearInterval(keepAlive));
+  }
+
   private async dispatchCommandEnvelope(input: {
     name: string;
     goalId: string;
@@ -710,11 +769,135 @@ export class EventServer {
     );
   }
 
-  private writeSseEvent(res: http.ServerResponse, eventType: string, data: unknown): void {
-    this.eventIdCounter++;
-    const id = String(this.eventIdCounter);
-    res.write(`id: ${id}\nevent: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
+  private async buildSnapshot(): Promise<EventServerSnapshot> {
+    const [daemon, goals, latestOutbox, activeWorkers] = await Promise.all([
+      this.readDaemonState(),
+      this.readGoalSummaries(),
+      this.outboxStore?.loadLatest() ?? Promise.resolve(null),
+      this.activeWorkersProvider?.() ?? Promise.resolve([]),
+    ]);
+
+    return {
+      daemon,
+      goals,
+      approvals: this.approvalBroker?.getPendingApprovalEvents() ?? [],
+      active_workers: activeWorkers,
+      last_outbox_seq: latestOutbox?.seq ?? 0,
+    };
   }
+
+  private async readDaemonState(): Promise<Record<string, unknown> | null> {
+    const statePath = path.join(this.eventsDir.replace("/events", ""), "daemon-state.json");
+    try {
+      const raw = await fsp.readFile(statePath, "utf-8");
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  private async readGoalSummaries(): Promise<Array<{ id: string; title: string; status: string; loop_status: string }>> {
+    const goalsDir = path.join(path.dirname(this.eventsDir), "goals");
+    let entries: string[];
+    try {
+      entries = await fsp.readdir(goalsDir);
+    } catch {
+      return [];
+    }
+
+    const goals: Array<{ id: string; title: string; status: string; loop_status: string }> = [];
+    for (const entry of entries) {
+      const goalFile = path.join(goalsDir, entry, "goal.json");
+      try {
+        const content = await fsp.readFile(goalFile, "utf-8");
+        const raw = JSON.parse(content) as Record<string, unknown>;
+        goals.push({
+          id: String(raw["id"] ?? entry),
+          title: String(raw["title"] ?? ""),
+          status: String(raw["status"] ?? "active"),
+          loop_status: String(raw["loop_status"] ?? "idle"),
+        });
+      } catch {
+        // Skip unreadable entries
+      }
+    }
+    return goals;
+  }
+
+  private resolveReplayCursor(
+    queryAfter: string | null,
+    lastEventIdHeader: string | string[] | undefined
+  ): number {
+    const headerValue = Array.isArray(lastEventIdHeader) ? lastEventIdHeader[0] : lastEventIdHeader;
+    return Math.max(this.parseReplayCursorValue(queryAfter), this.parseReplayCursorValue(headerValue));
+  }
+
+  private parseReplayCursorValue(value: string | null | undefined): number {
+    if (!value) return 0;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  private async replayOutbox(
+    res: http.ServerResponse,
+    afterSeq: number,
+    pendingApprovalIds: ReadonlySet<string>
+  ): Promise<Set<string>> {
+    const replayedApprovals = new Set<string>();
+    if (!this.outboxStore) return replayedApprovals;
+
+    const records = await this.outboxStore.list(afterSeq);
+    for (const record of records) {
+      if (record.event_type === "approval_required" && isRecord(record.payload)) {
+        const requestId = record.payload["requestId"];
+        if (typeof requestId === "string") {
+          if (pendingApprovalIds.has(requestId)) {
+            continue;
+          }
+          replayedApprovals.add(requestId);
+        }
+      }
+      this.writeSseEvent(res, record.event_type, record.payload, String(record.seq));
+    }
+    return replayedApprovals;
+  }
+
+  private toOutboxInput(eventType: string, data: unknown): Omit<OutboxRecord, "seq"> {
+    const record: Omit<OutboxRecord, "seq"> = {
+      event_type: eventType,
+      created_at: Date.now(),
+      payload: data,
+    };
+
+    if (isRecord(data)) {
+      const goalId = data["goalId"] ?? data["goal_id"];
+      const correlationId = data["correlationId"] ?? data["correlation_id"] ?? data["requestId"] ?? data["request_id"];
+      if (typeof goalId === "string") record.goal_id = goalId;
+      if (typeof correlationId === "string") record.correlation_id = correlationId;
+    }
+
+    return record;
+  }
+
+  private enqueueBroadcast<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.broadcastChain.then(operation, operation);
+    this.broadcastChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private writeSseEvent(
+    res: http.ServerResponse,
+    eventType: string,
+    data: unknown,
+    id?: string
+  ): void {
+    const eventId = id ?? String(++this.eventIdCounter);
+    res.write(`id: ${eventId}\nevent: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 /** Read the full request body as a string (max 1 MB). */

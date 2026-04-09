@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { EventServer } from "../event-server.js";
 import type { PulSeedEvent } from "../../base/types/drive.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { OutboxStore } from "../store/outbox-store.js";
 
 // ─── Helpers ───
 
@@ -86,6 +87,74 @@ function makeRequest(
     req.on("error", reject);
     if (data.length > 0) req.write(data);
     req.end();
+  });
+}
+
+function collectSseEvents(
+  port: number,
+  urlPath: string,
+  eventType: string,
+  expectedCount: number
+): Promise<unknown[]> {
+  return new Promise((resolve, reject) => {
+    const received: unknown[] = [];
+    let settled = false;
+    const req = http.get(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: urlPath,
+        headers: { Accept: "text/event-stream" },
+      },
+      (res) => {
+        let buffer = "";
+        const timeout = setTimeout(() => {
+          settled = true;
+          req.destroy();
+          reject(new Error(`Timed out waiting for ${expectedCount} SSE events: ${eventType}`));
+        }, 2000);
+
+        res.setEncoding("utf-8");
+        res.on("data", (chunk: string) => {
+          buffer += chunk;
+          const messages = buffer.split("\n\n");
+          buffer = messages.pop() ?? "";
+
+          for (const message of messages) {
+            let currentEvent = "message";
+            let data = "";
+            for (const line of message.split("\n")) {
+              if (line.startsWith("event: ")) {
+                currentEvent = line.slice(7);
+              } else if (line.startsWith("data: ")) {
+                data += line.slice(6);
+              }
+            }
+
+            if (currentEvent !== eventType) continue;
+
+            try {
+              received.push(JSON.parse(data));
+            } catch {
+              received.push(data);
+            }
+
+            if (received.length >= expectedCount) {
+              clearTimeout(timeout);
+              settled = true;
+              req.destroy();
+              resolve(received);
+              return;
+            }
+          }
+        });
+      }
+    );
+    req.on("error", (err) => {
+      if (!settled) {
+        reject(err);
+      }
+    });
   });
 }
 
@@ -446,5 +515,88 @@ describe("goal action commands", () => {
 
     expect(result.status).toBe(404);
     expect(hook).not.toHaveBeenCalled();
+  });
+});
+
+describe("snapshot and outbox replay", () => {
+  it("returns snapshot metadata with the latest outbox sequence", async () => {
+    const outboxStore = new OutboxStore(tmpDir);
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      outboxStore,
+    });
+
+    await server.start();
+    await server.broadcast("goal_start_requested", { goalId: "goal-1" });
+    await server.broadcast("chat_message_received", { goalId: "goal-1", message: "hello" });
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as {
+      daemon: unknown;
+      goals: unknown[];
+      approvals: unknown[];
+      active_workers: unknown[];
+      last_outbox_seq: number;
+    };
+    expect(snapshot.daemon).toBeNull();
+    expect(snapshot.goals).toEqual([]);
+    expect(snapshot.approvals).toEqual([]);
+    expect(snapshot.active_workers).toEqual([]);
+    expect(snapshot.last_outbox_seq).toBe(2);
+  });
+
+  it("includes active worker summaries in snapshot when a provider is registered", async () => {
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+    });
+    server.setActiveWorkersProvider(() => [
+      {
+        worker_id: "worker-1",
+        goal_id: "goal-1",
+        started_at: 123,
+        iterations: 0,
+      },
+    ]);
+
+    await server.start();
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as { active_workers: unknown[] };
+    expect(snapshot.active_workers).toEqual([
+      {
+        worker_id: "worker-1",
+        goal_id: "goal-1",
+        started_at: 123,
+        iterations: 0,
+      },
+    ]);
+  });
+
+  it("replays outbox events after the requested sequence", async () => {
+    const outboxStore = new OutboxStore(tmpDir);
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      outboxStore,
+    });
+
+    await server.start();
+    await server.broadcast("goal_start_requested", { goalId: "goal-1" });
+    await server.broadcast("chat_message_received", { goalId: "goal-1", message: "hello" });
+
+    const events = await collectSseEvents(
+      server.getPort(),
+      "/stream?after=1",
+      "chat_message_received",
+      1
+    );
+
+    expect(events).toEqual([{ goalId: "goal-1", message: "hello" }]);
   });
 });

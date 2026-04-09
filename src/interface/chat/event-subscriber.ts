@@ -33,6 +33,8 @@ interface RawNotificationReport {
 export class EventSubscriber extends EventEmitter {
   private abortController: AbortController | null = null;
   private previousGap: number | undefined = undefined;
+  private lastOutboxSeq = 0;
+  private snapshotBootstrapped = false;
 
   constructor(
     private baseUrl: string,
@@ -53,7 +55,11 @@ export class EventSubscriber extends EventEmitter {
     if (this.abortController?.signal.aborted) return;
 
     try {
-      const res = await fetch(`${this.baseUrl}/stream`, {
+      if (!this.snapshotBootstrapped) {
+        await this.bootstrapSnapshot();
+      }
+
+      const res = await fetch(`${this.baseUrl}/stream?after=${this.lastOutboxSeq}`, {
         headers: { Accept: "text/event-stream", "Cache-Control": "no-cache" },
         signal: this.abortController!.signal,
       });
@@ -104,11 +110,14 @@ export class EventSubscriber extends EventEmitter {
   }
 
   private parseSSEMessage(raw: string): void {
+    let id = "";
     let eventType = "message";
     let data = "";
 
     for (const line of raw.split("\n")) {
-      if (line.startsWith("event: ")) {
+      if (line.startsWith("id: ")) {
+        id = line.slice(4).trim();
+      } else if (line.startsWith("event: ")) {
         eventType = line.slice(7).trim();
       } else if (line.startsWith("data: ")) {
         data += (data ? "\n" : "") + line.slice(6);
@@ -116,11 +125,19 @@ export class EventSubscriber extends EventEmitter {
     }
 
     if (!data) return;
+    const seq = Number.parseInt(id, 10);
+    if (Number.isFinite(seq) && seq > this.lastOutboxSeq) {
+      this.lastOutboxSeq = seq;
+    }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(data);
     } catch {
+      return;
+    }
+
+    if (!this.matchesGoal(parsed)) {
       return;
     }
 
@@ -245,5 +262,38 @@ export class EventSubscriber extends EventEmitter {
     }
 
     return null;
+  }
+
+  private matchesGoal(data: unknown): boolean {
+    if (typeof data !== "object" || data === null) return true;
+    const goalId = (data as Record<string, unknown>)["goalId"] ?? (data as Record<string, unknown>)["goal_id"];
+    return typeof goalId === "string" ? goalId === this.goalId : true;
+  }
+
+  private async bootstrapSnapshot(): Promise<void> {
+    try {
+      const res = await fetch(`${this.baseUrl}/snapshot`, {
+        headers: { Accept: "application/json" },
+        signal: this.abortController!.signal,
+      });
+      if (!res.ok) {
+        throw new Error(`snapshot failed: HTTP ${res.status}`);
+      }
+      const snapshot = await res.json() as {
+        approvals?: unknown[];
+        last_outbox_seq?: number;
+      };
+      this.snapshotBootstrapped = true;
+      this.lastOutboxSeq = Math.max(this.lastOutboxSeq, snapshot.last_outbox_seq ?? 0);
+      for (const approval of snapshot.approvals ?? []) {
+        if (!this.matchesGoal(approval)) continue;
+        const notification = this.formatNotification("approval_required", approval);
+        if (notification) {
+          this.emit("notification", notification);
+        }
+      }
+    } catch {
+      // Snapshot bootstrap is best-effort.
+    }
   }
 }

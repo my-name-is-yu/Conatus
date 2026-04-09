@@ -183,6 +183,7 @@ export class ApprovalBroker {
     session?.resolve?.(resolution.approved);
     this.broadcast?.("approval_resolved", {
       requestId: approvalId,
+      goalId: resolved.goal_id,
       approved: resolution.approved,
       reason: resolution.reason,
       responseChannel: resolution.responseChannel,

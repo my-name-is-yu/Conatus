@@ -190,27 +190,40 @@ describe("EventSubscriber", () => {
   });
 
   describe("subscribe / unsubscribe", () => {
-    it("connects to the correct URL (baseUrl + /stream)", async () => {
-      // Minimal ReadableStream that ends immediately
+    it("bootstraps snapshot then connects to /stream with after cursor", async () => {
       const stream = new ReadableStream({
         start(controller) {
           controller.close();
         },
       });
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        body: stream,
-      });
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ approvals: [], last_outbox_seq: 5 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          body: stream,
+        });
 
       vi.stubGlobal("fetch", mockFetch);
 
       const sub = new EventSubscriber("http://localhost:9000", "goal-xyz", "quiet");
       await sub.subscribe();
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        "http://localhost:9000/stream",
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        "http://localhost:9000/snapshot",
+        expect.objectContaining({
+          headers: expect.objectContaining({ Accept: "application/json" }),
+        })
+      );
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        "http://localhost:9000/stream?after=5",
         expect.objectContaining({
           headers: expect.objectContaining({ Accept: "text/event-stream" }),
         })
@@ -292,6 +305,18 @@ describe("EventSubscriber", () => {
       expect(received[0].type).toBe("approval");
       expect(received[0].requestId).toBe("approval-123");
       expect(received[0].message).toContain("Approve daily brief dispatch");
+    });
+
+    it("ignores events for other goals when goalId is present", () => {
+      const sub = makeSubscriber("goal-abc", "normal");
+      const received: TendNotification[] = [];
+      sub.on("notification", (n: TendNotification) => received.push(n));
+
+      const raw = `id: 7\nevent: approval_required\ndata: {"requestId":"approval-123","goalId":"goal-other","task":{"description":"Ignore me","action":"noop"}}`;
+      (sub as any).parseSSEMessage(raw);
+
+      expect(received).toHaveLength(0);
+      expect((sub as any).lastOutboxSeq).toBe(7);
     });
   });
 
