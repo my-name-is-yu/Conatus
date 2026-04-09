@@ -3,10 +3,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
-import {
-  getRuntimePendingApprovalsDir,
-  getRuntimeResolvedApprovalsDir,
-} from "../store/runtime-paths.js";
+import { createRuntimeStorePaths } from "../store/runtime-paths.js";
 import type { ApprovalRecord } from "../store/runtime-schemas.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
@@ -34,6 +31,7 @@ describe("ApprovalBroker", () => {
   it("persists pending approvals and resolves live requests", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
+    const paths = createRuntimeStorePaths(tmpDir);
     const broadcast = vi.fn();
     const broker = new ApprovalBroker({
       store,
@@ -48,20 +46,17 @@ describe("ApprovalBroker", () => {
     });
 
     await waitForFile(
-      path.join(getRuntimePendingApprovalsDir(tmpDir), "approval-live.json")
+      paths.approvalPendingPath("approval-live")
     );
-    const pending = await store.getPending("approval-live");
+    const pending = await store.loadPending("approval-live");
     expect(pending?.state).toBe("pending");
 
     await expect(broker.resolveApproval("approval-live", true, "tui")).resolves.toBe(true);
     await expect(request).resolves.toBe(true);
 
-    expect(await store.getPending("approval-live")).toBeNull();
+    expect(await store.loadPending("approval-live")).toBeNull();
 
-    const resolvedPath = path.join(
-      getRuntimeResolvedApprovalsDir(tmpDir),
-      "approval-live.json"
-    );
+    const resolvedPath = paths.approvalResolvedPath("approval-live");
     const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
     expect(resolved.state).toBe("approved");
     expect(resolved.response_channel).toBe("tui");
@@ -78,6 +73,7 @@ describe("ApprovalBroker", () => {
   it("restores pending approvals from durable storage", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
+    const paths = createRuntimeStorePaths(tmpDir);
     const expiresAt = Date.now() + 60_000;
     await store.savePending({
       approval_id: "approval-restored",
@@ -115,10 +111,7 @@ describe("ApprovalBroker", () => {
 
     await expect(broker.resolveApproval("approval-restored", false, "http")).resolves.toBe(true);
 
-    const resolvedPath = path.join(
-      getRuntimeResolvedApprovalsDir(tmpDir),
-      "approval-restored.json"
-    );
+    const resolvedPath = paths.approvalResolvedPath("approval-restored");
     const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
     expect(resolved.state).toBe("denied");
     expect(resolved.response_channel).toBe("http");

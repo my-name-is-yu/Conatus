@@ -25,9 +25,12 @@ import { EventBus } from "./queue/event-bus.js";
 import { CommandBus } from "./queue/command-bus.js";
 import { LoopSupervisor } from "./executor/index.js";
 import { PulSeedEventSchema } from "../base/types/drive.js";
-import { ApprovalStore } from "./store/approval-store.js";
+import { ApprovalStore, OutboxStore, RuntimeHealthStore, createRuntimeStorePaths } from "./store/index.js";
+import { LeaderLockManager } from "./leader-lock-manager.js";
+import { GoalLeaseManager } from "./goal-lease-manager.js";
+import { JournalBackedQueue, type JournalBackedQueueAcceptResult } from "./queue/journal-backed-queue.js";
+import { QueueClaimSweeper } from "./queue/queue-claim-sweeper.js";
 import { ApprovalBroker } from "./approval-broker.js";
-import { RuntimeJournal } from "./store/runtime-journal.js";
 
 // Re-exports for callers that imported these from daemon-runner
 export { generateCronEntry } from "./daemon-signals.js";
@@ -68,6 +71,12 @@ export interface DaemonDeps {
   stateManager: StateManager;
   pidManager: PIDManager;
   logger: Logger;
+  reportingEngine?: {
+    generateNotification(
+      type: "approval_required",
+      context: { goalId: string; message: string; details?: string }
+    ): Promise<unknown>;
+  };
   config?: Partial<DaemonConfig>;
   eventServer?: EventServer;
   llmClient?: ILLMClient;
@@ -102,6 +111,14 @@ export class DaemonRunner {
   private currentLoopIndex = 0;
   private lastProactiveTickAt: number = 0;
   private llmClient: ILLMClient | undefined;
+  private reportingEngine:
+    | {
+        generateNotification(
+          type: "approval_required",
+          context: { goalId: string; message: string; details?: string }
+        ): Promise<unknown>;
+      }
+    | undefined;
   private cronScheduler: CronScheduler | undefined;
   private scheduleEngine: ScheduleEngine | undefined;
   private consecutiveIdleCycles: number = 0;
@@ -109,12 +126,18 @@ export class DaemonRunner {
   private eventBus: EventBus | undefined;
   private commandBus: CommandBus | undefined;
   private supervisor: LoopSupervisor | null = null;
-  private approvalBroker: ApprovalBroker | undefined;
-  private runtimeJournal: RuntimeJournal | undefined;
-  private lastShutdownMarker: ShutdownMarker | null = null;
   private cronScheduleInterval: ReturnType<typeof setInterval> | null = null;
   private shutdownResolve: (() => void) | null = null;
   private readonly deps: DaemonDeps;
+  private runtimeRoot: string | null = null;
+  private approvalStore: ApprovalStore | null = null;
+  private outboxStore: OutboxStore | null = null;
+  private runtimeHealthStore: RuntimeHealthStore | null = null;
+  private leaderLockManager: LeaderLockManager | null = null;
+  private goalLeaseManager: GoalLeaseManager | null = null;
+  private journalQueue: JournalBackedQueue | null = null;
+  private queueClaimSweeper: QueueClaimSweeper | null = null;
+  private approvalBroker: ApprovalBroker | null = null;
 
   constructor(deps: DaemonDeps) {
     this.deps = deps;
@@ -125,6 +148,7 @@ export class DaemonRunner {
     this.logger = deps.logger;
     this.eventServer = deps.eventServer;
     this.llmClient = deps.llmClient;
+    this.reportingEngine = deps.reportingEngine;
     this.cronScheduler = deps.cronScheduler;
     this.scheduleEngine = deps.scheduleEngine;
     this.gateway = deps.gateway;
@@ -143,6 +167,26 @@ export class DaemonRunner {
     this.logDir = path.join(this.baseDir, this.config.log_dir);
     this.logPath = path.join(this.logDir, "pulseed.log");
 
+    if (this.config.runtime_journal_v2) {
+      this.runtimeRoot = this.resolveRuntimeRoot();
+      const runtimePaths = createRuntimeStorePaths(this.runtimeRoot);
+      this.approvalStore = new ApprovalStore(runtimePaths);
+      this.outboxStore = new OutboxStore(runtimePaths);
+      this.runtimeHealthStore = new RuntimeHealthStore(runtimePaths);
+      this.leaderLockManager = new LeaderLockManager(this.runtimeRoot);
+      this.goalLeaseManager = new GoalLeaseManager(this.runtimeRoot);
+      this.approvalBroker = new ApprovalBroker({
+        store: this.approvalStore,
+        logger: this.logger,
+      });
+      this.journalQueue = new JournalBackedQueue({
+        journalPath: path.join(this.runtimeRoot, "queue.json"),
+      });
+      this.queueClaimSweeper = new QueueClaimSweeper({
+        queue: this.journalQueue,
+      });
+    }
+
     // Initialize daemon state
     this.state = DaemonStateSchema.parse({
       pid: process.pid,
@@ -154,6 +198,16 @@ export class DaemonRunner {
       crash_count: 0,
       last_error: null,
     });
+  }
+
+  private resolveRuntimeRoot(): string {
+    const configuredRoot = this.config.runtime_root;
+    if (!configuredRoot || configuredRoot.trim() === "") {
+      return path.join(this.baseDir, "runtime");
+    }
+    return path.isAbsolute(configuredRoot)
+      ? configuredRoot
+      : path.resolve(this.baseDir, configuredRoot);
   }
 
   // ─── Public API ───
@@ -172,16 +226,13 @@ export class DaemonRunner {
       );
     }
 
-    // 2. Write PID file
-    await this.pidManager.writePID();
-
-    // 2b. Rotate log if needed, then check for crash recovery marker
+    // 2. Rotate log if needed, then check for crash recovery marker
     await this.rotateLog();
     await this.checkCrashRecovery();
-    if (this.config.runtime_journal_v2) {
-      this.runtimeJournal = new RuntimeJournal(this.baseDir);
-      this.gateway ??= new IngressGateway(this.logger);
-    }
+    await this.initializeRuntimeFoundation();
+
+    // 2b. Publish PID only after startup prerequisites succeed.
+    await this.pidManager.writePID();
 
     // 2c. Start EventServer (always-on) and file watcher
     if (!this.eventServer) {
@@ -191,21 +242,20 @@ export class DaemonRunner {
         stateManager: this.stateManager,
       }, this.logger);
     }
-
-    if (this.config.runtime_journal_v2 && this.eventServer) {
-      this.eventServer.setApprovalBroker(this.getOrCreateApprovalBroker());
-      this.eventServer.setCommandHook(async (envelope) => {
-        await this.runtimeJournal?.accept(envelope);
+    if (this.approvalBroker) {
+      this.approvalBroker.setBroadcast((eventType, data) => {
+        this.eventServer?.broadcast(eventType, data);
       });
+      this.eventServer.setApprovalBroker?.(this.approvalBroker);
     }
+
+    this.eventServer.setCommandEnvelopeHook?.(async (envelope: Envelope) => this.handleInboundEnvelope(envelope));
 
     if (this.gateway) {
       // Phase A: Route through Gateway → Envelope → writeEvent
       const httpAdapter = new HttpChannelAdapter(this.eventServer);
       this.gateway.registerAdapter(httpAdapter);
-      this.gateway.onEnvelope(async (envelope: Envelope) => {
-        await this.routeEnvelope(envelope);
-      });
+      this.gateway.onEnvelope(async (envelope: Envelope) => this.handleInboundEnvelope(envelope));
       // Wire onHighPriority to abort sleep — done via the abortSleep() public method.
       // Callers who construct buses should pass: onHighPriority: () => daemon.abortSleep()
       // The daemon provides abortSleep() below for this purpose.
@@ -222,12 +272,32 @@ export class DaemonRunner {
     if (!this.approvalFn && this.eventServer) {
       const es = this.eventServer;
       this.approvalFn = async (task: Record<string, unknown>): Promise<boolean> => {
+        const goalId = String(task["goal_id"] ?? "unknown");
+        const description = String(task["description"] ?? "");
+        const action = String(task["action"] ?? "");
+        const taskId = String(task["id"] ?? "");
+
+        if (this.reportingEngine) {
+          try {
+            await this.reportingEngine.generateNotification("approval_required", {
+              goalId,
+              message: description || action || taskId || "Task approval required",
+              details: [`task_id: ${taskId || "(none)"}`, `action: ${action || "(none)"}`].join("\n"),
+            });
+          } catch (err) {
+            this.logger.warn("Approval notification dispatch failed", {
+              goalId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
         return es.requestApproval(
-          String(task["goal_id"] ?? "unknown"),
+          goalId,
           {
-            id: String(task["id"] ?? ""),
-            description: String(task["description"] ?? ""),
-            action: String(task["action"] ?? ""),
+            id: taskId,
+            description,
+            action,
           }
         );
       };
@@ -289,10 +359,6 @@ export class DaemonRunner {
     });
     await this.saveDaemonState();
 
-    if (this.config.runtime_journal_v2) {
-      await this.replayPendingIngress();
-    }
-
     // 5b. Write "running" shutdown marker (crash detection on next startup)
     await this.writeShutdownMarker({
       goal_ids: mergedGoalIds,
@@ -309,13 +375,25 @@ export class DaemonRunner {
       check_interval_ms: this.config.check_interval_ms,
     });
 
-    // 7. Create supervisor if not already provided and eventBus is configured
-    if (!this.supervisor && this.eventBus) {
+    const sweepResult = this.queueClaimSweeper?.sweep();
+    if (sweepResult && (sweepResult.reclaimed > 0 || sweepResult.deadlettered > 0)) {
+      this.logger.info("Recovered stale runtime claims on startup", {
+        reclaimed: sweepResult.reclaimed,
+        deadlettered: sweepResult.deadlettered,
+        expiredClaimTokens: sweepResult.expiredClaimTokens,
+      });
+    }
+    this.queueClaimSweeper?.start();
+
+    // 7. Create supervisor if not already provided and runtime execution wiring is configured
+    if (!this.supervisor && (this.eventBus || (this.journalQueue && this.goalLeaseManager))) {
       const factory = this.deps.coreLoopFactory ?? (() => this.coreLoop);
       this.supervisor = new LoopSupervisor(
         {
           coreLoopFactory: factory,
           eventBus: this.eventBus,
+          journalQueue: this.journalQueue ?? undefined,
+          goalLeaseManager: this.goalLeaseManager ?? undefined,
           driveSystem: this.driveSystem,
           stateManager: this.stateManager,
           logger: this.logger,
@@ -327,11 +405,26 @@ export class DaemonRunner {
       );
     }
 
+    await this.saveRuntimeHealthSnapshot(
+      this.supervisor && this.journalQueue && this.goalLeaseManager
+        ? "execution_ownership_durable"
+        : "foundation_only",
+      {
+        gateway: this.gateway || this.eventServer ? "ok" : "degraded",
+        queue: this.journalQueue ? "ok" : "degraded",
+        leases: this.goalLeaseManager ? "ok" : "degraded",
+        approval: this.approvalStore ? "ok" : "degraded",
+        outbox: this.outboxStore ? "ok" : "degraded",
+        supervisor: this.supervisor && this.journalQueue && this.goalLeaseManager ? "ok" : "degraded",
+      }
+    );
+
     // 8. Run main loop — supervisor mode when supervisor is injected via deps,
     //    fallback to sequential runLoop otherwise (preserves backward compat for
     //    tests that provide eventBus without a supervisor)
+    let cleanupHandled = false;
     try {
-      if (this.supervisor && this.eventBus) {
+      if (this.supervisor) {
         // Supervisor handles goal execution; cron/schedule must also run in this mode.
         await this.supervisor.start(mergedGoalIds);
 
@@ -354,6 +447,7 @@ export class DaemonRunner {
       } else {
         // Fallback: sequential mode
         await this.runLoop(mergedGoalIds);
+        cleanupHandled = true;
       }
     } finally {
       // Cancel the force-stop timer if it's still pending
@@ -361,6 +455,7 @@ export class DaemonRunner {
         clearTimeout(forceStopTimer);
         forceStopTimer = null;
       }
+      this.queueClaimSweeper?.stop();
       // Remove signal handlers
       if (this.shutdownHandler) {
         process.removeListener("SIGTERM", this.shutdownHandler);
@@ -383,76 +478,66 @@ export class DaemonRunner {
         await this.eventServer.stop();
         this.logger.info("EventServer stopped");
       }
+      if (!cleanupHandled) {
+        await this.cleanup();
+      }
     }
+  }
+
+  private async initializeRuntimeFoundation(): Promise<void> {
+    if (!this.config.runtime_journal_v2) return;
+
+    await Promise.all([
+      this.approvalStore?.ensureReady(),
+      this.outboxStore?.ensureReady(),
+      this.runtimeHealthStore?.ensureReady(),
+    ]);
+
+    await this.saveRuntimeHealthSnapshot("foundation_only", {
+      gateway: "degraded",
+      queue: "degraded",
+      leases: "ok",
+      approval: "ok",
+      outbox: "ok",
+      supervisor: "degraded",
+    });
+
+    this.logger.info("Runtime journal foundation initialized", {
+      runtime_root: this.runtimeRoot,
+      queue_path: this.runtimeRoot ? path.join(this.runtimeRoot, "queue.json") : undefined,
+    });
+  }
+
+  private async saveRuntimeHealthSnapshot(
+    phase: string,
+    components: {
+      gateway: "ok" | "degraded";
+      queue: "ok" | "degraded";
+      leases: "ok" | "degraded";
+      approval: "ok" | "degraded";
+      outbox: "ok" | "degraded";
+      supervisor: "ok" | "degraded";
+    }
+  ): Promise<void> {
+    if (!this.config.runtime_journal_v2) return;
+
+    const status = Object.values(components).every((value) => value === "ok") ? "ok" : "degraded";
+    await this.runtimeHealthStore?.saveSnapshot({
+      status,
+      leader: false,
+      checked_at: Date.now(),
+      components,
+      details: {
+        runtime_journal_v2: true,
+        runtime_root: this.runtimeRoot,
+        phase,
+      },
+    });
   }
 
   /** Expose approvalFn for callers (e.g. cmdStart) to wire into TaskLifecycle */
   getApprovalFn(): ((task: Record<string, unknown>) => Promise<boolean>) | undefined {
     return this.approvalFn;
-  }
-
-  private async routeEnvelope(
-    envelope: Envelope,
-    options?: { replayed?: boolean }
-  ): Promise<void> {
-    if (this.config.runtime_journal_v2 && !options?.replayed) {
-      const receipt = await this.runtimeJournal?.accept(envelope);
-      if (receipt && !receipt.accepted) {
-        this.logger.info("Runtime journal suppressed duplicate envelope", {
-          id: envelope.id,
-          duplicate_of: receipt.duplicateOf,
-          source: envelope.source,
-          name: envelope.name,
-        });
-        return;
-      }
-    }
-
-    // Route by envelope type when buses are configured
-    if (envelope.type === "command" && this.commandBus) {
-      this.commandBus.push(envelope);
-      return;
-    }
-    if (envelope.type === "event" && this.eventBus) {
-      this.eventBus.push(envelope);
-      return;
-    }
-
-    // Fallback: no bus configured — keep legacy driveSystem.writeEvent() behavior
-    const payload = envelope.payload as Record<string, unknown>;
-    try {
-      const event = PulSeedEventSchema.parse(payload);
-      await this.driveSystem.writeEvent(event);
-      if (this.config.runtime_journal_v2) {
-        await this.runtimeJournal?.markHandled(envelope.id);
-      }
-    } catch (err) {
-      this.logger.error("Gateway: failed to process envelope", {
-        id: envelope.id,
-        error: String(err),
-      });
-    }
-  }
-
-  private async replayPendingIngress(): Promise<void> {
-    if (!this.runtimeJournal) {
-      return;
-    }
-    if (this.lastShutdownMarker?.state === "clean_shutdown") {
-      return;
-    }
-
-    const pending = await this.runtimeJournal.replayPending("event");
-    if (pending.length === 0) {
-      return;
-    }
-
-    this.logger.warn("Replaying pending runtime journal envelopes after restart", {
-      count: pending.length,
-    });
-    for (const envelope of pending) {
-      await this.routeEnvelope(envelope, { replayed: true });
-    }
   }
 
   /**
@@ -746,15 +831,6 @@ export class DaemonRunner {
     if (!wasCrashed) {
       this.state.status = "stopped";
     }
-
-    if (!wasCrashed) {
-      await this.runtimeJournal?.clearReceipts().catch((err) => {
-        this.logger.warn("Failed to clear runtime journal receipts", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
-
     await this.saveDaemonState();
     await this.pidManager.cleanup();
 
@@ -798,25 +874,20 @@ export class DaemonRunner {
           type: task.type,
         });
 
+        const envelope = createEnvelope({
+          type: "event",
+          name: "cron_task_due",
+          source: "cron-scheduler",
+          priority: "normal",
+          payload: task,
+          dedupe_key: `cron-${task.id}`,
+        });
+        if (!this.acceptRuntimeEnvelope(envelope)) {
+          continue;
+        }
+
         if (this.eventBus) {
           // Push to eventBus — markFired happens when the envelope is consumed, not at push time
-          const envelope = createEnvelope({
-            type: "event",
-            name: "cron_task_due",
-            source: "cron-scheduler",
-            priority: "normal",
-            payload: task,
-            dedupe_key: `cron-${task.id}`,
-          });
-          if (this.config.runtime_journal_v2) {
-            const receipt = await this.runtimeJournal?.accept(envelope);
-            if (receipt && !receipt.accepted) {
-              this.logger.info(`Cron task duplicate receipt suppressed: ${task.id}`, {
-                duplicate_of: receipt.duplicateOf,
-              });
-              continue;
-            }
-          }
           this.eventBus.push(envelope);
           this.logger.info(`Cron task enqueued to eventBus: ${task.id}`);
         } else {
@@ -828,34 +899,7 @@ export class DaemonRunner {
               prompt: task.prompt,
             });
 
-            let receiptAccepted = true;
-            const envelope = this.config.runtime_journal_v2
-              ? createEnvelope({
-                type: "event",
-                name: "cron_task_due",
-                source: "cron-scheduler",
-                priority: "normal",
-                payload: task,
-                dedupe_key: `cron-${task.id}`,
-              })
-              : null;
-            if (envelope) {
-              const receipt = await this.runtimeJournal?.accept(envelope);
-              receiptAccepted = receipt?.accepted ?? true;
-              if (!receiptAccepted) {
-                this.logger.info(`Cron task duplicate receipt suppressed: ${task.id}`, {
-                  duplicate_of: receipt?.duplicateOf,
-                });
-              }
-            }
-            if (!receiptAccepted) {
-              continue;
-            }
-
             await this.cronScheduler.markFired(task.id);
-            if (envelope) {
-              await this.runtimeJournal?.markHandled(envelope.id);
-            }
             this.logger.info(`Cron task fired: ${task.id}`);
           } catch (err) {
             this.logger.warn(`Cron task ${task.id} failed`, {
@@ -884,8 +928,8 @@ export class DaemonRunner {
       for (const result of results) {
         if (result.status === "error") {
           this.logger?.warn?.(`Schedule entry ${result.entry_id} failed: ${result.error_message}`);
-        } else if (this.eventBus) {
-          // Push activated schedule entries to eventBus as envelopes
+        } else {
+          // Record schedule activation in the runtime journal before any in-memory fanout.
           const goalId = (result as Record<string, unknown>)["goal_id"] as string | undefined;
           if (!goalId) {
             this.logger.warn("schedule_activated envelope missing goal_id", { entry_id: (result as Record<string, unknown>)["entry_id"] });
@@ -899,17 +943,12 @@ export class DaemonRunner {
             payload: result,
             dedupe_key: result.entry_id,
           });
-          if (this.config.runtime_journal_v2) {
-            const receipt = await this.runtimeJournal?.accept(envelope);
-            if (receipt && !receipt.accepted) {
-              this.logger.info("Schedule activation duplicate receipt suppressed", {
-                entry_id: result.entry_id,
-                duplicate_of: receipt.duplicateOf,
-              });
-              continue;
-            }
+          if (!this.acceptRuntimeEnvelope(envelope)) {
+            continue;
           }
-          this.eventBus.push(envelope);
+          if (this.eventBus) {
+            this.eventBus.push(envelope);
+          }
         }
       }
     } catch (error) {
@@ -964,6 +1003,54 @@ export class DaemonRunner {
       event_type: event.type,
     });
     this.sleepAbortController?.abort();
+  }
+
+  private acceptRuntimeEnvelope(envelope: Envelope): boolean {
+    if (!this.journalQueue) return true;
+
+    const result: JournalBackedQueueAcceptResult = this.journalQueue.accept(envelope);
+    if (result.accepted) {
+      return true;
+    }
+
+    this.logger.info("Runtime journal skipped envelope", {
+      id: envelope.id,
+      name: envelope.name,
+      type: envelope.type,
+      duplicate: result.duplicate,
+      runtime_root: this.runtimeRoot,
+    });
+    return false;
+  }
+
+  private async handleInboundEnvelope(envelope: Envelope): Promise<void> {
+    if (!this.acceptRuntimeEnvelope(envelope)) {
+      return;
+    }
+
+    if (envelope.type === "command") {
+      if (this.commandBus) {
+        this.commandBus.push(envelope);
+      }
+      return;
+    }
+
+    if (envelope.type === "event" && this.eventBus) {
+      this.eventBus.push(envelope);
+      return;
+    }
+
+    // Fallback: no bus configured — keep legacy driveSystem.writeEvent() behavior
+    const payload = envelope.payload as Record<string, unknown>;
+    try {
+      const event = PulSeedEventSchema.parse(payload);
+      await this.driveSystem.writeEvent(event);
+    } catch (err) {
+      this.logger.error("Gateway: failed to process envelope", {
+        id: envelope.id,
+        error: String(err),
+      });
+    }
   }
 
   // ─── Private: Proactive Tick ───
@@ -1111,7 +1198,6 @@ export class DaemonRunner {
    */
   private async checkCrashRecovery(): Promise<void> {
     const marker = await this.readShutdownMarker();
-    this.lastShutdownMarker = marker;
     if (!marker) return;
 
     if (marker.state === "clean_shutdown") {
@@ -1157,18 +1243,5 @@ export class DaemonRunner {
    */
   static generateCronEntry(goalId: string, intervalMinutes: number = 60): string {
     return generateCronEntry(goalId, intervalMinutes);
-  }
-
-  private getOrCreateApprovalBroker(): ApprovalBroker {
-    if (!this.approvalBroker) {
-      this.approvalBroker = new ApprovalBroker({
-        store: new ApprovalStore(this.baseDir),
-        logger: this.logger,
-        broadcast: (eventType, data) => {
-          this.eventServer?.broadcast(eventType, data);
-        },
-      });
-    }
-    return this.approvalBroker;
   }
 }

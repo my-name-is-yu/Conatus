@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { ScheduleEngine } from "../schedule-engine.js";
 import { detectChange } from "../change-detector.js";
 import type { ScheduleEntry, ScheduleEntryInput } from "../types/schedule.js";
@@ -718,6 +720,35 @@ describe("Probe execution", () => {
     expect(result!.change_detected).toBe(true);
   });
 
+  it("executeProbe uses probe_dimension when provided", async () => {
+    const adapter = makeMockAdapter(3);
+    const registry = new Map([["test-source", adapter]]);
+    const eng = new ScheduleEngine({ baseDir: tempDir, dataSourceRegistry: registry });
+
+    const entry = await eng.addEntry(makeProbeEntry({
+      probe: {
+        data_source_id: "test-source",
+        probe_dimension: "open_issue_count",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+    }));
+
+    const entries = eng.getEntries();
+    entries[0]!.baseline_results = [1];
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id);
+    expect(result!.status).toBe("ok");
+    expect(adapter.query).toHaveBeenCalledWith(expect.objectContaining({
+      dimension_name: "open_issue_count",
+    }));
+  });
+
   it("executeProbe calls LLM on change when llm_on_change is true", async () => {
     const adapter = makeMockAdapter({ count: 5 });
     const registry = new Map([["test-source", adapter]]);
@@ -1373,6 +1404,107 @@ describe("Cron execution (Phase 3)", () => {
     expect(result.status).toBe("error");
     expect(result.error_message).toContain("No cron config");
   });
+
+  it("executeCron runs morning_planning reflection jobs", async () => {
+    const notificationDispatcher = { dispatch: vi.fn().mockResolvedValue([]) };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          priorities: [],
+          suggestions: ["Focus on review"],
+          concerns: [],
+        }),
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }),
+      parseJSON: vi.fn().mockImplementation((content: string, schema: { parse: (value: unknown) => unknown }) => schema.parse(JSON.parse(content))),
+    };
+    const stateManager = {
+      listGoalIds: vi.fn().mockResolvedValue(["goal-1"]),
+      loadGoal: vi.fn().mockResolvedValue({
+        id: "goal-1",
+        title: "Refine planning",
+        status: "active",
+        dimensions: [{ id: "d-1" }],
+      }),
+      loadGapHistory: vi.fn().mockResolvedValue([
+        {
+          gap_vector: [{ normalized_weighted_gap: 0.4 }],
+        },
+      ]),
+    };
+
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      llmClient: llmClient as unknown as import("../../base/llm/llm-client.js").ILLMClient,
+      stateManager: stateManager as any,
+      notificationDispatcher,
+    });
+
+    const entry = await eng.addEntry(makeCronEntry({
+      cron: {
+        job_kind: "reflection",
+        reflection_kind: "morning_planning",
+        prompt_template: "ignored",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 1000,
+      },
+    }));
+
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((r) => r.entry_id === entry.id)!;
+    const updatedEntry = eng.getEntries().find((e) => e.id === entry.id)!;
+
+    expect(result.status).toBe("ok");
+    expect(result.output_summary).toContain("Morning planning completed");
+    expect(result.tokens_used).toBe(15);
+    expect(updatedEntry.tokens_used_today).toBe(15);
+    expect(notificationDispatcher.dispatch).toHaveBeenCalledOnce();
+    expect(fs.existsSync(path.join(tempDir, "reflections"))).toBe(true);
+  });
+
+  it("executeCron runs dream_consolidation reflection jobs without llmClient", async () => {
+    const stateManager = {
+      listGoalIds: vi.fn().mockResolvedValue(["goal-1"]),
+    };
+    const memoryLifecycle = {
+      compressToLongTerm: vi.fn().mockResolvedValue({ entries_compressed: 2 }),
+    };
+    const knowledgeManager = {
+      getStaleEntries: vi.fn().mockResolvedValue([]),
+      generateRevalidationTasks: vi.fn().mockResolvedValue([]),
+    };
+
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      stateManager: stateManager as any,
+      memoryLifecycle: memoryLifecycle as any,
+      knowledgeManager: knowledgeManager as any,
+    });
+
+    const entry = await eng.addEntry(makeCronEntry({
+      cron: {
+        job_kind: "reflection",
+        reflection_kind: "dream_consolidation",
+        prompt_template: "ignored",
+        context_sources: [],
+        output_format: "report",
+        max_tokens: 1000,
+      },
+    }));
+
+    const result = await (eng as any).executeCron(entry);
+
+    expect(result.status).toBe("ok");
+    expect(result.output_summary).toContain("Dream consolidation completed");
+    expect(memoryLifecycle.compressToLongTerm).toHaveBeenCalled();
+    expect(fs.existsSync(path.join(tempDir, "reflections"))).toBe(true);
+  });
 });
 
 // ─── Phase 3: GoalTrigger execution ───
@@ -1406,7 +1538,7 @@ describe("GoalTrigger execution (Phase 3)", () => {
     const eng = new ScheduleEngine({
       baseDir: tempDir,
       coreLoop: mockCoreLoop,
-      stateManager: mockStateManager,
+      stateManager: mockStateManager as any,
     });
 
     const entry = await eng.addEntry(makeGoalTriggerEntry());
@@ -1428,7 +1560,7 @@ describe("GoalTrigger execution (Phase 3)", () => {
     const eng = new ScheduleEngine({
       baseDir: tempDir,
       coreLoop: mockCoreLoop,
-      stateManager: mockStateManager,
+      stateManager: mockStateManager as any,
     });
 
     const entry = await eng.addEntry(makeGoalTriggerEntry({

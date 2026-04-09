@@ -1,181 +1,93 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { createHash } from "node:crypto";
-import { readJsonFileOrNull, readJsonFileWithSchema, writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import { EnvelopeSchema, type Envelope, type EnvelopeType } from "../types/envelope.js";
-import {
-  getRuntimeInboxDateDir,
-  getRuntimeQueueDedupeDir,
-  getRuntimeQueueRecordsDir,
-} from "./runtime-paths.js";
-import { QueueRecordSchema, type QueueRecord } from "./runtime-schemas.js";
+import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
+import type { RuntimeStorePaths } from "./runtime-paths.js";
+import { ensureRuntimeStorePaths } from "./runtime-paths.js";
+import type { z } from "zod";
 
-export interface JournalAcceptResult {
-  accepted: boolean;
-  duplicateOf?: string;
+export async function ensureRuntimeDirectory(dirPath: string): Promise<void> {
+  await fsp.mkdir(dirPath, { recursive: true });
+}
+
+export async function loadRuntimeJson<T>(
+  filePath: string,
+  schema: z.ZodType<T>
+): Promise<T | null> {
+  const raw = await readJsonFileOrNull<unknown>(filePath);
+  if (raw === null) return null;
+  const parsed = schema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+export async function saveRuntimeJson<T>(
+  filePath: string,
+  schema: z.ZodType<T>,
+  value: T
+): Promise<T> {
+  const parsed = schema.parse(value);
+  await writeJsonFileAtomic(filePath, parsed);
+  return parsed;
+}
+
+export async function removeRuntimeJson(filePath: string): Promise<void> {
+  try {
+    await fsp.unlink(filePath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+}
+
+export async function listRuntimeJson<T>(
+  dirPath: string,
+  schema: z.ZodType<T>
+): Promise<T[]> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(dirPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+
+  const files = entries.filter((entry) => entry.endsWith(".json")).sort();
+  const records: T[] = [];
+  for (const fileName of files) {
+    const record = await loadRuntimeJson(path.join(dirPath, fileName), schema);
+    if (record !== null) records.push(record);
+  }
+  return records;
+}
+
+export async function moveRuntimeJson(sourcePath: string, targetPath: string): Promise<void> {
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+  await fsp.rename(sourcePath, targetPath);
 }
 
 export class RuntimeJournal {
-  private readonly baseDir: string;
+  constructor(private readonly paths: RuntimeStorePaths) {}
 
-  constructor(baseDir: string) {
-    this.baseDir = baseDir;
+  async ensureReady(): Promise<void> {
+    await ensureRuntimeStorePaths(this.paths);
   }
 
-  async accept(envelope: Envelope): Promise<JournalAcceptResult> {
-    if (envelope.dedupe_key) {
-      const existingId = await this.lookupDedupe(envelope.dedupe_key);
-      if (existingId) {
-        const existing = await this.getQueueRecord(existingId);
-        if (existing?.state === "queued") {
-          return { accepted: false, duplicateOf: existingId };
-        }
-      }
-    }
-
-    await writeJsonFileAtomic(this.getInboxPath(envelope), envelope);
-    await writeJsonFileAtomic(this.getQueueRecordPath(envelope.id), {
-      message_id: envelope.id,
-      envelope_type: envelope.type,
-      priority: envelope.priority,
-      state: "queued",
-      dedupe_key: envelope.dedupe_key,
-      available_at: envelope.created_at,
-      attempt: 0,
-      updated_at: Date.now(),
-    } satisfies QueueRecord);
-
-    if (envelope.dedupe_key) {
-      await writeJsonFileAtomic(this.getDedupePath(envelope.dedupe_key), {
-        dedupe_key: envelope.dedupe_key,
-        message_id: envelope.id,
-      });
-    }
-
-    return { accepted: true };
+  async load<T>(filePath: string, schema: z.ZodType<T>): Promise<T | null> {
+    return loadRuntimeJson(filePath, schema);
   }
 
-  async markHandled(messageId: string): Promise<void> {
-    const record = await this.getQueueRecord(messageId);
-    if (!record || record.state !== "queued") {
-      return;
-    }
-
-    await writeJsonFileAtomic(this.getQueueRecordPath(messageId), {
-      ...record,
-      state: "completed",
-      updated_at: Date.now(),
-    } satisfies QueueRecord);
-
-    if (record.dedupe_key) {
-      await fsp.unlink(this.getDedupePath(record.dedupe_key)).catch((err: NodeJS.ErrnoException) => {
-        if (err.code !== "ENOENT") {
-          throw err;
-        }
-      });
-    }
+  async save<T>(filePath: string, schema: z.ZodType<T>, value: T): Promise<T> {
+    return saveRuntimeJson(filePath, schema, value);
   }
 
-  async replayPending(type?: EnvelopeType): Promise<Envelope[]> {
-    const records = await this.listQueueRecords();
-    const pending = records.filter((record) => {
-      if (record.state !== "queued") {
-        return false;
-      }
-      return type ? record.envelope_type === type : true;
-    });
-
-    const envelopes = await Promise.all(
-      pending.map((record) => this.getEnvelope(record.message_id))
-    );
-
-    return envelopes
-      .filter((envelope): envelope is Envelope => envelope !== null)
-      .sort((a, b) => a.created_at - b.created_at);
+  async list<T>(dirPath: string, schema: z.ZodType<T>): Promise<T[]> {
+    return listRuntimeJson(dirPath, schema);
   }
 
-  async clearReceipts(): Promise<void> {
-    const records = await this.listQueueRecords();
-    for (const record of records) {
-      if (record.dedupe_key) {
-        await fsp.unlink(this.getDedupePath(record.dedupe_key)).catch((err: NodeJS.ErrnoException) => {
-          if (err.code !== "ENOENT") {
-            throw err;
-          }
-        });
-      }
-      await fsp.unlink(this.getQueueRecordPath(record.message_id)).catch((err: NodeJS.ErrnoException) => {
-        if (err.code !== "ENOENT") {
-          throw err;
-        }
-      });
-    }
+  async remove(filePath: string): Promise<void> {
+    await removeRuntimeJson(filePath);
   }
 
-  private async listQueueRecords(): Promise<QueueRecord[]> {
-    const dir = getRuntimeQueueRecordsDir(this.baseDir);
-    try {
-      const entries = await fsp.readdir(dir, { withFileTypes: true });
-      const records = await Promise.all(
-        entries
-          .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-          .map((entry) =>
-            readJsonFileWithSchema(path.join(dir, entry.name), QueueRecordSchema)
-          )
-      );
-
-      return records.filter((record): record is QueueRecord => record !== null);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return [];
-      }
-      throw err;
-    }
-  }
-
-  private async lookupDedupe(dedupeKey: string): Promise<string | null> {
-    const data = await readJsonFileOrNull<{ message_id?: string }>(this.getDedupePath(dedupeKey));
-    return typeof data?.message_id === "string" ? data.message_id : null;
-  }
-
-  private async getQueueRecord(messageId: string): Promise<QueueRecord | null> {
-    return readJsonFileWithSchema(this.getQueueRecordPath(messageId), QueueRecordSchema);
-  }
-
-  private async getEnvelope(messageId: string): Promise<Envelope | null> {
-    const inboxDir = path.join(this.baseDir, "runtime", "inbox");
-    try {
-      const days = await fsp.readdir(inboxDir, { withFileTypes: true });
-      for (const day of days) {
-        if (!day.isDirectory()) {
-          continue;
-        }
-        const filePath = path.join(inboxDir, day.name, `${messageId}.json`);
-        const envelope = await readJsonFileWithSchema(filePath, EnvelopeSchema);
-        if (envelope) {
-          return envelope;
-        }
-      }
-      return null;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw err;
-    }
-  }
-
-  private getInboxPath(envelope: Envelope): string {
-    const dateKey = new Date(envelope.created_at).toISOString().slice(0, 10);
-    return path.join(getRuntimeInboxDateDir(this.baseDir, dateKey), `${envelope.id}.json`);
-  }
-
-  private getQueueRecordPath(messageId: string): string {
-    return path.join(getRuntimeQueueRecordsDir(this.baseDir), `${messageId}.json`);
-  }
-
-  private getDedupePath(dedupeKey: string): string {
-    const digest = createHash("sha256").update(dedupeKey).digest("hex");
-    return path.join(getRuntimeQueueDedupeDir(this.baseDir), `${digest}.json`);
+  async move(sourcePath: string, targetPath: string): Promise<void> {
+    await moveRuntimeJson(sourcePath, targetPath);
   }
 }

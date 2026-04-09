@@ -34,7 +34,7 @@ interface PendingApprovalSession {
 export class ApprovalBroker {
   private readonly store: ApprovalStore;
   private readonly logger?: Logger;
-  private readonly broadcast?: (eventType: string, data: unknown) => void;
+  private broadcast?: (eventType: string, data: unknown) => void;
   private readonly now: () => number;
   private readonly createId: () => string;
   private readonly defaultTimeoutMs: number;
@@ -50,6 +50,10 @@ export class ApprovalBroker {
       options.createId ??
       (() => `approval-${this.now()}-${Math.random().toString(36).slice(2, 8)}`);
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 5 * 60 * 1000;
+  }
+
+  setBroadcast(broadcast: (eventType: string, data: unknown) => void): void {
+    this.broadcast = broadcast;
   }
 
   async start(): Promise<void> {

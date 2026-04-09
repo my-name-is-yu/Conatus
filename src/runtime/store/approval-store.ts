@@ -1,81 +1,143 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { readJsonFileWithSchema, writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import { getRuntimePendingApprovalsDir, getRuntimeResolvedApprovalsDir } from "./runtime-paths.js";
-import { ApprovalRecordSchema, type ApprovalRecord } from "./runtime-schemas.js";
+import { RuntimeJournal } from "./runtime-journal.js";
+import {
+  ApprovalRecordSchema,
+  ApprovalStateSchema,
+  type ApprovalRecord,
+  type ApprovalState,
+} from "./runtime-schemas.js";
+import {
+  createRuntimeStorePaths,
+  type RuntimeStorePaths,
+} from "./runtime-paths.js";
+
+export interface ApprovalResolutionInput {
+  state: Exclude<ApprovalState, "pending">;
+  resolved_at?: number;
+  response_channel?: string;
+  payload?: unknown;
+}
 
 export class ApprovalStore {
-  private readonly baseDir: string;
+  private readonly paths: RuntimeStorePaths;
+  private readonly journal: RuntimeJournal;
 
-  constructor(baseDir: string) {
-    this.baseDir = baseDir;
+  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+    this.paths =
+      typeof runtimeRootOrPaths === "string"
+        ? createRuntimeStorePaths(runtimeRootOrPaths)
+        : runtimeRootOrPaths ?? createRuntimeStorePaths();
+    this.journal = new RuntimeJournal(this.paths);
   }
 
-  async savePending(record: ApprovalRecord): Promise<void> {
-    await writeJsonFileAtomic(this.getPendingPath(record.approval_id), record);
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async getPending(approvalId: string): Promise<ApprovalRecord | null> {
-    return readJsonFileWithSchema(this.getPendingPath(approvalId), ApprovalRecordSchema);
+  private lockPath(approvalId: string): string {
+    return path.join(this.paths.approvalsDir, "locks", `${approvalId}.lock`);
+  }
+
+  private async withApprovalLock<T>(approvalId: string, fn: () => Promise<T>): Promise<T> {
+    const lockPath = this.lockPath(approvalId);
+    const staleAfterMs = 30_000;
+
+    for (;;) {
+      try {
+        await fsp.mkdir(path.dirname(lockPath), { recursive: true });
+        const handle = await fsp.open(lockPath, "wx");
+        await handle.writeFile(JSON.stringify({ pid: process.pid, acquired_at: Date.now() }));
+        try {
+          return await fn();
+        } finally {
+          await handle.close();
+          await fsp.unlink(lockPath).catch(() => undefined);
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+
+        try {
+          const stat = await fsp.stat(lockPath);
+          if (Date.now() - stat.mtimeMs > staleAfterMs) {
+            await fsp.unlink(lockPath);
+            continue;
+          }
+        } catch (staleErr) {
+          if ((staleErr as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw staleErr;
+        }
+
+        await this.sleep(10);
+      }
+    }
+  }
+
+  async ensureReady(): Promise<void> {
+    await this.journal.ensureReady();
+  }
+
+  async load(approvalId: string): Promise<ApprovalRecord | null> {
+    return (await this.loadResolved(approvalId)) ?? (await this.loadPending(approvalId));
+  }
+
+  async loadPending(approvalId: string): Promise<ApprovalRecord | null> {
+    return this.journal.load(this.paths.approvalPendingPath(approvalId), ApprovalRecordSchema);
+  }
+
+  async loadResolved(approvalId: string): Promise<ApprovalRecord | null> {
+    return this.journal.load(this.paths.approvalResolvedPath(approvalId), ApprovalRecordSchema);
   }
 
   async listPending(): Promise<ApprovalRecord[]> {
-    const dir = getRuntimePendingApprovalsDir(this.baseDir);
-    try {
-      const entries = await fsp.readdir(dir, { withFileTypes: true });
-      const pending = await Promise.all(
-        entries
-          .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-          .map((entry) =>
-            readJsonFileWithSchema(path.join(dir, entry.name), ApprovalRecordSchema)
-          )
-      );
-      return pending
-        .filter((record): record is ApprovalRecord => record !== null && record.state === "pending")
-        .sort((a, b) => a.created_at - b.created_at);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return [];
-      }
-      throw err;
+    const pending = await this.journal.list(this.paths.approvalsPendingDir, ApprovalRecordSchema);
+    const filtered: ApprovalRecord[] = [];
+    for (const record of pending) {
+      const resolved = await this.loadResolved(record.approval_id);
+      if (resolved === null) filtered.push(record);
     }
+    return filtered;
   }
 
-  async resolvePending(
-    approvalId: string,
-    resolution: {
-      state: "approved" | "denied" | "expired" | "cancelled";
-      resolved_at: number;
-      response_channel?: string;
-    }
-  ): Promise<ApprovalRecord | null> {
-    const current = await this.getPending(approvalId);
-    if (current === null || current.state !== "pending") {
-      return null;
-    }
+  async listResolved(): Promise<ApprovalRecord[]> {
+    return this.journal.list(this.paths.approvalsResolvedDir, ApprovalRecordSchema);
+  }
 
-    const resolved: ApprovalRecord = {
-      ...current,
-      state: resolution.state,
-      resolved_at: resolution.resolved_at,
-      response_channel: resolution.response_channel,
-    };
-
-    await writeJsonFileAtomic(this.getResolvedPath(approvalId), resolved);
-    await fsp.unlink(this.getPendingPath(approvalId)).catch((err: NodeJS.ErrnoException) => {
-      if (err.code !== "ENOENT") {
-        throw err;
-      }
+  async savePending(record: ApprovalRecord): Promise<ApprovalRecord> {
+    const parsed = ApprovalRecordSchema.parse({ ...record, state: "pending" });
+    return this.withApprovalLock(parsed.approval_id, async () => {
+      const resolved = await this.loadResolved(parsed.approval_id);
+      if (resolved !== null) return resolved;
+      await this.journal.save(this.paths.approvalPendingPath(parsed.approval_id), ApprovalRecordSchema, parsed);
+      return parsed;
     });
-
-    return resolved;
   }
 
-  private getPendingPath(approvalId: string): string {
-    return path.join(getRuntimePendingApprovalsDir(this.baseDir), `${approvalId}.json`);
+  async saveResolved(record: ApprovalRecord): Promise<ApprovalRecord> {
+    const parsed = ApprovalRecordSchema.parse({
+      ...record,
+      state: ApprovalStateSchema.parse(record.state),
+      resolved_at: record.resolved_at ?? Date.now(),
+    });
+    await this.journal.save(this.paths.approvalResolvedPath(parsed.approval_id), ApprovalRecordSchema, parsed);
+    return parsed;
   }
 
-  private getResolvedPath(approvalId: string): string {
-    return path.join(getRuntimeResolvedApprovalsDir(this.baseDir), `${approvalId}.json`);
+  async resolvePending(approvalId: string, update: ApprovalResolutionInput): Promise<ApprovalRecord | null> {
+    return this.withApprovalLock(approvalId, async () => {
+      const current = await this.loadPending(approvalId);
+      if (current === null) return this.loadResolved(approvalId);
+
+      const resolved = ApprovalRecordSchema.parse({
+        ...current,
+        ...update,
+        approval_id: current.approval_id,
+        state: ApprovalStateSchema.parse(update.state),
+        resolved_at: update.resolved_at ?? Date.now(),
+      });
+      await this.saveResolved(resolved);
+      await this.journal.remove(this.paths.approvalPendingPath(approvalId));
+      return resolved;
+    });
   }
 }

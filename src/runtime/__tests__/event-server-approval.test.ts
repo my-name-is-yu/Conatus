@@ -5,10 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventServer } from "../event-server.js";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
-import {
-  getRuntimePendingApprovalsDir,
-  getRuntimeResolvedApprovalsDir,
-} from "../store/runtime-paths.js";
+import { createRuntimeStorePaths } from "../store/runtime-paths.js";
 import type { ApprovalRecord } from "../store/runtime-schemas.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
@@ -138,6 +135,7 @@ describe("EventServer durable approval integration", () => {
 
   it("routes approval resolution through ApprovalBroker", async () => {
     const store = new ApprovalStore(tmpDir);
+    const paths = createRuntimeStorePaths(tmpDir);
     const broker = new ApprovalBroker({
       store,
       createId: () => "approval-http",
@@ -158,9 +156,7 @@ describe("EventServer durable approval integration", () => {
         description: "Approve HTTP request",
         action: "merge",
       });
-      await waitForFile(
-        path.join(getRuntimePendingApprovalsDir(tmpDir), "approval-http.json")
-      );
+      await waitForFile(paths.approvalPendingPath("approval-http"));
 
       const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "approval-http",
@@ -170,10 +166,7 @@ describe("EventServer durable approval integration", () => {
       expect(result.status).toBe(200);
       await expect(approval).resolves.toBe(true);
 
-      const resolvedPath = path.join(
-        getRuntimeResolvedApprovalsDir(tmpDir),
-        "approval-http.json"
-      );
+      const resolvedPath = paths.approvalResolvedPath("approval-http");
       const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
       expect(resolved.state).toBe("approved");
     } finally {

@@ -6,7 +6,7 @@ import { DaemonRunner } from "../daemon-runner.js";
 import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
-import { getRuntimePendingApprovalsDir, getRuntimeResolvedApprovalsDir } from "../store/runtime-paths.js";
+import { createRuntimeStorePaths } from "../store/runtime-paths.js";
 import type { ApprovalRecord } from "../store/runtime-schemas.js";
 
 function makeDeps(tmpDir: string) {
@@ -184,6 +184,7 @@ describe("DaemonRunner durable approval restart", () => {
 
   it("keeps pending approvals across daemon restart when runtime_journal_v2 is enabled", async () => {
     tmpDir = makeTempDir();
+    const paths = createRuntimeStorePaths(path.join(tmpDir, "runtime"));
 
     const deps1 = makeDeps(tmpDir);
     daemon = new DaemonRunner(deps1);
@@ -198,13 +199,14 @@ describe("DaemonRunner durable approval restart", () => {
       action: "deploy",
     });
 
-    const pendingDir = getRuntimePendingApprovalsDir(tmpDir);
+    const pendingDir = paths.approvalsPendingDir;
     await waitFor(() => fs.existsSync(pendingDir) && fs.readdirSync(pendingDir).length === 1);
     const [pendingFile] = fs.readdirSync(pendingDir);
     const pendingPath = path.join(pendingDir, pendingFile!);
 
     daemon.stop();
     await startPromise;
+    await waitFor(() => !fs.existsSync(path.join(tmpDir!, "pulseed.pid")));
     daemon = null;
     startPromise = null;
 
@@ -255,10 +257,7 @@ describe("DaemonRunner durable approval restart", () => {
     });
     expect(approveResult.status).toBe(200);
 
-    const resolvedPath = path.join(
-      getRuntimeResolvedApprovalsDir(tmpDir),
-      `${approvalId}.json`
-    );
+    const resolvedPath = paths.approvalResolvedPath(approvalId);
     await waitFor(() => fs.existsSync(resolvedPath));
     const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
     expect(resolved.state).toBe("approved");
