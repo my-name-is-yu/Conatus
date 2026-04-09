@@ -19,6 +19,14 @@ export interface DaemonEvent {
   data: unknown;
 }
 
+export interface DaemonSnapshot {
+  daemon: Record<string, unknown> | null;
+  goals: unknown[];
+  approvals: unknown[];
+  active_workers: unknown[];
+  last_outbox_seq: number;
+}
+
 type EventHandler = (data: unknown) => void;
 
 export class DaemonClient {
@@ -30,6 +38,8 @@ export class DaemonClient {
   private connected = false;
   private stopped = false;
   private lastEventId: string | null = null;
+  private lastOutboxSeq = 0;
+  private snapshotBootstrapped = false;
 
   constructor(config: DaemonClientConfig) {
     this.config = {
@@ -44,11 +54,16 @@ export class DaemonClient {
 
   connect(): void {
     this.stopped = false;
-    this.connectSSE();
+    void this.connectSSE();
   }
 
-  private connectSSE(): void {
+  private async connectSSE(): Promise<void> {
     if (this.stopped) return;
+
+    if (!this.snapshotBootstrapped) {
+      await this.bootstrapSnapshot();
+      if (this.stopped) return;
+    }
 
     const headers: Record<string, string> = {
       Accept: "text/event-stream",
@@ -62,7 +77,7 @@ export class DaemonClient {
       {
         hostname: this.config.host,
         port: this.config.port,
-        path: "/stream",
+        path: `/stream?after=${this.lastOutboxSeq}`,
         headers,
       },
       (res) => {
@@ -121,6 +136,10 @@ export class DaemonClient {
     }
 
     if (id) this.lastEventId = id;
+    const seq = Number.parseInt(id, 10);
+    if (Number.isFinite(seq) && seq > this.lastOutboxSeq) {
+      this.lastOutboxSeq = seq;
+    }
     if (!data && event === "message") return;
 
     let parsed: unknown;
@@ -145,7 +164,9 @@ export class DaemonClient {
       this.config.reconnectInterval * Math.pow(1.5, this.reconnectAttempts - 1),
       30_000
     );
-    this.reconnectTimer = setTimeout(() => this.connectSSE(), delay);
+    this.reconnectTimer = setTimeout(() => {
+      void this.connectSSE();
+    }, delay);
   }
 
   disconnect(): void {
@@ -224,6 +245,10 @@ export class DaemonClient {
     return this.get("/daemon/status");
   }
 
+  async getSnapshot(): Promise<DaemonSnapshot> {
+    return this.get("/snapshot") as Promise<DaemonSnapshot>;
+  }
+
   async getGoals(): Promise<unknown[]> {
     return this.get("/goals") as Promise<unknown[]>;
   }
@@ -262,6 +287,22 @@ export class DaemonClient {
       );
       req.on("error", reject);
     });
+  }
+
+  private async bootstrapSnapshot(): Promise<void> {
+    try {
+      const snapshot = await this.getSnapshot();
+      this.snapshotBootstrapped = true;
+      this.lastOutboxSeq = Math.max(this.lastOutboxSeq, snapshot.last_outbox_seq ?? 0);
+      if (snapshot.daemon) {
+        this.emit("daemon_status", snapshot.daemon);
+      }
+      for (const approval of snapshot.approvals ?? []) {
+        this.emit("approval_required", approval);
+      }
+    } catch {
+      // Snapshot bootstrap is optional; fall back to a direct stream connect.
+    }
   }
 
   private post(path: string, data: unknown): Promise<{ ok: boolean }> {

@@ -240,11 +240,26 @@ export class DaemonRunner {
       this.eventServer = new EventServer(this.driveSystem, {
         port: esPort,
         stateManager: this.stateManager,
+        outboxStore: this.outboxStore ?? undefined,
       }, this.logger);
     }
+    if (this.outboxStore) {
+      this.eventServer.setOutboxStore?.(this.outboxStore);
+    }
+    this.eventServer.setActiveWorkersProvider?.(() => {
+      const workers = this.supervisor?.getState().workers ?? [];
+      return workers
+        .filter((worker) => worker.goalId !== null)
+        .map((worker) => ({
+          worker_id: worker.workerId,
+          goal_id: worker.goalId,
+          started_at: worker.startedAt,
+          iterations: worker.iterations,
+        }));
+    });
     if (this.approvalBroker) {
       this.approvalBroker.setBroadcast((eventType, data) => {
-        this.eventServer?.broadcast(eventType, data);
+        void this.eventServer?.broadcast(eventType, data);
       });
       this.eventServer.setApprovalBroker?.(this.approvalBroker);
     }
