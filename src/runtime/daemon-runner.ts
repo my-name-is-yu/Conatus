@@ -830,6 +830,9 @@ export class DaemonRunner {
     const wasCrashed = this.state.status === "crashed";
     if (!wasCrashed) {
       this.state.status = "stopped";
+      if (this.state.interrupted_goals === undefined) {
+        this.state.interrupted_goals = [...this.state.active_goals];
+      }
     }
     await this.saveDaemonState();
     await this.pidManager.cleanup();
