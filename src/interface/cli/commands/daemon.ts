@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { DaemonStateSchema, DaemonConfigSchema } from "../../../base/types/daemon.js";
 import type { DaemonState, DaemonConfig } from "../../../base/types/daemon.js";
+import type { Task } from "../../../base/types/task.js";
 
 import { StateManager } from "../../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
@@ -21,6 +22,7 @@ import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
 import { RuntimeHealthStore } from "../../../runtime/store/index.js";
 import { compactRuntimeHealthKpi, type RuntimeHealthKpi } from "../../../runtime/store/index.js";
+import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
 import { NotificationDispatcher } from "../../../runtime/notification-dispatcher.js";
@@ -32,6 +34,7 @@ import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { getPulseedDirPath, getLogsDir } from "../../../base/utils/paths.js";
 import { summarizeTaskOutcomeLedgers } from "../../../orchestrator/execution/task/task-outcome-ledger.js";
+import type { SupervisorState } from "../../../runtime/executor/index.js";
 
 const WATCHDOG_CHILD_ENV = "PULSEED_WATCHDOG_CHILD";
 
@@ -46,6 +49,16 @@ function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: string): str
 
 function formatGoalMode(goalIds: string[]): string {
   return goalIds.length > 0 ? goalIds.join(", ") : "(idle mode)";
+}
+
+async function loadDaemonConfig(baseDir: string): Promise<DaemonConfig> {
+  const configPath = path.join(baseDir, "daemon.json");
+  const legacyConfigPath = path.join(baseDir, "daemon-config.json");
+  const configRaw =
+    (await readJsonFileOrNull(configPath)) ??
+    (await readJsonFileOrNull(legacyConfigPath));
+  const configParsed = configRaw !== null ? DaemonConfigSchema.safeParse(configRaw) : null;
+  return configParsed?.success ? configParsed.data : DaemonConfigSchema.parse({});
 }
 
 export async function cmdStart(
@@ -170,11 +183,25 @@ export async function cmdStart(
     const leaderLockManager = new LeaderLockManager(runtimeRoot);
     const scriptPath = process.argv[1]!;
     const childArgs = process.argv.slice(2);
+    const healthProbe =
+      resolvedDaemonConfig.event_server_port > 0
+        ? async () => {
+            const probe = await probeDaemonHealth({
+              host: "127.0.0.1",
+              port: resolvedDaemonConfig.event_server_port,
+            });
+            return {
+              ok: probe.ok,
+              detail: probe.ok ? undefined : probe.error,
+            };
+          }
+        : undefined;
     const watchdog = new RuntimeWatchdog({
       pidManager,
       healthStore,
       leaderLockManager,
       logger,
+      healthProbe,
       startChild: () =>
         spawn(process.execPath, [scriptPath, ...childArgs], {
           stdio: "inherit",
@@ -198,7 +225,27 @@ export async function cmdStart(
     return;
   }
 
-  const deps = await buildDeps(stateManager, characterConfigManager);
+  let daemonApprovalProvider:
+    | ((task: Task) => Promise<boolean>)
+    | null = null;
+  const approvalBridge = async (task: Task): Promise<boolean> => {
+    if (!daemonApprovalProvider) {
+      logger.warn("Daemon approval requested before approval provider was ready", {
+        task_id: task.id,
+        goal_id: task.goal_id,
+      });
+      return false;
+    }
+    return daemonApprovalProvider(task);
+  };
+
+  const deps = await buildDeps(
+    stateManager,
+    characterConfigManager,
+    undefined,
+    approvalBridge,
+    logger,
+  );
 
   // Load notifier plugins and wire NotificationDispatcher
   const notifierRegistry = new NotifierRegistry();
@@ -246,7 +293,13 @@ export async function cmdStart(
   await scheduleEngine.loadEntries();
 
   const refreshResidentDeps = async () => {
-    const freshDeps = await buildDeps(stateManager, characterConfigManager);
+    const freshDeps = await buildDeps(
+      stateManager,
+      characterConfigManager,
+      undefined,
+      approvalBridge,
+      logger,
+    );
     freshDeps.reportingEngine.setNotificationDispatcher(notificationDispatcher);
 
     const freshScheduleEngine = new ScheduleEngine({
@@ -295,6 +348,17 @@ export async function cmdStart(
     getProviderRuntimeFingerprint,
     refreshResidentDeps,
   });
+  daemonApprovalProvider = async (task: Task) => {
+    const provider = daemon.getApprovalFn();
+    if (!provider) {
+      logger.warn("Daemon approval provider unavailable while processing task", {
+        task_id: task.id,
+        goal_id: task.goal_id,
+      });
+      return false;
+    }
+    return provider(task);
+  };
 
   logger.info(`Starting PulSeed daemon for goals: ${formatGoalMode(goalIds)}`);
   await daemon.start(goalIds);
@@ -354,8 +418,57 @@ function formatKpiCompactLine(kpi: RuntimeHealthKpi): string {
   return `KPI snapshot:    process=${compact.process_alive ? "up" : "down"} accept=${compact.can_accept_command ? "up" : "down"} execute=${compact.can_execute_task ? "up" : "down"} (${compact.status})`;
 }
 
+interface RuntimeTaskOutcomeDetails {
+  success_rate: number | null;
+  terminal_counts: {
+    total_tasks: number;
+    terminal_tasks: number;
+    succeeded: number;
+    failed: number;
+    abandoned: number;
+    retried: number;
+  };
+  healthy_at_0_95: boolean | null;
+}
+
+function formatTaskOutcomeLine(taskOutcome: RuntimeTaskOutcomeDetails): string {
+  const rate = formatPercent(taskOutcome.success_rate);
+  const terminalCounts = taskOutcome.terminal_counts;
+  const thresholdLabel =
+    taskOutcome.healthy_at_0_95 === null
+      ? "threshold n/a"
+      : taskOutcome.healthy_at_0_95
+        ? "healthy @ 0.95"
+        : "degraded @ 0.95";
+  return `${rate} (${terminalCounts.succeeded}/${terminalCounts.terminal_tasks} terminal, ${thresholdLabel})`;
+}
+
+function formatTaskSuccessRateLine(
+  taskSuccessRate: number | null,
+  taskOutcome: RuntimeTaskOutcomeDetails | undefined
+): string {
+  const rate = formatPercent(taskSuccessRate);
+  if (!taskOutcome) {
+    return `task_success_rate: ${rate}`;
+  }
+
+  const terminalCounts = taskOutcome.terminal_counts;
+  const thresholdLabel =
+    taskOutcome.healthy_at_0_95 === null
+      ? "threshold n/a"
+      : taskOutcome.healthy_at_0_95
+        ? "healthy @ 0.95"
+        : "degraded @ 0.95";
+  return `task_success_rate: ${rate} (${terminalCounts.succeeded}/${terminalCounts.terminal_tasks} terminal, ${thresholdLabel})`;
+}
+
 function isPidAlive(pidStatus: Awaited<ReturnType<PIDManager["inspect"]>>, pid?: number | null): boolean {
   return typeof pid === "number" && pidStatus.alivePids.includes(pid);
+}
+
+async function readSupervisorState(runtimeRoot: string): Promise<SupervisorState | null> {
+  const raw = await readJsonFileOrNull(path.join(runtimeRoot, "supervisor-state.json"));
+  return raw as SupervisorState | null;
 }
 
 export async function cmdDaemonStatus(_args: string[]): Promise<void> {
@@ -394,15 +507,10 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const resolvedRuntimeAlive = isPidAlive(pidStatus, resolvedRuntimePid);
 
   // Load daemon config for config section display
-  const configPath = path.join(baseDir, "daemon.json");
-  const legacyConfigPath = path.join(baseDir, "daemon-config.json");
-  const configRaw =
-    (await readJsonFileOrNull(configPath)) ??
-    (await readJsonFileOrNull(legacyConfigPath));
-  const configParsed = configRaw !== null ? DaemonConfigSchema.safeParse(configRaw) : null;
-  const cfg = configParsed?.success ? configParsed.data : DaemonConfigSchema.parse({});
+  const cfg = await loadDaemonConfig(baseDir);
   const runtimeRoot = resolveDaemonRuntimeRoot(baseDir, cfg.runtime_root);
   const runtimeHealth = await new RuntimeHealthStore(runtimeRoot).loadSnapshot();
+  const supervisorState = await readSupervisorState(runtimeRoot);
   const taskKpis = await summarizeTaskOutcomeLedgers(baseDir);
 
   const status =
@@ -439,6 +547,20 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   lines.push("");
   lines.push(`Loops:           ${data.loop_count} cycles completed`);
 
+  const activeWorkers =
+    resolvedRuntimeAlive
+      ? (supervisorState?.workers ?? []).filter((worker) => worker.goalId !== null)
+      : [];
+  if (activeWorkers.length > 0) {
+    lines.push(`In flight:       ${activeWorkers.length} worker${activeWorkers.length === 1 ? "" : "s"} active`);
+    for (const worker of activeWorkers) {
+      const started = worker.startedAt > 0 ? formatRelativeTimestamp(worker.startedAt) : "just now";
+      const progress =
+        worker.iterations > 0 ? `, ${worker.iterations} iteration${worker.iterations === 1 ? "" : "s"}` : "";
+      lines.push(`  Worker ${worker.workerId}: ${worker.goalId} (${started}${progress})`);
+    }
+  }
+
   if (data.last_loop_at) {
     lines.push(`Last cycle:      ${formatRelativeTime(data.last_loop_at)}`);
   }
@@ -460,6 +582,14 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     lines.push(`  ${formatCapabilityLabel("Accept command:", runtimeHealth.kpi, "command_acceptance")}`);
     lines.push(`  ${formatCapabilityLabel("Execute task:", runtimeHealth.kpi, "task_execution")}`);
     lines.push(`  ${formatKpiCompactLine(runtimeHealth.kpi)}`);
+    const taskSuccessRate = runtimeHealth.details?.task_success_rate as number | null | undefined;
+    const taskOutcome = runtimeHealth.details?.task_outcome as RuntimeTaskOutcomeDetails | undefined;
+    if (taskSuccessRate !== undefined) {
+      lines.push(`  ${formatTaskSuccessRateLine(taskSuccessRate, taskOutcome)}`);
+    }
+    if (taskOutcome) {
+      lines.push(`  Important task success rate: ${formatTaskOutcomeLine(taskOutcome)}`);
+    }
     if (runtimeHealth.kpi.degraded_at !== undefined) {
       lines.push(
         `  Degraded at:     ${new Date(runtimeHealth.kpi.degraded_at).toISOString()} (${formatRelativeTimestamp(runtimeHealth.kpi.degraded_at)})`
@@ -475,6 +605,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   if (taskKpis.total_tasks > 0) {
     lines.push("");
     lines.push("Task KPIs:");
+    lines.push(`  In-flight:       ${taskKpis.inflight_tasks}/${taskKpis.total_tasks}`);
     lines.push(
       `  Success rate:    ${taskKpis.succeeded}/${taskKpis.terminal_tasks} (${formatPercent(taskKpis.success_rate)})`
     );
@@ -537,6 +668,37 @@ export async function cmdStop(_args: string[]): Promise<void> {
     return;
   }
   console.log("Daemon stopped");
+}
+
+export async function cmdDaemonPing(_args: string[]): Promise<number> {
+  const baseDir = getPulseedDirPath();
+  const cfg = await loadDaemonConfig(baseDir);
+  const port = cfg.event_server_port;
+  const probe = await probeDaemonHealth({ host: "127.0.0.1", port });
+
+  if (probe.ok) {
+    const health = probe.health ?? {};
+    const latencyMs = probe.latency_ms;
+    const status = typeof health.status === "string" ? health.status : "ok";
+    const uptime =
+      typeof health.uptime === "number" && Number.isFinite(health.uptime)
+        ? `, uptime ${health.uptime.toFixed(1)}s`
+        : "";
+    console.log(`Daemon pong: ${status} (${latencyMs}ms, port ${port}${uptime})`);
+    return 0;
+  }
+
+  const daemonInfo = await isDaemonRunning(baseDir);
+  const stateRaw = await readJsonFileOrNull(path.join(baseDir, "daemon-state.json")) as Record<string, unknown> | null;
+  const stateDetail =
+    stateRaw && typeof stateRaw.status === "string"
+      ? `, daemon state ${stateRaw.status}`
+      : daemonInfo.running
+        ? ", daemon state running"
+        : ", daemon state unavailable";
+  const message = probe.error ?? "unknown error";
+  console.log(`Daemon ping failed: no response from EventServer on port ${port}${stateDetail} (${message})`);
+  return 1;
 }
 
 export async function cmdCron(args: string[]): Promise<void> {

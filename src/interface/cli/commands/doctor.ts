@@ -8,6 +8,7 @@ import { getCliRunnerBuildPath } from "../../../base/utils/pulseed-meta.js";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { DaemonConfigSchema } from "../../../base/types/daemon.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
+import { probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import {
   ApprovalStore,
   OutboxStore,
@@ -73,6 +74,11 @@ function formatDurationMs(ms: number): string {
 
 function formatPercent(value: number | null): string {
   return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatLivePingDetail(latencyMs: number, error?: string): string {
+  const latency = formatDurationMs(latencyMs);
+  return error ? `live ping failed (${latency}; ${error})` : `live ping ok (${latency})`;
 }
 
 // ─── Individual checks ───
@@ -159,18 +165,29 @@ export function checkGoals(baseDir?: string): CheckResult {
     return { name: "Goals", status: "warn", detail: "goals directory not found" };
   }
 
-  let jsonFiles: string[] = [];
+  let count = 0;
   try {
-    jsonFiles = fs.readdirSync(goalsDir).filter((f) => f.endsWith(".json"));
+    const entries = fs.readdirSync(goalsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith(".json")) {
+        count += 1;
+        continue;
+      }
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      if (fs.existsSync(path.join(goalsDir, entry.name, "goal.json"))) {
+        count += 1;
+      }
+    }
   } catch {
     return { name: "Goals", status: "warn", detail: "could not read goals directory" };
   }
 
-  if (jsonFiles.length === 0) {
+  if (count === 0) {
     return { name: "Goals", status: "warn", detail: "0 goals configured" };
   }
 
-  const count = jsonFiles.length;
   return { name: "Goals", status: "pass", detail: `${count} goal${count === 1 ? "" : "s"} configured` };
 }
 
@@ -234,12 +251,18 @@ export async function checkDaemon(baseDir?: string): Promise<CheckResult> {
   const taskKpis = await summarizeTaskOutcomeLedgers(dir);
   const taskSummary =
     taskKpis.total_tasks > 0
-      ? `task success=${taskKpis.succeeded}/${taskKpis.terminal_tasks} (${formatPercent(taskKpis.success_rate)}), retry=${taskKpis.retried}/${taskKpis.total_tasks} (${formatPercent(taskKpis.retry_rate)})${
+      ? `task success=${taskKpis.succeeded}/${taskKpis.terminal_tasks} (${formatPercent(taskKpis.success_rate)}), in-flight=${taskKpis.inflight_tasks}/${taskKpis.total_tasks}, retry=${taskKpis.retried}/${taskKpis.total_tasks} (${formatPercent(taskKpis.retry_rate)})${
           taskKpis.p95_created_to_completed_ms !== null
             ? `, total p95=${formatDurationMs(taskKpis.p95_created_to_completed_ms)}`
             : ""
         }`
       : null;
+  const liveProbe = runtimeAlive
+    ? await probeDaemonHealth({ host: "127.0.0.1", port: daemonConfig.event_server_port })
+    : null;
+  const livePingSummary = liveProbe
+    ? formatLivePingDetail(liveProbe.latency_ms, liveProbe.ok ? undefined : liveProbe.error)
+    : null;
 
   if (runtimeState === "crashed" || runtimeState === "stopping") {
     return {
@@ -294,11 +317,17 @@ export async function checkDaemon(baseDir?: string): Promise<CheckResult> {
           : runtimeKpi?.recovered_at !== undefined
             ? `; recovered ${formatRelativeTimestamp(runtimeKpi.recovered_at)}`
             : ""
-      }${taskSummary ? `; ${taskSummary}` : ""}`
-    : `${detail}; KPI telemetry unavailable${taskSummary ? `; ${taskSummary}` : ""}`;
+      }${livePingSummary ? `; ${livePingSummary}` : ""}${taskSummary ? `; ${taskSummary}` : ""}`
+    : `${detail}; KPI telemetry unavailable${livePingSummary ? `; ${livePingSummary}` : ""}${taskSummary ? `; ${taskSummary}` : ""}`;
+  const effectiveHealthStatus = liveProbe && !liveProbe.ok ? "failed" : healthStatus;
   return {
     name: "Daemon",
-    status: healthStatus === "failed" ? "fail" : healthStatus === "degraded" ? "warn" : "pass",
+    status:
+      effectiveHealthStatus === "failed"
+        ? "fail"
+        : effectiveHealthStatus === "degraded"
+          ? "warn"
+          : "pass",
     detail: detailWithHealth,
   };
 }

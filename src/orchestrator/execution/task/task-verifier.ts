@@ -514,7 +514,19 @@ export async function handleVerdict(
           verification_verdict: verificationResult.verdict,
           verification_evidence: verificationResult.evidence?.map((e) => e.description ?? String(e)) ?? [],
         };
+        await deps.stateManager.writeRaw(
+          `tasks/${task.goal_id}/${task.id}.json`,
+          partialTask
+        );
         await appendTaskHistory(deps, task.goal_id, partialTask);
+        await appendTaskOutcomeEvent(deps.stateManager, {
+          task: partialTask,
+          type: "retried",
+          attempt: task.consecutive_failure_count + 1,
+          action: "keep",
+          verificationResult,
+          reason: "partial progress kept for follow-up work",
+        });
         return { action: "keep", task: partialTask };
       }
       return handleFailure(deps, task, verificationResult);

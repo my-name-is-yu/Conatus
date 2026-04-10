@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { Logger } from "../logger.js";
 import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
+import { summarizeTaskOutcomeLedgers } from "../../orchestrator/execution/task/task-outcome-ledger.js";
 import {
   evolveRuntimeHealthKpi,
   type RuntimeDaemonHealth,
@@ -14,6 +15,7 @@ export type RuntimeHealthComponents = Record<
 >;
 
 interface RuntimeOwnershipDeps {
+  baseDir: string | null;
   runtimeRoot: string | null;
   logger: Logger;
   approvalStore: ApprovalStore | null;
@@ -21,6 +23,19 @@ interface RuntimeOwnershipDeps {
   runtimeHealthStore: RuntimeHealthStore | null;
   leaderLockManager: LeaderLockManager | null;
   onLeadershipLost: (reason: string) => void;
+}
+
+interface RuntimeTaskOutcomeDetails {
+  success_rate: number | null;
+  terminal_counts: {
+    total_tasks: number;
+    terminal_tasks: number;
+    succeeded: number;
+    failed: number;
+    abandoned: number;
+    retried: number;
+  };
+  healthy_at_0_95: boolean | null;
 }
 
 export class RuntimeOwnershipCoordinator {
@@ -61,6 +76,41 @@ export class RuntimeOwnershipCoordinator {
     return Object.values(components).every((value) => value === "ok") ? "ok" : "degraded";
   }
 
+  private async summarizeTaskOutcomeDetails(): Promise<RuntimeTaskOutcomeDetails | null> {
+    if (!this.deps.baseDir) {
+      return null;
+    }
+
+    const summary = await summarizeTaskOutcomeLedgers(this.deps.baseDir);
+    return {
+      success_rate: summary.success_rate,
+      terminal_counts: {
+        total_tasks: summary.total_tasks,
+        terminal_tasks: summary.terminal_tasks,
+        succeeded: summary.succeeded,
+        failed: summary.failed,
+        abandoned: summary.abandoned,
+        retried: summary.retried,
+      },
+      healthy_at_0_95: summary.success_rate === null ? null : summary.success_rate >= 0.95,
+    };
+  }
+
+  private async buildHealthDetails(phase: string): Promise<Record<string, unknown>> {
+    const details: Record<string, unknown> = {
+      pid: process.pid,
+      runtime_journal_v2: true,
+      runtime_root: this.deps.runtimeRoot,
+      phase,
+    };
+    const taskOutcome = await this.summarizeTaskOutcomeDetails();
+    if (taskOutcome) {
+      details.task_success_rate = taskOutcome.success_rate;
+      details.task_outcome = taskOutcome;
+    }
+    return details;
+  }
+
   private async saveDaemonHealthWithKpi(params: {
     status: RuntimeDaemonHealth["status"];
     checkedAt: number;
@@ -78,12 +128,7 @@ export class RuntimeOwnershipCoordinator {
         params.checkedAt,
         params.reasons,
       ),
-      details: {
-        pid: process.pid,
-        runtime_journal_v2: true,
-        runtime_root: this.deps.runtimeRoot,
-        phase: this.runtimeHealthPhase,
-      },
+      details: await this.buildHealthDetails(this.runtimeHealthPhase),
     });
   }
 
@@ -125,12 +170,7 @@ export class RuntimeOwnershipCoordinator {
             ? undefined
             : "supervisor or lease health degraded",
       }),
-      details: {
-        pid: process.pid,
-        runtime_journal_v2: true,
-        runtime_root: this.deps.runtimeRoot,
-        phase,
-      },
+      details: await this.buildHealthDetails(phase),
     });
   }
 
@@ -194,12 +234,7 @@ export class RuntimeOwnershipCoordinator {
         task_execution:
           status === "failed" ? "daemon exited unexpectedly" : "daemon stopped",
       }),
-      details: {
-        pid: process.pid,
-        runtime_journal_v2: true,
-        runtime_root: this.deps.runtimeRoot,
-        phase: this.runtimeHealthPhase,
-      },
+      details: await this.buildHealthDetails(this.runtimeHealthPhase),
     });
   }
 

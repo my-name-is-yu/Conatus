@@ -19,6 +19,7 @@ describe("RuntimeOwnershipCoordinator", () => {
 
   it("preserves an observed command failure across heartbeats until a fresh recovery signal arrives", async () => {
     const coordinator = new RuntimeOwnershipCoordinator({
+      baseDir: tmpDir,
       runtimeRoot: tmpDir,
       logger: {
         info: vi.fn(),

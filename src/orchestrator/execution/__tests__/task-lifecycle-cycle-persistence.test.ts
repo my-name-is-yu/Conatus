@@ -345,6 +345,42 @@ describe("TaskLifecycle — persistence", () => {
     expect(events[1]!.action).toBe("keep");
   });
 
+  it("handleVerdict records partial keep outcomes as retried and persists the verdict", async () => {
+    const llm = createMockLLMClient([]);
+    const lifecycle = createLifecycle(llm);
+    const task = makeTask({
+      started_at: new Date(Date.now() - 1000).toISOString(),
+      completed_at: new Date().toISOString(),
+      status: "completed",
+    });
+    const vr: import("../../../base/types/task.js").VerificationResult = {
+      task_id: task.id,
+      verdict: "partial",
+      confidence: 0.7,
+      evidence: [
+        { layer: "independent_review", description: "Direction correct", confidence: 0.7 },
+        { layer: "self_report", description: "Partial progress", confidence: 0.3 },
+      ],
+      dimension_updates: [],
+      timestamp: new Date().toISOString(),
+    };
+
+    await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+    const result = await lifecycle.handleVerdict(task, vr);
+
+    const storedTask = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+    const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as Record<string, unknown>;
+    const events = ledger.events as Array<Record<string, unknown>>;
+    const summary = ledger.summary as Record<string, unknown>;
+
+    expect(result.action).toBe("keep");
+    expect(storedTask.verification_verdict).toBe("partial");
+    expect(events.map((event) => event.type)).toEqual(["retried"]);
+    expect(events[0]!.action).toBe("keep");
+    expect(summary.latest_event_type).toBe("retried");
+    expect(summary.action).toBe("keep");
+  });
+
   it("runTaskCycle records abandoned events when pre-execution checks reject the task", async () => {
     const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
     const lifecycle = createLifecycle(llm, {

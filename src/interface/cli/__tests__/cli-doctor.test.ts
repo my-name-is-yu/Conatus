@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
+import * as daemonClient from "../../../runtime/daemon/client.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -165,11 +166,32 @@ describe("checkGoals", () => {
     expect(result.detail).toContain("0 goals");
   });
 
-  it("passes when goals directory has JSON files", () => {
+  it("passes when goals directory has legacy JSON files", () => {
     const goalsDir = path.join(tmpDir, "goals");
     fs.mkdirSync(goalsDir);
     fs.writeFileSync(path.join(goalsDir, "goal-1.json"), "{}");
     fs.writeFileSync(path.join(goalsDir, "goal-2.json"), "{}");
+    const result = checkGoals(tmpDir);
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("2 goals");
+  });
+
+  it("passes when goals directory has nested goal.json files", () => {
+    const goalsDir = path.join(tmpDir, "goals");
+    fs.mkdirSync(path.join(goalsDir, "goal-1"), { recursive: true });
+    fs.mkdirSync(path.join(goalsDir, "goal-2"), { recursive: true });
+    fs.writeFileSync(path.join(goalsDir, "goal-1", "goal.json"), "{}");
+    fs.writeFileSync(path.join(goalsDir, "goal-2", "goal.json"), "{}");
+    const result = checkGoals(tmpDir);
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("2 goals");
+  });
+
+  it("counts both nested and legacy goal layouts", () => {
+    const goalsDir = path.join(tmpDir, "goals");
+    fs.mkdirSync(path.join(goalsDir, "goal-1"), { recursive: true });
+    fs.writeFileSync(path.join(goalsDir, "goal-1", "goal.json"), "{}");
+    fs.writeFileSync(path.join(goalsDir, "legacy-goal.json"), "{}");
     const result = checkGoals(tmpDir);
     expect(result.status).toBe("pass");
     expect(result.detail).toContain("2 goals");
@@ -243,12 +265,20 @@ describe("checkBuild", () => {
 
 describe("checkDaemon", () => {
   let tmpDir: string;
+  let probeSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     tmpDir = makeTempDir("pulseed-doctor-daemon-");
+    probeSpy = vi.spyOn(daemonClient, "probeDaemonHealth").mockResolvedValue({
+      ok: true,
+      port: 41700,
+      latency_ms: 5,
+      health: { status: "ok", uptime: 12.3 },
+    });
   });
 
   afterEach(() => {
+    probeSpy.mockRestore();
     cleanupTempDir(tmpDir);
   });
 
@@ -287,6 +317,7 @@ describe("checkDaemon", () => {
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("running");
     expect(result.detail).toContain("KPI telemetry unavailable");
+    expect(result.detail).toContain("live ping ok");
   });
 
   it("warns when PID file is JSON format and references running process without KPI telemetry", async () => {
@@ -311,6 +342,7 @@ describe("checkDaemon", () => {
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("running");
     expect(result.detail).toContain("KPI telemetry unavailable");
+    expect(result.detail).toContain("live ping ok");
   });
 
   it("fails when the watchdog is alive but the runtime child is dead", async () => {
@@ -419,6 +451,7 @@ describe("checkDaemon", () => {
     expect(result.detail).toContain("idle daemon running");
     expect(result.detail).toContain(`PID: ${process.pid}`);
     expect(result.detail).toContain("KPI telemetry unavailable");
+    expect(result.detail).toContain("live ping ok");
   });
 
   it("warns when runtime KPI reports degraded command acceptance", async () => {
@@ -514,6 +547,48 @@ describe("checkDaemon", () => {
     expect(result.detail).toContain("degraded");
     expect(result.detail).toContain("task success=1/1 (100.0%)");
     expect(result.detail).toContain("total p95=4.1s");
+    expect(result.detail).toContain("live ping ok");
+  });
+
+  it("fails when the runtime PID is alive but the live daemon health probe fails", async () => {
+    probeSpy.mockResolvedValue({
+      ok: false,
+      port: 41700,
+      latency_ms: 15,
+      error: "connect ECONNREFUSED",
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+
+    const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+      info: {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        owner_pid: process.pid,
+        runtime_pid: process.pid,
+      },
+      running: true,
+      runtimePid: process.pid,
+      ownerPid: process.pid,
+      alivePids: [process.pid],
+      stalePids: [],
+      verifiedPids: [process.pid],
+      unverifiedLegacyPids: [],
+    });
+
+    const result = await checkDaemon(tmpDir);
+    inspectSpy.mockRestore();
+
+    expect(result.status).toBe("fail");
+    expect(result.detail).toContain("live ping failed");
+    expect(result.detail).toContain("ECONNREFUSED");
   });
 });
 

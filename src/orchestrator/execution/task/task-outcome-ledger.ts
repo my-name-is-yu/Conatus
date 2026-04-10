@@ -65,6 +65,7 @@ export interface TaskOutcomeLedgerRecord {
 export interface TaskOutcomeAggregateSummary {
   total_tasks: number;
   terminal_tasks: number;
+  inflight_tasks: number;
   succeeded: number;
   failed: number;
   abandoned: number;
@@ -312,6 +313,7 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
       return {
         total_tasks: 0,
         terminal_tasks: 0,
+        inflight_tasks: 0,
         succeeded: 0,
         failed: 0,
         abandoned: 0,
@@ -346,11 +348,16 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
   const failed = records.filter((record) => record.summary.latest_event_type === "failed").length;
   const abandoned = records.filter((record) => record.summary.latest_event_type === "abandoned").length;
   const retried = records.filter((record) => record.events.some((event) => event.type === "retried")).length;
+  const inflightTasks = records.filter((record) => {
+    const latestEvent = record.summary.latest_event_type;
+    return latestEvent === "acked" || latestEvent === "started" || latestEvent === "retried";
+  }).length;
   const terminalTasks = succeeded + failed + abandoned;
 
   return {
     total_tasks: records.length,
     terminal_tasks: terminalTasks,
+    inflight_tasks: inflightTasks,
     succeeded,
     failed,
     abandoned,

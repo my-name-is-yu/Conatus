@@ -169,7 +169,9 @@ export async function processScheduleEntriesForDaemon(params: {
       if (!goalId) {
         logger.warn("schedule_activated envelope missing goal_id", {
           entry_id: (result as Record<string, unknown>)["entry_id"],
+          layer: (result as Record<string, unknown>)["layer"],
         });
+        continue;
       }
 
       const envelope = createEnvelope({

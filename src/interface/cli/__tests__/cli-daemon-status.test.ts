@@ -221,6 +221,98 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Ack latency:     p95 1.0s");
   });
 
+  it("shows in-flight worker progress from supervisor state when loops are still zero", async () => {
+    const now = Date.now();
+    fs.mkdirSync(path.join(tmpDir, "runtime"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "runtime", "supervisor-state.json"),
+      JSON.stringify({
+        workers: [
+          {
+            workerId: "worker-1",
+            goalId: "goal-live",
+            startedAt: now - 20_000,
+            iterations: 0,
+          },
+        ],
+        crashCounts: {},
+        suspendedGoals: [],
+        updatedAt: now,
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({
+        pid: process.pid,
+        started_at: new Date(now - 60_000).toISOString(),
+        last_loop_at: null,
+        loop_count: 0,
+        active_goals: ["goal-live"],
+        status: "running",
+        crash_count: 0,
+        last_error: null,
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date(now).toISOString(),
+      })
+    );
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Loops:           0 cycles completed");
+    expect(output).toContain("In flight:       1 worker active");
+    expect(output).toContain("Worker worker-1: goal-live");
+  });
+
+  it("ignores stale in-flight worker state when the runtime is stopped", async () => {
+    const now = Date.now();
+    fs.mkdirSync(path.join(tmpDir, "runtime"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "runtime", "supervisor-state.json"),
+      JSON.stringify({
+        workers: [
+          {
+            workerId: "worker-stale",
+            goalId: "goal-stale",
+            startedAt: now - 20_000,
+            iterations: 0,
+          },
+        ],
+        crashCounts: {},
+        suspendedGoals: [],
+        updatedAt: now,
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({
+        pid: 999999999,
+        started_at: new Date(now - 60_000).toISOString(),
+        last_loop_at: null,
+        loop_count: 0,
+        active_goals: ["goal-stale"],
+        status: "stopped",
+        crash_count: 0,
+        last_error: null,
+      })
+    );
+
+    await cmdDaemonStatus([]);
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).not.toContain("In flight:");
+    expect(output).not.toContain("Worker worker-stale");
+  });
+
   it("shows idle status and watchdog PID when the daemon is running without goals", async () => {
     const runtimePid = process.pid;
     const watchdogPid = 424242;
