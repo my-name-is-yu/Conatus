@@ -6,11 +6,13 @@ export {
   ToolRegistry,
   createBuiltinTools,
   ChatRunner,
+  createNativeChatAgentLoopRunner,
   getGlobalCrossPlatformChatSessionManager,
   ToolExecutor,
   ToolPermissionManager,
   ConcurrencyController,
   TrustManager,
+  shouldUseNativeTaskAgentLoop,
 } from "../../../src/index.js";
 
 export type {
@@ -20,6 +22,7 @@ export type {
   ChatEvent,
   ChatEventHandler,
   ChatRunResult,
+  ChatAgentLoopRunner,
 } from "../../../src/index.js";
 
 export type ChatRunnerLike =

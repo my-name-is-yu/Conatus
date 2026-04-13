@@ -189,5 +189,3 @@ export class TelegramChatRunnerProcessor {
     };
   }
 }
-
-export type { ProcessMessageFn };

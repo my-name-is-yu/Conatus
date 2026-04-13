@@ -1,33 +1,8 @@
-import type * as http from "node:http";
-import { PassThrough } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WhatsAppWebhookConfig } from "../src/config.js";
 import type { WhatsAppCloudClient } from "../src/whatsapp-client.js";
 import { WhatsAppWebhookServer } from "../src/webhook-server.js";
-
-function createRequest(body: unknown): http.IncomingMessage {
-  const req = new PassThrough() as unknown as http.IncomingMessage;
-  req.method = "POST";
-  req.url = "/webhook";
-  req.headers = { host: "127.0.0.1" };
-  (req as unknown as PassThrough).end(JSON.stringify(body));
-  return req;
-}
-
-function createResponse(): { res: http.ServerResponse; done: Promise<void> } {
-  let resolve!: () => void;
-  const done = new Promise<void>((r) => {
-    resolve = r;
-  });
-  const res = {
-    statusCode: 200,
-    setHeader: vi.fn(),
-    end: vi.fn(() => {
-      resolve();
-    }),
-  } as unknown as http.ServerResponse;
-  return { res, done };
-}
+import { createJsonPostRequest, createMockServerResponse } from "../../../tests/helpers/http-mocks.js";
 
 function createPayload(from: string): unknown {
   return {
@@ -77,9 +52,9 @@ describe("WhatsAppWebhookServer", () => {
   it("marks runtime control approved for configured WhatsApp sender ids", async () => {
     const fetchChatReply = vi.fn().mockResolvedValue("ok");
     const server = new WhatsAppWebhookServer(config, client as WhatsAppCloudClient, fetchChatReply);
-    const { res, done } = createResponse();
+    const { res, done } = createMockServerResponse();
 
-    await server.handleRequest(createRequest(createPayload("15551234567")), res);
+    await server.handleRequest(createJsonPostRequest(createPayload("15551234567"), "/webhook"), res);
     await done;
 
     await vi.waitFor(() => {
@@ -95,9 +70,9 @@ describe("WhatsAppWebhookServer", () => {
   it("does not approve runtime control for unconfigured WhatsApp sender ids", async () => {
     const fetchChatReply = vi.fn().mockResolvedValue("ok");
     const server = new WhatsAppWebhookServer(config, client as WhatsAppCloudClient, fetchChatReply);
-    const { res, done } = createResponse();
+    const { res, done } = createMockServerResponse();
 
-    await server.handleRequest(createRequest(createPayload("15550000000")), res);
+    await server.handleRequest(createJsonPostRequest(createPayload("15550000000"), "/webhook"), res);
     await done;
 
     await vi.waitFor(() => {

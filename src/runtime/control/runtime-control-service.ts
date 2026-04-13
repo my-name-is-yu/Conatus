@@ -42,6 +42,10 @@ export interface RuntimeControlServiceOptions {
   now?: () => Date;
 }
 
+type RuntimeControlStep =
+  | { ok: true; operation: RuntimeControlOperation }
+  | { ok: false; result: RuntimeControlResult };
+
 export class RuntimeControlService {
   private readonly operationStore: RuntimeOperationStore;
   private readonly executor?: RuntimeControlExecutor;
@@ -54,6 +58,15 @@ export class RuntimeControlService {
   }
 
   async request(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
+    const initial = await this.createInitialOperation(request);
+    const approved = await this.approveIfRequired(initial, request.approvalFn);
+    if (!approved.ok) return approved.result;
+
+    const acknowledged = await this.acknowledge(approved.operation);
+    return this.executeAcknowledgedOperation(acknowledged, request);
+  }
+
+  private async createInitialOperation(request: RuntimeControlRequest): Promise<RuntimeControlOperation> {
     const requestedAt = this.nowIso();
     const operation: RuntimeControlOperation = {
       operation_id: randomUUID(),
@@ -67,101 +80,104 @@ export class RuntimeControlService {
       expected_health: expectedHealthFor(request.intent.kind),
     };
 
-    await this.operationStore.save(operation);
+    return this.operationStore.save(operation);
+  }
 
-    if (requiresApproval(operation.kind)) {
-      if (!request.approvalFn) {
-        const failed = await this.update(operation, "failed", {
-          ok: false,
-          message: "Runtime control requires approval, but no approval handler is configured.",
-        });
-        return {
-          success: false,
-          message: failed.result?.message ?? "Runtime control requires approval.",
-          operationId: failed.operation_id,
-          state: failed.state,
-        };
-      }
-
-      let approved: boolean;
-      try {
-        approved = await request.approvalFn(approvalReason(operation.kind, operation.reason));
-      } catch (err) {
-        const failed = await this.update(operation, "failed", {
-          ok: false,
-          message: err instanceof Error ? err.message : String(err),
-        });
-        return {
-          success: false,
-          message: failed.result?.message ?? "Runtime control approval failed.",
-          operationId: failed.operation_id,
-          state: failed.state,
-        };
-      }
-
-      if (!approved) {
-        const cancelled = await this.update(operation, "cancelled", {
-          ok: false,
-          message: "Runtime control operation was not approved.",
-        });
-        return {
-          success: false,
-          message: cancelled.result?.message ?? "Runtime control operation was not approved.",
-          operationId: cancelled.operation_id,
-          state: cancelled.state,
-        };
-      }
-
-      operation.state = "approved";
-      operation.updated_at = this.nowIso();
-      await this.operationStore.save(operation);
+  private async approveIfRequired(
+    operation: RuntimeControlOperation,
+    approvalFn: RuntimeControlRequest["approvalFn"]
+  ): Promise<RuntimeControlStep> {
+    if (!requiresApproval(operation.kind)) {
+      return { ok: true, operation };
     }
 
-    const acknowledged = await this.update(operation, "acknowledged", {
+    if (!approvalFn) {
+      return this.failStep(
+        operation,
+        "failed",
+        "Runtime control requires approval, but no approval handler is configured."
+      );
+    }
+
+    let approved: boolean;
+    try {
+      approved = await approvalFn(approvalReason(operation.kind, operation.reason));
+    } catch (err) {
+      return this.failStep(
+        operation,
+        "failed",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+
+    if (!approved) {
+      return this.failStep(operation, "cancelled", "Runtime control operation was not approved.");
+    }
+
+    const updated = await this.operationStore.save({
+      ...operation,
+      state: "approved",
+      updated_at: this.nowIso(),
+    });
+    return { ok: true, operation: updated };
+  }
+
+  private acknowledge(operation: RuntimeControlOperation): Promise<RuntimeControlOperation> {
+    return this.update(operation, "acknowledged", {
       ok: true,
       message: ackMessage(operation.kind),
     });
+  }
 
+  private async executeAcknowledgedOperation(
+    operation: RuntimeControlOperation,
+    request: RuntimeControlRequest
+  ): Promise<RuntimeControlResult> {
     if (!this.executor) {
-      const failed = await this.update(acknowledged, "failed", {
+      const failed = await this.update(operation, "failed", {
         ok: false,
         message: "Runtime control executor is not configured; operation was recorded but not started.",
       });
-      return {
-        success: false,
-        message: failed.result?.message ?? "Runtime control executor is not configured.",
-        operationId: failed.operation_id,
-        state: failed.state,
-      };
+      return this.toResult(failed);
     }
 
     let executed: RuntimeControlExecutorResult;
     try {
-      executed = await this.executor(acknowledged, request);
+      executed = await this.executor(operation, request);
     } catch (err) {
-      const failed = await this.update(acknowledged, "failed", {
+      const failed = await this.update(operation, "failed", {
         ok: false,
         message: err instanceof Error ? err.message : String(err),
       });
-      return {
-        success: false,
-        message: failed.result?.message ?? "Runtime control executor failed.",
-        operationId: failed.operation_id,
-        state: failed.state,
-      };
+      return this.toResult(failed);
     }
 
     const nextState = executed.state ?? (executed.ok ? "acknowledged" : "failed");
-    const saved = await this.update(acknowledged, nextState, {
+    const saved = await this.update(operation, nextState, {
       ok: executed.ok,
       message: executed.message ?? ackMessage(operation.kind),
     });
+    return this.toResult(saved);
+  }
 
+  private async failStep(
+    operation: RuntimeControlOperation,
+    state: Extract<RuntimeControlOperationState, "failed" | "cancelled">,
+    message: string
+  ): Promise<RuntimeControlStep> {
+    const saved = await this.update(operation, state, {
+      ok: false,
+      message,
+    });
+    return { ok: false, result: this.toResult(saved) };
+  }
+
+  private toResult(operation: RuntimeControlOperation): RuntimeControlResult {
     return {
-      success: executed.ok,
-      message: saved.result?.message ?? ackMessage(operation.kind),
-      operationId: saved.operation_id,
-      state: saved.state,
+      success: operation.result?.ok ?? false,
+      message: operation.result?.message ?? ackMessage(operation.kind),
+      operationId: operation.operation_id,
+      state: operation.state,
     };
   }
 

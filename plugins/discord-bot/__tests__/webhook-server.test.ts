@@ -1,37 +1,8 @@
-import type * as http from "node:http";
-import { PassThrough } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DiscordWebhookServer } from "../src/webhook-server.js";
 import type { DiscordBotConfig } from "../src/config.js";
 import type { DiscordAPI } from "../src/discord-api.js";
-
-function createRequest(body: unknown): http.IncomingMessage {
-  const req = new PassThrough() as unknown as http.IncomingMessage;
-  req.method = "POST";
-  req.url = "/";
-  req.headers = { host: "127.0.0.1" };
-  (req as unknown as PassThrough).end(JSON.stringify(body));
-  return req;
-}
-
-function createResponse(): { res: http.ServerResponse; done: Promise<void>; body: () => string } {
-  const chunks: string[] = [];
-  let resolve!: () => void;
-  const done = new Promise<void>((r) => {
-    resolve = r;
-  });
-  const res = {
-    statusCode: 200,
-    setHeader: vi.fn(),
-    end: vi.fn((chunk?: unknown) => {
-      if (chunk !== undefined) {
-        chunks.push(String(chunk));
-      }
-      resolve();
-    }),
-  } as unknown as http.ServerResponse;
-  return { res, done, body: () => chunks.join("") };
-}
+import { createJsonPostRequest, createMockServerResponse } from "../../../tests/helpers/http-mocks.js";
 
 describe("DiscordWebhookServer", () => {
   const config: DiscordBotConfig = {
@@ -57,10 +28,10 @@ describe("DiscordWebhookServer", () => {
   it("marks runtime control approved for configured Discord sender ids", async () => {
     const fetchChatReply = vi.fn().mockResolvedValue("ok");
     const server = new DiscordWebhookServer(config, api as DiscordAPI, fetchChatReply);
-    const { res, done } = createResponse();
+    const { res, done } = createMockServerResponse();
 
     await server.handleRequest(
-      createRequest({
+      createJsonPostRequest({
         id: "interaction-1",
         type: 2,
         token: "token-1",
@@ -86,10 +57,10 @@ describe("DiscordWebhookServer", () => {
   it("does not approve runtime control for unconfigured Discord sender ids", async () => {
     const fetchChatReply = vi.fn().mockResolvedValue("ok");
     const server = new DiscordWebhookServer(config, api as DiscordAPI, fetchChatReply);
-    const { res, done } = createResponse();
+    const { res, done } = createMockServerResponse();
 
     await server.handleRequest(
-      createRequest({
+      createJsonPostRequest({
         id: "interaction-2",
         type: 2,
         token: "token-2",
