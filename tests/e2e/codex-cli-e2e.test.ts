@@ -4,10 +4,11 @@
  * These tests spawn the real `codex` binary and are skipped when the CLI is not
  * installed. Run them intentionally with:
  *
- *   npx vitest run tests/e2e/codex-cli-e2e.test.ts
+ *   PULSEED_RUN_CODEX_E2E=1 npx vitest run tests/e2e/codex-cli-e2e.test.ts
  *
- * The suite auto-skips when `codex` is not found on PATH (or at the known
- * absolute path). Keep tasks minimal to conserve ChatGPT Plus quota.
+ * The suite auto-skips unless PULSEED_RUN_CODEX_E2E=1 is set and `codex` is
+ * found on PATH (or at the known absolute path). Keep tasks minimal to
+ * conserve ChatGPT Plus quota.
  *
  * Requirements:
  *   - codex CLI installed (v0.114.0+)
@@ -55,7 +56,8 @@ function findCodexBin(): string | null {
 }
 
 const CODEX_BIN = findCodexBin();
-const CODEX_AVAILABLE = CODEX_BIN !== null;
+const CODEX_E2E_ENABLED = process.env["PULSEED_RUN_CODEX_E2E"] === "1";
+const CODEX_AVAILABLE = CODEX_E2E_ENABLED && CODEX_BIN !== null;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
