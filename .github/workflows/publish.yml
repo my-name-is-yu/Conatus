@@ -1,29 +1,31 @@
 name: Publish to npm
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  build-and-publish:
+  publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v5
 
-      - name: Setup Node.js 24
+      - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
 
+      - run: npm install -g npm@11
       - run: npm ci
-
       - run: npm run build
-
-      - run: npx vitest run
+      - run: npm test
 
       - name: Verify release tag matches package version
         run: |
@@ -34,8 +36,4 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      - run: npm publish --provenance --access public
