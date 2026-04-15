@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildChatViewport, getInputPromptLabel, getMatchingSuggestions, getScrollRequest, stripMouseEscapeSequences } from "../chat.js";
+import {
+  buildChatViewport,
+  estimateComposerHeight,
+  formatSuggestionLabel,
+  getInputPromptLabel,
+  getMatchingSuggestions,
+  getScrollRequest,
+  stripMouseEscapeSequences,
+} from "../chat.js";
 import { estimateMarkdownHeight, estimateWrappedLineCount, wrapTextToRows } from "../markdown-renderer.js";
 import { extractBashCommand, isBashModeInput, isSafeBashCommand, createShellApprovalTask, formatShellOutput } from "../bash-mode.js";
 import { INPUT_MARKER, buildCursorEscape } from "../cursor-tracker.js";
@@ -110,14 +118,69 @@ describe("chat viewport", () => {
       },
     ];
 
-    const bottom = buildChatViewport(messages, 40, 16, 0);
+    const bottom = buildChatViewport(messages, 40, 8, 0);
     expect(bottom.totalRows).toBeGreaterThan(bottom.maxVisibleRows);
     expect(bottom.rows.some((row) => row.text.trim() === "line 10")).toBe(true);
     expect(bottom.rows.some((row) => row.text.trim() === "line 1")).toBe(false);
 
-    const scrolled = buildChatViewport(messages, 40, 16, 3);
+    const scrolled = buildChatViewport(messages, 40, 8, 3);
     expect(scrolled.hiddenAboveRows).toBe(0);
     expect(scrolled.rows.some((row) => row.text.trim() === "line 1")).toBe(true);
+  });
+});
+
+describe("composer sizing", () => {
+  it("reserves extra height when input wraps inside the composer", () => {
+    const singleLine = estimateComposerHeight({
+      termCols: 40,
+      input: "",
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+    });
+    const wrappedInput = estimateComposerHeight({
+      termCols: 20,
+      input: "this is a deliberately long line that must wrap",
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+    });
+
+    expect(wrappedInput).toBeGreaterThan(singleLine);
+  });
+
+  it("counts the trailing cursor cell when input exactly fills a line", () => {
+    const exactFit = estimateComposerHeight({
+      termCols: 10,
+      input: "abcd",
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+    });
+
+    expect(exactFit).toBe(5);
+  });
+
+  it("accounts for suggestions and helper text in composer height", () => {
+    const base = estimateComposerHeight({
+      termCols: 40,
+      input: "/",
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+    });
+    const matches = getMatchingSuggestions("/", []);
+    const withMatches = estimateComposerHeight({
+      termCols: 40,
+      input: "/",
+      bashMode: false,
+      emptyHint: false,
+      matches,
+    });
+
+    expect(matches.length).toBeGreaterThan(0);
+    expect(formatSuggestionLabel(matches[0]!).length).toBeGreaterThan(0);
+    expect(withMatches).toBeGreaterThan(base);
   });
 });
 
