@@ -12,7 +12,8 @@ import { getClipboardContent } from "./clipboard.js";
 import { theme } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
 import { ShimmerText } from "./shimmer-text.js";
-import { positionCursorInFrame, buildCursorEscape } from "./cursor-tracker.js";
+import { INPUT_MARKER, positionCursorInFrame, buildCursorEscape } from "./cursor-tracker.js";
+import { HIDE_CURSOR, SHOW_CURSOR } from "./flicker/dec.js";
 import { isBashModeInput } from "./bash-mode.js";
 import { isRenderableFrameChunk } from "./render-output.js";
 import { buildChatViewport } from "./chat/viewport.js";
@@ -37,10 +38,16 @@ interface ChatProps {
 }
 
 const SCROLL_LINE_STEP = 3;
+const DEFAULT_PROMPT = "◉";
+const BASH_PROMPT = "!";
 
 export { buildChatViewport } from "./chat/viewport.js";
 export { getScrollRequest, stripMouseEscapeSequences } from "./chat/scroll.js";
 export { getMatchingSuggestions } from "./chat/suggestions.js";
+
+export function getInputPromptLabel(bashMode: boolean): string {
+  return bashMode ? BASH_PROMPT : DEFAULT_PROMPT;
+}
 
 export function Chat({
   messages,
@@ -246,13 +253,15 @@ export function Chat({
     };
   }, []);
 
-  // Hide cursor during AI processing
+  // Keep the terminal's real cursor hidden in standard mode.
   React.useEffect(() => {
-    if (isProcessing) {
-      const original = process.stdout.write.bind(process.stdout);
-      original("\x1b[?25l");
-    }
-  }, [isProcessing]);
+    if (noFlicker) return;
+    const original = process.stdout.write.bind(process.stdout);
+    original(HIDE_CURSOR);
+    return () => {
+      original(SHOW_CURSOR);
+    };
+  }, [noFlicker]);
 
   const handleSubmit = (value: string) => {
     if (hasMatches) return; // let useInput handle enter when suggestions are shown
@@ -350,14 +359,12 @@ export function Chat({
           <Box
             borderStyle="single"
             borderColor={bashMode ? theme.command : theme.border}
-            borderBottom={false}
-            borderLeft={false}
-            borderRight={false}
-          />
-          <Box>
+            paddingX={1}
+          >
             <Text color={bashMode ? theme.command : theme.userPrompt} bold>
-              {"​◉ "}
+              {getInputPromptLabel(bashMode)}{" "}
             </Text>
+            <Text>{INPUT_MARKER}</Text>
             <TextInput
               value={input}
               onChange={(val) => {
@@ -368,13 +375,6 @@ export function Chat({
               placeholder={bashMode ? "! for bash mode" : "/ for commands"}
             />
           </Box>
-          <Box
-            borderStyle="single"
-            borderColor={bashMode ? theme.command : theme.border}
-            borderTop={false}
-            borderLeft={false}
-            borderRight={false}
-          />
           {bashMode && <Text color={theme.command}>! for bash mode</Text>}
           {emptyHint && (
             <Text dimColor> Type a message or /help for commands</Text>
