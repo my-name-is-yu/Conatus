@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.14] - 2026-04-15
+
+### Added
+- Added a prompted JSON/text tool protocol so the PulSeed agent loop can drive tools through providers and auth modes without native function calling, including Codex OAuth and local Ollama-style clients (#689)
+
+### Changed
+- Hid execution adapter selection from the setup wizard and made setup focus on provider, model, and authentication method instead (#688)
+- Made the PulSeed agent loop the always-on execution path independent of provider, authentication method, legacy adapter selection, or native tool-calling support (#689)
+- Clarified native provider tool-calling capability naming and shared prompted tool protocol handling between task and chat runtimes (#689)
+- Bumped the package version to `0.4.14`
+
+### Fixed
+- Fixed native agent-loop execution being blocked by external adapter circuit-breaker state (#689)
+- Fixed TUI/chat paths that could bypass the agent loop through direct-answer or non-tool-calling fallbacks (#689)
+- Hardened prompted tool-call parsing for multiple tool calls, trailing commas, string arguments, and unknown-tool feedback (#689)
+
 ## [0.4.13] - 2026-04-15
 
 ### Added
