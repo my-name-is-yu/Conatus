@@ -541,7 +541,7 @@ export async function runSetupWizard(): Promise<number> {
       }
       if (next === "continue") {
         if (skipImportedExecution) {
-          p.log.info("Provider settings were imported, so provider questions are skipped.");
+          p.note("Provider settings were imported completely and applied as defaults.", "Imported setup defaults");
           executionMode = "interactive";
           section = "runtime";
         } else {

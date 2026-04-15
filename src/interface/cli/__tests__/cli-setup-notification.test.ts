@@ -694,7 +694,10 @@ describe("setup notification step", () => {
       expect.stringContaining("API Key:   found in imported settings"),
       "Imported setup defaults"
     );
-    expect(logInfoMock).toHaveBeenCalledWith("Provider settings were imported, so provider questions are skipped.");
+    expect(noteMock).toHaveBeenCalledWith(
+      expect.stringContaining("Provider settings were imported completely and applied as defaults."),
+      "Imported setup defaults"
+    );
     expect(stepExistingConfigMock).not.toHaveBeenCalled();
     expect(stepSeedyNameMock).toHaveBeenCalledTimes(1);
     expect(stepRootPresetMock).not.toHaveBeenCalled();
