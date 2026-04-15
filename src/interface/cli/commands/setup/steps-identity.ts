@@ -34,7 +34,6 @@ export async function stepExistingConfig(): Promise<"keep" | "modify" | "reset" 
     [
       `Provider: ${current.provider}`,
       `Model:    ${current.model}`,
-      `Adapter:  ${current.adapter}`,
       `API Key:  ${maskKey(current.api_key)}`,
     ].join("\n"),
     "Existing configuration found"
@@ -48,7 +47,7 @@ export async function stepExistingConfig(): Promise<"keep" | "modify" | "reset" 
         {
           value: "modify" as const,
           label: "Update provider settings",
-          hint: "reuse current provider/model/adapter as defaults",
+          hint: "reuse current provider and model as defaults",
         },
         { value: "reset" as const, label: "Run full setup again", hint: "recreate identity and optional settings" },
       ],

@@ -14,6 +14,8 @@ import {
 import type { Provider } from "../setup-shared.js";
 import { guardCancel } from "./utils.js";
 
+export type OpenAIAuthMethod = "codex_oauth" | "api_key";
+
 export async function stepRootPreset(initialPreset?: RootPresetKey): Promise<RootPresetKey> {
   const preset = guardCancel(
     await p.select({
@@ -144,6 +146,39 @@ export async function runCodexOAuthLogin(): Promise<string | undefined> {
 
   p.log.error("Codex CLI not found. Install with: npm install -g @openai/codex");
   return undefined;
+}
+
+export async function stepOpenAIAuthMethod(
+  initialMethod?: OpenAIAuthMethod,
+  options: { canUseCodexOAuth?: boolean } = {}
+): Promise<OpenAIAuthMethod> {
+  const canUseCodexOAuth = options.canUseCodexOAuth ?? true;
+  const choices = [
+    ...(canUseCodexOAuth
+      ? [
+          {
+            value: "codex_oauth" as const,
+            label: "Codex OAuth",
+            hint: "uses your Codex CLI login",
+          },
+        ]
+      : []),
+    {
+      value: "api_key" as const,
+      label: "OpenAI API key",
+      hint: "uses OpenAI API billing",
+    },
+  ];
+
+  return guardCancel(
+    await p.select({
+      message: "Select OpenAI authentication:",
+      options: choices,
+      initialValue: canUseCodexOAuth
+        ? initialMethod ?? "codex_oauth"
+        : "api_key",
+    })
+  );
 }
 
 function isLikelyCodexOAuthToken(value: string | undefined): boolean {
