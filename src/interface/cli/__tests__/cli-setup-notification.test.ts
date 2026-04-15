@@ -190,6 +190,25 @@ describe("setup notification step", () => {
     expect(prompt.options.some((option) => option.hint?.includes("recommended"))).toBe(false);
   });
 
+  it("asks for OpenAI auth without listing agent loop as a setup choice", async () => {
+    selectMock.mockResolvedValueOnce("api_key");
+
+    const { stepOpenAIAuthMethod } = await import("../commands/setup/steps-provider.js");
+    const result = await stepOpenAIAuthMethod(undefined, { canUseCodexOAuth: true });
+
+    expect(result).toBe("api_key");
+    const prompt = selectMock.mock.calls[0]?.[0] as {
+      message: string;
+      options: Array<{ label: string; value: string }>;
+    };
+    expect(prompt.message).toBe("Select OpenAI authentication:");
+    expect(prompt.options.map((option) => option.label)).toEqual([
+      "Codex OAuth",
+      "OpenAI API key",
+    ]);
+    expect(prompt.options.map((option) => option.value)).not.toContain("agent_loop");
+  });
+
   it("writes notification.json only after final confirmation", async () => {
     vi.doMock("../commands/setup/steps-identity.js", () => ({
       getBanner: () => "banner",
@@ -202,6 +221,7 @@ describe("setup notification step", () => {
       stepProvider: vi.fn(async () => "openai"),
       stepModel: vi.fn(async () => "gpt-5.4-mini"),
       stepApiKey: vi.fn(async () => "sk-test"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
       stepAdapter: vi.fn(async () => "openai_codex_cli"),
@@ -286,6 +306,7 @@ describe("setup notification step", () => {
       stepProvider: stepProviderMock,
       stepModel: vi.fn(async () => "gpt-5.4-mini"),
       stepApiKey: vi.fn(async () => "sk-test"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
       stepAdapter: vi.fn(async () => "openai_codex_cli"),
@@ -357,6 +378,7 @@ describe("setup notification step", () => {
       stepProvider: stepProviderMock,
       stepModel: vi.fn(async () => "gpt-5.4-mini"),
       stepApiKey: vi.fn(async () => "sk-test"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
       stepAdapter: vi.fn(async () => "openai_codex_cli"),
@@ -428,6 +450,7 @@ describe("setup notification step", () => {
       stepProvider: vi.fn(async () => "openai"),
       stepModel: vi.fn(async () => "gpt-5.4-mini"),
       stepApiKey: vi.fn(async () => "sk-existing"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
       stepAdapter: vi.fn(async () => "agent_loop"),
@@ -491,6 +514,74 @@ describe("setup notification step", () => {
     expect((saveProviderConfigMock.mock.calls[0] as unknown[] | undefined)?.[0]).not.toHaveProperty("api_key");
   });
 
+  it("preserves existing OpenAI API transport when updating auth settings", async () => {
+    const saveProviderConfigMock = vi.fn(async () => {});
+
+    vi.doMock("../commands/setup/steps-identity.js", () => ({
+      getBanner: () => "banner",
+      stepExistingConfig: vi.fn(async () => "modify"),
+      stepUserName: vi.fn(async () => "User"),
+      stepSeedyName: vi.fn(async () => "Seedy"),
+    }));
+    vi.doMock("../commands/setup/steps-provider.js", () => ({
+      stepRootPreset: vi.fn(async () => "default"),
+      stepProvider: vi.fn(async () => "openai"),
+      stepModel: vi.fn(async () => "gpt-5.4-mini"),
+      stepApiKey: vi.fn(async () => "sk-existing"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
+    }));
+    vi.doMock("../commands/setup/steps-runtime.js", () => ({
+      ensurePulseedDir: vi.fn(() => "/tmp/pulseed-test"),
+      stepDaemon: vi.fn(async () => ({ start: false, port: 41700 })),
+      writeSeedMd: vi.fn(),
+      writeRootMd: vi.fn(),
+      writeUserMd: vi.fn(),
+    }));
+    vi.doMock("../commands/setup/steps-notification.js", () => ({
+      stepNotification: vi.fn(async () => null),
+    }));
+    vi.doMock("../../../base/llm/provider-config.js", () => ({
+      MODEL_REGISTRY: {
+        "gpt-5.4-mini": {
+          provider: "openai",
+          adapters: ["openai_codex_cli", "openai_api", "agent_loop"],
+        },
+      },
+      loadProviderConfig: vi.fn(async () => ({
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        adapter: "openai_api",
+        api_key: "sk-existing",
+      })),
+      saveProviderConfig: saveProviderConfigMock,
+      validateProviderConfig: vi.fn(() => ({ valid: true, errors: [] })),
+    }));
+    vi.doMock("../../../base/config/identity-loader.js", () => ({
+      clearIdentityCache: vi.fn(),
+    }));
+    vi.doMock("node:fs", () => ({
+      mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
+      existsSync: vi.fn(() => false),
+      readFileSync: vi.fn(),
+    }));
+
+    confirmMock.mockResolvedValueOnce(true);
+    selectMock.mockResolvedValueOnce("save");
+
+    const { runSetupWizard } = await import("../commands/setup-wizard.js");
+    const code = await runSetupWizard();
+
+    expect(code).toBe(0);
+    expect(saveProviderConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        adapter: "openai_api",
+      })
+    );
+  });
+
   it("starts daemon and gateway after saving daemon config", async () => {
     const spawnChild = {
       pid: 12345,
@@ -522,6 +613,7 @@ describe("setup notification step", () => {
       stepProvider: vi.fn(async () => "openai"),
       stepModel: vi.fn(async () => "gpt-5.4-mini"),
       stepApiKey: vi.fn(async () => "sk-test"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
       stepAdapter: vi.fn(async () => "openai_codex_cli"),
@@ -625,6 +717,7 @@ describe("setup notification step", () => {
       stepProvider: vi.fn(async () => "openai"),
       stepModel: vi.fn(async () => "gpt-5.4-mini"),
       stepApiKey: vi.fn(async () => "sk-test"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
       stepAdapter: vi.fn(async () => "openai_codex_cli"),
@@ -745,6 +838,7 @@ describe("setup notification step", () => {
       stepProvider: stepProviderMock,
       stepModel: stepModelMock,
       stepApiKey: stepApiKeyMock,
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
       runCodexOAuthLogin: vi.fn(),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
@@ -891,6 +985,7 @@ describe("setup notification step", () => {
       stepProvider: vi.fn(async () => "openai"),
       stepModel: vi.fn(async () => "gpt-5.4"),
       stepApiKey: vi.fn(async () => "sk-imported"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
       runCodexOAuthLogin: vi.fn(),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
@@ -1012,6 +1107,7 @@ describe("setup notification step", () => {
       stepProvider: stepProviderMock,
       stepModel: stepModelMock,
       stepApiKey: stepApiKeyMock,
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
       stepAdapter: stepAdapterMock,
@@ -1126,6 +1222,7 @@ describe("setup notification step", () => {
       stepProvider: stepProviderMock,
       stepModel: stepModelMock,
       stepApiKey: stepApiKeyMock,
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
       runCodexOAuthLogin: vi.fn(),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
@@ -1232,6 +1329,7 @@ describe("setup notification step", () => {
       stepProvider: stepProviderMock,
       stepModel: stepModelMock,
       stepApiKey: stepApiKeyMock,
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
       runCodexOAuthLogin: vi.fn(),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
@@ -1347,6 +1445,7 @@ describe("setup notification step", () => {
       stepProvider: vi.fn(),
       stepModel: vi.fn(),
       stepApiKey: stepApiKeyMock,
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
       runCodexOAuthLogin: runCodexOAuthLoginMock,
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
@@ -1426,6 +1525,7 @@ describe("setup notification step", () => {
       stepProvider: vi.fn(async () => "openai"),
       stepModel: vi.fn(async () => "gpt-5.4-mini"),
       stepApiKey: vi.fn(async () => "sk-test"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
     }));
     vi.doMock("../commands/setup/steps-adapter.js", () => ({
       stepAdapter: vi.fn(async () => "openai_codex_cli"),

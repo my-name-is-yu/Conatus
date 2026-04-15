@@ -16,8 +16,7 @@ import { ROOT_PRESETS } from "./presets/root-presets.js";
 import { MODEL_REGISTRY, detectApiKeys, getAdaptersForModel, maskKey } from "./setup-shared.js";
 import type { Provider } from "./setup-shared.js";
 import { getBanner, stepExistingConfig, stepUserName, stepSeedyName } from "./setup/steps-identity.js";
-import { stepRootPreset, stepProvider, stepModel, stepApiKey, runCodexOAuthLogin } from "./setup/steps-provider.js";
-import { stepAdapter } from "./setup/steps-adapter.js";
+import { stepRootPreset, stepProvider, stepModel, stepApiKey, runCodexOAuthLogin, stepOpenAIAuthMethod } from "./setup/steps-provider.js";
 import { stepNotification } from "./setup/steps-notification.js";
 import { stepDaemon, ensurePulseedDir, writeSeedMd, writeRootMd, writeUserMd } from "./setup/steps-runtime.js";
 import { guardCancel } from "./setup/utils.js";
@@ -61,8 +60,8 @@ function formatSummary(answers: SetupAnswers): string {
     `Style:     ${ROOT_PRESETS[answers.rootPreset].name}`,
     `Provider:  ${answers.provider}`,
     `Model:     ${answers.model}`,
-    `Adapter:   ${answers.adapter}`,
-    `API Key:   ${maskKey(answers.apiKey)}`,
+    formatAuthSummary(answers),
+    formatCredentialSummary(answers),
     `Daemon:    ${answers.startDaemon ? `configured (port ${answers.daemonPort})` : "not configured"}`,
     `Notify:    ${notificationChannels}`,
   ].join("\n");
@@ -74,9 +73,29 @@ function formatExecutionSummary(
   return [
     `Provider:  ${execution.provider}`,
     `Model:     ${execution.model}`,
-    `Adapter:   ${execution.adapter}`,
-    `API Key:   ${maskKey(execution.apiKey)}`,
+    formatAuthSummary(execution),
+    formatCredentialSummary(execution),
   ].join("\n");
+}
+
+function formatAuthSummary(execution: Pick<SetupAnswers, "provider" | "adapter">): string {
+  if (execution.provider === "openai") {
+    return `Auth:      ${execution.adapter === "openai_codex_cli" ? "Codex OAuth" : "OpenAI API key"}`;
+  }
+  if (execution.provider === "anthropic") {
+    return "Auth:      Anthropic API key";
+  }
+  return "Auth:      local Ollama";
+}
+
+function formatCredentialSummary(execution: Pick<SetupAnswers, "provider" | "adapter" | "apiKey">): string {
+  if (execution.provider === "openai" && execution.adapter === "openai_codex_cli") {
+    return "Credential: Codex OAuth login";
+  }
+  if (execution.provider === "ollama") {
+    return "Credential: local runtime";
+  }
+  return `API Key:   ${maskKey(execution.apiKey)}`;
 }
 
 function formatImportSetupSummary(
@@ -98,14 +117,17 @@ function formatImportSetupSummary(
     providerPatch.api_key
       ? "found in imported settings"
       : providerPatch.provider === "ollama" || providerPatch.adapter === "openai_codex_cli"
-        ? "not required for this adapter"
+        ? "not required for this auth method"
         : "not found";
 
   return [
     `Source:    ${sourceNames}`,
     `Provider:  ${providerPatch.provider}`,
     `Model:     ${providerPatch.model ?? "not found"}`,
-    `Adapter:   ${providerPatch.adapter ?? "not found"}`,
+    formatAuthSummary({
+      provider: providerPatch.provider,
+      adapter: providerPatch.adapter ?? "agent_loop",
+    }),
     `API Key:   ${apiKeyStatus}`,
     `User:      ${selection.userSettings ? "imported USER.md" : "PulSeed will ask"}`,
     "Style:     Default",
@@ -180,7 +202,7 @@ async function stepMissingOpenAiAuth(
 ): Promise<{ adapter: string; apiKey?: string }> {
   const details = [
     "OpenAI API key was not found in the imported settings.",
-    `${adapter} uses the OpenAI API directly, so PulSeed needs an API key unless you switch to Codex CLI OAuth.`,
+    "PulSeed needs an OpenAI API key unless you use Codex CLI OAuth.",
   ];
   if (importedApiKey && isLikelyCodexOAuthToken(importedApiKey)) {
     details.push("The imported auth value looks like a Codex OAuth token, not an OpenAI API key.");
@@ -198,7 +220,7 @@ async function stepMissingOpenAiAuth(
               {
                 value: "oauth" as const,
                 label: "Use Codex CLI OAuth instead",
-                hint: `switch adapter for ${model} to OpenAI Codex CLI`,
+                hint: `use Codex CLI authentication for ${model}`,
               },
               {
                 value: "skip" as const,
@@ -247,6 +269,12 @@ async function stepMissingOpenAiAuth(
   return { adapter, apiKey };
 }
 
+function defaultExecutionAdapter(provider: Provider, model: string): string {
+  const adapters = getAdaptersForModel(model, provider);
+  if (adapters.includes("agent_loop")) return "agent_loop";
+  return adapters[0] ?? "";
+}
+
 async function stepExecutionConfig(
   current?: ExecutionAnswers,
   mode: "interactive" | "imported" = "interactive"
@@ -261,17 +289,28 @@ async function stepExecutionConfig(
           mode === "interactive" && current?.provider === provider ? current.model : undefined
         );
   const adaptersForModel = getAdaptersForModel(model, provider);
-  const adapter =
-    mode === "imported" && current?.adapter && adaptersForModel.includes(current.adapter)
+  const compatibleCurrentAdapter =
+    current?.adapter && adaptersForModel.includes(current.adapter)
       ? current.adapter
-      : await stepAdapter(
-          model,
-          provider,
-          mode === "interactive" && current?.provider === provider && adaptersForModel.includes(current.adapter)
-            ? current.adapter
-            : undefined
-        );
+      : undefined;
+  let adapter = compatibleCurrentAdapter ?? defaultExecutionAdapter(provider, model);
   if (!adapter) return { provider, model, adapter, apiKey: current?.apiKey };
+
+  if (
+    provider === "openai" &&
+    !(mode === "imported" && compatibleCurrentAdapter)
+  ) {
+    const authMethod = await stepOpenAIAuthMethod(
+      compatibleCurrentAdapter === "openai_codex_cli" ? "codex_oauth" : "api_key",
+      { canUseCodexOAuth: adaptersForModel.includes("openai_codex_cli") }
+    );
+    adapter =
+      authMethod === "codex_oauth"
+        ? "openai_codex_cli"
+        : compatibleCurrentAdapter && compatibleCurrentAdapter !== "openai_codex_cli"
+          ? compatibleCurrentAdapter
+          : defaultExecutionAdapter(provider, model);
+  }
 
   const detectedKeys = detectApiKeys();
   const openAiEnvKey = process.env["OPENAI_API_KEY"];
@@ -492,7 +531,7 @@ export async function runSetupWizard(): Promise<number> {
             message: "Save these provider settings?",
             options: [
               { value: "save" as const, label: "Save provider settings" },
-              { value: "edit" as const, label: "Edit provider, model, adapter" },
+              { value: "edit" as const, label: "Edit provider, model, auth" },
               { value: "cancel" as const, label: "Cancel setup" },
             ],
             initialValue: "save" as const,
@@ -605,7 +644,7 @@ export async function runSetupWizard(): Promise<number> {
           message: "Save this configuration?",
           options: [
             { value: "save" as const, label: "Save configuration", hint: "write files and finish" },
-            { value: "edit-execution" as const, label: "Edit provider, model, adapter" },
+            { value: "edit-execution" as const, label: "Edit provider, model, auth" },
             { value: "edit-identity" as const, label: "Edit user, agent, style" },
             { value: "edit-runtime" as const, label: "Edit daemon and notifications" },
             { value: "cancel" as const, label: "Cancel setup" },

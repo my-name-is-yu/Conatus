@@ -154,8 +154,16 @@ async function runNonInteractive(argv: string[]): Promise<number> {
   console.log("Setup complete! Configuration saved to ~/.pulseed/provider.json");
   console.log(`  Provider: ${config.provider}`);
   console.log(`  Model:    ${config.model}`);
-  console.log(`  Adapter:  ${config.adapter}`);
+  console.log(`  Auth:     ${formatAuthForSetup(config)}`);
   return 0;
+}
+
+function formatAuthForSetup(config: Pick<ProviderConfig, "provider" | "adapter">): string {
+  if (config.provider === "openai") {
+    return config.adapter === "openai_codex_cli" ? "Codex OAuth" : "OpenAI API key";
+  }
+  if (config.provider === "anthropic") return "Anthropic API key";
+  return "local Ollama";
 }
 
 // ─── Help text ───
@@ -167,7 +175,6 @@ Interactive setup wizard for provider configuration.
 Options:
   --provider <name>   LLM provider (openai, anthropic, ollama)
   --model <name>      Model name (e.g., gpt-5.4-mini)
-  --adapter <name>    Execution adapter (agent_loop, openai_codex_cli, claude_code_cli, etc.)
   --agentloop-worktree <on|off>
                       Enable isolated git worktrees for native task agentloop
   --agentloop-worktree-base-dir <path>
@@ -177,6 +184,9 @@ Options:
   --agentloop-worktree-cleanup <on_success|always|never>
                       Cleanup policy for isolated worktrees
   --help, -h          Show this help
+
+Advanced compatibility:
+  --adapter <name>    Legacy provider transport field (agent_loop, openai_codex_cli, etc.)
 
 Note: Non-interactive mode only configures provider settings. Identity files
 (SEED.md, ROOT.md, USER.md) are only configured in interactive mode.
