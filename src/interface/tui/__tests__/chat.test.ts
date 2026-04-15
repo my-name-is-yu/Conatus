@@ -5,12 +5,19 @@ import {
   formatSuggestionLabel,
   getInputPromptLabel,
   getMatchingSuggestions,
+  parseMouseEvent,
   getScrollRequest,
   stripMouseEscapeSequences,
 } from "../chat.js";
 import { estimateMarkdownHeight, estimateWrappedLineCount, wrapTextToRows } from "../markdown-renderer.js";
 import { extractBashCommand, isBashModeInput, isSafeBashCommand, createShellApprovalTask, formatShellOutput } from "../bash-mode.js";
-import { INPUT_MARKER, buildCursorEscape } from "../cursor-tracker.js";
+import {
+  CARET_MARKER,
+  INPUT_MARKER,
+  buildCursorEscape,
+  buildCursorEscapeFromCaretMarker,
+  buildCursorEscapeFromInputMarker,
+} from "../cursor-tracker.js";
 
 describe("getMatchingSuggestions", () => {
   it("hides suggestions for an exact slash command so enter can submit", () => {
@@ -199,6 +206,27 @@ describe("chat scroll keys", () => {
     expect(getScrollRequest("[<65;40;12M", {})).toMatchObject({ direction: "down", kind: "line" });
   });
 
+  it("parses press, drag, and release mouse events for composer selection", () => {
+    expect(parseMouseEvent("\u001b[<0;12;8M")).toEqual({
+      kind: "press",
+      button: "left",
+      x: 12,
+      y: 8,
+    });
+    expect(parseMouseEvent("\u001b[<32;16;8M")).toEqual({
+      kind: "drag",
+      button: "left",
+      x: 16,
+      y: 8,
+    });
+    expect(parseMouseEvent("\u001b[<0;16;8m")).toEqual({
+      kind: "release",
+      button: "left",
+      x: 16,
+      y: 8,
+    });
+  });
+
   it("strips sgr mouse sequences from input text", () => {
     expect(stripMouseEscapeSequences("hello\u001b[<64;40;12Mworld")).toBe("helloworld");
   });
@@ -218,5 +246,25 @@ describe("cursor tracker", () => {
   it("keeps the bash prompt label separate from the internal marker", () => {
     expect(getInputPromptLabel(true)).toBe("!");
     expect(getInputPromptLabel(false)).toBe("◉");
+  });
+
+  it("builds a cursor escape directly from the caret marker", () => {
+    const frame = [
+      "header",
+      `│ ! abc${CARET_MARKER}def │`,
+      "footer",
+    ].join("\n");
+
+    expect(buildCursorEscapeFromCaretMarker(frame)).toBe("\u001b[2;8H\u001b[?25h");
+  });
+
+  it("builds a cursor escape from the input marker and cursor column", () => {
+    const frame = [
+      "header",
+      `│ ! ${INPUT_MARKER}abcdef │`,
+      "footer",
+    ].join("\n");
+
+    expect(buildCursorEscapeFromInputMarker(frame, 3)).toBe("\u001b[2;8H\u001b[?25h");
   });
 });

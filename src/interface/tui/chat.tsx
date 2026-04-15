@@ -12,7 +12,7 @@ import { getClipboardContent } from "./clipboard.js";
 import { theme } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
 import { ShimmerText } from "./shimmer-text.js";
-import { INPUT_MARKER, positionCursorInFrame, buildCursorEscape } from "./cursor-tracker.js";
+import { CARET_MARKER, INPUT_MARKER, positionCursorInFrame, buildCursorEscape } from "./cursor-tracker.js";
 import { HIDE_CURSOR, SHOW_CURSOR } from "./flicker/dec.js";
 import { isBashModeInput } from "./bash-mode.js";
 import { isRenderableFrameChunk } from "./render-output.js";
@@ -36,6 +36,8 @@ interface ChatProps {
   isProcessing: boolean; // show "thinking..." indicator
   goalNames?: string[];
   noFlicker?: boolean;
+  availableRows?: number;
+  availableCols?: number;
 }
 
 const SCROLL_LINE_STEP = 3;
@@ -45,9 +47,10 @@ const CHAT_CHROME_RESERVED_ROWS = 4;
 const SCROLL_INDICATOR_ROWS = 2;
 const INPUT_BOX_HORIZONTAL_CHROME = 4;
 const SUGGESTION_HINT = " arrows to navigate, tab/enter to select, esc to dismiss";
+const ZERO_WIDTH_CHARS = new Set(["\u200B", "\u2060", "\u2061"]);
 
 export { buildChatViewport } from "./chat/viewport.js";
-export { getScrollRequest, stripMouseEscapeSequences } from "./chat/scroll.js";
+export { getScrollRequest, parseMouseEvent, stripMouseEscapeSequences } from "./chat/scroll.js";
 export { getMatchingSuggestions } from "./chat/suggestions.js";
 
 export function getInputPromptLabel(bashMode: boolean): string {
@@ -62,6 +65,112 @@ export function formatSuggestionLabel(suggestion: Suggestion): string {
   return suggestion.type === "goal"
     ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
     : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
+}
+
+type InputCell = {
+  text: string;
+  width: number;
+};
+
+type InputRow = {
+  cells: InputCell[];
+};
+
+function charWidth(ch: string): number {
+  if (ZERO_WIDTH_CHARS.has(ch)) return 0;
+  const cp = ch.codePointAt(0) ?? 0;
+  return cp > 0x2e7f ? 2 : 1;
+}
+
+function stringWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) {
+    width += charWidth(ch);
+  }
+  return width;
+}
+
+function trimToWidth(text: string, width: number): string {
+  if (width <= 0) return "";
+  let out = "";
+  let used = 0;
+  for (const ch of text) {
+    const next = charWidth(ch);
+    if (used + next > width) break;
+    out += ch;
+    used += next;
+  }
+  return out;
+}
+
+function pushInputRow(rows: InputRow[], cells: InputCell[]): void {
+  rows.push({ cells: [...cells] });
+}
+
+function buildInputRows(
+  input: string,
+  cursorOffset: number,
+  contentWidth: number,
+  placeholder: string,
+): InputRow[] {
+  if (contentWidth <= 0) {
+    return [{ cells: [{ text: CARET_MARKER, width: 0 }] }];
+  }
+
+  if (input.length === 0) {
+    return [{
+      cells: [
+        { text: CARET_MARKER, width: 0 },
+        { text: " ", width: 1 },
+        ...Array.from(trimToWidth(placeholder, Math.max(0, contentWidth - 1))).map((ch) => ({
+          text: ch,
+          width: charWidth(ch),
+        })),
+      ],
+    }];
+  }
+
+  const rows: InputRow[] = [];
+  let currentCells: InputCell[] = [];
+  let currentWidth = 0;
+  let offset = 0;
+
+  while (offset <= input.length) {
+    if (offset === cursorOffset) {
+      currentCells.push({ text: CARET_MARKER, width: 0 });
+    }
+
+    if (offset === input.length) {
+      break;
+    }
+
+    const codePoint = input.codePointAt(offset) ?? 0;
+    const ch = String.fromCodePoint(codePoint);
+    const nextOffset = offset + ch.length;
+
+    if (ch === "\n") {
+      currentCells.push({ text: " ", width: 1 });
+      pushInputRow(rows, currentCells);
+      currentCells = [];
+      currentWidth = 0;
+      offset = nextOffset;
+      continue;
+    }
+
+    const width = charWidth(ch);
+    if (currentWidth + width > contentWidth && currentCells.length > 0) {
+      pushInputRow(rows, currentCells);
+      currentCells = [];
+      currentWidth = 0;
+    }
+
+    currentCells.push({ text: ch, width });
+    currentWidth += width;
+    offset = nextOffset;
+  }
+
+  pushInputRow(rows, currentCells);
+  return rows;
 }
 
 function getInputBoxContentWidth(termCols: number, bashMode: boolean): number {
@@ -122,6 +231,8 @@ export function Chat({
   isProcessing,
   goalNames = [],
   noFlicker,
+  availableRows,
+  availableCols,
 }: ChatProps) {
   const [input, setInput] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -192,8 +303,8 @@ export function Chat({
 
   // Scroll-slicing: clip messages to visible terminal height
   const { stdout } = useStdout();
-  const termRows = stdout?.rows ?? 24;
-  const termCols = stdout?.columns ?? 80;
+  const termRows = availableRows ?? stdout?.rows ?? 24;
+  const termCols = availableCols ?? stdout?.columns ?? 80;
   const composerHeight = estimateComposerHeight({
     termCols,
     input,

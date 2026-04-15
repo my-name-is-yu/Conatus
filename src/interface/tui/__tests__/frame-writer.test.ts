@@ -8,6 +8,7 @@ import {
   ERASE_SCREEN,
   cursorTo,
 } from "../flicker/dec.js";
+import { PROTECTED_ROW_MARKER } from "../cursor-tracker.js";
 
 // Mock terminal-detect to control sync support
 vi.mock("../flicker/terminal-detect.js", () => ({
@@ -41,7 +42,7 @@ describe("frame-writer", () => {
 
     expect(stream.write).toHaveBeenCalledTimes(1);
     const output = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(output).toBe(BSU + CURSOR_HOME + "hello" + "[24;1H" + ESU);
+    expect(output).toBe(BSU + CURSOR_HOME + "hello" + "[24;1H" + ESU + "[24;1H");
   });
 
   it("updates only changed rows after the first frame", () => {
@@ -53,7 +54,7 @@ describe("frame-writer", () => {
 
     const output = (stream.write as ReturnType<typeof vi.fn>).mock.calls[1][0];
     expect(output).toBe(
-      BSU + cursorTo(2) + ERASE_LINE + "BETA" + "[24;1H" + ESU,
+      BSU + cursorTo(2) + ERASE_LINE + "BETA" + "[24;1H" + ESU + "[24;1H",
     );
   });
 
@@ -65,7 +66,7 @@ describe("frame-writer", () => {
     fw.write("alpha\nbeta");
 
     const output = (stream.write as ReturnType<typeof vi.fn>).mock.calls[1][0];
-    expect(output).toBe(BSU + cursorTo(3) + ERASE_LINE + "[24;1H" + ESU);
+    expect(output).toBe(BSU + cursorTo(3) + ERASE_LINE + "[24;1H" + ESU + "[24;1H");
   });
 
   it("skips writing when frame and cursor are unchanged", () => {
@@ -86,7 +87,7 @@ describe("frame-writer", () => {
     fw.write("hello", "\u001b[3;6H\u001b[?25h");
 
     const output = (stream.write as ReturnType<typeof vi.fn>).mock.calls[1][0];
-    expect(output).toBe(BSU + "\u001b[3;6H\u001b[?25h" + ESU);
+    expect(output).toBe(BSU + "\u001b[3;6H\u001b[?25h" + ESU + "\u001b[3;6H\u001b[?25h");
   });
 
   it("includes ERASE_SCREEN after requestErase()", () => {
@@ -97,7 +98,7 @@ describe("frame-writer", () => {
     fw.write("content");
 
     const output = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(output).toBe(BSU + ERASE_SCREEN + CURSOR_HOME + "content" + "[24;1H" + ESU);
+    expect(output).toBe(BSU + ERASE_SCREEN + CURSOR_HOME + "content" + "[24;1H" + ESU + "[24;1H");
   });
 
   it("clears needsErase after one write", () => {
@@ -156,7 +157,23 @@ describe("frame-writer", () => {
     fw.write("hello", "\u001b[3;5H\u001b[?25h");
 
     const output = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(output).toBe(BSU + CURSOR_HOME + "hello" + "\u001b[3;5H\u001b[?25h" + ESU);
+    expect(output).toBe(BSU + CURSOR_HOME + "hello" + "\u001b[3;5H\u001b[?25h" + ESU + "\u001b[3;5H\u001b[?25h");
+  });
+
+  it("rewrites protected rows without erase-line and strips the marker", () => {
+    const stream = createMockStream(24);
+    const fw = createFrameWriter(stream);
+
+    fw.write(`alpha\n${PROTECTED_ROW_MARKER}input one`);
+    fw.write(`alpha\n${PROTECTED_ROW_MARKER}input two`);
+
+    const first = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const second = (stream.write as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    expect(first).not.toContain(PROTECTED_ROW_MARKER);
+    expect(second).toBe(
+      BSU + cursorTo(2) + "input two" + "\u001b[24;1H" + ESU + "\u001b[24;1H",
+    );
+    expect(second).not.toContain(ERASE_LINE);
   });
 
   it("does nothing after destroy()", () => {
