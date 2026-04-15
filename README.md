@@ -6,17 +6,13 @@
 
 Keep a goal moving until it is actually done.
 
-[![Forks](https://img.shields.io/github/forks/my-name-is-yu/PulSeed.svg?style=for-the-badge)](https://github.com/my-name-is-yu/PulSeed/network/members)
-[![Stargazers](https://img.shields.io/github/stars/my-name-is-yu/PulSeed.svg?style=for-the-badge)](https://github.com/my-name-is-yu/PulSeed/stargazers)
-[![Issues](https://img.shields.io/github/issues/my-name-is-yu/PulSeed.svg?style=for-the-badge)](https://github.com/my-name-is-yu/PulSeed/issues)
+[![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=for-the-badge)](https://pulseed.dev)
 [![npm](https://img.shields.io/npm/v/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
 [![Downloads](https://img.shields.io/npm/dm/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
 [![CI](https://img.shields.io/github/actions/workflow/status/my-name-is-yu/PulSeed/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/my-name-is-yu/PulSeed/actions/workflows/ci.yml)
 [![Publish](https://img.shields.io/github/actions/workflow/status/my-name-is-yu/PulSeed/publish.yml?style=for-the-badge&label=Publish)](https://github.com/my-name-is-yu/PulSeed/actions/workflows/publish.yml)
 [![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Security Policy](https://img.shields.io/badge/Security-Policy-brightgreen.svg?style=for-the-badge)](SECURITY.md)
 [![MIT License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
-[![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=for-the-badge)](https://pulseed.dev)
 
 </div>
 
