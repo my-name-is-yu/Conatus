@@ -183,6 +183,30 @@ describe("ContextAssembler", () => {
       expect(result.contextBlock).toContain("How?");
     });
 
+    it("accepts richer vector search results and ignores extra metadata", async () => {
+      const vectorIndex: NonNullable<ContextAssemblerDeps["vectorIndex"]> = {
+        search: vi.fn().mockResolvedValue([
+          {
+            id: "knowledge-1",
+            text: "Vector knowledge entry",
+            similarity: 0.91,
+            metadata: { source: "semantic-index" },
+          },
+        ]),
+      };
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        vectorIndex,
+      };
+      const assembler = new ContextAssembler(deps);
+      const result = await assembler.build("task_generation", "goal-1");
+      expect(result.contextBlock).toContain("knowledge");
+      expect(result.contextBlock).toContain("Vector knowledge entry");
+      expect(vectorIndex.search).toHaveBeenCalledWith("goal-1", 5, 0.6);
+    });
+
     it("includes failure_context from additionalContext", async () => {
       const deps: ContextAssemblerDeps = {
         stateManager: {
