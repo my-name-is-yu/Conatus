@@ -33,6 +33,7 @@ import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { ActivityKind, ChatEvent, ChatEventContext } from "./chat-events.js";
 import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
+import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type {
   AgentLoopEvent,
   AgentLoopEventSink,
@@ -99,6 +100,8 @@ export interface ChatRunnerDeps {
   onEvent?: (event: ChatEvent) => void;
   /** Optional: native agentloop runner for chat turns. */
   chatAgentLoopRunner?: ChatAgentLoopRunner;
+  /** Optional: native agentloop runner for review turns. */
+  reviewAgentLoopRunner?: Pick<ReviewAgentLoopRunner, "execute">;
   /** Optional: first-class runtime control service for natural-language restart/update requests. */
   runtimeControlService?: Pick<RuntimeControlService, "request">;
   /** Optional: approval handler scoped to runtime-control operations only. */
@@ -799,16 +802,27 @@ export class ChatRunner {
   private async handleReview(start: number): Promise<ChatRunResult> {
     const cwd = this.sessionCwd ?? process.cwd();
     const diffStat = await checkGitChanges(cwd);
-    const policy = await this.getSessionExecutionPolicy();
+    const reviewProfile = await this.getAgentLoopDefaultProfile("review");
+    const reviewPolicy = reviewProfile.executionPolicy ?? await this.getSessionExecutionPolicy();
+    if (this.deps.reviewAgentLoopRunner) {
+      const review = await this.deps.reviewAgentLoopRunner.execute({
+        cwd,
+        diffStat,
+        executionPolicy: reviewPolicy,
+      });
+      return { success: review.success, output: review.output, elapsed_ms: Date.now() - start };
+    }
     const output = [
       "Review summary",
       diffStat ? diffStat : "No uncommitted changes detected.",
       "",
       "Execution policy",
-      summarizeExecutionPolicy(policy),
+      summarizeExecutionPolicy(reviewPolicy),
       "",
       "Review profile",
-      await this.getAgentLoopProfileSummary("review"),
+      formatAgentLoopResolvedProfileSummary(
+        summarizeAgentLoopResolvedProfile(reviewProfile, reviewPolicy),
+      ),
     ].join("\n");
     return { success: true, output, elapsed_ms: Date.now() - start };
   }
@@ -1999,7 +2013,11 @@ export class ChatRunner {
   /** Build a ToolCallContext from ChatRunnerDeps for tool dispatch. */
   private async getSessionExecutionPolicy(): Promise<ExecutionPolicy> {
     if (this.sessionExecutionPolicy) return this.sessionExecutionPolicy;
-    this.sessionExecutionPolicy = (await this.getAgentLoopDefaultProfile("chat")).executionPolicy!;
+    const profile = await this.getAgentLoopDefaultProfile("chat");
+    if (!profile.executionPolicy) {
+      throw new Error("Chat profile did not resolve an execution policy.");
+    }
+    this.sessionExecutionPolicy = profile.executionPolicy;
     return this.sessionExecutionPolicy;
   }
 

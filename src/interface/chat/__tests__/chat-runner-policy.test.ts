@@ -102,7 +102,34 @@ describe("ChatRunner policy commands", () => {
     expect(result.output).toContain("Execution policy");
     expect(result.output).toContain("Review profile");
     expect(result.output).toContain("profile_id: review");
-    expect(result.output).toContain("resolved_posture: sandbox=workspace_write approval=on_request network=off");
+    expect(result.output).toContain("resolved_posture:");
+    expect(result.output).toContain("sandbox=read_only approval=never network=off");
+  });
+
+  it("/review routes through the native review runner with review posture", async () => {
+    const reviewAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "native review output",
+        review: null,
+      }),
+    };
+    const runner = new ChatRunner(makeDeps({ reviewAgentLoopRunner }));
+    runner.startSession("/repo");
+
+    const result = await runner.execute("/review", "/repo");
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("native review output");
+    expect(reviewAgentLoopRunner.execute).toHaveBeenCalledOnce();
+    const input = vi.mocked(reviewAgentLoopRunner.execute).mock.calls[0][0] as {
+      executionPolicy?: { sandboxMode: string; approvalPolicy: string; networkAccess: boolean };
+    };
+    expect(input.executionPolicy).toMatchObject({
+      sandboxMode: "read_only",
+      approvalPolicy: "never",
+      networkAccess: false,
+    });
   });
 
   it("/fork creates a new session id", async () => {

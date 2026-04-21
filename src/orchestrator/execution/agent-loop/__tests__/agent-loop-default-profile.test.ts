@@ -75,7 +75,7 @@ describe("resolveAgentLoopDefaultProfile", () => {
     });
   });
 
-  it("summarizes review posture without changing defaults", () => {
+  it("resolves review posture to a dedicated read-only profile", () => {
     const profile = resolveAgentLoopDefaultProfile({
       surface: "review",
       workspaceRoot: "/repo",
@@ -87,11 +87,19 @@ describe("resolveAgentLoopDefaultProfile", () => {
       },
     });
 
+    expect(profile.toolPolicy.allowedTools).toContain("git_diff");
+    expect(profile.toolPolicy.allowedTools).toContain("test_runner");
+    expect(profile.executionPolicy).toMatchObject({
+      sandboxMode: "read_only",
+      approvalPolicy: "never",
+      networkAccess: false,
+      trustProjectInstructions: true,
+    });
     expect(
       formatAgentLoopResolvedProfileSummary(summarizeAgentLoopResolvedProfile(profile)),
     ).toBe([
       "profile_id: review",
-      "resolved_posture: sandbox=workspace_write approval=on_request network=off",
+      "resolved_posture: sandbox=read_only approval=never network=off",
     ].join("\n"));
   });
 });

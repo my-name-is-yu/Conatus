@@ -1,7 +1,7 @@
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import type { CorePhaseKind } from "./core-phase-runner.js";
 import type { AgentLoopSecurityConfig, ExecutionPolicy } from "./execution-policy.js";
-import { resolveExecutionPolicy } from "./execution-policy.js";
+import { resolveExecutionPolicy, withExecutionPolicyOverrides } from "./execution-policy.js";
 import type { AgentLoopReasoningEffort } from "./agent-loop-model.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
 import { withDefaultBudget } from "./agent-loop-turn-context.js";
@@ -40,6 +40,28 @@ interface CorePhaseProfileDefaults {
   failPolicy: "return_low_confidence" | "fallback_deterministic" | "fail_cycle";
 }
 
+interface SurfaceProfileInput {
+  surface: "task" | "chat" | "review";
+  workspaceRoot: string;
+  security?: AgentLoopSecurityConfig;
+  budget?: Partial<AgentLoopBudget>;
+  toolPolicy?: AgentLoopToolPolicy;
+  worktreePolicy?: AgentLoopWorktreePolicy;
+  reasoningEffort?: AgentLoopReasoningEffort;
+}
+
+interface CorePhaseProfileInput {
+  surface: "core_phase";
+  phase: CorePhaseKind;
+  workspaceRoot?: string;
+  security?: AgentLoopSecurityConfig;
+  budget?: Partial<AgentLoopBudget>;
+  toolPolicy?: AgentLoopToolPolicy;
+  enabled?: boolean;
+  maxInvocationsPerIteration?: number;
+  failPolicy?: "return_low_confidence" | "fallback_deterministic" | "fail_cycle";
+}
+
 const DEFAULT_SURFACE_PROFILE = {
   budget: {} as Partial<AgentLoopBudget>,
   toolPolicy: {} as AgentLoopToolPolicy,
@@ -57,6 +79,52 @@ const DEFAULT_CORE_PHASE_BUDGET: Partial<AgentLoopBudget> = {
   compactionMaxMessages: 6,
 };
 
+const CHAT_ALLOWED_TOOLS = [
+  "read",
+  "read-pulseed-file",
+  "glob",
+  "grep",
+  "git_diff",
+  "git_log",
+  "shell_command",
+  "test-runner",
+  "tool_search",
+  "read-plan",
+  "session_history",
+  "progress_history",
+  "task_get",
+  "goal_state",
+  "soil_query",
+  "knowledge_query",
+  "memory_recall",
+  "web_search",
+  "http_fetch",
+  "github_read",
+  "mcp_list_tools",
+  "mcp_call_tool",
+  "desktop_list_apps",
+  "desktop_get_app_state",
+  "browser_get_state",
+  "browser_run_workflow",
+] as const;
+
+const REVIEW_ALLOWED_TOOLS = [
+  "read",
+  "read-pulseed-file",
+  "glob",
+  "grep",
+  "git_diff",
+  "git_log",
+  "shell_command",
+  "test-runner",
+  "task_get",
+  "goal_state",
+  "progress_history",
+  "session_history",
+  "soil_query",
+  "knowledge_query",
+] as const;
+
 const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefaults> = {
   observe_evidence: {
     enabled: true,
@@ -64,7 +132,8 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET,
     toolPolicy: {
       allowedTools: [
-        "read_pulseed_file",
+        "read",
+        "read-pulseed-file",
         "glob",
         "grep",
         "git_log",
@@ -86,7 +155,8 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
         "memory_recall",
         "glob",
         "grep",
-        "read_pulseed_file",
+        "read",
+        "read-pulseed-file",
       ],
       requiredTools: ["soil_query"],
     },
@@ -117,7 +187,7 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
         "task_get",
         "goal_state",
         "soil_query",
-        "read_plan",
+        "read-plan",
         "session_history",
         "memory_recall",
       ],
@@ -130,10 +200,11 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET,
     toolPolicy: {
       allowedTools: [
-        "test_runner",
+        "test-runner",
         "shell_command",
         "git_diff",
-        "read_pulseed_file",
+        "read",
+        "read-pulseed-file",
         "grep",
         "soil_query",
       ],
@@ -141,26 +212,6 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     failPolicy: "fallback_deterministic",
   },
 };
-
-interface SurfaceProfileInput {
-  surface: "task" | "chat" | "review";
-  workspaceRoot: string;
-  security?: AgentLoopSecurityConfig;
-  budget?: Partial<AgentLoopBudget>;
-  toolPolicy?: AgentLoopToolPolicy;
-}
-
-interface CorePhaseProfileInput {
-  surface: "core_phase";
-  phase: CorePhaseKind;
-  workspaceRoot?: string;
-  security?: AgentLoopSecurityConfig;
-  budget?: Partial<AgentLoopBudget>;
-  toolPolicy?: AgentLoopToolPolicy;
-  enabled?: boolean;
-  maxInvocationsPerIteration?: number;
-  failPolicy?: "return_low_confidence" | "fallback_deterministic" | "fail_cycle";
-}
 
 export function resolveAgentLoopDefaultProfile(
   input: SurfaceProfileInput | CorePhaseProfileInput,
@@ -171,6 +222,7 @@ export function resolveAgentLoopDefaultProfile(
       name: `core_phase:${input.phase}`,
       budget: withDefaultBudget({ ...defaults.budget, ...input.budget }),
       toolPolicy: mergeToolPolicy(defaults.toolPolicy, input.toolPolicy),
+      reasoningEffort: "low",
       ...(input.workspaceRoot
         ? {
             executionPolicy: resolveExecutionPolicy({
@@ -187,25 +239,79 @@ export function resolveAgentLoopDefaultProfile(
     };
   }
 
+  const executionPolicy = resolveExecutionPolicy({
+    workspaceRoot: input.workspaceRoot,
+    security: input.security,
+  });
+
+  if (input.surface === "review") {
+    return {
+      name: "review",
+      budget: withDefaultBudget({
+        ...DEFAULT_SURFACE_PROFILE.budget,
+        maxModelTurns: 6,
+        maxToolCalls: 10,
+        ...input.budget,
+      }),
+      toolPolicy: mergeToolPolicy(
+        {
+          allowedTools: REVIEW_ALLOWED_TOOLS,
+        },
+        input.toolPolicy,
+      ),
+      executionPolicy: withExecutionPolicyOverrides(executionPolicy, {
+        sandboxMode: "read_only",
+        approvalPolicy: "never",
+      }),
+      reasoningEffort: input.reasoningEffort ?? "medium",
+    };
+  }
+
+  if (input.surface === "chat") {
+    return {
+      name: "chat",
+      budget: withDefaultBudget({ ...DEFAULT_SURFACE_PROFILE.budget, ...input.budget }),
+      toolPolicy: mergeToolPolicy(
+        {
+          allowedTools: CHAT_ALLOWED_TOOLS,
+        },
+        input.toolPolicy,
+      ),
+      executionPolicy,
+      reasoningEffort: input.reasoningEffort ?? "low",
+    };
+  }
+
   return {
     name: input.surface,
     budget: withDefaultBudget({ ...DEFAULT_SURFACE_PROFILE.budget, ...input.budget }),
     toolPolicy: mergeToolPolicy(DEFAULT_SURFACE_PROFILE.toolPolicy, input.toolPolicy),
-    executionPolicy: resolveExecutionPolicy({
-      workspaceRoot: input.workspaceRoot,
-      security: input.security,
+    executionPolicy: withExecutionPolicyOverrides(executionPolicy, {
+      approvalPolicy: "never",
     }),
+    worktreePolicy: {
+      enabled: true,
+      cleanupPolicy: "on_success",
+      ...input.worktreePolicy,
+    },
+    reasoningEffort: input.reasoningEffort ?? "medium",
   };
 }
 
 export function summarizeAgentLoopResolvedProfile(
-  profile: Pick<AgentLoopResolvedProfile, "name" | "executionPolicy">,
+  profile: Pick<AgentLoopResolvedProfile, "name" | "executionPolicy" | "reasoningEffort" | "worktreePolicy">,
   executionPolicy = profile.executionPolicy,
 ): AgentLoopResolvedProfileSummary {
   return {
     profileId: profile.name,
     resolvedPosture: executionPolicy
-      ? `sandbox=${executionPolicy.sandboxMode} approval=${executionPolicy.approvalPolicy} network=${executionPolicy.networkAccess ? "on" : "off"}`
+      ? [
+          `sandbox=${executionPolicy.sandboxMode}`,
+          `approval=${executionPolicy.approvalPolicy}`,
+          `network=${executionPolicy.networkAccess ? "on" : "off"}`,
+          `worktree=${profile.worktreePolicy?.enabled ? "isolated" : "shared"}`,
+          `reasoning=${profile.reasoningEffort ?? "default"}`,
+        ].join(" ")
       : "no_execution_policy",
   };
 }

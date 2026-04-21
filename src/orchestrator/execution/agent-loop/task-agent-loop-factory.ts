@@ -15,6 +15,7 @@ import {
 import { ToolExecutorAgentLoopToolRuntime } from "./agent-loop-tool-runtime.js";
 import { ToolRegistryAgentLoopToolRouter } from "./agent-loop-tool-router.js";
 import { ChatAgentLoopRunner } from "./chat-agent-loop-runner.js";
+import { ReviewAgentLoopRunner } from "./review-agent-loop-runner.js";
 import { TaskAgentLoopRunner } from "./task-agent-loop-runner.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
@@ -99,6 +100,34 @@ export function createNativeChatAgentLoopRunner(
     cwd: deps.cwd,
     createSession: deps.traceBaseDir
       ? createPersistentAgentLoopSessionFactory({ traceBaseDir: deps.traceBaseDir, kind: "chat" })
+      : undefined,
+  });
+}
+
+export function createNativeReviewAgentLoopRunner(
+  deps: NativeTaskAgentLoopRuntimeDeps,
+): ReviewAgentLoopRunner {
+  const runtime = createNativeAgentLoopRuntime(deps);
+  const profile = resolveAgentLoopDefaultProfile({
+    surface: "review",
+    workspaceRoot: deps.cwd ?? process.cwd(),
+    security: deps.providerConfig.agent_loop?.security,
+  });
+
+  return new ReviewAgentLoopRunner({
+    boundedRunner: runtime.boundedRunner,
+    modelClient: runtime.modelClient,
+    modelRegistry: runtime.modelRegistry,
+    defaultModel: runtime.modelInfo.ref,
+    defaultBudget: profile.budget,
+    defaultToolPolicy: profile.toolPolicy,
+    defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
+    defaultReasoningEffort: profile.reasoningEffort,
+    defaultExecutionPolicy: profile.executionPolicy,
+    profile,
+    cwd: deps.cwd,
+    createSession: deps.traceBaseDir
+      ? createPersistentAgentLoopSessionFactory({ traceBaseDir: deps.traceBaseDir, kind: "review" })
       : undefined,
   });
 }
