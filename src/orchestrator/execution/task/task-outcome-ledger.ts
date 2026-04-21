@@ -27,6 +27,7 @@ export interface TaskOutcomeEvent {
   verification_at: string | null;
   elapsed_ms: number | null;
   estimated_duration_ms: number | null;
+  tokens_used: number | null;
 }
 
 export interface TaskOutcomeSummary {
@@ -46,6 +47,7 @@ export interface TaskOutcomeSummary {
   last_failure_at: string | null;
   abandoned_at: string | null;
   estimated_duration_ms: number | null;
+  tokens_used: number;
   latencies: {
     created_to_acked_ms: number | null;
     acked_to_started_ms: number | null;
@@ -70,6 +72,7 @@ export interface TaskOutcomeAggregateSummary {
   failed: number;
   abandoned: number;
   retried: number;
+  total_tokens_used: number;
   success_rate: number | null;
   retry_rate: number | null;
   abandoned_rate: number | null;
@@ -88,6 +91,7 @@ interface AppendTaskOutcomeEventParams {
   stoppedReason?: string | null;
   verificationResult?: VerificationResult;
   elapsedMs?: number | null;
+  tokensUsed?: number | null;
 }
 
 const ledgerPath = (goalId: string, taskId: string): string => `tasks/${goalId}/ledger/${taskId}.json`;
@@ -140,6 +144,7 @@ function buildEvent(params: AppendTaskOutcomeEventParams): TaskOutcomeEvent {
     verification_at: params.verificationResult?.timestamp ?? null,
     elapsed_ms: params.elapsedMs ?? diffMs(params.task.started_at, params.task.completed_at),
     estimated_duration_ms: estimateDurationMs(params.task),
+    tokens_used: typeof params.tokensUsed === "number" ? params.tokensUsed : null,
   };
 }
 
@@ -165,6 +170,7 @@ function buildSummary(task: Task, events: TaskOutcomeEvent[]): TaskOutcomeSummar
     lastEvent?.verification_at ??
     findLastEvent(events, (event) => event.verification_at !== null)?.verification_at ??
     null;
+  const latestTokensUsed = findLastEvent(events, (event) => typeof event.tokens_used === "number")?.tokens_used ?? 0;
 
   return {
     task_id: task.id,
@@ -183,6 +189,7 @@ function buildSummary(task: Task, events: TaskOutcomeEvent[]): TaskOutcomeSummar
     last_failure_at: lastFailure?.ts ?? null,
     abandoned_at: lastAbandoned?.ts ?? null,
     estimated_duration_ms: estimateDurationMs(task),
+    tokens_used: latestTokensUsed,
     latencies: {
       created_to_acked_ms: diffMs(task.created_at ?? null, ackedAt),
       acked_to_started_ms: diffMs(ackedAt, task.started_at ?? null),
@@ -242,6 +249,31 @@ export async function syncTaskOutcomeSummary(
 ): Promise<TaskOutcomeLedgerRecord> {
   const existing = await readLedgerRecord(stateManager, task.goal_id, task.id);
   return writeLedgerRecord(stateManager, task, existing?.events ?? []);
+}
+
+export async function setTaskOutcomeTokens(
+  stateManager: StateManager,
+  task: Task,
+  tokensUsed: number
+): Promise<TaskOutcomeLedgerRecord | null> {
+  const existing = await readLedgerRecord(stateManager, task.goal_id, task.id);
+  if (!existing) return null;
+  const nextEvents = [...existing.events];
+  const lastIndex = nextEvents.length - 1;
+  if (lastIndex >= 0) {
+    const lastEvent = nextEvents[lastIndex]!;
+    nextEvents[lastIndex] = {
+      ...lastEvent,
+      tokens_used: tokensUsed,
+    };
+  } else {
+    nextEvents.push(buildEvent({
+      task,
+      type: inferMutationEvent(task) ?? "acked",
+      tokensUsed,
+    }));
+  }
+  return writeLedgerRecord(stateManager, task, nextEvents);
 }
 
 function inferMutationEvent(task: Task): TaskOutcomeEventType | null {
@@ -318,6 +350,7 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
         failed: 0,
         abandoned: 0,
         retried: 0,
+        total_tokens_used: 0,
         success_rate: null,
         retry_rate: null,
         abandoned_rate: null,
@@ -348,6 +381,7 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
   const failed = records.filter((record) => record.summary.latest_event_type === "failed").length;
   const abandoned = records.filter((record) => record.summary.latest_event_type === "abandoned").length;
   const retried = records.filter((record) => record.events.some((event) => event.type === "retried")).length;
+  const totalTokensUsed = records.reduce((sum, record) => sum + (record.summary.tokens_used ?? 0), 0);
   const inflightTasks = records.filter((record) => {
     const latestEvent = record.summary.latest_event_type;
     return latestEvent === "acked" || latestEvent === "started" || latestEvent === "retried";
@@ -362,6 +396,7 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
     failed,
     abandoned,
     retried,
+    total_tokens_used: totalTokensUsed,
     success_rate: terminalTasks > 0 ? succeeded / terminalTasks : null,
     retry_rate: records.length > 0 ? retried / records.length : null,
     abandoned_rate: terminalTasks > 0 ? abandoned / terminalTasks : null,

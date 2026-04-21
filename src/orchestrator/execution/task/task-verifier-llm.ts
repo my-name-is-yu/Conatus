@@ -129,23 +129,46 @@ Return JSON:
   // Gateway path: route through PromptGateway when available
   if (deps.gateway) {
     let parsed: z.infer<typeof CompletionJudgerResponseSchema>;
+    let verifierTokens = 0;
     try {
-      parsed = await withRetry(
-        () => withTimeout(
-          deps.gateway!.execute({
-            purpose: "verification",
-            goalId: task.goal_id,
-            additionalContext: { review_prompt: prompt },
-            responseSchema: CompletionJudgerResponseSchema as z.ZodSchema<z.infer<typeof CompletionJudgerResponseSchema>>,
-            maxTokens: 1024,
-          }),
-          timeoutMs
-        ),
-        maxRetries,
-        retryBackoffMs,
-        deps.logger,
-        `completion_judger for task ${task.id}`
-      );
+      if (typeof deps.gateway.executeWithUsage === "function") {
+        const gatewayResult = await withRetry(
+          () => withTimeout(
+            deps.gateway!.executeWithUsage({
+              purpose: "verification",
+              goalId: task.goal_id,
+              additionalContext: { review_prompt: prompt },
+              responseSchema: CompletionJudgerResponseSchema as z.ZodSchema<z.infer<typeof CompletionJudgerResponseSchema>>,
+              maxTokens: 1024,
+            }),
+            timeoutMs
+          ),
+          maxRetries,
+          retryBackoffMs,
+          deps.logger,
+          `completion_judger for task ${task.id}`
+        );
+        parsed = gatewayResult.data;
+        verifierTokens = gatewayResult.usage.totalTokens;
+      } else {
+        parsed = await withRetry(
+          () => withTimeout(
+            deps.gateway!.execute({
+              purpose: "verification",
+              goalId: task.goal_id,
+              additionalContext: { review_prompt: prompt },
+              responseSchema: CompletionJudgerResponseSchema as z.ZodSchema<z.infer<typeof CompletionJudgerResponseSchema>>,
+              maxTokens: 1024,
+            }),
+            timeoutMs
+          ),
+          maxRetries,
+          retryBackoffMs,
+          deps.logger,
+          `completion_judger for task ${task.id}`
+        );
+        verifierTokens = 0;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       deps.logger?.error(`[completion_judger] All retries exhausted for task ${task.id}: ${msg}`);
@@ -166,7 +189,7 @@ Return JSON:
       confidence: verdictStr === "pass" ? 0.8 : verdictStr === "partial" ? 0.6 : 0.8,
       criteria_met: parsed.criteria_met,
       criteria_total: parsed.criteria_total,
-      tokensUsed: 0, // TODO: PromptGateway does not expose usage data
+      tokensUsed: verifierTokens,
     };
     if (deps._tokenAccumulator) deps._tokenAccumulator.tokensUsed += result.tokensUsed;
     await deps.sessionManager.endSession(reviewSession.id, `LLM review: ${verdictStr}`);

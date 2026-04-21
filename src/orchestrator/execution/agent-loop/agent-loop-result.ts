@@ -24,6 +24,12 @@ export interface AgentLoopWorkspaceInfo {
   cleanupReason?: string;
 }
 
+export interface AgentLoopTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 export interface AgentLoopResult<TOutput> {
   success: boolean;
   output: TOutput | null;
@@ -32,6 +38,7 @@ export interface AgentLoopResult<TOutput> {
   elapsedMs: number;
   modelTurns: number;
   toolCalls: number;
+  usage?: AgentLoopTokenUsage;
   compactions: number;
   filesChanged?: boolean;
   changedFiles: string[];

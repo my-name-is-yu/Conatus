@@ -45,6 +45,7 @@ import { cmdTelegramSetup } from "./commands/telegram.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSkills } from "./commands/skills.js";
 import { cmdPlaybook } from "./commands/playbook.js";
+import { cmdUsage } from "./commands/usage.js";
 import { printUsage, formatOperationError } from "./utils.js";
 import { ensureProviderConfig } from "./ensure-api-key.js";
 
@@ -547,6 +548,10 @@ export async function dispatchCommand(
 
   if (subcommand === "playbook" || subcommand === "playbooks") {
     return await cmdPlaybook(argv.slice(1), stateManager);
+  }
+
+  if (subcommand === "usage") {
+    return await cmdUsage(stateManager, argv.slice(1));
   }
 
   if (subcommand === "telegram") {

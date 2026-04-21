@@ -33,6 +33,11 @@ export interface AgentLoopExecutionInfo {
   stopReason: string;
   modelTurns: number;
   toolCalls: number;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
   compactions: number;
   completionEvidence?: string[];
   verificationHints?: string[];

@@ -62,6 +62,7 @@ import type { HookManager } from "../../../runtime/hook-manager.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
 import type { TaskAgentLoopRunner } from "../agent-loop/task-agent-loop-runner.js";
 import { taskAgentLoopResultToAgentResult } from "../agent-loop/task-agent-loop-result.js";
+import type { IPromptGateway } from "../../../prompt/gateway.js";
 import {
   formatPlaybookHints,
   formatPatternHints,
@@ -84,7 +85,7 @@ export type {
 } from "./task-pipeline-types.js";
 import type { TaskCycleResult } from "./task-execution-types.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
-import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
+import { appendTaskOutcomeEvent, setTaskOutcomeTokens } from "./task-outcome-ledger.js";
 
 export interface TaskLifecycleCoreDeps {
   stateManager: StateManager;
@@ -122,6 +123,8 @@ export interface TaskLifecycleOptions {
   toolExecutor?: ToolExecutor;
   /** Native task-level agentloop runner. When present, runTaskCycle executes tasks through this path. */
   agentLoopRunner?: TaskAgentLoopRunner;
+  /** Optional PromptGateway used for task generation and verifier review. */
+  gateway?: IPromptGateway;
   /** Optional explicit workspace root for git-based revert operations. */
   revertCwd?: string;
   /** Optional explicit workspace root for post-execution health checks. */
@@ -165,6 +168,7 @@ export class TaskLifecycle {
   private readonly hookManager?: HookManager;
   private readonly toolExecutor?: ToolExecutor;
   private readonly agentLoopRunner?: TaskAgentLoopRunner;
+  private readonly gateway?: IPromptGateway;
   private readonly revertCwd?: string;
   private readonly healthCheckCwd?: string;
   private onTaskComplete?: (strategyId: string) => void;
@@ -222,6 +226,7 @@ export class TaskLifecycle {
     this.hookManager = resolvedOptions?.hookManager;
     this.toolExecutor = resolvedOptions?.toolExecutor;
     this.agentLoopRunner = resolvedOptions?.agentLoopRunner;
+    this.gateway = resolvedOptions?.gateway;
     this.revertCwd = resolvedOptions?.revertCwd;
     this.healthCheckCwd = resolvedOptions?.healthCheckCwd;
   }
@@ -331,6 +336,7 @@ export class TaskLifecycle {
         logger: this.logger,
         knowledgeManager: this.knowledgeManager,
         memoryLifecycle: this.memoryLifecycle,
+        gateway: this.gateway,
       },
       goalId,
       targetDimension,
@@ -587,7 +593,7 @@ export class TaskLifecycle {
     const task = genResult.task;
     if (task === null) {
       this.logger?.warn("TaskLifecycle: task generation returned null (duplicate detected), skipping cycle");
-      return createSkippedTaskResult(goalId, targetDimension);
+      return createSkippedTaskResult(goalId, targetDimension, taskCycleTokens);
     }
     void this.hookManager?.emit("PostTaskCreate", { goal_id: goalId, data: { task_id: task.id } });
     this.logger?.info(`[task] created: ${task.work_description?.substring(0, 120)}`, { taskId: task.id });
@@ -613,7 +619,11 @@ export class TaskLifecycle {
         verificationResult: preCheckResult.verificationResult,
         reason: preCheckResult.verificationResult.evidence[0]?.description,
       });
-      return preCheckResult;
+      await setTaskOutcomeTokens(this.stateManager, task, taskCycleTokens);
+      return {
+        ...preCheckResult,
+        tokensUsed: taskCycleTokens,
+      };
     }
 
     await appendTaskOutcomeEvent(this.stateManager, {
@@ -638,6 +648,7 @@ export class TaskLifecycle {
         attempt: task.consecutive_failure_count + 1,
         reason,
       });
+      await setTaskOutcomeTokens(this.stateManager, blockedTask, taskCycleTokens);
       this.logger?.warn(`[task] skipped: ${reason}`, { taskId: task.id });
 
       return {
@@ -663,6 +674,10 @@ export class TaskLifecycle {
         ? this.executeTaskWithAgentLoop(task, workspaceContext, enrichedKnowledgeContext)
         : this.executeTask(task, adapter, workspaceContext)
     );
+    const nativeExecutionTokens = executionResult.agentLoop?.usage?.totalTokens;
+    if (typeof nativeExecutionTokens === "number" && Number.isFinite(nativeExecutionTokens)) {
+      taskCycleTokens += nativeExecutionTokens;
+    }
     void this.hookManager?.emit("PostExecute", { goal_id: goalId, data: { task_id: task.id, success: executionResult.success } });
     this.logger?.info(`[task] executed: ${executionResult.success ? 'success' : 'failed'}`, { taskId: task.id });
     this.logger?.debug(`[DEBUG-TL] Execution result: success=${executionResult.success}, stopped=${executionResult.stopped_reason}, error=${executionResult.error}, output=${executionResult.output?.substring(0, 200)}`);
@@ -709,6 +724,9 @@ export class TaskLifecycle {
         reusedPlaybookIds: playbookIdsUsed,
       })
     );
+    await runPhase("persist-usage-telemetry", async () => {
+      await setTaskOutcomeTokens(this.stateManager, verdictResult.task, taskCycleTokens);
+    });
 
     return {
       task: verdictResult.task,
@@ -766,6 +784,7 @@ export class TaskLifecycle {
       preferredAdapterType,
       logger: this.logger,
       onTaskComplete: this.onTaskComplete,
+      gateway: this.gateway,
       durationToMs: durationToMs,
       completionJudgerConfig: this.completionJudgerConfig,
       toolExecutor: this.toolExecutor,

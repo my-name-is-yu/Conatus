@@ -218,11 +218,104 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Session");
       expect(result.output).toContain("Goals and tasks");
       expect(result.output).toContain("Configuration");
+      expect(result.output).toContain("/usage");
       expect(result.output).toContain("Deferred");
       expect(result.output).toContain("/status [goal-id]");
       expect(result.output).toContain("/compact");
       expect(result.output).not.toContain("/context");
       expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("/usage reports session totals and phase breakdown", async () => {
+      const stateManager = makeMockStateManager();
+      const llmClient = {
+        sendMessage: vi.fn().mockResolvedValue({
+          content: "Plain answer",
+          usage: { input_tokens: 2, output_tokens: 3 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn(),
+      } as unknown as ILLMClient;
+      const runner = new ChatRunner(makeDeps({ stateManager, llmClient }));
+      runner.startSession("/repo");
+
+      await runner.execute("What is 1+1?", "/repo");
+      const result = await runner.execute("/usage", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Usage summary (session");
+      expect(result.output).toContain("Session total tokens:  5");
+      expect(result.output).toContain("execution: 5");
+    });
+
+    it("/usage goal <id> reads goal-level telemetry from task ledgers", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-usage-goal-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("tasks/goal-usage/ledger/task-1.json", {
+          task_id: "task-1",
+          goal_id: "goal-usage",
+          events: [{ type: "succeeded", ts: "2026-01-01T00:00:00.000Z", tokens_used: 123 }],
+          summary: {
+            latest_event_type: "succeeded",
+            tokens_used: 123,
+            latencies: {
+              created_to_acked_ms: null,
+              acked_to_started_ms: null,
+              started_to_completed_ms: null,
+              completed_to_verification_ms: null,
+              created_to_completed_ms: null,
+            },
+          },
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager }));
+
+        const result = await runner.execute("/usage goal goal-usage", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Usage summary (goal scope)");
+        expect(result.output).toContain("Goal: goal-usage");
+        expect(result.output).toContain("Total tokens: 123");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/usage schedule [period] aggregates schedule history tokens", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-usage-schedule-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("schedule-history.json", [
+          {
+            id: "record-1",
+            entry_id: "entry-1",
+            entry_name: "Daily brief",
+            layer: "cron",
+            status: "ok",
+            duration_ms: 1200,
+            fired_at: new Date().toISOString(),
+            reason: "manual_run",
+            attempt: 0,
+            scheduled_for: null,
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+            retry_at: null,
+            tokens_used: 88,
+          },
+        ]);
+        const runner = new ChatRunner(makeDeps({ stateManager }));
+
+        const result = await runner.execute("/usage schedule 24h", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Usage summary (schedule, 24h)");
+        expect(result.output).toContain("Runs: 1");
+        expect(result.output).toContain("Total tokens: 88");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
 
     it("/clear returns cleared message without calling adapter", async () => {

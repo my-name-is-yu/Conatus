@@ -338,6 +338,7 @@ describe("TaskLifecycle — persistence", () => {
 
     expect(events.map((event) => event.type)).toEqual(["acked", "started", "succeeded"]);
     expect(summary.latest_event_type).toBe("succeeded");
+    expect(summary.tokens_used).toBeGreaterThan(0);
     expect((summary.latencies as Record<string, unknown>).created_to_acked_ms).not.toBeNull();
   });
 

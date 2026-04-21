@@ -14,6 +14,11 @@ export interface AgentLoopSessionState {
   messages: AgentLoopMessage[];
   modelTurns: number;
   toolCalls: number;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
   compactions: number;
   completionValidationAttempts: number;
   calledTools: string[];
@@ -34,7 +39,14 @@ export class InMemoryAgentLoopSessionStateStore implements AgentLoopSessionState
   private state: AgentLoopSessionState | null = null;
 
   async load(): Promise<AgentLoopSessionState | null> {
-    return this.state ? { ...this.state, messages: [...this.state.messages], calledTools: [...this.state.calledTools] } : null;
+    return this.state
+      ? {
+          ...this.state,
+          messages: [...this.state.messages],
+          calledTools: [...this.state.calledTools],
+          ...(this.state.usage ? { usage: { ...this.state.usage } } : {}),
+        }
+      : null;
   }
 
   async save(state: AgentLoopSessionState): Promise<void> {
@@ -42,6 +54,7 @@ export class InMemoryAgentLoopSessionStateStore implements AgentLoopSessionState
       ...state,
       messages: [...state.messages],
       calledTools: [...state.calledTools],
+      ...(state.usage ? { usage: { ...state.usage } } : {}),
     };
   }
 }
@@ -91,6 +104,7 @@ export function normalizeAgentLoopSessionState(value: unknown): AgentLoopSession
     messages,
     modelTurns: nonNegativeNumberField(value, "modelTurns"),
     toolCalls: nonNegativeNumberField(value, "toolCalls"),
+    usage: usageField(value),
     compactions: nonNegativeNumberField(value, "compactions"),
     completionValidationAttempts: nonNegativeNumberField(value, "completionValidationAttempts"),
     calledTools: stringArrayField(value, "calledTools"),
@@ -138,6 +152,27 @@ function stringField(value: Record<string, unknown>, field: string): string | nu
 function nonNegativeNumberField(value: Record<string, unknown>, field: string): number {
   const raw = value[field];
   return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : 0;
+}
+
+function usageField(value: Record<string, unknown>): NonNullable<AgentLoopSessionState["usage"]> {
+  const raw = value["usage"];
+  if (isRecord(raw)) {
+    const inputTokens = nonNegativeNumberField(raw, "inputTokens");
+    const outputTokens = nonNegativeNumberField(raw, "outputTokens");
+    const totalTokensRaw = nonNegativeNumberField(raw, "totalTokens");
+    return {
+      inputTokens,
+      outputTokens,
+      totalTokens: totalTokensRaw > 0 ? totalTokensRaw : inputTokens + outputTokens,
+    };
+  }
+
+  // Legacy fallback for state files before usage tracking.
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
 }
 
 function stringArrayField(value: Record<string, unknown>, field: string): string[] {

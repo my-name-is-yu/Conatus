@@ -50,6 +50,7 @@ function makeAgentLoopState(overrides: Partial<AgentLoopSessionState> & {
     ],
     modelTurns: overrides.modelTurns ?? 1,
     toolCalls: overrides.toolCalls ?? 0,
+    usage: overrides.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     compactions: overrides.compactions ?? 0,
     completionValidationAttempts: overrides.completionValidationAttempts ?? 0,
     calledTools: overrides.calledTools ?? [],
