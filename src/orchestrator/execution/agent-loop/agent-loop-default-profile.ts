@@ -53,8 +53,6 @@ interface SurfaceProfileInput {
 interface CorePhaseProfileInput {
   surface: "core_phase";
   phase: CorePhaseKind;
-  workspaceRoot?: string;
-  security?: AgentLoopSecurityConfig;
   budget?: Partial<AgentLoopBudget>;
   toolPolicy?: AgentLoopToolPolicy;
   enabled?: boolean;
@@ -62,61 +60,80 @@ interface CorePhaseProfileInput {
   failPolicy?: "return_low_confidence" | "fallback_deterministic" | "fail_cycle";
 }
 
-const DEFAULT_SURFACE_PROFILE = {
-  budget: {} as Partial<AgentLoopBudget>,
-  toolPolicy: {} as AgentLoopToolPolicy,
-};
+export type ResolveAgentLoopDefaultProfileInput =
+  | SurfaceProfileInput
+  | CorePhaseProfileInput;
 
-const DEFAULT_CORE_PHASE_BUDGET: Partial<AgentLoopBudget> = {
-  maxModelTurns: 6,
-  maxToolCalls: 12,
-  maxWallClockMs: 90_000,
-  maxConsecutiveToolErrors: 2,
-  maxRepeatedToolCalls: 2,
-  maxSchemaRepairAttempts: 1,
-  maxCompletionValidationAttempts: 1,
-  maxCompactions: 1,
-  compactionMaxMessages: 6,
+const DEFAULT_SURFACE_PROFILE = {
+  budget: withDefaultBudget(),
+  toolPolicy: {},
+} as const;
+
+const DEFAULT_CORE_PHASE_BUDGET: Partial<Record<CorePhaseKind, Partial<AgentLoopBudget>>> = {
+  observe_evidence: {
+    maxModelTurns: 6,
+    maxToolCalls: 8,
+    maxWallClockMs: 90_000,
+    compactionMaxMessages: 6,
+  },
+  knowledge_refresh: {
+    maxModelTurns: 6,
+    maxToolCalls: 8,
+    maxWallClockMs: 90_000,
+    compactionMaxMessages: 6,
+  },
+  stall_investigation: {
+    maxModelTurns: 4,
+    maxToolCalls: 5,
+    maxWallClockMs: 60_000,
+    compactionMaxMessages: 6,
+  },
+  replanning_options: {
+    maxModelTurns: 4,
+    maxToolCalls: 4,
+    maxWallClockMs: 60_000,
+    compactionMaxMessages: 6,
+  },
+  verification_evidence: {
+    maxModelTurns: 6,
+    maxToolCalls: 8,
+    maxWallClockMs: 90_000,
+    compactionMaxMessages: 6,
+  },
 };
 
 const CHAT_ALLOWED_TOOLS = [
-  "read",
-  "read-pulseed-file",
+  "read_pulseed_file",
   "glob",
   "grep",
+  "list_dir",
   "git_diff",
   "git_log",
   "shell_command",
-  "test-runner",
-  "tool_search",
-  "read-plan",
-  "session_history",
-  "progress_history",
+  "apply_patch",
+  "file_edit",
+  "file_write",
+  "json_query",
+  "test_runner",
   "task_get",
   "goal_state",
+  "progress_history",
+  "session_history",
+  "tool_search",
+  "update_plan",
   "soil_query",
   "knowledge_query",
   "memory_recall",
-  "web_search",
-  "http_fetch",
-  "github_read",
-  "mcp_list_tools",
-  "mcp_call_tool",
-  "desktop_list_apps",
-  "desktop_get_app_state",
-  "browser_get_state",
-  "browser_run_workflow",
 ] as const;
 
 const REVIEW_ALLOWED_TOOLS = [
-  "read",
-  "read-pulseed-file",
+  "read_pulseed_file",
   "glob",
   "grep",
   "git_diff",
   "git_log",
   "shell_command",
-  "test-runner",
+  "test_runner",
   "task_get",
   "goal_state",
   "progress_history",
@@ -129,11 +146,10 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
   observe_evidence: {
     enabled: true,
     maxInvocationsPerIteration: 1,
-    budget: DEFAULT_CORE_PHASE_BUDGET,
+    budget: DEFAULT_CORE_PHASE_BUDGET.observe_evidence ?? {},
     toolPolicy: {
       allowedTools: [
-        "read",
-        "read-pulseed-file",
+        "read_pulseed_file",
         "glob",
         "grep",
         "git_log",
@@ -147,16 +163,13 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
   knowledge_refresh: {
     enabled: true,
     maxInvocationsPerIteration: 1,
-    budget: DEFAULT_CORE_PHASE_BUDGET,
+    budget: DEFAULT_CORE_PHASE_BUDGET.knowledge_refresh ?? {},
     toolPolicy: {
       allowedTools: [
         "soil_query",
         "knowledge_query",
-        "memory_recall",
-        "glob",
+        "read_pulseed_file",
         "grep",
-        "read",
-        "read-pulseed-file",
       ],
       requiredTools: ["soil_query"],
     },
@@ -165,31 +178,30 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
   stall_investigation: {
     enabled: true,
     maxInvocationsPerIteration: 1,
-    budget: DEFAULT_CORE_PHASE_BUDGET,
+    budget: DEFAULT_CORE_PHASE_BUDGET.stall_investigation ?? {},
     toolPolicy: {
       allowedTools: [
-        "progress_history",
-        "session_history",
+        "read_pulseed_file",
+        "glob",
+        "grep",
         "git_log",
         "shell_command",
-        "soil_query",
-        "task_get",
+        "progress_history",
+        "tool_search",
       ],
     },
     failPolicy: "return_low_confidence",
   },
   replanning_options: {
-    enabled: false,
+    enabled: true,
     maxInvocationsPerIteration: 1,
-    budget: DEFAULT_CORE_PHASE_BUDGET,
+    budget: DEFAULT_CORE_PHASE_BUDGET.replanning_options ?? {},
     toolPolicy: {
       allowedTools: [
         "task_get",
         "goal_state",
+        "progress_history",
         "soil_query",
-        "read-plan",
-        "session_history",
-        "memory_recall",
       ],
     },
     failPolicy: "fallback_deterministic",
@@ -197,24 +209,24 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
   verification_evidence: {
     enabled: true,
     maxInvocationsPerIteration: 1,
-    budget: DEFAULT_CORE_PHASE_BUDGET,
+    budget: DEFAULT_CORE_PHASE_BUDGET.verification_evidence ?? {},
     toolPolicy: {
       allowedTools: [
-        "test-runner",
-        "shell_command",
-        "git_diff",
-        "read",
-        "read-pulseed-file",
+        "read_pulseed_file",
+        "glob",
         "grep",
-        "soil_query",
+        "git_diff",
+        "git_log",
+        "test_runner",
+        "shell_command",
       ],
     },
-    failPolicy: "fallback_deterministic",
+    failPolicy: "return_low_confidence",
   },
 };
 
 export function resolveAgentLoopDefaultProfile(
-  input: SurfaceProfileInput | CorePhaseProfileInput,
+  input: ResolveAgentLoopDefaultProfileInput,
 ): AgentLoopResolvedProfile {
   if (input.surface === "core_phase") {
     const defaults = CORE_PHASE_PROFILE_DEFAULTS[input.phase];
@@ -223,14 +235,6 @@ export function resolveAgentLoopDefaultProfile(
       budget: withDefaultBudget({ ...defaults.budget, ...input.budget }),
       toolPolicy: mergeToolPolicy(defaults.toolPolicy, input.toolPolicy),
       reasoningEffort: "low",
-      ...(input.workspaceRoot
-        ? {
-            executionPolicy: resolveExecutionPolicy({
-              workspaceRoot: input.workspaceRoot,
-              security: input.security,
-            }),
-          }
-        : {}),
       corePhase: {
         enabled: input.enabled ?? defaults.enabled,
         maxInvocationsPerIteration: input.maxInvocationsPerIteration ?? defaults.maxInvocationsPerIteration,
@@ -273,6 +277,7 @@ export function resolveAgentLoopDefaultProfile(
       budget: withDefaultBudget({ ...DEFAULT_SURFACE_PROFILE.budget, ...input.budget }),
       toolPolicy: mergeToolPolicy(
         {
+          ...DEFAULT_SURFACE_PROFILE.toolPolicy,
           allowedTools: CHAT_ALLOWED_TOOLS,
         },
         input.toolPolicy,
@@ -283,36 +288,45 @@ export function resolveAgentLoopDefaultProfile(
   }
 
   return {
-    name: input.surface,
+    name: "task",
     budget: withDefaultBudget({ ...DEFAULT_SURFACE_PROFILE.budget, ...input.budget }),
     toolPolicy: mergeToolPolicy(DEFAULT_SURFACE_PROFILE.toolPolicy, input.toolPolicy),
     executionPolicy: withExecutionPolicyOverrides(executionPolicy, {
       approvalPolicy: "never",
     }),
-    worktreePolicy: {
-      enabled: true,
-      cleanupPolicy: "on_success",
-      ...input.worktreePolicy,
-    },
+    worktreePolicy: mergeWorktreePolicy(
+      { enabled: true, cleanupPolicy: "on_success" },
+      input.worktreePolicy,
+    ),
     reasoningEffort: input.reasoningEffort ?? "medium",
   };
 }
 
 export function summarizeAgentLoopResolvedProfile(
-  profile: Pick<AgentLoopResolvedProfile, "name" | "executionPolicy" | "reasoningEffort" | "worktreePolicy">,
+  profile: Pick<
+    AgentLoopResolvedProfile,
+    "name" | "executionPolicy" | "reasoningEffort" | "worktreePolicy"
+  >,
   executionPolicy = profile.executionPolicy,
 ): AgentLoopResolvedProfileSummary {
+  const posture = executionPolicy
+    ? [
+        `sandbox=${executionPolicy.sandboxMode}`,
+        `approval=${executionPolicy.approvalPolicy}`,
+        `network=${executionPolicy.networkAccess ? "on" : "off"}`,
+      ]
+    : ["execution=unset"];
+
+  if (profile.worktreePolicy) {
+    posture.push(`worktree=${profile.worktreePolicy.enabled ? "on" : "off"}`);
+  }
+  if (profile.reasoningEffort) {
+    posture.push(`reasoning=${profile.reasoningEffort}`);
+  }
+
   return {
     profileId: profile.name,
-    resolvedPosture: executionPolicy
-      ? [
-          `sandbox=${executionPolicy.sandboxMode}`,
-          `approval=${executionPolicy.approvalPolicy}`,
-          `network=${executionPolicy.networkAccess ? "on" : "off"}`,
-          `worktree=${profile.worktreePolicy?.enabled ? "isolated" : "shared"}`,
-          `reasoning=${profile.reasoningEffort ?? "default"}`,
-        ].join(" ")
-      : "no_execution_policy",
+    resolvedPosture: posture.join(" "),
   };
 }
 
@@ -326,18 +340,22 @@ export function formatAgentLoopResolvedProfileSummary(
 }
 
 function mergeToolPolicy(
-  base: AgentLoopToolPolicy,
+  base: AgentLoopToolPolicy | undefined,
   override?: AgentLoopToolPolicy,
 ): AgentLoopToolPolicy {
-  const allowedTools = override?.allowedTools ?? base.allowedTools;
-  const requiredTools = override?.requiredTools ?? base.requiredTools;
-  const deniedTools = override?.deniedTools ?? base.deniedTools;
-  const includeDeferred = override?.includeDeferred ?? base.includeDeferred;
-
   return {
-    ...(allowedTools ? { allowedTools: [...allowedTools] } : {}),
-    ...(requiredTools ? { requiredTools: [...requiredTools] } : {}),
-    ...(deniedTools ? { deniedTools: [...deniedTools] } : {}),
-    ...(includeDeferred !== undefined ? { includeDeferred } : {}),
+    ...(base ?? {}),
+    ...(override ?? {}),
+  };
+}
+
+function mergeWorktreePolicy(
+  base: AgentLoopWorktreePolicy | undefined,
+  override: AgentLoopWorktreePolicy | undefined,
+): AgentLoopWorktreePolicy | undefined {
+  if (!base && !override) return undefined;
+  return {
+    ...(base ?? {}),
+    ...(override ?? {}),
   };
 }

@@ -23,11 +23,16 @@ describe("resolveAgentLoopDefaultProfile", () => {
     expect(profile.budget.maxModelTurns).toBe(12);
     expect(profile.budget.compactionMaxMessages).toBe(8);
     expect(profile.toolPolicy).toEqual({});
+    expect(profile.reasoningEffort).toBe("medium");
     expect(profile.executionPolicy).toMatchObject({
       sandboxMode: "workspace_write",
-      approvalPolicy: "on_request",
+      approvalPolicy: "never",
       networkAccess: false,
       trustProjectInstructions: true,
+    });
+    expect(profile.worktreePolicy).toEqual({
+      enabled: true,
+      cleanupPolicy: "on_success",
     });
   });
 
@@ -45,6 +50,7 @@ describe("resolveAgentLoopDefaultProfile", () => {
     expect(profile.name).toBe("chat");
     expect(profile.budget.maxModelTurns).toBe(4);
     expect(profile.budget.maxToolCalls).toBe(40);
+    expect(profile.reasoningEffort).toBe("low");
     expect(profile.toolPolicy).toEqual({
       allowedTools: ["read_pulseed_file"],
       requiredTools: ["read_pulseed_file"],
@@ -73,6 +79,7 @@ describe("resolveAgentLoopDefaultProfile", () => {
       maxInvocationsPerIteration: 1,
       failPolicy: "fallback_deterministic",
     });
+    expect(profile.reasoningEffort).toBe("low");
   });
 
   it("resolves review posture to a dedicated read-only profile", () => {
@@ -99,7 +106,7 @@ describe("resolveAgentLoopDefaultProfile", () => {
       formatAgentLoopResolvedProfileSummary(summarizeAgentLoopResolvedProfile(profile)),
     ).toBe([
       "profile_id: review",
-      "resolved_posture: sandbox=read_only approval=never network=off",
+      "resolved_posture: sandbox=read_only approval=never network=off reasoning=medium",
     ].join("\n"));
   });
 });
