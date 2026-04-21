@@ -161,6 +161,7 @@ Common directories:
 Depending on the features in use, you may also see:
 
 - checkpoints
+- dream playbooks
 - runtime health snapshots
 - Soil projections and indexes
 - schedule suggestions and approval state
@@ -188,6 +189,9 @@ Scriptable commands:
 | `pulseed skills install <path>` | Copy a local `SKILL.md` into `~/.pulseed/skills/imported/` |
 
 The runtime also exposes `skill_search` as a read-only built-in tool.
+
+Verified playbooks are stored separately from skills under `~/.pulseed/dream/playbooks/`.
+They are inspectable runtime memory artifacts, not auto-generated `SKILL.md` files.
 
 ## 9. Channel security and routing
 
@@ -242,6 +246,12 @@ Common scriptable commands:
 | `pulseed schedule history <id>` | Show recent schedule execution history |
 | `pulseed skills list` | List discovered skills |
 | `pulseed skills install <path>` | Install a local skill file |
+| `pulseed playbook list` | List stored verified playbooks |
+| `pulseed playbook show <id>` | Show one playbook as JSON |
+| `pulseed playbook promote <id>` | Mark a playbook as promoted |
+| `pulseed playbook demote <id>` | Demote a playbook back to candidate |
+| `pulseed playbook disable <id>` | Disable a playbook from retrieval |
+| `pulseed playbook delete <id>` | Delete a stored playbook |
 
 ## 12. Practical guidance
 

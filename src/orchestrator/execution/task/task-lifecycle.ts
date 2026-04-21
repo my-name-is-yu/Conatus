@@ -63,11 +63,14 @@ import type { ToolExecutor } from "../../../tools/executor.js";
 import type { TaskAgentLoopRunner } from "../agent-loop/task-agent-loop-runner.js";
 import { taskAgentLoopResultToAgentResult } from "../agent-loop/task-agent-loop-result.js";
 import {
+  formatPlaybookHints,
   formatPatternHints,
   formatWorkflowHints,
   loadDreamActivationState,
+  loadDreamPlaybookRecords,
   loadDreamWorkflows,
   loadLearnedPatterns,
+  selectPlaybookHints,
   selectPatternHints,
   selectWorkflowHints,
 } from "../../../platform/dream/dream-activation.js";
@@ -261,12 +264,17 @@ export class TaskLifecycle {
     adapterType?: string,
     existingTasks?: string[],
     workspaceContext?: string
-  ): Promise<{ task: Task | null; tokensUsed: number }> {
+  ): Promise<{ task: Task | null; tokensUsed: number; playbookIdsUsed: string[] }> {
     let resolvedKnowledgeContext = knowledgeContext;
+    const playbookIdsUsed = new Set<string>();
     try {
       const baseDir = this.stateManager.getBaseDir();
       const dreamActivation = await loadDreamActivationState(baseDir);
-      if (dreamActivation.flags.learnedPatternHints || dreamActivation.flags.workflowHints) {
+      if (
+        dreamActivation.flags.learnedPatternHints ||
+        dreamActivation.flags.playbookHints ||
+        dreamActivation.flags.workflowHints
+      ) {
         const goal = await this.stateManager.loadGoal(goalId);
         const query = [
           goal?.title ?? "",
@@ -280,6 +288,20 @@ export class TaskLifecycle {
           const hints = selectPatternHints(patterns, query);
           const formattedHints = formatPatternHints(hints);
           if (formattedHints) {
+            resolvedKnowledgeContext = resolvedKnowledgeContext
+              ? `${resolvedKnowledgeContext}\n\n${formattedHints}`
+              : formattedHints;
+          }
+        }
+
+        if (dreamActivation.flags.playbookHints) {
+          const playbooks = await loadDreamPlaybookRecords(baseDir);
+          const hints = selectPlaybookHints(playbooks, query, { goalId, targetDimension });
+          const formattedHints = formatPlaybookHints(hints);
+          if (formattedHints) {
+            for (const hint of hints) {
+              playbookIdsUsed.add(hint.playbook_id);
+            }
             resolvedKnowledgeContext = resolvedKnowledgeContext
               ? `${resolvedKnowledgeContext}\n\n${formattedHints}`
               : formattedHints;
@@ -301,7 +323,7 @@ export class TaskLifecycle {
       // Non-fatal: proceed without Dream activation hints.
     }
 
-    return _generateTask(
+    const generated = await _generateTask(
       {
         stateManager: this.stateManager,
         llmClient: this.llmClient,
@@ -318,6 +340,10 @@ export class TaskLifecycle {
       existingTasks,
       workspaceContext
     );
+    return {
+      ...generated,
+      playbookIdsUsed: [...playbookIdsUsed],
+    };
   }
 
   /** Check whether the task requires human approval and request it if so. */
@@ -557,6 +583,7 @@ export class TaskLifecycle {
       )
     );
     let taskCycleTokens = genResult.tokensUsed;
+    const playbookIdsUsed = genResult.playbookIdsUsed;
     const task = genResult.task;
     if (task === null) {
       this.logger?.warn("TaskLifecycle: task generation returned null (duplicate detected), skipping cycle");
@@ -679,6 +706,7 @@ export class TaskLifecycle {
         adapter,
         ...this.sideEffectDeps(),
         gapValue: gapVector?.gaps?.[0]?.normalized_gap,
+        reusedPlaybookIds: playbookIdsUsed,
       })
     );
 
@@ -780,6 +808,7 @@ export class TaskLifecycle {
 
   private sideEffectDeps() {
     return {
+      stateManager: this.stateManager,
       sessionManager: this.sessionManager,
       llmClient: this.llmClient,
       knowledgeManager: this.knowledgeManager,

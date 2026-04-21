@@ -55,6 +55,19 @@ It makes durable knowledge available to bounded runs through memory recall, know
 
 That is how a short AgentLoop run can still make use of state accumulated over a much longer horizon.
 
+## Procedural memory
+
+PulSeed can also retain verified procedural knowledge as Dream-backed playbooks.
+
+These playbooks are:
+
+- derived from verifier-backed successful execution
+- stored as inspectable memory artifacts under the PulSeed state directory
+- injected back into task generation as bounded hints when they are promoted
+
+They are not the same thing as skills.
+PulSeed does not auto-generate or auto-overwrite `SKILL.md` files as part of this path.
+
 ## Verification
 
 Verification is a separate step from execution.

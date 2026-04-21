@@ -39,6 +39,7 @@ menu of subcommands.
 - Goal-first orchestration for long-running work
 - Honest goal negotiation when a target is not realistic as stated
 - Bounded agent execution with verification around delegated work
+- Verified playbook memory that turns successful runs into reusable planning hints
 - Local persistent state under `~/.pulseed/`
 - Multiple runtime surfaces: CLI, chat, TUI, daemon, and cron
 - Support for OpenAI, Anthropic, Ollama, and adapter-based execution paths
@@ -67,6 +68,8 @@ default for most users is `agent_loop` with OpenAI or Anthropic.
   verify, or stop
 - `AgentLoop` handles bounded tool-using work for task execution, chat, and
   selected runtime phases
+- Dream-backed playbooks can feed verified workflow hints into later task
+  generation without auto-writing executable skills
 - State, reports, schedules, and local memory live under `~/.pulseed/`
 - Software-level approval and verification gates protect delegated work
 
