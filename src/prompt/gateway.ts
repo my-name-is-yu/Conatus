@@ -22,8 +22,21 @@ export interface PromptGatewayInput<T> {
   temperature?: number;
 }
 
+export interface PromptGatewayUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface PromptGatewayExecutionResult<T> {
+  data: T;
+  usage: PromptGatewayUsage;
+  contextTokens: number;
+}
+
 export interface IPromptGateway {
   execute<T>(input: PromptGatewayInput<T>): Promise<T>;
+  executeWithUsage<T>(input: PromptGatewayInput<T>): Promise<PromptGatewayExecutionResult<T>>;
 }
 
 // ─── Purpose → Role mapping ───────────────────────────────────────────────────
@@ -99,6 +112,11 @@ export class PromptGateway implements IPromptGateway {
   ) {}
 
   async execute<T>(input: PromptGatewayInput<T>): Promise<T> {
+    const result = await this.executeWithUsage(input);
+    return result.data;
+  }
+
+  async executeWithUsage<T>(input: PromptGatewayInput<T>): Promise<PromptGatewayExecutionResult<T>> {
     const config = PURPOSE_CONFIGS[input.purpose];
 
     let assembled;
@@ -138,13 +156,24 @@ ${baseSystemPrompt}`;
     }
 
     const parsed = this.llmClient.parseJSON(response.content, input.responseSchema);
+    const inputTokens = response.usage?.input_tokens ?? 0;
+    const outputTokens = response.usage?.output_tokens ?? 0;
+    const usage: PromptGatewayUsage = {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+    };
 
     if (this.options?.logger) {
       this.options.logger(
-        `[PromptGateway] ${input.purpose} | tokens: ${response.usage.input_tokens}+${response.usage.output_tokens} | context: ${assembled.totalTokensUsed}`
+        `[PromptGateway] ${input.purpose} | tokens: ${usage.inputTokens}+${usage.outputTokens} | context: ${assembled.totalTokensUsed}`
       );
     }
 
-    return parsed;
+    return {
+      data: parsed,
+      usage,
+      contextTokens: assembled.totalTokensUsed,
+    };
   }
 }

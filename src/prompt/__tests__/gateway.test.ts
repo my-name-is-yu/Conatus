@@ -220,6 +220,28 @@ describe("PromptGateway", () => {
     });
   });
 
+  describe("executeWithUsage()", () => {
+    it("returns parsed output with usage and context token metadata", async () => {
+      const assembler = makeMockAssembler({ totalTokensUsed: 77 });
+      const llmClient = makeMockLLMClient({ score: 0.91 });
+      const gateway = new PromptGateway(llmClient, assembler);
+
+      const result = await gateway.executeWithUsage({
+        purpose: "observation",
+        goalId: "goal-usage",
+        responseSchema: schema,
+      });
+
+      expect(result.data).toEqual({ score: 0.91 });
+      expect(result.usage).toEqual({
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+      });
+      expect(result.contextTokens).toBe(77);
+    });
+  });
+
   describe("error handling", () => {
     it("throws meaningful error when assembler.build fails", async () => {
       const assembler = new ContextAssembler({});

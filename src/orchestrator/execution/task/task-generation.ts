@@ -346,14 +346,28 @@ export async function generateTask(
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       console.log(`  [LLM] Calling LLM for task generation (${targetDimension})...`);
-      generated = await deps.gateway.execute({
-        purpose: "task_generation",
-        goalId,
-        dimensionName: targetDimension,
-        additionalContext: { task_prompt: prompt },
-        responseSchema: LLMGeneratedTaskSchema as z.ZodSchema<ReturnType<typeof LLMGeneratedTaskSchema.parse>>,
-        maxTokens: maxGenerationTokens,
-      });
+      if (typeof deps.gateway.executeWithUsage === "function") {
+        const gatewayResult = await deps.gateway.executeWithUsage({
+          purpose: "task_generation",
+          goalId,
+          dimensionName: targetDimension,
+          additionalContext: { task_prompt: prompt },
+          responseSchema: LLMGeneratedTaskSchema as z.ZodSchema<ReturnType<typeof LLMGeneratedTaskSchema.parse>>,
+          maxTokens: maxGenerationTokens,
+        });
+        generated = gatewayResult.data;
+        generationTokens = gatewayResult.usage.totalTokens;
+      } else {
+        generated = await deps.gateway.execute({
+          purpose: "task_generation",
+          goalId,
+          dimensionName: targetDimension,
+          additionalContext: { task_prompt: prompt },
+          responseSchema: LLMGeneratedTaskSchema as z.ZodSchema<ReturnType<typeof LLMGeneratedTaskSchema.parse>>,
+          maxTokens: maxGenerationTokens,
+        });
+        generationTokens = 0;
+      }
       console.log(`  [LLM] Task generation complete (${targetDimension}).`);
     } catch (err) {
       deps.logger?.error(
@@ -362,8 +376,6 @@ export async function generateTask(
       );
       throw err;
     }
-    // PromptGateway does not expose usage data — tokens tracked as 0.
-    generationTokens = 0;
   } else {
     console.log(`  [LLM] Calling LLM for task generation (${targetDimension})...`);
     const response = await deps.llmClient.sendMessage(

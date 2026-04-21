@@ -164,6 +164,7 @@ export class ChatAgentLoopRunner {
         stopReason: result.stopReason,
         modelTurns: result.modelTurns,
         toolCalls: result.toolCalls,
+        usage: result.usage,
         compactions: result.compactions,
         ...(result.profileName ? { profileName: result.profileName } : {}),
         ...(result.reasoningEffort ? { reasoningEffort: result.reasoningEffort } : {}),

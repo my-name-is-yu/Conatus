@@ -40,6 +40,13 @@ function makeDeps(
           execute: vi.fn(async () => options.gatewayResponse) as unknown as NonNullable<
             ReconcilerDeps["gateway"]
           >["execute"],
+          executeWithUsage: vi.fn(async () => ({
+            data: options.gatewayResponse,
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            contextTokens: 0,
+          })) as unknown as NonNullable<
+            ReconcilerDeps["gateway"]
+          >["executeWithUsage"],
         } satisfies NonNullable<ReconcilerDeps["gateway"]>);
 
   return {

@@ -24,6 +24,24 @@ export const ChatSessionAgentLoopMetadataSchema = z.object({
 }).passthrough();
 export type ChatSessionAgentLoopMetadata = z.infer<typeof ChatSessionAgentLoopMetadataSchema>;
 
+export const ChatUsageCounterSchema = z.object({
+  inputTokens: z.number().int().nonnegative().default(0),
+  outputTokens: z.number().int().nonnegative().default(0),
+  totalTokens: z.number().int().nonnegative().default(0),
+}).passthrough();
+export type ChatUsageCounter = z.infer<typeof ChatUsageCounterSchema>;
+
+export const ChatSessionUsageSchema = z.object({
+  totals: ChatUsageCounterSchema.default({
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  }),
+  byPhase: z.record(ChatUsageCounterSchema).default({}),
+  updatedAt: z.string().optional(),
+}).passthrough();
+export type ChatSessionUsage = z.infer<typeof ChatSessionUsageSchema>;
+
 export const ChatSessionSchema = z.object({
   id: z.string(),
   cwd: z.string(), // git root at session start
@@ -37,6 +55,7 @@ export const ChatSessionSchema = z.object({
   agentLoopResumable: z.boolean().nullable().optional(),
   agentLoopUpdatedAt: z.string().nullable().optional(),
   agentLoop: ChatSessionAgentLoopMetadataSchema.optional(),
+  usage: ChatSessionUsageSchema.optional(),
 }).passthrough();
 export type ChatSession = z.infer<typeof ChatSessionSchema>;
 
@@ -57,6 +76,7 @@ export class ChatHistory {
         cwd: existingSession.cwd,
         updatedAt: existingSession.updatedAt ?? existingSession.createdAt,
         messages: [...existingSession.messages],
+        ...(existingSession.usage ? { usage: cloneUsage(existingSession.usage) } : {}),
       };
     } else {
       const createdAt = new Date().toISOString();
@@ -141,7 +161,11 @@ export class ChatHistory {
   }
 
   getSessionData(): ChatSession {
-    return { ...this.session, messages: [...this.session.messages] };
+    return {
+      ...this.session,
+      messages: [...this.session.messages],
+      ...(this.session.usage ? { usage: cloneUsage(this.session.usage) } : {}),
+    };
   }
 
   getSessionId(): string {
@@ -164,6 +188,24 @@ export class ChatHistory {
     }
   }
 
+  recordUsage(phase: string, usage: ChatUsageCounter): void {
+    const normalized = normalizeUsageCounter(usage);
+    const nextTotals = sumUsage(
+      this.session.usage?.totals,
+      normalized
+    );
+    const currentPhase = this.session.usage?.byPhase?.[phase];
+    const nextByPhase = {
+      ...(this.session.usage?.byPhase ?? {}),
+      [phase]: sumUsage(currentPhase, normalized),
+    };
+    this.session.usage = {
+      totals: nextTotals,
+      byPhase: nextByPhase,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   async persist(): Promise<void> {
     this.session.updatedAt = new Date().toISOString();
     await this.stateManager.writeRaw(
@@ -171,4 +213,36 @@ export class ChatHistory {
       this.session
     );
   }
+}
+
+function normalizeUsageCounter(usage: ChatUsageCounter): ChatUsageCounter {
+  const inputTokens = Number.isFinite(usage.inputTokens) ? Math.max(0, Math.floor(usage.inputTokens)) : 0;
+  const outputTokens = Number.isFinite(usage.outputTokens) ? Math.max(0, Math.floor(usage.outputTokens)) : 0;
+  const totalTokens = Number.isFinite(usage.totalTokens)
+    ? Math.max(0, Math.floor(usage.totalTokens))
+    : inputTokens + outputTokens;
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+  };
+}
+
+function sumUsage(base: ChatUsageCounter | undefined, delta: ChatUsageCounter): ChatUsageCounter {
+  const normalizedBase = normalizeUsageCounter(base ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+  return {
+    inputTokens: normalizedBase.inputTokens + delta.inputTokens,
+    outputTokens: normalizedBase.outputTokens + delta.outputTokens,
+    totalTokens: normalizedBase.totalTokens + delta.totalTokens,
+  };
+}
+
+function cloneUsage(usage: ChatSessionUsage): ChatSessionUsage {
+  return {
+    totals: { ...usage.totals },
+    byPhase: Object.fromEntries(
+      Object.entries(usage.byPhase ?? {}).map(([phase, counter]) => [phase, { ...counter }])
+    ),
+    ...(usage.updatedAt ? { updatedAt: usage.updatedAt } : {}),
+  };
 }

@@ -37,6 +37,7 @@ export interface LoadedChatSession {
   agentLoopResumable: boolean;
   agentLoopUpdatedAt?: string | null;
   agentLoop?: ChatSession["agentLoop"];
+  usage?: ChatSession["usage"];
   [key: string]: unknown;
 }
 
@@ -270,6 +271,7 @@ async function readSessionRecordWithMetadata(
     agentLoopResumable: discovery.resumable,
     agentLoopUpdatedAt: discovery.updatedAt,
     ...(parsed.data.agentLoop ? { agentLoop: parsed.data.agentLoop } : {}),
+    ...(parsed.data.usage ? { usage: parsed.data.usage } : {}),
   };
 
   return normalizeSessionRecord(session, filePath, fileMtimeMs, discovery);
@@ -308,6 +310,7 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
       ? { agentLoopUpdatedAt: session.agentLoopUpdatedAt }
       : {}),
     ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
+    ...(session.usage ? { usage: session.usage } : {}),
   };
 }
 
