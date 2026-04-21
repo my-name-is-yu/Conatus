@@ -581,7 +581,10 @@ export async function runTaskCycleWithContext(
           if (!topDimension) return;
           let entries = await ctx.deps.knowledgeManager!.getRelevantKnowledge(goalId, topDimension);
 
-          if (activationFlags?.semanticContext) {
+          if (
+            activationFlags?.semanticContext &&
+            typeof ctx.deps.knowledgeManager!.searchKnowledge === "function"
+          ) {
             const semanticEntries = await ctx.deps.knowledgeManager!.searchKnowledge(
               `${goal.title} ${goal.description} ${topDimension}`,
               5
@@ -590,7 +593,11 @@ export async function runTaskCycleWithContext(
           }
 
           let contradictionWarnings: string[] = [];
-          if (activationFlags?.graphTraversal && entries.length > 0) {
+          if (
+            activationFlags?.graphTraversal &&
+            entries.length > 0 &&
+            typeof ctx.deps.knowledgeManager!.loadKnowledge === "function"
+          ) {
             const graph = baseDir
               ? await KnowledgeGraph.create(
                   path.join(baseDir, "knowledge", "graph.json")

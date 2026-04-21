@@ -66,6 +66,12 @@ Usage:
   pulseed knowledge list               List all shared knowledge entries
   pulseed knowledge search <query>     Search knowledge entries by keyword
   pulseed knowledge stats              Show knowledge base statistics
+  pulseed playbook list                List stored verified playbooks
+  pulseed playbook show <id>           Show a stored playbook as JSON
+  pulseed playbook promote <id>        Mark a playbook as promoted
+  pulseed playbook demote <id>         Mark a playbook as candidate
+  pulseed playbook disable <id>        Disable a playbook from retrieval
+  pulseed playbook delete <id>         Delete a stored playbook
   pulseed plugin list                  List installed plugins
   pulseed plugin install <path>        Install a plugin from a local directory
   pulseed plugin remove <name>         Remove an installed plugin

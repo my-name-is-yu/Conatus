@@ -1,10 +1,15 @@
 import type { Logger } from "../../../runtime/logger.js";
 import type { Task, VerificationResult } from "../../../base/types/task.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
 import type { AgentResult, IAdapter } from "../adapter-layer.js";
 import type { SessionManager } from "../session-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import { generateReflection, saveReflectionAsKnowledge } from "../reflection-generator.js";
+import {
+  captureVerifiedTaskPlaybook,
+  recordDreamPlaybookReuseOutcome,
+} from "../../../platform/dream/playbook-memory.js";
 
 interface PersistTaskCycleSideEffectsParams {
   goalId: string;
@@ -14,11 +19,13 @@ interface PersistTaskCycleSideEffectsParams {
   verificationResult: VerificationResult;
   executionResult: AgentResult;
   adapter: IAdapter;
+  stateManager: StateManager;
   sessionManager: SessionManager;
   llmClient: ILLMClient;
   knowledgeManager?: KnowledgeManager;
   logger?: Logger;
   gapValue?: number;
+  reusedPlaybookIds?: string[];
 }
 
 export async function persistTaskCycleSideEffects(
@@ -32,11 +39,13 @@ export async function persistTaskCycleSideEffects(
     verificationResult,
     executionResult,
     adapter,
+    stateManager,
     sessionManager,
     llmClient,
     knowledgeManager,
     logger,
     gapValue,
+    reusedPlaybookIds,
   } = params;
 
   const adapterType = adapter?.adapterType ?? "unknown";
@@ -63,6 +72,24 @@ export async function persistTaskCycleSideEffects(
     intermediateResults,
     metadata: { strategy_id: task.strategy_id, gap_value: gapValue },
   }).catch((e) => logger?.warn?.("checkpoint save failed", { error: String(e) }));
+
+  if (verificationResult.verdict === "pass") {
+    await captureVerifiedTaskPlaybook(stateManager.getBaseDir(), {
+      task,
+      verificationResult,
+    }).catch((error) => logger?.warn?.("playbook capture failed", { error: String(error), taskId: task.id }));
+  }
+
+  if (reusedPlaybookIds && reusedPlaybookIds.length > 0) {
+    await recordDreamPlaybookReuseOutcome(stateManager.getBaseDir(), {
+      playbookIds: reusedPlaybookIds,
+      verificationResult,
+    }).catch((error) => logger?.warn?.("playbook reuse outcome update failed", {
+      error: String(error),
+      taskId: task.id,
+      playbookCount: reusedPlaybookIds.length,
+    }));
+  }
 
   if (!knowledgeManager) return;
 

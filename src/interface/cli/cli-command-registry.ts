@@ -44,6 +44,7 @@ import { cmdGateway } from "./commands/gateway.js";
 import { cmdTelegramSetup } from "./commands/telegram.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSkills } from "./commands/skills.js";
+import { cmdPlaybook } from "./commands/playbook.js";
 import { printUsage, formatOperationError } from "./utils.js";
 import { ensureProviderConfig } from "./ensure-api-key.js";
 
@@ -542,6 +543,10 @@ export async function dispatchCommand(
 
   if (subcommand === "gateway") {
     return await cmdGateway(argv.slice(1));
+  }
+
+  if (subcommand === "playbook" || subcommand === "playbooks") {
+    return await cmdPlaybook(argv.slice(1), stateManager);
   }
 
   if (subcommand === "telegram") {

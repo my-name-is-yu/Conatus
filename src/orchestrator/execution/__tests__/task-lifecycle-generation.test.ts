@@ -15,6 +15,7 @@ import type {
   LLMResponse,
 } from "../../../base/llm/llm-client.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
+import { upsertDreamPlaybook } from "../../../platform/dream/playbook-memory.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -198,6 +199,7 @@ describe("TaskLifecycle", async () => {
           semanticContext: false,
           autoAcquireKnowledge: false,
           learnedPatternHints: true,
+          playbookHints: false,
           workflowHints: false,
           strategyTemplates: false,
           decisionHeuristics: false,
@@ -264,6 +266,7 @@ describe("TaskLifecycle", async () => {
           semanticContext: false,
           autoAcquireKnowledge: false,
           learnedPatternHints: false,
+          playbookHints: false,
           workflowHints: true,
           strategyTemplates: false,
           decisionHeuristics: false,
@@ -276,6 +279,196 @@ describe("TaskLifecycle", async () => {
       const userMessage = spy.calls[0]!.messages[0]!.content;
       expect(userMessage).toContain("Workflow recovery hints");
       expect(userMessage).toContain("Stall recovery: confidence stall");
+    });
+
+    it("injects promoted playbook hints into task generation when playbook hints are enabled", async () => {
+      const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
+      const lifecycle = createLifecycle(spy);
+
+      await stateManager.saveGoal({
+        id: "goal-42",
+        title: "Stabilize provider config verification",
+        description: "Keep the provider config boundary strict while fixing type errors",
+        status: "active",
+        dimensions: [],
+        parent_id: null,
+        child_goal_ids: [],
+        success_criteria: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+      await upsertDreamPlaybook(stateManager.getBaseDir(), {
+        playbook_id: "dream-playbook-provider-config",
+        status: "promoted",
+        kind: "verified_execution",
+        title: "Repair the provider config type boundary",
+        summary: "Verified workflow for type_safety: repair the provider config boundary and rerun focused verification.",
+        source_signature: "provider-config-boundary",
+        applicability: {
+          goal_ids: ["goal-42"],
+          primary_dimensions: ["type_safety"],
+          task_categories: ["verification"],
+          terms: ["provider", "config", "boundary", "typecheck"],
+        },
+        preconditions: ["Constraint: Keep runtime validation strict"],
+        recommended_steps: [
+          "Repair the provider config type boundary",
+          "Rerun focused typecheck before broadening scope",
+        ],
+        verification_checks: [
+          {
+            description: "Focused typecheck passes",
+            verification_method: "npm run typecheck",
+            blocking: true,
+          },
+        ],
+        failure_warnings: ["Out of scope: broad runtime widening"],
+        evidence_refs: ["Focused typecheck passed"],
+        source_task_ids: ["task-provider-config"],
+        verification: {
+          verdict: "pass",
+          confidence: 0.89,
+          last_verified_at: new Date().toISOString(),
+        },
+        usage: {
+          retrieved_count: 0,
+          verified_success_count: 2,
+          successful_reuse_count: 0,
+          failed_reuse_count: 0,
+        },
+        governance: {
+          created_by: "dream",
+          review_state: "verified",
+          auto_generated: true,
+          user_editable: true,
+          auto_mutation: "forbidden",
+        },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      await saveDreamConfig({
+        activation: {
+          semanticWorkingMemory: false,
+          crossGoalLessons: false,
+          semanticContext: false,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: false,
+          playbookHints: true,
+          workflowHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, stateManager.getBaseDir());
+
+      await lifecycle.generateTask("goal-42", "type_safety");
+
+      const userMessage = spy.calls[0]!.messages[0]!.content;
+      expect(userMessage).toContain("Verified playbook hints");
+      expect(userMessage).toContain("Repair the provider config type boundary");
+      expect(userMessage).toContain("Focused typecheck passes");
+    });
+
+    it("does not inject candidate or disabled playbooks into task generation", async () => {
+      const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
+      const lifecycle = createLifecycle(spy);
+
+      await stateManager.saveGoal({
+        id: "goal-42",
+        title: "Reduce drift in verification planning",
+        description: "Prefer verified workflows over speculative recall",
+        status: "active",
+        dimensions: [],
+        parent_id: null,
+        child_goal_ids: [],
+        success_criteria: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+      const now = new Date().toISOString();
+      await upsertDreamPlaybook(stateManager.getBaseDir(), {
+        playbook_id: "dream-playbook-candidate",
+        status: "candidate",
+        kind: "verified_execution",
+        title: "Candidate playbook should stay hidden",
+        summary: "Candidate only",
+        source_signature: "candidate-playbook",
+        applicability: {
+          goal_ids: ["goal-42"],
+          primary_dimensions: ["verification"],
+          task_categories: ["verification"],
+          terms: ["candidate", "hidden"],
+        },
+        preconditions: [],
+        recommended_steps: ["Candidate step"],
+        verification_checks: [],
+        failure_warnings: [],
+        evidence_refs: [],
+        source_task_ids: ["task-candidate"],
+        verification: { verdict: "pass", confidence: 0.6, last_verified_at: now },
+        usage: { retrieved_count: 0, verified_success_count: 1, successful_reuse_count: 0, failed_reuse_count: 0 },
+        governance: {
+          created_by: "dream",
+          review_state: "pending",
+          auto_generated: true,
+          user_editable: true,
+          auto_mutation: "forbidden",
+        },
+        created_at: now,
+        updated_at: now,
+      });
+      await upsertDreamPlaybook(stateManager.getBaseDir(), {
+        playbook_id: "dream-playbook-disabled",
+        status: "disabled",
+        kind: "verified_execution",
+        title: "Disabled playbook should stay hidden",
+        summary: "Disabled only",
+        source_signature: "disabled-playbook",
+        applicability: {
+          goal_ids: ["goal-42"],
+          primary_dimensions: ["verification"],
+          task_categories: ["verification"],
+          terms: ["disabled", "hidden"],
+        },
+        preconditions: [],
+        recommended_steps: ["Disabled step"],
+        verification_checks: [],
+        failure_warnings: [],
+        evidence_refs: [],
+        source_task_ids: ["task-disabled"],
+        verification: { verdict: "pass", confidence: 0.9, last_verified_at: now },
+        usage: { retrieved_count: 0, verified_success_count: 3, successful_reuse_count: 0, failed_reuse_count: 0 },
+        governance: {
+          created_by: "dream",
+          review_state: "disabled",
+          auto_generated: true,
+          user_editable: true,
+          auto_mutation: "forbidden",
+        },
+        created_at: now,
+        updated_at: now,
+      });
+      await saveDreamConfig({
+        activation: {
+          semanticWorkingMemory: false,
+          crossGoalLessons: false,
+          semanticContext: false,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: false,
+          playbookHints: true,
+          workflowHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, stateManager.getBaseDir());
+
+      await lifecycle.generateTask("goal-42", "verification");
+
+      const userMessage = spy.calls[0]!.messages[0]!.content;
+      expect(userMessage).not.toContain("Verified playbook hints");
+      expect(userMessage).not.toContain("Candidate playbook should stay hidden");
+      expect(userMessage).not.toContain("Disabled playbook should stay hidden");
     });
 
     it("sends a system prompt for task generation", async () => {

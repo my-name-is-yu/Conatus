@@ -11,6 +11,8 @@ import { StrategyTemplateSchema } from "../../orchestrator/strategy/types/cross-
 import type { Strategy } from "../../orchestrator/strategy/types/strategy.js";
 import { loadDreamConfig } from "./dream-config.js";
 import { loadDreamWorkflowRecords, type DreamWorkflowRecord } from "./dream-event-workflows.js";
+import { loadDreamPlaybooks, type DreamPlaybookRecord } from "./playbook-memory.js";
+export { formatPlaybookHints, selectPlaybookHints } from "./playbook-memory.js";
 
 export interface DreamActivationRuntimeState {
   flags: Awaited<ReturnType<typeof loadDreamConfig>>["activation"];
@@ -128,6 +130,10 @@ export function formatPatternHints(patterns: LearnedPattern[]): string {
 
 export async function loadDreamWorkflows(baseDir: string): Promise<DreamWorkflowRecord[]> {
   return loadDreamWorkflowRecords(baseDir);
+}
+
+export async function loadDreamPlaybookRecords(baseDir: string): Promise<DreamPlaybookRecord[]> {
+  return loadDreamPlaybooks(baseDir);
 }
 
 export function selectWorkflowHints(

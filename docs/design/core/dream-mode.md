@@ -104,12 +104,16 @@ Typed knowledge records that are safe to persist and project:
 
 - fact
 - workflow
+- verified playbook
 - preference
 - observation
 - decision
 - reflection
 
 These records are versioned and can supersede earlier versions.
+
+`verified playbook` means a reusable procedural-memory artifact derived from verifier-backed task success or successful reuse.
+It is advisory by default and is meant for bounded runtime injection, not direct autonomous execution.
 
 ### 4.4 Activation Artifacts
 
@@ -208,7 +212,11 @@ Activation points include:
 - recovery paths for repeated failure modes
 - optional knowledge-gap handling
 
-Every activation is gated by its own feature flag and should default to off. The runtime should only read bounded evidence packs or small activation artifacts. There must be no hidden hard dependency on Dream for core execution.
+Every activation is gated by its own feature flag. The runtime should only read bounded evidence packs or small activation artifacts. There must be no hidden hard dependency on Dream for core execution.
+
+In the current public runtime, Dream activation features default to on because PulSeed is still in an experimentation-heavy phase and early users are expected to actively exercise memory-driven behaviors. Operators who want a more conservative posture can still disable individual activation flags in `~/.pulseed/dream/config.json`.
+
+Verified playbooks follow the same rule. Runtime may inject a compact playbook hint into task generation, but Dream must not silently create or overwrite executable skills as part of activation.
 
 ---
 
