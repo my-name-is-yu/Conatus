@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.18] - 2026-04-21
+
+### Added
+- Added core gateway channel integrations and Hermes-style setup flow support for Telegram, WhatsApp, Signal, and Discord paths (#711)
+- Added end-to-end durable usage telemetry surfaces across PromptGateway, AgentLoop, task verification, and chat/CLI `/usage` reporting scopes (#715)
+- Added centralized AgentLoop default-profile resolution and runtime profile surfaces, including native review profile wiring and public profile posture docs (#714)
+- Added verified playbook memory activation during Dream sync to strengthen retrieved memory quality before runtime use (#712)
+
+### Changed
+- Changed runtime entrypoints to apply resolved AgentLoop profiles consistently across chat, goal, daemon, and schedule execution paths (#714)
+- Changed usage accounting to persist task-cycle token totals through generation, execution, verification, and early-exit branches for goal/daemon/schedule/session aggregation (#715)
+- Bumped the package version to `0.4.18`
+
+### Fixed
+- Fixed AgentLoop default profile mappings to align with real tool identifiers so default policy application cannot silently miss intended tools (#714)
+- Fixed PromptGateway-backed generation and verification usage paths that previously reported zero tokens in real-usage flows (#715)
+
 ## [0.4.17] - 2026-04-21
 
 ### Added
