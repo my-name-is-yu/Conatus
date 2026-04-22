@@ -71,6 +71,16 @@ type RenderLine = {
   protected?: boolean;
 };
 
+type FullscreenChatRenderLinesInput = {
+  availableCols: number;
+  availableRows: number;
+  viewport: ReturnType<typeof buildChatViewport>;
+  composerLines: RenderLine[];
+  isProcessing: boolean;
+  spinnerGlyph: string;
+  spinnerVerb: string;
+};
+
 type SelectionState = {
   anchor: number;
   focus: number;
@@ -612,6 +622,57 @@ function renderMessageRow(row: ChatDisplayRow, cols: number): RenderLine {
   };
 }
 
+export function buildFullscreenChatRenderLines({
+  availableCols,
+  availableRows,
+  viewport,
+  composerLines,
+  isProcessing,
+  spinnerGlyph,
+  spinnerVerb,
+}: FullscreenChatRenderLinesInput): RenderLine[] {
+  const lines: RenderLine[] = [];
+  lines.push({
+    key: "indicator-top",
+    text: padToWidth(
+      viewport.hiddenAboveRows > 0 ? `↑ ${viewport.hiddenAboveRows} earlier lines` : "",
+      availableCols,
+    ),
+    dim: true,
+  });
+
+  const renderedRows = viewport.rows.map((row) => renderMessageRow(row, availableCols));
+  const fillerCount = Math.max(0, viewport.maxVisibleRows - renderedRows.length);
+  for (let index = 0; index < fillerCount; index += 1) {
+    lines.push({ key: `filler-${index}`, text: " ".repeat(availableCols) });
+  }
+  lines.push(...renderedRows);
+  lines.push({
+    key: "indicator-bottom",
+    text: padToWidth(
+      viewport.hiddenBelowRows > 0 ? `↓ ${viewport.hiddenBelowRows} newer lines` : "",
+      availableCols,
+    ),
+    dim: true,
+  });
+  lines.push({
+    key: "processing",
+    ...(isProcessing
+      ? { processing: { glyph: spinnerGlyph, verb: spinnerVerb } }
+      : { text: padToWidth("", availableCols), dim: true }),
+  });
+  lines.push(...composerLines);
+
+  while (lines.length < availableRows) {
+    lines.push({
+      key: `tail-filler-${lines.length}`,
+      text: " ".repeat(availableCols),
+    });
+  }
+
+  return lines.slice(0, availableRows);
+}
+
 function getMouseOffsetFromComposer(
   layout: ComposerLayout,
   x: number,
@@ -1129,48 +1190,16 @@ export function FullscreenChat({
     };
   }, []);
 
-  const lines: RenderLine[] = [];
-  lines.push({
-    key: "indicator-top",
-    text: padToWidth(
-      viewport.hiddenAboveRows > 0 ? `↑ ${viewport.hiddenAboveRows} earlier lines` : "",
-      availableCols,
-    ),
-    dim: true,
-  });
-
-  const renderedRows = viewport.rows.map((row) => renderMessageRow(row, availableCols));
-  const fillerCount = Math.max(0, viewport.maxVisibleRows - renderedRows.length);
-  for (let index = 0; index < fillerCount; index += 1) {
-    lines.push({ key: `filler-${index}`, text: " ".repeat(availableCols) });
-  }
-  lines.push(...renderedRows);
-
   const spinnerGlyph = PROCESSING_SPINNER_FRAMES[spinnerFrameIndex] ?? PROCESSING_SPINNER_FRAMES[0];
-  lines.push({
-    key: "processing",
-    ...(isProcessing
-      ? { processing: { glyph: spinnerGlyph, verb: spinnerVerb } }
-      : { text: padToWidth("", availableCols), dim: true }),
+  const visibleLines = buildFullscreenChatRenderLines({
+    availableCols,
+    availableRows,
+    viewport,
+    composerLines: composer.lines,
+    isProcessing,
+    spinnerGlyph,
+    spinnerVerb,
   });
-  lines.push({
-    key: "indicator-bottom",
-    text: padToWidth(
-      viewport.hiddenBelowRows > 0 ? `↓ ${viewport.hiddenBelowRows} newer lines` : "",
-      availableCols,
-    ),
-    dim: true,
-  });
-  lines.push(...composer.lines);
-
-  while (lines.length < availableRows) {
-    lines.push({
-      key: `tail-filler-${lines.length}`,
-      text: " ".repeat(availableCols),
-    });
-  }
-
-  const visibleLines = lines.slice(0, availableRows);
 
   return (
     <Box flexDirection="column" flexGrow={1} overflow="hidden">

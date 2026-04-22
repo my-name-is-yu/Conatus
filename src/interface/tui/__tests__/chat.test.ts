@@ -11,7 +11,7 @@ import {
   getScrollRequest,
   stripMouseEscapeSequences,
 } from "../chat.js";
-import { renderProcessingRow } from "../fullscreen-chat.js";
+import { buildFullscreenChatRenderLines, renderProcessingRow } from "../fullscreen-chat.js";
 import {
   estimateMarkdownHeight,
   estimateWrappedLineCount,
@@ -158,6 +158,35 @@ describe("chat viewport", () => {
     const scrolled = buildChatViewport(messages, 40, 8, 3);
     expect(scrolled.hiddenAboveRows).toBe(0);
     expect(scrolled.rows.some((row) => row.text.trim() === "line 1")).toBe(true);
+  });
+
+  it("renders the processing row directly above the composer", () => {
+    const messages = [
+      {
+        id: "m1",
+        role: "pulseed" as const,
+        text: "hello",
+        timestamp: new Date(),
+      },
+    ];
+    const viewport = buildChatViewport(messages, 40, 6, 0);
+
+    const lines = buildFullscreenChatRenderLines({
+      availableCols: 40,
+      availableRows: 10,
+      viewport,
+      composerLines: [
+        { key: "composer-helper", text: "helper" },
+        { key: "composer-input", text: "input" },
+      ],
+      isProcessing: true,
+      spinnerGlyph: "⠋",
+      spinnerVerb: "Tiny-Blooming",
+    });
+
+    const keys = lines.map((line) => line.key);
+    expect(keys.indexOf("indicator-bottom")).toBeLessThan(keys.indexOf("processing"));
+    expect(keys.indexOf("processing")).toBeLessThan(keys.indexOf("composer-helper"));
   });
 });
 
