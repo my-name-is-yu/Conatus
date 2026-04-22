@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.19] - 2026-04-22
+
+### Added
+- Added packaged artifact verification to release checks, validating required tarball entries such as `dist/interface/cli/cli-runner.js`, `dist/index.js`, and `dist/index.d.ts` before tagging and publish
+
+### Changed
+- Changed installation guidance to an nvm-first flow with Node.js 24 as the default setup path while retaining support for Node.js 22
+- Changed build invocation in release packaging paths to use deterministic TypeScript emission (`--incremental false`) so required distributable files are always produced before packing
+- Bumped the package version to `0.4.19`
+
+### Fixed
+- Fixed release verification blind spots where a package tarball could pass generic checks without explicitly asserting required runtime entrypoints
+
 ## [0.4.18] - 2026-04-21
 
 ### Added
