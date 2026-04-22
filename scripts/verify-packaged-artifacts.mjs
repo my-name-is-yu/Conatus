@@ -1,0 +1,69 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import process from "node:process";
+
+const requiredFiles = [
+  "dist/interface/cli/cli-runner.js",
+  "dist/index.js",
+  "dist/index.d.ts",
+  "README.md",
+  "LICENSE",
+];
+
+const packResult = spawnSync("npm", ["pack", "--json", "--dry-run"], {
+  encoding: "utf8",
+});
+
+if (packResult.error) {
+  fail(packResult.error.message);
+}
+
+if (packResult.status !== 0) {
+  fail(packResult.stderr.trim() || "npm pack --json --dry-run failed");
+}
+
+const payload = `${packResult.stdout}\n${packResult.stderr}`.trim();
+const jsonStart = payload.indexOf("[");
+const jsonEnd = payload.lastIndexOf("]");
+if (jsonStart === -1 || jsonEnd === -1 || jsonEnd < jsonStart) {
+  fail("Could not find JSON output from npm pack --json --dry-run.");
+}
+
+let parsed;
+try {
+  parsed = JSON.parse(payload.slice(jsonStart, jsonEnd + 1));
+} catch (error) {
+  fail(`Could not parse npm pack output: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+if (!Array.isArray(parsed) || parsed.length === 0) {
+  fail("npm pack --json --dry-run did not return any tarball metadata.");
+}
+
+const [entry] = parsed;
+const files = Array.isArray(entry?.files)
+  ? entry.files
+      .map((file) => (file && typeof file === "object" ? file.path : null))
+      .filter((filePath) => typeof filePath === "string")
+  : [];
+
+if (files.length === 0) {
+  fail("npm pack --json --dry-run did not include a file list.");
+}
+
+const missingFiles = requiredFiles.filter((filePath) => !files.includes(filePath));
+
+if (missingFiles.length > 0) {
+  fail(`Packaged artifact is missing required files:\n- ${missingFiles.join("\n- ")}`);
+}
+
+console.log("Packaged artifact verification passed.");
+console.log(`Tarball: ${entry.filename ?? "(unknown)"}`);
+for (const filePath of requiredFiles) {
+  console.log(`- ${filePath}`);
+}
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}

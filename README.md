@@ -46,9 +46,15 @@ menu of subcommands.
 
 ## Start Here
 
-PulSeed requires Node.js 22 or 24.
+PulSeed supports Node.js 22 and 24. The default install path below uses Node.js 24 via nvm.
 
 ```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nvm install 24
+nvm use 24
+nvm alias default 24
 npm install -g pulseed
 pulseed
 ```
