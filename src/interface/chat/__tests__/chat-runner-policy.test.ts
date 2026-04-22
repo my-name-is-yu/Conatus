@@ -4,6 +4,7 @@ import type { ChatRunnerDeps } from "../chat-runner.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
+import type { ReviewAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -87,7 +88,7 @@ describe("ChatRunner policy commands", () => {
     expect(result.output).toContain("approval_policy: never");
   });
 
-  it("/review returns diff summary and execution policy", async () => {
+  it("/review falls back to a read-only summary when no runner is configured", async () => {
     const runner = new ChatRunner(makeDeps());
     runner.startSession("/repo");
 
@@ -96,6 +97,33 @@ describe("ChatRunner policy commands", () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain("Review summary");
     expect(result.output).toContain("Execution policy");
+    expect(result.output).toContain("sandbox_mode: read_only");
+    expect(result.output).toContain("approval_policy: never");
+  });
+
+  it("/review routes through the native review runner with read-only semantics", async () => {
+    const reviewAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "review output",
+        review: null,
+      }),
+    } as Pick<ReviewAgentLoopRunner, "execute">;
+    const runner = new ChatRunner(makeDeps({ reviewAgentLoopRunner }));
+    runner.startSession("/repo");
+
+    await runner.execute("/permissions workspace-write network on approval on_request", "/repo");
+    const result = await runner.execute("/review", "/repo");
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("review output");
+    expect(reviewAgentLoopRunner.execute).toHaveBeenCalledOnce();
+    const input = vi.mocked(reviewAgentLoopRunner.execute).mock.calls[0]?.[0] as {
+      executionPolicy?: { sandboxMode?: string; approvalPolicy?: string; networkAccess?: boolean };
+    };
+    expect(input.executionPolicy?.sandboxMode).toBe("read_only");
+    expect(input.executionPolicy?.approvalPolicy).toBe("never");
+    expect(input.executionPolicy?.networkAccess).toBe(true);
   });
 
   it("/fork creates a new session id", async () => {

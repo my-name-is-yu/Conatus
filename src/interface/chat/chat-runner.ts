@@ -13,7 +13,7 @@ import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { TaskSchema, type Task } from "../../base/types/task.js";
 import type { Goal } from "../../base/types/goal.js";
-import { ChatHistory, type ChatSession } from "./chat-history.js";
+import { ChatHistory, type ChatSession, type ChatUsageCounter } from "./chat-history.js";
 import {
   ChatSessionCatalog,
   ChatSessionSelectorError,
@@ -37,6 +37,7 @@ import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { ActivityKind, ChatEvent, ChatEventContext } from "./chat-events.js";
 import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
+import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type {
   AgentLoopEvent,
   AgentLoopEventSink,
@@ -98,6 +99,8 @@ export interface ChatRunnerDeps {
   onEvent?: (event: ChatEvent) => void;
   /** Optional: native agentloop runner for chat turns. */
   chatAgentLoopRunner?: ChatAgentLoopRunner;
+  /** Optional: native agentloop runner for review turns. */
+  reviewAgentLoopRunner?: Pick<ReviewAgentLoopRunner, "execute">;
   /** Optional: first-class runtime control service for natural-language restart/update requests. */
   runtimeControlService?: Pick<RuntimeControlService, "request">;
   /** Optional: approval handler scoped to runtime-control operations only. */
@@ -180,6 +183,7 @@ Configuration
   /model                Show the active provider/model/adapter
   /permissions [args]   Show or update session execution policy
   /plugins              List installed plugins when plugin metadata is available
+  /usage [scope]        Show usage summary (session, goal <id>, daemon <goal-id>, schedule [7d|24h|2w])
 
 Review and branching
   /review               Show current diff summary and verification context
@@ -187,7 +191,7 @@ Review and branching
   /undo                 Remove the latest chat turn from session history
 
 Deferred
-  /retry and /usage are intentionally not supported yet.`;
+  /retry is intentionally not supported yet.`;
 
 // ─── Helpers ───
 
@@ -652,6 +656,209 @@ export class ChatRunner {
     }
   }
 
+  private zeroUsageCounter(): ChatUsageCounter {
+    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  }
+
+  private normalizeUsageCounter(usage: ChatUsageCounter): ChatUsageCounter {
+    const inputTokens = Number.isFinite(usage.inputTokens) ? Math.max(0, Math.floor(usage.inputTokens)) : 0;
+    const outputTokens = Number.isFinite(usage.outputTokens) ? Math.max(0, Math.floor(usage.outputTokens)) : 0;
+    const totalTokens = Number.isFinite(usage.totalTokens)
+      ? Math.max(0, Math.floor(usage.totalTokens))
+      : inputTokens + outputTokens;
+    return { inputTokens, outputTokens, totalTokens };
+  }
+
+  private usageFromLLMResponse(response: LLMResponse): ChatUsageCounter {
+    const inputTokens = response.usage?.input_tokens ?? 0;
+    const outputTokens = response.usage?.output_tokens ?? 0;
+    return {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+    };
+  }
+
+  private addUsageCounter(target: ChatUsageCounter, delta: ChatUsageCounter): void {
+    const normalizedDelta = this.normalizeUsageCounter(delta);
+    target.inputTokens += normalizedDelta.inputTokens;
+    target.outputTokens += normalizedDelta.outputTokens;
+    target.totalTokens += normalizedDelta.totalTokens;
+  }
+
+  private hasUsage(usage: ChatUsageCounter): boolean {
+    return usage.totalTokens > 0 || usage.inputTokens > 0 || usage.outputTokens > 0;
+  }
+
+  private formatUsageCounter(prefix: string, usage: ChatUsageCounter): string[] {
+    return [
+      `${prefix} input tokens:  ${usage.inputTokens}`,
+      `${prefix} output tokens: ${usage.outputTokens}`,
+      `${prefix} total tokens:  ${usage.totalTokens}`,
+    ];
+  }
+
+  private parseUsagePeriodMs(period: string): number {
+    const match = /^(\d+)([dhw])$/i.exec(period.trim());
+    if (!match) {
+      throw new Error("period must be one of 24h, 7d, 2w");
+    }
+    const value = Number(match[1]);
+    const unit = match[2]?.toLowerCase();
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error("period value must be positive");
+    }
+    if (unit === "h") return value * 60 * 60 * 1000;
+    if (unit === "w") return value * 7 * 24 * 60 * 60 * 1000;
+    return value * 24 * 60 * 60 * 1000;
+  }
+
+  private async collectGoalUsage(goalId: string): Promise<{
+    goalId: string;
+    totalTokens: number;
+    taskCount: number;
+    terminalTaskCount: number;
+  }> {
+    const baseDir = this.deps.stateManager.getBaseDir();
+    const ledgerDir = path.join(baseDir, "tasks", goalId, "ledger");
+    let entries: string[] = [];
+    try {
+      entries = await fsp.readdir(ledgerDir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      return { goalId, totalTokens: 0, taskCount: 0, terminalTaskCount: 0 };
+    }
+
+    let totalTokens = 0;
+    let taskCount = 0;
+    let terminalTaskCount = 0;
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      taskCount += 1;
+      try {
+        const raw = await fsp.readFile(path.join(ledgerDir, entry), "utf-8");
+        const parsed = JSON.parse(raw) as {
+          summary?: { latest_event_type?: string; tokens_used?: number };
+        };
+        if (typeof parsed.summary?.tokens_used === "number") {
+          totalTokens += parsed.summary.tokens_used;
+        }
+        if (parsed.summary?.latest_event_type === "succeeded"
+          || parsed.summary?.latest_event_type === "failed"
+          || parsed.summary?.latest_event_type === "abandoned") {
+          terminalTaskCount += 1;
+        }
+      } catch {
+        // Ignore malformed records.
+      }
+    }
+
+    return { goalId, totalTokens, taskCount, terminalTaskCount };
+  }
+
+  private async collectScheduleUsage(period: string): Promise<{
+    period: string;
+    runs: number;
+    totalTokens: number;
+  }> {
+    const periodMs = this.parseUsagePeriodMs(period);
+    const since = Date.now() - periodMs;
+    const historyPath = path.join(this.deps.stateManager.getBaseDir(), "schedule-history.json");
+    let raw: unknown;
+    try {
+      raw = JSON.parse(await fsp.readFile(historyPath, "utf-8"));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return { period, runs: 0, totalTokens: 0 };
+      }
+      throw err;
+    }
+    if (!Array.isArray(raw)) {
+      return { period, runs: 0, totalTokens: 0 };
+    }
+    let runs = 0;
+    let totalTokens = 0;
+    for (const record of raw) {
+      if (!record || typeof record !== "object") continue;
+      const finishedAt = (record as Record<string, unknown>)["finished_at"];
+      const firedAt = typeof finishedAt === "string" ? Date.parse(finishedAt) : Number.NaN;
+      if (!Number.isFinite(firedAt) || firedAt < since) continue;
+      runs += 1;
+      const tokensUsed = (record as Record<string, unknown>)["tokens_used"];
+      if (typeof tokensUsed === "number" && Number.isFinite(tokensUsed)) {
+        totalTokens += tokensUsed;
+      }
+    }
+    return { period, runs, totalTokens };
+  }
+
+  private async handleUsage(args: string, start: number): Promise<ChatRunResult> {
+    const tokens = args.trim().split(/\s+/).filter(Boolean);
+    const scope = tokens[0]?.toLowerCase();
+
+    if (!scope || scope === "session") {
+      if (!this.history) {
+        return { success: false, output: "No active chat session. Start a session and run work before /usage.", elapsed_ms: Date.now() - start };
+      }
+      const session = this.history.getSessionData();
+      const totals = this.normalizeUsageCounter(session.usage?.totals ?? this.zeroUsageCounter());
+      const lines = [
+        `Usage summary (session ${session.id})`,
+        ...this.formatUsageCounter("Session", totals),
+      ];
+      const phaseEntries = Object.entries(session.usage?.byPhase ?? {})
+        .map(([phase, usage]) => ({ phase, usage: this.normalizeUsageCounter(usage as ChatUsageCounter) }))
+        .filter((entry) => this.hasUsage(entry.usage))
+        .sort((left, right) => right.usage.totalTokens - left.usage.totalTokens);
+      if (phaseEntries.length > 0) {
+        lines.push("");
+        lines.push("By phase:");
+        for (const entry of phaseEntries) {
+          lines.push(`- ${entry.phase}: ${entry.usage.totalTokens} (in=${entry.usage.inputTokens}, out=${entry.usage.outputTokens})`);
+        }
+      }
+      return { success: true, output: lines.join("\n"), elapsed_ms: Date.now() - start };
+    }
+
+    if (scope === "goal" || scope === "daemon") {
+      const goalId = tokens[1] ?? this.deps.goalId;
+      if (!goalId) {
+        return { success: false, output: "Usage: /usage goal <goal-id>", elapsed_ms: Date.now() - start };
+      }
+      const summary = await this.collectGoalUsage(goalId);
+      const lines = [
+        `Usage summary (${scope} scope)`,
+        `Goal: ${summary.goalId}`,
+        `Tasks observed: ${summary.taskCount}`,
+        `Terminal tasks: ${summary.terminalTaskCount}`,
+        `Total tokens: ${summary.totalTokens}`,
+      ];
+      return { success: true, output: lines.join("\n"), elapsed_ms: Date.now() - start };
+    }
+
+    if (scope === "schedule") {
+      const period = tokens[1] ?? "7d";
+      try {
+        const summary = await this.collectScheduleUsage(period);
+        const lines = [
+          `Usage summary (schedule, ${summary.period})`,
+          `Runs: ${summary.runs}`,
+          `Total tokens: ${summary.totalTokens}`,
+        ];
+        return { success: true, output: lines.join("\n"), elapsed_ms: Date.now() - start };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { success: false, output: `Usage: /usage schedule [24h|7d|2w]\nError: ${message}`, elapsed_ms: Date.now() - start };
+      }
+    }
+
+    return {
+      success: false,
+      output: "Usage: /usage [session|goal <goal-id>|daemon <goal-id>|schedule [24h|7d|2w]]",
+      elapsed_ms: Date.now() - start,
+    };
+  }
+
   private deterministicChatSummary(messages: ChatSession["messages"]): string {
     const lines = messages.map((message) => `${message.role}: ${message.content.replace(/\s+/g, " ").trim()}`);
     return lines.join("\n").slice(0, 4_000);
@@ -788,6 +995,9 @@ export class ChatRunner {
     if (cmd === "/plugins") {
       return this.handlePlugins(start);
     }
+    if (cmd === "/usage") {
+      return this.handleUsage(trimmed.slice("/usage".length).trim(), start);
+    }
     if (cmd === "/review") {
       return this.handleReview(start);
     }
@@ -909,13 +1119,24 @@ export class ChatRunner {
   private async handleReview(start: number): Promise<ChatRunResult> {
     const cwd = this.sessionCwd ?? process.cwd();
     const diffStat = await checkGitChanges(cwd);
-    const policy = await this.getSessionExecutionPolicy();
+    const reviewPolicy = withExecutionPolicyOverrides(await this.getSessionExecutionPolicy(), {
+      sandboxMode: "read_only",
+      approvalPolicy: "never",
+    });
+    if (this.deps.reviewAgentLoopRunner) {
+      const review = await this.deps.reviewAgentLoopRunner.execute({
+        cwd,
+        diffStat,
+        executionPolicy: reviewPolicy,
+      });
+      return { success: review.success, output: review.output, elapsed_ms: Date.now() - start };
+    }
     const output = [
       "Review summary",
       diffStat ? diffStat : "No uncommitted changes detected.",
       "",
       "Execution policy",
-      summarizeExecutionPolicy(policy),
+      summarizeExecutionPolicy(reviewPolicy),
     ].join("\n");
     return { success: true, output, elapsed_ms: Date.now() - start };
   }
@@ -1241,6 +1462,7 @@ export class ChatRunner {
 
     const start = Date.now();
     const assistantBuffer: AssistantBuffer = { text: "" };
+    const turnUsage = this.zeroUsageCounter();
 
     if (directAnswerRoute) {
       try {
@@ -1256,8 +1478,12 @@ export class ChatRunner {
           assistantBuffer,
           eventContext
         );
+        this.addUsageCounter(turnUsage, this.usageFromLLMResponse(directResponse));
         const elapsed_ms = Date.now() - start;
         const output = assistantBuffer.text || directResponse.content || "(no response)";
+        if (this.hasUsage(turnUsage)) {
+          history.recordUsage("execution", turnUsage);
+        }
         await history.appendAssistantMessage(output);
         this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
         this.emitEvent({
@@ -1387,6 +1613,12 @@ export class ChatRunner {
           ...(agentLoopSystemPrompt ? { systemPrompt: agentLoopSystemPrompt } : {}),
         });
         const elapsed_ms = Date.now() - start;
+        const agentLoopUsage = result.agentLoop?.usage
+          ? this.normalizeUsageCounter(result.agentLoop.usage)
+          : this.zeroUsageCounter();
+        if (this.hasUsage(agentLoopUsage)) {
+          history.recordUsage("agentloop", agentLoopUsage);
+        }
         if (result.output) {
           this.pushAssistantDelta(result.output, assistantBuffer, eventContext);
         }
@@ -1428,16 +1660,19 @@ export class ChatRunner {
       try {
         const toolResult = await this.executeWithTools(prompt, eventContext, assistantBuffer, systemPrompt || undefined);
         const elapsed_ms = Date.now() - start;
-        await history.appendAssistantMessage(toolResult);
+        if (this.hasUsage(toolResult.usage)) {
+          history.recordUsage("execution", toolResult.usage);
+        }
+        await history.appendAssistantMessage(toolResult.output);
         this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
         this.emitEvent({
           type: "assistant_final",
-          text: toolResult,
+          text: toolResult.output,
           persisted: true,
           ...this.eventBase(eventContext),
         });
         this.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
-        return { success: true, output: toolResult, elapsed_ms };
+        return { success: true, output: toolResult.output, elapsed_ms };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.emitLifecycleErrorEvent(message, assistantBuffer.text, eventContext);
@@ -1584,10 +1819,11 @@ export class ChatRunner {
     eventContext: ChatEventContext,
     assistantBuffer: AssistantBuffer,
     systemPrompt?: string
-  ): Promise<string> {
+  ): Promise<{ output: string; usage: ChatUsageCounter }> {
     const llmClient = this.deps.llmClient!;
     const messages: LLMMessage[] = [{ role: "user", content: prompt }];
     const toolCallContext = await this.buildToolCallContext();
+    const usage = this.zeroUsageCounter();
 
     for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
       // Recompute tools each iteration so newly activated deferred tools are included
@@ -1608,6 +1844,7 @@ export class ChatRunner {
         const hint = err instanceof Error ? `: ${err.message}` : "";
         throw new Error(`Sorry, I encountered an error processing your request${hint}.`);
       }
+      this.addUsageCounter(usage, this.usageFromLLMResponse(response));
 
       const toolCalls = response.tool_calls?.length
         ? response.tool_calls
@@ -1632,7 +1869,10 @@ export class ChatRunner {
 
       // No tool calls — return the text content
       if (toolCalls.length === 0) {
-        return assistantBuffer.text || response.content || "(no response)";
+        return {
+          output: assistantBuffer.text || response.content || "(no response)",
+          usage,
+        };
       }
 
       // Append assistant message, then process tool calls
@@ -1662,7 +1902,10 @@ export class ChatRunner {
 
     // Max loops reached — return last assistant content or fallback
     const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
-    return lastAssistant?.content || "I was unable to complete the request within the allowed tool call limit.";
+    return {
+      output: lastAssistant?.content || "I was unable to complete the request within the allowed tool call limit.",
+      usage,
+    };
   }
 
   /**
