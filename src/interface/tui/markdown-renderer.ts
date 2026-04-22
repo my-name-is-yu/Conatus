@@ -342,7 +342,7 @@ function prependText(prefix: string, segs: MarkdownSegment[]): MarkdownSegment[]
 export function parseInlineSegments(text: string): MarkdownSegment[] {
   const segments: MarkdownSegment[] = [];
   // Pattern: bold+italic (***), bold (**/__), italic (*/_), code (`), link ([text](url))
-  const pattern = /(\*{3}.+?\*{3}|\*{2}.+?\*{2}|_{2}.+?_{2}|\*.+?\*|_.+?_|`[^`]+`|\[.+?\]\(.+?\))/g;
+  const pattern = /(\*{3}.+?\*{3}|\*{2}.+?\*{2}|_{2}.+?_{2}|\*.+?\*|_.+?_|`[^`]+`|\[[^\]]+\]\((?:[^()]|\([^)]*\))+(?:\s+"[^"]*")?\))/g;
   let lastIndex = 0;
   let m: RegExpExecArray | null;
 
@@ -365,7 +365,7 @@ export function parseInlineSegments(text: string): MarkdownSegment[] {
                (raw.startsWith('_') && raw.endsWith('_'))) {
       segments.push({ text: raw.slice(1, -1), italic: true });
     } else if (raw.startsWith('[')) {
-      const linkMatch = raw.match(/^\[(.+?)\]\((.+?)\)$/);
+      const linkMatch = raw.match(/^\[(.+?)\]\(((?:[^()]|\([^)]*\))+?)(?:\s+"[^"]*")?\)$/);
       const label = linkMatch?.[1] ?? raw;
       const destination = linkMatch?.[2] ?? "";
       segments.push({

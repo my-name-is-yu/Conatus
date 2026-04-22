@@ -23,6 +23,7 @@ export function buildAgentLoopBaseInstructions(options?: {
     "Preserve and follow AGENTS.md and project instructions from the workspace context.",
     ...(mode === "chat"
       ? [
+          "When returning structured output, keep the main response in finalAnswer with a short summary, optional sections, evidence, blockers, and next steps; keep compatibility fields brief.",
           "For the final answer, use concise structured markdown with short headings and bullets instead of long unbroken prose.",
           "Keep the summary tight and put supporting evidence, blockers, and next steps in separate short sections when relevant.",
         ]

@@ -179,6 +179,12 @@ describe("markdown row wrapping", () => {
 
     expect(line?.text).toContain("src/interface/chat/chat-runner.ts:12");
   });
+
+  it("renders local markdown links with parentheses and titles as paths", () => {
+    const [line] = renderMarkdownLines("[spec](/Users/yuyoshimuta/Documents/dev/SeedPulse-output-opt/docs/Design (draft).md:8 \"draft\")");
+
+    expect(line?.text).toContain("docs/Design (draft).md:8");
+  });
 });
 
 describe("composer sizing", () => {

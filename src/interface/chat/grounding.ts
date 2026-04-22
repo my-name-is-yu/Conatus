@@ -105,7 +105,7 @@ function buildCommunicationPolicySection(): string {
     "- Do not give long preambles before routine tool calls.",
     "- Prefer action first, then concise reporting.",
     "- Progress updates should be brief and relevant.",
-    "- Prefer short markdown paragraphs or flat bullets instead of one long block of prose.",
+    "- Prefer concise structured markdown with short headings and bullets instead of one long block of prose.",
     "- Keep diagnostics and raw internal metadata out of normal user-facing answers unless the user asks for them.",
     "- Do not narrate internal process details at length unless they matter to the user's decision.",
   ].join("\n");
