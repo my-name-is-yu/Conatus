@@ -150,7 +150,7 @@ export class ChatAgentLoopRunner {
         budget: withDefaultBudget({ ...this.deps.defaultBudget, ...input.budget }),
         toolPolicy: { ...this.deps.defaultToolPolicy, ...input.toolPolicy },
         ...(input.resumeState ? { resumeState: input.resumeState } : {}),
-        loadPersistedState: input.resumeOnly === true || input.resumeState !== undefined || input.resumeStatePath !== undefined,
+        loadPersistedState: input.resumeOnly === true || input.resumeState !== undefined,
         ...(this.deps.defaultExecutionPolicy ? { executionPolicy: this.deps.defaultExecutionPolicy } : {}),
         toolCallContext: {
           cwd,

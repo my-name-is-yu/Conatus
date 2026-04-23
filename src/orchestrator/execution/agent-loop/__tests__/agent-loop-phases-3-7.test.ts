@@ -574,7 +574,7 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
     expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "approval_tool")).toBe(true);
   });
 
-  it("uses the latest chat input even when a state file path is reused", async () => {
+  it("uses the latest chat input even when a state file path is provided and reused", async () => {
     const stateDir = makeTempDir();
     const statePath = path.join(stateDir, "chat.state.json");
     try {
@@ -599,16 +599,16 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
         modelClient,
         modelRegistry: registryModel,
         defaultModel: modelInfo.ref,
-        createSession: () =>
+        createSession: (input) =>
           createAgentLoopSession({
             sessionId: "chat-session",
             traceId: "chat-trace",
-            stateStore: new JsonAgentLoopSessionStateStore(statePath),
+            stateStore: new JsonAgentLoopSessionStateStore(input.resumeStatePath ?? statePath),
           }),
       });
 
-      await chat.execute({ message: "first input" });
-      await chat.execute({ message: "second input" });
+      await chat.execute({ message: "first input", resumeStatePath: statePath });
+      await chat.execute({ message: "second input", resumeStatePath: statePath });
 
       const firstLastUser = [...modelClient.calls[0].messages].reverse().find((message) => message.role === "user")?.content ?? "";
       const secondLastUser = [...modelClient.calls[1].messages].reverse().find((message) => message.role === "user")?.content ?? "";
