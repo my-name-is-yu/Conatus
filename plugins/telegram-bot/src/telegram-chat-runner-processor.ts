@@ -154,7 +154,15 @@ export class TelegramChatRunnerProcessor {
         metadata: {
           chat_id: chatId,
         },
-      }, this.workspaceRoot);
+      }, this.workspaceRoot, 120_000, {
+        lane: "fast",
+        kind: "adapter",
+        reason: "adapter_fallback",
+        replyTargetPolicy: "turn_reply_target",
+        eventProjectionPolicy: "turn_only",
+        concurrencyPolicy: "session_serial",
+        daemonChatPolicy: "compatibility_only",
+      });
       return result.output;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

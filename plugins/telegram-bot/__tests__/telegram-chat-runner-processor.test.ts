@@ -148,7 +148,12 @@ describe("TelegramChatRunnerProcessor", () => {
         platform: "telegram",
         conversation_id: "101",
       }),
-      "/workspace"
+      "/workspace",
+      expect.any(Number),
+      expect.objectContaining({
+        kind: "adapter",
+        reason: "adapter_fallback",
+      })
     );
     cwdSpy.mockRestore();
   });
