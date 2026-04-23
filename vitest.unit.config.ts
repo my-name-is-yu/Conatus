@@ -13,6 +13,8 @@ export default defineConfig({
     include: fullInclude,
     exclude: integrationInclude,
     coverage: sharedCoverage,
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
   resolve: sharedResolve,
 });

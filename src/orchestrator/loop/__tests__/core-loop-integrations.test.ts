@@ -9,10 +9,20 @@ import {
 } from "../core-loop.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";
-import type { TaskLifecycle, TaskCycleResult } from "../../execution/task/task-lifecycle.js";
+import {
+  TaskLifecycle as RealTaskLifecycle,
+  type TaskLifecycle,
+  type TaskCycleResult,
+} from "../../execution/task/task-lifecycle.js";
 import type { SatisficingJudge } from "../../../platform/drive/satisficing-judge.js";
-import type { StallDetector } from "../../../platform/drive/stall-detector.js";
-import type { StrategyManager } from "../../strategy/strategy-manager.js";
+import {
+  StallDetector as RealStallDetector,
+  type StallDetector,
+} from "../../../platform/drive/stall-detector.js";
+import {
+  StrategyManager as RealStrategyManager,
+  type StrategyManager,
+} from "../../strategy/strategy-manager.js";
 import type { DriveSystem } from "../../../platform/drive/drive-system.js";
 import type { AdapterRegistry, IAdapter } from "../../execution/adapter-layer.js";
 import type { GapVector } from "../../../base/types/gap.js";
@@ -20,8 +30,13 @@ import type { CompletionJudgment } from "../../../base/types/satisficing.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { DriveScore } from "../../../base/types/drive.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
+import { SessionManager } from "../../execution/session-manager.js";
+import { TrustManager } from "../../../platform/traits/trust-manager.js";
+import { ReportingEngine as RealReportingEngine } from "../../../reporting/reporting-engine.js";
+import { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 function makeGapVector(goalId = "goal-1"): GapVector {
   return {
@@ -151,6 +166,29 @@ function makeStallReport(overrides: Partial<StallReport> = {}): StallReport {
     decay_factor: 0.6,
     ...overrides,
   };
+}
+
+function makeGeneratedTaskResponse(): string {
+  return JSON.stringify({
+    work_description: "Deploy the service to production",
+    rationale: "The goal requires production deployment to close the gap",
+    approach: "Run the production deployment workflow",
+    success_criteria: [
+      {
+        description: "Production deployment has completed",
+        verification_method: "manual check",
+        is_blocking: true,
+      },
+    ],
+    scope_boundary: {
+      in_scope: ["production deployment"],
+      out_of_scope: ["unrelated infrastructure changes"],
+      blast_radius: "production service",
+    },
+    constraints: ["requires explicit deployment permission"],
+    reversibility: "reversible",
+    estimated_duration: { value: 30, unit: "minutes" },
+  });
 }
 
 function createMockAdapter(): IAdapter {
@@ -671,6 +709,69 @@ describe("CoreLoop", async () => {
   // ─── CapabilityDetector integration ───
 
   describe("CapabilityDetector integration", async () => {
+    it("contract: real TaskLifecycle turns a detected permission gap into CoreLoop escalation", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const llmClient = createMockLLMClient([
+        "```json\n" + makeGeneratedTaskResponse() + "\n```",
+        JSON.stringify({
+          has_deficiency: true,
+          missing_capability: {
+            name: "Production deployment approval",
+            type: "permission",
+          },
+          reason: "Deploying this service requires explicit production approval.",
+          alternatives: ["Request approval from the operator"],
+          impact_description: "The deployment task cannot proceed safely without approval.",
+        }),
+      ]);
+      const sessionManager = new SessionManager(mocks.stateManager);
+      const trustManager = new TrustManager(mocks.stateManager);
+      const stallDetector = new RealStallDetector(mocks.stateManager);
+      const strategyManager = new RealStrategyManager(mocks.stateManager, llmClient);
+      const reportingEngine = new RealReportingEngine(mocks.stateManager);
+      const capabilityDetector = new CapabilityDetector(
+        mocks.stateManager,
+        llmClient,
+        reportingEngine
+      );
+      const taskLifecycle = new RealTaskLifecycle(
+        mocks.stateManager,
+        llmClient,
+        sessionManager,
+        trustManager,
+        strategyManager,
+        stallDetector,
+        {
+          approvalFn: async () => true,
+          capabilityDetector,
+          healthCheckEnabled: false,
+        }
+      );
+
+      const loop = new CoreLoop(
+        {
+          ...deps,
+          taskLifecycle,
+          stallDetector,
+          strategyManager,
+          reportingEngine,
+          capabilityDetector,
+        },
+        { delayBetweenLoopsMs: 0 }
+      );
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.error).toBeNull();
+      expect(result.taskResult?.action).toBe("escalate");
+      expect(result.taskResult?.verificationResult.evidence[0]?.description).toContain(
+        "Capability deficiency: Production deployment approval"
+      );
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+      expect(llmClient.callCount).toBe(2);
+    });
+
     it("delegates capability detection to TaskLifecycle when capabilityDetector provided and deficiency detected", async () => {
       // Capability detection is handled inside TaskLifecycle.runTaskCycle, not CoreLoop.
       // CoreLoop must still call runTaskCycle and return whatever result TaskLifecycle produces.

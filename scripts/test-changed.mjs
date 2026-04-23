@@ -16,6 +16,7 @@ if (args.has("--help") || args.has("-h")) {
 Runs the narrowest reasonable docs/test workflow for the current git diff.
 - docs changes -> check docs
 - infra changes -> build + unit + smoke
+- subpackage changes -> changed subpackage build/package-local tests
 - code changes -> related unit/integration tests, plus smoke for runtime-heavy areas
 `);
   process.exit(0);
@@ -82,6 +83,25 @@ function isInfraPath(filePath) {
   );
 }
 
+const subpackageDirs = [
+  "plugins/discord-bot",
+  "plugins/signal-bridge",
+  "plugins/slack-notifier",
+  "plugins/telegram-bot",
+  "plugins/whatsapp-webhook",
+  "examples/plugins/jira-datasource",
+  "examples/plugins/mysql-datasource",
+  "examples/plugins/pagerduty-notifier",
+  "examples/plugins/postgres-datasource",
+  "examples/plugins/sqlite-datasource",
+  "examples/plugins/sse-datasource",
+  "examples/plugins/websocket-datasource",
+];
+
+function isSubpackagePath(filePath) {
+  return subpackageDirs.some((dir) => filePath === dir || filePath.startsWith(`${dir}/`));
+}
+
 const changedFiles = unique([
   ...gitLines(["diff", "--name-only", "--diff-filter=ACMRD"]),
   ...gitLines(["diff", "--cached", "--name-only", "--diff-filter=ACMRD"]),
@@ -101,6 +121,7 @@ for (const file of changedFiles) {
 
 const docsTouched = changedFiles.some(isDocPath);
 const infraTouched = changedFiles.some(isInfraPath);
+const subpackageTouched = changedFiles.some(isSubpackagePath);
 const sourceFiles = changedFiles.filter(isSourceLike);
 const integrationFiles = sourceFiles.filter(isIntegrationPath);
 const unitFiles = sourceFiles.filter((file) => !isIntegrationPath(file));
@@ -108,6 +129,11 @@ const smokeFiles = sourceFiles.filter(isSmokeRelevantPath);
 
 if (docsTouched) {
   run("npm", ["run", "check:docs"]);
+}
+
+if (subpackageTouched) {
+  console.log("Subpackage changes detected. Running subpackage verification.");
+  run("npm", ["run", "check:subpackages"]);
 }
 
 if (infraTouched) {

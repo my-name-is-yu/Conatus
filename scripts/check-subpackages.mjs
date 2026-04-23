@@ -46,17 +46,19 @@ for (const dir of targets) {
 console.log("Subpackage verification passed.");
 
 function gitChangedFiles(base) {
-  const result = spawnSync("git", ["diff", "--name-only", `${base}...HEAD`], {
+  const committed = spawnSync("git", ["diff", "--name-only", `${base}...HEAD`], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "inherit"],
   });
-  if (result.status !== 0) {
+  if (committed.status !== 0) {
     fail(`Unable to resolve changed files against ${base}.`);
   }
-  return result.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  return unique([
+    ...lines(committed.stdout),
+    ...gitLines(["diff", "--name-only", "--diff-filter=ACMRD"]),
+    ...gitLines(["diff", "--cached", "--name-only", "--diff-filter=ACMRD"]),
+    ...gitLines(["ls-files", "--others", "--exclude-standard"]),
+  ]);
 }
 
 function resolveDefaultBase() {
@@ -98,6 +100,25 @@ function run(command, commandArgs) {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+}
+
+function gitLines(commandArgs) {
+  const result = spawnSync("git", commandArgs, {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 ? lines(result.stdout) : [];
+}
+
+function lines(output) {
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function unique(items) {
+  return [...new Set(items)];
 }
 
 function fail(message) {

@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { z } from "zod";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
+import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { EscalationHandler, EscalationResult } from "../escalation.js";
@@ -15,7 +16,6 @@ import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-
 import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
 import type { ChatEvent } from "../chat-events.js";
-import { selectLegacyChatRoute } from "../ingress-router.js";
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -1712,8 +1712,15 @@ describe("ChatRunner", () => {
       });
     });
 
-    it("supports routed ingress execution for TUI callers", async () => {
-      const adapter = makeMockAdapter();
+    it("routes natural TUI ingress through the production selector", async () => {
+      const adapter = makeMockAdapter({
+        success: false,
+        output: "",
+        error: "adapter path must not be called",
+        exit_code: 1,
+        elapsed_ms: 1,
+        stopped_reason: "error",
+      });
       const llmClient = {
         sendMessage: vi.fn().mockResolvedValue({
           content: "TUI answer",
@@ -1723,34 +1730,21 @@ describe("ChatRunner", () => {
         parseJSON: vi.fn(),
       };
 
-      const runner = new ChatRunner(makeDeps({ adapter, llmClient: llmClient as never }));
-      const result = await runner.executeIngressMessage({
-        text: "What is this lane?",
+      const manager = new CrossPlatformChatSessionManager(makeDeps({ adapter, llmClient: llmClient as never }));
+      const result = await manager.execute("What is this lane?", {
         channel: "tui",
         platform: "local_tui",
-        actor: {
-          surface: "tui",
-          platform: "local_tui",
-        },
-        replyTarget: {
-          surface: "tui",
-          platform: "local_tui",
-          metadata: {},
-        },
         runtimeControl: {
           allowed: true,
           approvalMode: "interactive",
         },
-        metadata: {},
-      }, "/repo", 120_000, selectLegacyChatRoute("What is this lane?", {
-        hasLightweightLlm: true,
-        hasAgentLoop: false,
-        hasToolLoop: false,
-        hasRuntimeControlService: false,
-      }));
+        cwd: "/repo",
+        timeoutMs: 120_000,
+      });
 
       expect(result.success).toBe(true);
       expect(result.output).toBe("TUI answer");
+      expect(result.diagnostics?.route).toBe("direct");
       expect(result.diagnostics?.reason).toBe("simple_question");
       expect(adapter.execute).not.toHaveBeenCalled();
     });
