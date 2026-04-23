@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-04-23
+
+### Added
+- Added shared grounding infrastructure for chat and AgentLoop paths, including reusable grounding providers, prompt rendering helpers, and native AgentLoop grounding reuse (#722, #723, #727)
+- Added shared channel-aware chat ingress with explicit route selection, cross-platform session routing, and durable daemon event projection into chat transcripts for progress, completion, approval, and loop-error events (#726, #729)
+- Added medium-task chat output improvements, including structured final answers, markdown-preserving TUI rendering, and visible progress/lock-output prompts (#721)
+
+### Changed
+- Refactored chat, TUI, Telegram, and daemon chat surfaces onto the shared ingress/projection path while keeping TUI and Telegram routing behavior aligned (#726, #729)
+- Refactored builtin tool factory/export wiring and split the knowledge public API for clearer runtime boundaries (#725)
+- Broke the plugin-loader/chat-session dependency cycle and reused shared grounding prompt helpers across execution paths (#723, #724)
+- Resolved native AgentLoop defaults through provider configuration instead of hard-coded/default-profile-only behavior (#728)
+- Bumped the package version to `0.5.0`
+
+### Fixed
+- Fixed chat turns so they do not implicitly resume stale state across interactions (#717)
+- Fixed TUI composer sanitization, transient activity clearing, stable output rendering, spinner placement/rendering, daemon approval behavior, text selection, and safe escape normalization (#718, #719, #726)
+- Fixed Codex chat timeout handling, local output preservation, timeout trace stops, review/chat approval flows, AgentLoop chat contracts, profile limits, and grounding limits (#720, #722)
+- Fixed Telegram fallback ingress routing while requiring explicit selected routes for ingress execution (#729)
+
 ## [0.4.20] - 2026-04-22
 
 ### Added
