@@ -28,6 +28,7 @@ import {
   createNativeChatAgentLoopRunner,
   shouldUseNativeTaskAgentLoop,
   resolveChannelRoute,
+  createIngressRouter,
 } from "pulseed";
 import { TrustManager } from "pulseed";
 
@@ -123,8 +124,9 @@ export class TelegramChatRunnerProcessor {
 
     try {
       const runner = await this.getRunner(chatId);
+      const bootstrap = await this.bootstrap();
       runner.onEvent = emit;
-      const result = await runner.executeIngressMessage({
+      const ingress = {
         text,
         channel: "plugin_gateway",
         platform: "telegram",
@@ -154,15 +156,14 @@ export class TelegramChatRunnerProcessor {
         metadata: {
           chat_id: chatId,
         },
-      }, this.workspaceRoot, 120_000, {
-        lane: "fast",
-        kind: "adapter",
-        reason: "adapter_fallback",
-        replyTargetPolicy: "turn_reply_target",
-        eventProjectionPolicy: "turn_only",
-        concurrencyPolicy: "session_serial",
-        daemonChatPolicy: "compatibility_only",
+      } as const;
+      const selectedRoute = createIngressRouter().selectRoute(ingress, {
+        hasLightweightLlm: bootstrap.llmClient !== undefined,
+        hasAgentLoop: bootstrap.chatAgentLoopRunner !== undefined,
+        hasToolLoop: bootstrap.llmClient !== undefined,
+        hasRuntimeControlService: false,
       });
+      const result = await runner.executeIngressMessage(ingress, this.workspaceRoot, 120_000, selectedRoute);
       return result.output;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

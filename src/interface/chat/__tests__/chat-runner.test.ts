@@ -1727,7 +1727,7 @@ describe("ChatRunner", () => {
       const runner = new ChatRunner(makeDeps({}));
 
       await expect(
-        runner.executeIngressMessage({
+        (runner.executeIngressMessage as any)({
           text: "PulSeed を再起動して",
           channel: "tui",
           platform: "local_tui",
