@@ -35,14 +35,16 @@ const ChatAgentLoopFinalAnswerSchema = z.object({
 const ChatAgentLoopOutputBaseSchema = z.object({
   status: z.enum(["done", "blocked", "failed"]).default("done"),
   message: z.string().default(""),
+  answer: z.string().optional(),
   evidence: z.array(z.string()).default([]),
   blockers: z.array(z.string()).default([]),
   finalAnswer: ChatAgentLoopFinalAnswerSchema.optional(),
 }).passthrough();
 
 export const ChatAgentLoopOutputSchema = ChatAgentLoopOutputBaseSchema.transform((value) => {
+  const summary = value.message.trim() || value.answer?.trim() || "";
   const finalAnswer = value.finalAnswer ?? {
-    summary: value.message,
+    summary,
     sections: [],
     evidence: value.evidence,
     blockers: value.blockers,
@@ -51,7 +53,7 @@ export const ChatAgentLoopOutputSchema = ChatAgentLoopOutputBaseSchema.transform
 
   return {
     ...value,
-    message: value.message.trim() || finalAnswer.summary.trim(),
+    message: value.message.trim() || value.answer?.trim() || finalAnswer.summary.trim(),
     evidence: value.evidence.length > 0 ? value.evidence : finalAnswer.evidence,
     blockers: value.blockers.length > 0 ? value.blockers : finalAnswer.blockers,
     finalAnswer,
@@ -255,6 +257,7 @@ export class ChatAgentLoopRunner {
     const formatted = this.formatStructuredFinalText(finalText);
     if (formatted) return formatted;
     if (output?.message && output.message.trim().length > 0) return output.message.trim();
+    if (output?.answer && output.answer.trim().length > 0) return output.answer.trim();
     if (finalText && finalText.trim().length > 0) return finalText.trim();
     return "(no response)";
   }
@@ -298,9 +301,11 @@ export class ChatAgentLoopRunner {
     if (!output) return null;
 
     const finalAnswer = output.finalAnswer;
-    const summary = finalAnswer?.summary.trim() || output.message.trim();
+    const outputEvidence = Array.isArray(output.evidence) ? output.evidence : [];
+    const outputBlockers = Array.isArray(output.blockers) ? output.blockers : [];
+    const summary = finalAnswer?.summary.trim() || output.message?.trim() || output.answer?.trim() || "";
     const sections: string[] = [];
-    const handledKeys = new Set<string>(["status", "message", "evidence", "blockers", "finalAnswer"]);
+    const handledKeys = new Set<string>(["status", "message", "answer", "evidence", "blockers", "finalAnswer"]);
 
     if (summary.length > 0) {
       sections.push(summary);
@@ -314,7 +319,7 @@ export class ChatAgentLoopRunner {
 
     const evidence = [...new Set([
       ...(finalAnswer?.evidence ?? []),
-      ...output.evidence,
+      ...outputEvidence,
     ].map((item) => item.trim()).filter((item) => item.length > 0))];
     if (evidence.length > 0) {
       sections.push(`### Evidence\n${evidence.map((item) => `- ${item}`).join("\n")}`);
@@ -322,7 +327,7 @@ export class ChatAgentLoopRunner {
 
     const blockers = [...new Set([
       ...(finalAnswer?.blockers ?? []),
-      ...output.blockers,
+      ...outputBlockers,
     ].map((item) => item.trim()).filter((item) => item.length > 0))];
     if (blockers.length > 0) {
       sections.push(`### Blockers\n${blockers.map((item) => `- ${item}`).join("\n")}`);
