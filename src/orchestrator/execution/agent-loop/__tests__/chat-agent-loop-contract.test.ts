@@ -98,6 +98,19 @@ describe("chat agentloop final-answer contract", () => {
     expect(result.output).toContain("### Blockers");
   });
 
+  it("unwraps answer-only structured chat output into plain assistant text", async () => {
+    const { runner } = makeRunner({
+      status: "done",
+      answer: "Codexです。あなたの端末上の作業環境でコード作業を進めます。",
+    });
+
+    const result = await runner.execute({ message: "あなたは誰？" });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("Codexです。あなたの端末上の作業環境でコード作業を進めます。");
+    expect(result.output).not.toContain('"answer"');
+  });
+
   it("biases chat mode prompts toward concise structured markdown", () => {
     const chatPrompt = buildAgentLoopBaseInstructions({ mode: "chat" });
     const taskPrompt = buildAgentLoopBaseInstructions({ mode: "task" });
