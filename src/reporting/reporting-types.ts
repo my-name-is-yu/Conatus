@@ -1,5 +1,16 @@
 import type { VerificationFileDiff } from "../base/types/task.js";
 
+export type ExecutionSummaryWaitStatus = {
+  strategyId?: string;
+  status: string;
+  details?: string;
+  approvalId?: string;
+  observeOnly?: boolean;
+  suppressed?: boolean;
+  expired?: boolean;
+  skipReason?: string;
+};
+
 export type ExecutionSummaryParams = {
   goalId: string;
   loopIndex: number;
@@ -14,6 +25,7 @@ export type ExecutionSummaryParams = {
   stallDetected: boolean;
   pivotOccurred: boolean;
   elapsedMs: number;
+  waitStatus?: ExecutionSummaryWaitStatus;
 };
 
 export type NotificationType =

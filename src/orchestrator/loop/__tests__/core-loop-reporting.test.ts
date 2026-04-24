@@ -21,6 +21,8 @@ import type { StallReport } from "../../../base/types/stall.js";
 import type { DriveScore } from "../../../base/types/drive.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal, makeDimension } from "../../../../tests/helpers/fixtures.js";
+import { generateLoopReport } from "../loop-report-helper.js";
+import { makeEmptyIterationResult } from "../loop-result-types.js";
 
 function makeGapVector(goalId = "goal-1"): GapVector {
   return {
@@ -328,6 +330,51 @@ describe("CoreLoop", async () => {
   // ─── Report generation ───
 
   describe("report generation", async () => {
+    it("passes wait telemetry into execution summaries", async () => {
+      const reportingEngine = {
+        generateExecutionSummary: vi.fn().mockReturnValue({ type: "execution_summary" }),
+        saveReport: vi.fn(),
+      };
+
+      await generateLoopReport(
+        "goal-1",
+        0,
+        makeEmptyIterationResult("goal-1", 0, {
+          taskResult: null,
+          waitStrategyId: "wait-1",
+          waitObserveOnly: true,
+          waitExpired: true,
+          waitApprovalId: "wait-goal-1-wait-1",
+          waitExpiryOutcome: {
+            status: "approval_required",
+            goal_id: "goal-1",
+            strategy_id: "wait-1",
+            details: "approval required before resume",
+          },
+          skipped: true,
+          skipReason: "wait_observe_only",
+        }),
+        makeGoal(),
+        reportingEngine,
+        undefined
+      );
+
+      expect(reportingEngine.generateExecutionSummary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          waitStatus: {
+            strategyId: "wait-1",
+            status: "approval_required",
+            details: "approval required before resume",
+            approvalId: "wait-goal-1-wait-1",
+            observeOnly: true,
+            suppressed: undefined,
+            expired: true,
+            skipReason: "wait_observe_only",
+          },
+        })
+      );
+    });
+
     it("calls reportingEngine.generateExecutionSummary", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal({

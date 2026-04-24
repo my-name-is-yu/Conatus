@@ -405,6 +405,11 @@ export class PortfolioManager {
         const getBaseDir = this.stateManager.getBaseDir;
         if (typeof getBaseDir !== "function") return null;
         return new ApprovalStore(path.join(getBaseDir.call(this.stateManager), "runtime")).load(approvalId);
+      },
+      (gId, sId, metadata) => this.stateManager.writeRaw(`strategies/${gId}/wait-meta/${sId}.json`, metadata),
+      () => {
+        const getBaseDir = this.stateManager.getBaseDir;
+        return typeof getBaseDir === "function" ? getBaseDir.call(this.stateManager) : null;
       }
     );
   }

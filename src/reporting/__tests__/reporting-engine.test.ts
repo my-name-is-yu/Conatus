@@ -85,6 +85,34 @@ describe("generateExecutionSummary", () => {
     expect(report.content).toContain("code_quality");
   });
 
+  it("includes wait status details when provided", () => {
+    const report = engine.generateExecutionSummary(makeBaseParams({
+      taskResult: null,
+      waitStatus: {
+        strategyId: "wait-1",
+        status: "approval_required",
+        details: "external approval required before resume",
+        approvalId: "wait-goal-001-wait-1",
+        observeOnly: true,
+        suppressed: true,
+        expired: true,
+        skipReason: "wait_observe_only",
+      },
+    }));
+
+    expect(report.content).toContain("### Wait Status");
+    expect(report.content).toContain("approval_required");
+    expect(report.content).toContain("wait-1");
+    expect(report.content).toContain("external approval required before resume");
+    expect(report.content).toContain("wait-goal-001-wait-1");
+    expect(report.content).toContain("wait_observe_only");
+    expect(report.metadata?.wait_status).toMatchObject({
+      strategyId: "wait-1",
+      status: "approval_required",
+      approvalId: "wait-goal-001-wait-1",
+    });
+  });
+
   it("stores verification diffs in structured metadata", () => {
     const report = engine.generateExecutionSummary(makeBaseParams({
       taskResult: {
