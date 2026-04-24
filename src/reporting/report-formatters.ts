@@ -117,12 +117,14 @@ export function buildExecutionSummaryContent(
     stallDetected,
     pivotOccurred,
     elapsedMs,
+    waitStatus,
   } = params;
 
   const now = new Date().toISOString();
   const elapsedSec = (elapsedMs / 1000).toFixed(1);
 
-  const isStructuralEvent = stallDetected || pivotOccurred || taskResult === null;
+  const isStructuralEvent =
+    stallDetected || pivotOccurred || taskResult === null || waitStatus !== undefined;
   const useBrief = verbosity === "brief" && !isStructuralEvent;
 
   if (useBrief) {
@@ -158,6 +160,7 @@ export function buildExecutionSummaryContent(
 
   const stallStatus = stallDetected ? "Yes" : "No";
   const pivotStatus = pivotOccurred ? "Yes" : "No";
+  const waitSection = waitStatus ? formatWaitStatusSection(waitStatus) : "";
 
   return (
     `## Execution Summary — Loop ${loopIndex}\n\n` +
@@ -169,8 +172,41 @@ export function buildExecutionSummaryContent(
     `### Status\n\n` +
     `- **Stall detected**: ${stallStatus}\n` +
     `- **Strategy pivot**: ${pivotStatus}\n\n` +
+    waitSection +
     `### Elapsed Time\n\n${elapsedSec}s`
   );
+}
+
+function formatWaitStatusSection(waitStatus: NonNullable<ExecutionSummaryParams["waitStatus"]>): string {
+  const lines = [
+    "### Wait Status",
+    "",
+    `- **Status**: ${waitStatus.status}`,
+  ];
+
+  if (waitStatus.strategyId) {
+    lines.push(`- **Strategy ID**: ${waitStatus.strategyId}`);
+  }
+  if (waitStatus.details) {
+    lines.push(`- **Details**: ${waitStatus.details}`);
+  }
+  if (waitStatus.approvalId) {
+    lines.push(`- **Approval ID**: ${waitStatus.approvalId}`);
+  }
+  if (waitStatus.observeOnly !== undefined) {
+    lines.push(`- **Observe only**: ${waitStatus.observeOnly ? "Yes" : "No"}`);
+  }
+  if (waitStatus.suppressed !== undefined) {
+    lines.push(`- **Task suppressed**: ${waitStatus.suppressed ? "Yes" : "No"}`);
+  }
+  if (waitStatus.expired !== undefined) {
+    lines.push(`- **Wait expired**: ${waitStatus.expired ? "Yes" : "No"}`);
+  }
+  if (waitStatus.skipReason) {
+    lines.push(`- **Skip reason**: ${waitStatus.skipReason}`);
+  }
+
+  return `${lines.join("\n")}\n\n`;
 }
 
 // ─── buildNotificationContent ───

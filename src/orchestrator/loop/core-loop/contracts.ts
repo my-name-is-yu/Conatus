@@ -82,6 +82,16 @@ export interface ExecutionSummaryParams {
   stallDetected: boolean;
   pivotOccurred: boolean;
   elapsedMs: number;
+  waitStatus?: {
+    strategyId?: string;
+    status: string;
+    details?: string;
+    approvalId?: string;
+    observeOnly?: boolean;
+    suppressed?: boolean;
+    expired?: boolean;
+    skipReason?: string;
+  };
 }
 
 export interface ReportingEngine {

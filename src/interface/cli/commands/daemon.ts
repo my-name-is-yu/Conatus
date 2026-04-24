@@ -464,10 +464,12 @@ function formatUptime(startedAt: string): string {
 
 function formatRelativeTime(isoDate: string): string {
   const ms = Date.now() - new Date(isoDate).getTime();
-  if (ms < 60000) return `${Math.floor(ms / 1000)}s ago`;
-  if (ms < 3600000) return `${Math.floor(ms / 60000)}m ago`;
-  if (ms < 86400000) return `${Math.floor(ms / 3600000)}h ago`;
-  return `${Math.floor(ms / 86400000)}d ago`;
+  const suffix = ms < 0 ? "from now" : "ago";
+  const absMs = Math.abs(ms);
+  if (absMs < 60000) return `${Math.floor(absMs / 1000)}s ${suffix}`;
+  if (absMs < 3600000) return `${Math.floor(absMs / 60000)}m ${suffix}`;
+  if (absMs < 86400000) return `${Math.floor(absMs / 3600000)}h ${suffix}`;
+  return `${Math.floor(absMs / 86400000)}d ${suffix}`;
 }
 
 function formatRelativeTimestamp(timestamp: number): string {
@@ -652,6 +654,41 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   }
 
   lines.push(`Active goals:    ${data.active_goals.join(", ") || "(none)"}`);
+  const waitingGoals = data.waiting_goals ?? [];
+  if (
+    waitingGoals.length > 0
+    || data.next_observe_at
+    || data.last_observe_at
+    || data.last_wait_reason
+    || data.approval_pending_count
+  ) {
+    lines.push("");
+    lines.push("Wait status:");
+    lines.push(`  Waiting goals:  ${waitingGoals.length}`);
+    if (data.next_observe_at) {
+      lines.push(`  Next observe:   ${formatRelativeTime(data.next_observe_at)}`);
+    }
+    if (data.last_observe_at) {
+      lines.push(`  Last observe:   ${formatRelativeTime(data.last_observe_at)}`);
+    }
+    if (data.last_wait_reason) {
+      lines.push(`  Last reason:    ${data.last_wait_reason}`);
+    }
+    if (data.approval_pending_count !== undefined) {
+      lines.push(`  Approvals:      ${data.approval_pending_count} pending`);
+    }
+    for (const waitGoal of waitingGoals.slice(0, 5)) {
+      const approval = waitGoal.approval_pending ? ", approval pending" : "";
+      lines.push(
+        `  - ${waitGoal.goal_id}/${waitGoal.strategy_id}: observe `
+          + `${formatRelativeTime(waitGoal.next_observe_at)} (${waitGoal.wait_reason}${approval})`
+      );
+    }
+    if (waitingGoals.length > 5) {
+      const remainingGoals = waitingGoals.length - 5;
+      lines.push(`  ... ${remainingGoals} more waiting goal${remainingGoals === 1 ? "" : "s"}`);
+    }
+  }
   if (data.resident_activity) {
     const residentAgo = formatRelativeTime(data.resident_activity.recorded_at);
     lines.push(`Resident:        ${data.resident_activity.kind} (${residentAgo})`);

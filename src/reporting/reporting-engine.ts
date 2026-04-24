@@ -64,7 +64,7 @@ export class ReportingEngine {
   // ─── generateExecutionSummary ───
 
   generateExecutionSummary(params: ExecutionSummaryParams): Report {
-    const { goalId, loopIndex, gapAggregate, stallDetected, pivotOccurred, elapsedMs, taskResult } = params;
+    const { goalId, loopIndex, gapAggregate, stallDetected, pivotOccurred, elapsedMs, taskResult, waitStatus } = params;
 
     const now = new Date().toISOString();
     const verbosity = getVerbosityLevel(this.characterConfig);
@@ -89,6 +89,7 @@ export class ReportingEngine {
         task_id: taskResult?.taskId ?? null,
         task_action: taskResult?.action ?? null,
         task_verification_diffs: taskResult?.verificationDiffs,
+        wait_status: waitStatus ?? null,
       },
     });
 

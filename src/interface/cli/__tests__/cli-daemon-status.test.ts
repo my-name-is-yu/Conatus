@@ -122,6 +122,54 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("0/3 retries used");
   });
 
+  it("shows persisted wait status details", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-24T12:00:00.000Z"));
+    const state = {
+      pid: process.pid,
+      started_at: "2026-04-24T11:00:00.000Z",
+      last_loop_at: "2026-04-24T12:00:00.000Z",
+      loop_count: 3,
+      active_goals: ["goal-wait"],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+      waiting_goals: [
+        {
+          goal_id: "goal-wait",
+          strategy_id: "wait-1",
+          next_observe_at: "2026-04-24T12:30:00.000Z",
+          wait_until: "2026-04-24T12:30:00.000Z",
+          wait_reason: "approval required before resume",
+          approval_pending: true,
+        },
+      ],
+      next_observe_at: "2026-04-24T12:30:00.000Z",
+      last_observe_at: "2026-04-24T11:45:00.000Z",
+      last_wait_reason: "approval required before resume",
+      approval_pending_count: 1,
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    try {
+      await cmdDaemonStatus([]);
+    } finally {
+      inspectSpy.mockRestore();
+      vi.useRealTimers();
+    }
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Wait status:");
+    expect(output).toContain("Waiting goals:  1");
+    expect(output).toContain("Next observe:   30m from now");
+    expect(output).toContain("Last observe:   15m ago");
+    expect(output).toContain("Approvals:      1 pending");
+    expect(output).toContain("goal-wait/wait-1");
+    expect(output).toContain("observe 30m from now");
+    expect(output).toContain("approval required before resume, approval pending");
+  });
+
   it("prints runtime KPI status when health snapshot exists", async () => {
     const now = Date.now();
     fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });

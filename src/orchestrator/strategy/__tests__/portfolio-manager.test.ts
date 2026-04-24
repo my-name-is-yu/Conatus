@@ -998,6 +998,320 @@ describe("PortfolioManager", () => {
       }
     });
 
+    it("keeps waiting and persists latest observation when a file condition is not satisfied", async () => {
+      const tmpDir = makeTempDir();
+      const now = new Date("2026-04-24T12:00:00.000Z");
+      const wait = makeWaitStrategy({
+        id: "ws1",
+        state: "active",
+        wait_until: "2026-04-24T11:59:00.000Z",
+        gap_snapshot_at_start: 0.8,
+        primary_dimension: "quality",
+      });
+      const portfolio = makePortfolio([wait]);
+      (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+      (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+      (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+        if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+          return {
+            schema_version: 1,
+            wait_until: wait.wait_until,
+            conditions: [{ type: "file_exists", path: "artifacts/result.json" }],
+            resume_plan: { action: "complete_wait" },
+          };
+        }
+        if (rawPath === "capability_registry.json") {
+          return { capabilities: [], last_checked: now.toISOString() };
+        }
+        return { quality: 0.5 };
+      });
+
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      try {
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({
+          status: "not_due",
+          strategy_id: "ws1",
+        });
+        expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+        expect(mockStateManager.writeRaw).toHaveBeenCalledWith(
+          "strategies/goal-1/wait-meta/ws1.json",
+          expect.objectContaining({
+            next_observe_at: "2026-04-24T12:05:00.000Z",
+            latest_observation: expect.objectContaining({
+              status: "pending",
+              next_observe_at: "2026-04-24T12:05:00.000Z",
+              resume_hint: "file not found: artifacts/result.json",
+            }),
+          })
+        );
+      } finally {
+        vi.useRealTimers();
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
+    it("uses artifact JSON conditions as durable observation evidence before gap outcome", async () => {
+      const tmpDir = makeTempDir();
+      try {
+        fs.mkdirSync(path.join(tmpDir, "artifacts"), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, "artifacts", "metrics.json"), JSON.stringify({ score: 0.92 }));
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [
+                { type: "time_until", until: wait.wait_until },
+                { type: "artifact_json_value", path: "artifacts/metrics.json", json_pointer: "/score", expected: 0.92 },
+              ],
+              resume_plan: { action: "complete_wait" },
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return { capabilities: [], last_checked: new Date().toISOString() };
+          }
+          return { quality: 0.5 };
+        });
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({ status: "improved", strategy_id: "ws1" });
+        expect(mockStrategyManager.updateState).toHaveBeenCalledWith("ws1", "completed");
+        expect(mockStateManager.writeRaw).toHaveBeenCalledWith(
+          "strategies/goal-1/wait-meta/ws1.json",
+          expect.objectContaining({
+            next_observe_at: null,
+            latest_observation: expect.objectContaining({
+              status: "satisfied",
+              resume_hint: "wait_conditions_satisfied",
+              confidence: 0.9,
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
+    it("rejects wait condition artifact paths outside the state root", async () => {
+      const tmpDir = makeTempDir();
+      const outsideDir = makeTempDir();
+      try {
+        const outsideArtifact = path.join(outsideDir, "secret.json");
+        fs.writeFileSync(outsideArtifact, JSON.stringify({ score: 1 }));
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [
+                { type: "artifact_json_value", path: outsideArtifact, json_pointer: "/score", expected: 1 },
+              ],
+              resume_plan: { action: "complete_wait" },
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return { capabilities: [], last_checked: new Date().toISOString() };
+          }
+          return { quality: 0.5 };
+        });
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({
+          status: "unknown",
+          strategy_id: "ws1",
+          details: `path escapes state base: ${outsideArtifact}`,
+        });
+        expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+        expect(mockStateManager.writeRaw).toHaveBeenCalledWith(
+          "strategies/goal-1/wait-meta/ws1.json",
+          expect.objectContaining({
+            latest_observation: expect.objectContaining({
+              status: "failed",
+              resume_hint: `path escapes state base: ${outsideArtifact}`,
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        fs.rmSync(outsideDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
+    it("observes process session exit from durable metadata", async () => {
+      const tmpDir = makeTempDir();
+      try {
+        fs.mkdirSync(path.join(tmpDir, "runtime", "process-sessions"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpDir, "runtime", "process-sessions", "sess-1.json"),
+          JSON.stringify({ session_id: "sess-1", running: true, pid: 99999999, exitCode: null })
+        );
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [{ type: "process_session_exited", session_id: "sess-1" }],
+              resume_plan: { action: "complete_wait" },
+              process_refs: [{ session_id: "sess-1", metadata_relative_path: path.join("runtime", "process-sessions", "sess-1.json") }],
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return { capabilities: [], last_checked: new Date().toISOString() };
+          }
+          return { quality: 0.5 };
+        });
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({ status: "improved", strategy_id: "ws1" });
+        expect(mockStateManager.writeRaw).toHaveBeenCalledWith(
+          "strategies/goal-1/wait-meta/ws1.json",
+          expect.objectContaining({
+            latest_observation: expect.objectContaining({
+              status: "satisfied",
+              evidence: expect.objectContaining({
+                conditions: expect.arrayContaining([
+                  expect.objectContaining({ session_id: "sess-1", pid: 99999999, inferred_exit: true }),
+                ]),
+              }),
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
+    it("does not read process session metadata through escaping relative paths", async () => {
+      const tmpDir = makeTempDir();
+      const outsideDir = makeTempDir();
+      try {
+        const outsideSnapshot = path.join(outsideDir, "sess-escape.json");
+        fs.writeFileSync(outsideSnapshot, JSON.stringify({ session_id: "sess-escape", running: false, exitCode: 0 }));
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [{ type: "process_session_exited", session_id: "sess-escape" }],
+              resume_plan: { action: "complete_wait" },
+              process_refs: [{
+                session_id: "sess-escape",
+                metadata_relative_path: path.relative(tmpDir, outsideSnapshot),
+              }],
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return { capabilities: [], last_checked: new Date().toISOString() };
+          }
+          return { quality: 0.5 };
+        });
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({
+          status: "not_due",
+          strategy_id: "ws1",
+          details: "process session metadata not found: sess-escape",
+        });
+        expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        fs.rmSync(outsideDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
+    it("does not read process session metadata through escaping session ids", async () => {
+      const tmpDir = makeTempDir();
+      const outsideDir = makeTempDir();
+      try {
+        const outsideSnapshot = path.join(outsideDir, "sess-escape.json");
+        fs.writeFileSync(outsideSnapshot, JSON.stringify({ session_id: "sess-escape", running: false, exitCode: 0 }));
+        const escapingSessionId = path.relative(path.join(tmpDir, "runtime", "process-sessions"), outsideSnapshot).replace(/\.json$/, "");
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [{ type: "process_session_exited", session_id: escapingSessionId }],
+              resume_plan: { action: "complete_wait" },
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return { capabilities: [], last_checked: new Date().toISOString() };
+          }
+          return { quality: 0.5 };
+        });
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({
+          status: "not_due",
+          strategy_id: "ws1",
+          details: `process session metadata not found: ${escapingSessionId}`,
+        });
+        expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        fs.rmSync(outsideDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
     it("returns null for non-existent strategy", async () => {
       const portfolio = makePortfolio([]);
       (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);

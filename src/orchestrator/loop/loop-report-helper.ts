@@ -5,7 +5,7 @@
  */
 
 import type { Goal } from "../../base/types/goal.js";
-import type { ReportingEngine, LoopIterationResult } from "./core-loop/contracts.js";
+import type { ExecutionSummaryParams, ReportingEngine, LoopIterationResult } from "./core-loop/contracts.js";
 import type { Logger } from "../../runtime/logger.js";
 import { dimensionProgress } from "../../platform/drive/gap-calculator.js";
 
@@ -48,6 +48,7 @@ export async function generateLoopReport(
             verificationDiffs: iterationResult.taskResult.verificationResult.file_diffs,
           }
         : null;
+    const waitStatus = buildWaitStatus(iterationResult);
 
     const report = reportingEngine.generateExecutionSummary({
       goalId,
@@ -58,6 +59,7 @@ export async function generateLoopReport(
       stallDetected: iterationResult.stallDetected,
       pivotOccurred: iterationResult.pivotOccurred,
       elapsedMs: iterationResult.elapsedMs,
+      ...(waitStatus ? { waitStatus } : {}),
     });
     await reportingEngine.saveReport(report);
   } catch (err) {
@@ -66,4 +68,33 @@ export async function generateLoopReport(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+function buildWaitStatus(
+  iterationResult: LoopIterationResult
+): ExecutionSummaryParams["waitStatus"] | undefined {
+  if (
+    !iterationResult.waitExpiryOutcome
+    && iterationResult.waitSuppressed !== true
+    && iterationResult.waitExpired !== true
+    && iterationResult.waitObserveOnly !== true
+    && !iterationResult.waitStrategyId
+  ) {
+    return undefined;
+  }
+
+  return {
+    strategyId: iterationResult.waitStrategyId,
+    status:
+      iterationResult.waitExpiryOutcome?.status
+      ?? (iterationResult.waitSuppressed ? "suppressed" : undefined)
+      ?? (iterationResult.waitObserveOnly ? "observing" : undefined)
+      ?? (iterationResult.waitExpired ? "expired" : "active"),
+    details: iterationResult.waitExpiryOutcome?.details,
+    approvalId: iterationResult.waitApprovalId,
+    observeOnly: iterationResult.waitObserveOnly,
+    suppressed: iterationResult.waitSuppressed,
+    expired: iterationResult.waitExpired,
+    skipReason: iterationResult.skipReason,
+  };
 }
