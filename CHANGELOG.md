@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] - 2026-04-24
+
+### Added
+- Added wait/observe runtime contract coverage and deadline metadata handling for daemon goal cycles, strategy rebalance, and CoreLoop wait behavior (#733)
+- Added observe/approval-aware wait runtime phases, agentic phase policy, and process-session observability for final wait runtime flows (#734, #735)
+- Added wait observation reporting surfaces for daemon status, loop reports, reporting formatters, and portfolio rebalance metadata (#736)
+- Added runtime self-identity grounding coverage across identity loading, chat grounding, setup runtime steps, and architecture query paths (#739)
+
+### Changed
+- Made chat AgentLoop output display-text-first so user-facing chat renders the intended answer text before raw structured payloads (#738)
+- Grounded PulSeed self-identity from runtime files across chat and grounding paths instead of relying only on static/default policy text (#739)
+- Bumped the package version to `0.5.2`
+
+### Fixed
+- Fixed chat wiring regressions across ChatRunner, TUI routing, cross-platform sessions, Slack/gateway adapters, and runtime-control result routing (#732)
+- Fixed wait approval and deadline handling so deadline metadata fails softly and approval-pending waits do not spin across observe cycles (#733, #734)
+- Fixed TUI chat rendering so JSON-wrapped answer payloads are unwrapped into answer-only display text (#737, #738)
+
 ## [0.5.1] - 2026-04-23
 
 ### Added
