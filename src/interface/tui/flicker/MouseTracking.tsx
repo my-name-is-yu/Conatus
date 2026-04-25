@@ -7,7 +7,7 @@ type MouseTrackingStream = Pick<NodeJS.WriteStream, "write">;
 export function isMouseTrackingEnabled(): boolean {
   const envVal = process.env.PULSEED_MOUSE_TRACKING;
   if (!envVal) {
-    return true;
+    return false;
   }
   return envVal === "1" || envVal.toLowerCase() === "true";
 }

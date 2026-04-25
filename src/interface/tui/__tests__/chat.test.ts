@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildChatViewport,
   estimateComposerHeight,
@@ -10,7 +10,7 @@ import {
   getScrollRequest,
   stripMouseEscapeSequences,
 } from "../chat.js";
-import { buildFullscreenChatRenderLines } from "../fullscreen-chat.js";
+import { buildFullscreenChatRenderLines, copySelectedInputText, getSelectedInputText } from "../fullscreen-chat.js";
 import { estimateMarkdownHeight, estimateWrappedLineCount, wrapTextToRows } from "../markdown-renderer.js";
 import { extractBashCommand, isBashModeInput, isSafeBashCommand, createShellApprovalTask, formatShellOutput } from "../bash-mode.js";
 import {
@@ -277,6 +277,34 @@ describe("chat scroll keys", () => {
     expect(normalizeTerminalInputChunk("[200~hello[201~")).toBe("hello");
     expect(normalizeTerminalInputChunk("foo[27;2;13~bar")).toBe("foo[27;2;13~bar");
     expect(normalizeTerminalInputChunk("notes [200~ literal")).toBe("notes [200~ literal");
+  });
+});
+
+describe("composer clipboard selection", () => {
+  it("extracts selected input text in drag direction order", () => {
+    expect(getSelectedInputText("copy this text", { anchor: 0, focus: 4 })).toBe("copy");
+    expect(getSelectedInputText("copy this text", { anchor: 9, focus: 5 })).toBe("this");
+  });
+
+  it("ignores empty composer selections", () => {
+    expect(getSelectedInputText("copy", { anchor: 2, focus: 2 })).toBe("");
+    expect(getSelectedInputText("copy", null)).toBe("");
+  });
+
+  it("copies the selected composer text through the clipboard boundary", async () => {
+    const copy = vi.fn(async () => true);
+
+    await expect(copySelectedInputText("copy this text", { anchor: 9, focus: 5 }, copy)).resolves.toBe(true);
+
+    expect(copy).toHaveBeenCalledWith("this");
+  });
+
+  it("does not call the clipboard boundary for empty selections", async () => {
+    const copy = vi.fn(async () => true);
+
+    await expect(copySelectedInputText("copy", { anchor: 2, focus: 2 }, copy)).resolves.toBe(false);
+
+    expect(copy).not.toHaveBeenCalled();
   });
 });
 

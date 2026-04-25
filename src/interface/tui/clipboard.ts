@@ -12,19 +12,23 @@ function spawnWithStdin(cmd: string, args: string[], text: string): Promise<bool
 
 function writeOsc52(text: string): boolean {
   const b64 = Buffer.from(text).toString("base64");
-  writeTrustedTuiControl(`]52;c;${b64}`);
+  writeTrustedTuiControl(`\u001b]52;c;${b64}\u0007`);
   return true;
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {
   if (process.platform === "darwin") {
-    return spawnWithStdin("pbcopy", [], text);
+    const pbcopyOk = await spawnWithStdin("pbcopy", [], text);
+    if (pbcopyOk) return true;
+    return writeOsc52(text);
   }
 
   if (process.platform === "linux") {
     const xclipOk = await spawnWithStdin("xclip", ["-selection", "clipboard"], text);
     if (xclipOk) return true;
-    return spawnWithStdin("xsel", ["--clipboard", "--input"], text);
+    const xselOk = await spawnWithStdin("xsel", ["--clipboard", "--input"], text);
+    if (xselOk) return true;
+    return writeOsc52(text);
   }
 
   return writeOsc52(text);

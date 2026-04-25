@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { getClipboardContent } from "./clipboard.js";
+import { copyToClipboard, getClipboardContent } from "./clipboard.js";
 import { logTuiDebug } from "./debug-log.js";
 import { theme } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
@@ -74,12 +74,12 @@ type FullscreenChatRenderLinesInput = {
   spinnerVerb: string;
 };
 
-type SelectionState = {
+export type SelectionState = {
   anchor: number;
   focus: number;
 };
 
-type SelectionRange = {
+export type SelectionRange = {
   start: number;
   end: number;
 };
@@ -218,6 +218,23 @@ function normalizeSelection(selection: SelectionState | null): SelectionRange | 
     start: Math.min(selection.anchor, selection.focus),
     end: Math.max(selection.anchor, selection.focus),
   };
+}
+
+export function getSelectedInputText(input: string, selection: SelectionState | null): string {
+  const range = normalizeSelection(selection);
+  return range ? input.slice(range.start, range.end) : "";
+}
+
+export async function copySelectedInputText(
+  input: string,
+  selection: SelectionState | null,
+  copy: (text: string) => Promise<boolean> = copyToClipboard,
+): Promise<boolean> {
+  const selectedText = getSelectedInputText(input, selection);
+  if (!selectedText) {
+    return false;
+  }
+  return copy(selectedText);
 }
 
 function pushSegment(
@@ -792,6 +809,22 @@ export function FullscreenChat({
     return true;
   }, [replaceInputRange, selection]);
 
+  const copySelectedInput = useCallback((nextSelection: SelectionState | null) => {
+    const selectedText = getSelectedInputText(input, nextSelection);
+    if (!selectedText) {
+      return;
+    }
+
+    void copySelectedInputText(input, nextSelection).then((copied) => {
+      if (!copied) {
+        return;
+      }
+
+      setCopyToast(`copied ${selectedText.length} chars to clipboard`);
+      setTimeout(() => setCopyToast(null), 2000);
+    });
+  }, [input]);
+
   const matches = justSelected.current ? [] : getMatchingSuggestions(input, goalNames);
   const hasMatches = matches.length > 0;
   const bashMode = isBashModeInput(input);
@@ -960,6 +993,7 @@ export function FullscreenChat({
           const nextSelection = { anchor: selectionAnchor.current, focus: offset };
           selectionAnchor.current = null;
           setSelection(nextSelection.anchor === nextSelection.focus ? null : nextSelection);
+          copySelectedInput(nextSelection);
         }
         return;
       }

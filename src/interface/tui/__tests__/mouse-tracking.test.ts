@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { attachMouseTracking } from "../flicker/MouseTracking.js";
+import { attachMouseTracking, isMouseTrackingEnabled } from "../flicker/MouseTracking.js";
 import { DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING } from "../flicker/dec.js";
 
 function createMockStream(): NodeJS.WriteStream & { _written: string[] } {
@@ -14,6 +14,36 @@ function createMockStream(): NodeJS.WriteStream & { _written: string[] } {
 }
 
 describe("mouse tracking", () => {
+  it("leaves mouse tracking disabled by default so terminal text selection works", () => {
+    const original = process.env.PULSEED_MOUSE_TRACKING;
+    delete process.env.PULSEED_MOUSE_TRACKING;
+
+    try {
+      expect(isMouseTrackingEnabled()).toBe(false);
+    } finally {
+      if (original === undefined) {
+        delete process.env.PULSEED_MOUSE_TRACKING;
+      } else {
+        process.env.PULSEED_MOUSE_TRACKING = original;
+      }
+    }
+  });
+
+  it("allows mouse tracking to be explicitly enabled", () => {
+    const original = process.env.PULSEED_MOUSE_TRACKING;
+    process.env.PULSEED_MOUSE_TRACKING = "1";
+
+    try {
+      expect(isMouseTrackingEnabled()).toBe(true);
+    } finally {
+      if (original === undefined) {
+        delete process.env.PULSEED_MOUSE_TRACKING;
+      } else {
+        process.env.PULSEED_MOUSE_TRACKING = original;
+      }
+    }
+  });
+
   it("enables mouse tracking on attach and disables it on cleanup", () => {
     const stream = createMockStream();
 
