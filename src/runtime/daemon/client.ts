@@ -52,6 +52,18 @@ export interface DaemonScheduleRunNowResponse {
   scheduleId: string;
 }
 
+export interface DaemonStartGoalBackgroundRunMetadata {
+  backgroundRunId: string;
+  parentSessionId?: string | null;
+  notifyPolicy?: "silent" | "done_only" | "state_changes";
+  replyTargetSource?: "pinned_run" | "parent_session" | "none";
+  pinnedReplyTarget?: Record<string, unknown> | null;
+}
+
+export interface DaemonStartGoalOptions {
+  backgroundRun?: DaemonStartGoalBackgroundRunMetadata;
+}
+
 type EventHandler = (data: unknown) => void;
 
 const DAEMON_TOKEN_FILENAME = "daemon-token.json";
@@ -295,8 +307,8 @@ export class DaemonClient {
 
   // ─── REST Commands ───
 
-  async startGoal(goalId: string): Promise<{ ok: boolean }> {
-    return this.post(`/goals/${encodeURIComponent(goalId)}/start`, {});
+  async startGoal(goalId: string, options: DaemonStartGoalOptions = {}): Promise<{ ok: boolean; goalId?: string; backgroundRunId?: string }> {
+    return this.post(`/goals/${encodeURIComponent(goalId)}/start`, options);
   }
 
   async stopGoal(goalId: string): Promise<{ ok: boolean }> {

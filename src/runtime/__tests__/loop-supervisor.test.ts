@@ -9,6 +9,7 @@ import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
 import { GoalLeaseManager } from "../goal-lease-manager.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { BackgroundRunLedger } from "../store/background-run-store.js";
 
 function makeLoopResult(o: Partial<LoopResult> = {}): LoopResult {
   return { goalId: "g", totalIterations: 1, finalStatus: "completed", iterations: [],
@@ -447,6 +448,125 @@ describe("LoopSupervisor", () => {
       expect(journalQueue.inflightSize()).toBe(0);
       expect(await goalLeaseManager.read("g-durable")).toBeNull();
     } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("links CoreLoop background runs to the worker session and marks terminal", async () => {
+    const runId = "run:coreloop:bg";
+    const { supervisor, deps, runtimeRoot } = makeSupervisor(async (goalId: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return makeLoopResult({ goalId, totalIterations: 2 });
+    });
+    const ledger = new BackgroundRunLedger(runtimeRoot);
+    await ledger.ensureReady();
+    await ledger.create({
+      id: runId,
+      kind: "coreloop_run",
+      parent_session_id: "session:conversation:chat-bg",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      title: "Background CoreLoop",
+      workspace: "/repo",
+    });
+    (deps as { backgroundRunLedger?: BackgroundRunLedger }).backgroundRunLedger = ledger;
+
+    try {
+      await supervisor.start([]);
+      supervisor.activateGoal("g-bg", {
+        backgroundRun: {
+          backgroundRunId: runId,
+          parentSessionId: "session:conversation:chat-bg",
+        },
+      });
+
+      await waitFor(() => supervisor.getState().workers.some((worker) =>
+        worker.goalId === "g-bg" &&
+        worker.backgroundRunId === runId &&
+        worker.parentSessionId === "session:conversation:chat-bg" &&
+        worker.sessionId?.startsWith("session:coreloop:")
+      ));
+
+      const runFile = path.join(runtimeRoot, "background-runs", `${encodeURIComponent(runId)}.json`);
+      const terminal = await pollForJsonMatch<any>(runFile, (value) =>
+        value.status === "succeeded" &&
+        typeof value.child_session_id === "string" &&
+        value.child_session_id.startsWith("session:coreloop:")
+      );
+      await supervisor.shutdown();
+
+      expect(terminal).toMatchObject({
+        id: runId,
+        parent_session_id: "session:conversation:chat-bg",
+        status: "succeeded",
+        summary: "CoreLoop completed after 2 iteration(s).",
+      });
+      expect(terminal.source_refs).toContainEqual(expect.objectContaining({
+        kind: "supervisor_state",
+        path: path.join(runtimeRoot, "supervisor-state.json"),
+      }));
+    } finally {
+      await supervisor.shutdown();
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("settles coalesced CoreLoop background runs instead of leaving them queued", async () => {
+    const initialRunId = "run:coreloop:bg-initial";
+    const coalescedRunId = "run:coreloop:bg-coalesced";
+    const { supervisor, deps, runtimeRoot } = makeSupervisor(async (goalId: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      return makeLoopResult({ goalId, totalIterations: 2 });
+    });
+    const ledger = new BackgroundRunLedger(runtimeRoot);
+    await ledger.ensureReady();
+    for (const runId of [initialRunId, coalescedRunId]) {
+      await ledger.create({
+        id: runId,
+        kind: "coreloop_run",
+        parent_session_id: "session:conversation:chat-bg",
+        notify_policy: "silent",
+        reply_target_source: "none",
+        title: runId,
+      });
+    }
+    (deps as { backgroundRunLedger?: BackgroundRunLedger }).backgroundRunLedger = ledger;
+
+    try {
+      await supervisor.start([]);
+      supervisor.activateGoal("g-bg", {
+        backgroundRun: {
+          backgroundRunId: initialRunId,
+          parentSessionId: "session:conversation:chat-bg",
+        },
+      });
+      await waitFor(() => supervisor.getState().workers.some((worker) =>
+        worker.goalId === "g-bg" && worker.backgroundRunId === initialRunId
+      ));
+
+      supervisor.activateGoal("g-bg", {
+        backgroundRun: {
+          backgroundRunId: coalescedRunId,
+          parentSessionId: "session:conversation:chat-bg",
+        },
+      });
+
+      const coalescedFile = path.join(runtimeRoot, "background-runs", `${encodeURIComponent(coalescedRunId)}.json`);
+      const settled = await pollForJsonMatch<any>(coalescedFile, (value) =>
+        value.status === "cancelled" &&
+        typeof value.child_session_id === "string" &&
+        value.child_session_id.startsWith("session:coreloop:")
+      );
+      await supervisor.shutdown();
+
+      expect(settled).toMatchObject({
+        id: coalescedRunId,
+        parent_session_id: "session:conversation:chat-bg",
+        status: "cancelled",
+      });
+      expect(settled.summary).toContain("coalesced into active worker");
+    } finally {
+      await supervisor.shutdown();
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
   });

@@ -15,6 +15,8 @@ import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
 import type { CoreLoop } from "../../orchestrator/loop/core-loop.js";
 import { CommandDispatcher } from "../command-dispatcher.js";
 import { EventDispatcher } from "../event/dispatcher.js";
+import { BackgroundRunLedger } from "../store/background-run-store.js";
+import { extractBackgroundRunStartMetadata } from "./runner-commands.js";
 
 const RUNTIME_LEADER_LEASE_MS = 30_000;
 const RUNTIME_LEADER_HEARTBEAT_MS = 10_000;
@@ -205,7 +207,25 @@ export async function startDaemonRunner(
           driveSystem: context.driveSystem,
           stateManager: context.stateManager,
           logger: context.logger,
+          backgroundRunLedger: new BackgroundRunLedger(context.runtimeRoot ?? undefined),
           onGoalComplete: async (goalId, result) => context.handleGoalCompletion(goalId, result),
+          onBackgroundRunTerminal: async (run, result) => {
+            if (!context.eventServer || !run.pinned_reply_target) return;
+            const message = `Background run ${run.id} ${run.status}: ${run.summary ?? result.status}`;
+            await context.eventServer.broadcast("background_run_terminal", {
+              run_id: run.id,
+              run,
+              reply_target: run.pinned_reply_target,
+            });
+            await context.eventServer.broadcast("chat_response", {
+              goalId: `background_run:${run.id}`,
+              goal_id: `background_run:${run.id}`,
+              message,
+              status: run.status,
+              reply_target: run.pinned_reply_target,
+              background_run: run,
+            });
+          },
           onEscalation: (goalId, crashCount, lastError) => {
             context.logger.error(`Goal ${goalId} suspended after ${crashCount} crashes: ${lastError}`);
           },
@@ -230,8 +250,9 @@ export async function startDaemonRunner(
       context.commandDispatcher = new CommandDispatcher({
         journalQueue: context.journalQueue!,
         logger: context.logger,
-        onGoalStart: async (goalId) =>
-          context.runCommandWithHealth("goal_start", () => context.handleGoalStartCommand(goalId)),
+        onGoalStart: async (goalId, envelope) =>
+          context.runCommandWithHealth("goal_start", () =>
+            context.handleGoalStartCommand(goalId, extractBackgroundRunStartMetadata(envelope))),
         onGoalStop: async (goalId) =>
           context.runCommandWithHealth("goal_stop", () => context.handleGoalStopCommand(goalId)),
         onChatMessage: async (goalId, message) =>

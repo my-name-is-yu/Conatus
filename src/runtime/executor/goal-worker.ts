@@ -32,6 +32,7 @@ export class GoalWorker {
     private readonly coreLoop: CoreLoop,
     private readonly config: GoalWorkerConfig = { iterationsPerCycle: 5 },
     private readonly hooks?: {
+      onRunStart?: (goalId: string) => Promise<void> | void;
       onRunComplete?: (result: LoopResult, cumulativeIterations: number) => Promise<void> | void;
     }
   ) {
@@ -44,6 +45,7 @@ export class GoalWorker {
     this.startedAt = Date.now();
     this.currentIterations = 0;
     this.extendRequested = false;
+    await this.hooks?.onRunStart?.(goalId);
 
     try {
       let lastResult: LoopResult | undefined;

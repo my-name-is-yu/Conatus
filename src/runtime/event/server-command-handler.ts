@@ -23,14 +23,35 @@ export class EventServerCommandHandler {
   ): Promise<void> {
     if (action === "start") {
       try {
+        const body = await readBody(req);
+        const parsed = body.trim() ? JSON.parse(body) as Record<string, unknown> : {};
+        const backgroundRun = normalizeBackgroundRunMetadata(parsed["backgroundRun"]);
         await this.dispatchCommandEnvelope({
           name: "goal_start",
           goalId,
-          payload: { goalId },
+          payload: {
+            goalId,
+            ...(backgroundRun ? { backgroundRun } : {}),
+          },
         });
-        await this.broadcast("goal_start_requested", { goalId });
-        writeJson(res, 200, { ok: true, goalId });
+        await this.broadcast("goal_start_requested", {
+          goalId,
+          ...(backgroundRun?.backgroundRunId ? { backgroundRunId: backgroundRun.backgroundRunId } : {}),
+        });
+        writeJson(res, 200, {
+          ok: true,
+          goalId,
+          ...(backgroundRun?.backgroundRunId ? { backgroundRunId: backgroundRun.backgroundRunId } : {}),
+        });
       } catch (err) {
+        if (err instanceof Error && err.message === "Payload too large") {
+          writeJsonError(res, 413, "Payload too large");
+          return;
+        }
+        if (err instanceof SyntaxError) {
+          writeJsonError(res, 400, "Invalid goal start request", err);
+          return;
+        }
         writeJsonError(res, 500, "Command accept failed", err);
       }
       return;
@@ -215,4 +236,34 @@ export class EventServerCommandHandler {
       })
     );
   }
+}
+
+function normalizeBackgroundRunMetadata(value: unknown): {
+  backgroundRunId: string;
+  parentSessionId?: string | null;
+  notifyPolicy?: string;
+  replyTargetSource?: string;
+  pinnedReplyTarget?: Record<string, unknown> | null;
+} | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const input = value as Record<string, unknown>;
+  const backgroundRunId = input["backgroundRunId"];
+  if (typeof backgroundRunId !== "string" || backgroundRunId.trim() === "") return undefined;
+
+  const parentSessionId = input["parentSessionId"];
+  const notifyPolicy = input["notifyPolicy"];
+  const replyTargetSource = input["replyTargetSource"];
+  const pinnedReplyTarget = input["pinnedReplyTarget"];
+
+  return {
+    backgroundRunId,
+    ...(typeof parentSessionId === "string" || parentSessionId === null ? { parentSessionId } : {}),
+    ...(typeof notifyPolicy === "string" ? { notifyPolicy } : {}),
+    ...(typeof replyTargetSource === "string" ? { replyTargetSource } : {}),
+    ...(pinnedReplyTarget && typeof pinnedReplyTarget === "object"
+      ? { pinnedReplyTarget: pinnedReplyTarget as Record<string, unknown> }
+      : pinnedReplyTarget === null
+        ? { pinnedReplyTarget: null }
+        : {}),
+  };
 }

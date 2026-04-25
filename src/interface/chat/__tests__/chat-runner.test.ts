@@ -460,7 +460,21 @@ describe("ChatRunner", () => {
       vi.stubGlobal("fetch", mockFetch);
 
       try {
+        const stateManager = {
+          ...makeMockStateManager(),
+          getBaseDir: vi.fn().mockReturnValue(fs.mkdtempSync(path.join(os.tmpdir(), "chat-runner-tend-"))),
+          loadGoal: vi.fn().mockResolvedValue({
+            id: "goal-xyz",
+            title: "Tend test goal",
+            description: "Exercise tend confirmation.",
+            dimensions: [],
+            constraints: [],
+            created_at: "2026-04-25T00:00:00.000Z",
+            updated_at: "2026-04-25T00:00:00.000Z",
+          } as unknown as Goal),
+        } as unknown as StateManager;
         const runner = new ChatRunner(makeDeps({
+          stateManager,
           daemonClient: daemonClient as never,
           daemonBaseUrl: "http://localhost:9000",
           onNotification: (message) => { notifications.push(message); },
@@ -472,7 +486,11 @@ describe("ChatRunner", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(result.success).toBe(true);
-        expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-xyz");
+        expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-xyz", expect.objectContaining({
+          backgroundRun: expect.objectContaining({
+            backgroundRunId: expect.stringMatching(/^run:coreloop:/),
+          }),
+        }));
         expect((mockFetch as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
         expect((mockFetch as ReturnType<typeof vi.fn>).mock.invocationCallOrder[1]).toBeLessThan(
           (daemonClient.startGoal as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]

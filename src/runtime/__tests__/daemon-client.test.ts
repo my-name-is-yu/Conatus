@@ -161,6 +161,60 @@ describe("DaemonClient snapshot + replay", () => {
     });
   });
 
+  it("sends goal start background run metadata as a daemon command envelope", async () => {
+    const envelopes: unknown[] = [];
+    server.setCommandEnvelopeHook((envelope) => {
+      envelopes.push(envelope);
+    });
+    await server.start();
+
+    const client = new DaemonClient({
+      host: "127.0.0.1",
+      port: server.getPort(),
+      authToken: server.getAuthToken(),
+    });
+
+    await expect(client.startGoal("goal-bg", {
+      backgroundRun: {
+        backgroundRunId: "run:coreloop:goal-bg",
+        parentSessionId: "session:conversation:chat-bg",
+        notifyPolicy: "done_only",
+        replyTargetSource: "pinned_run",
+        pinnedReplyTarget: {
+          channel: "plugin_gateway",
+          target_id: "C123",
+          thread_id: "1710000000.000100",
+        },
+      },
+    })).resolves.toEqual({
+      ok: true,
+      goalId: "goal-bg",
+      backgroundRunId: "run:coreloop:goal-bg",
+    });
+
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]).toMatchObject({
+      type: "command",
+      name: "goal_start",
+      source: "http",
+      goal_id: "goal-bg",
+      payload: {
+        goalId: "goal-bg",
+        backgroundRun: {
+          backgroundRunId: "run:coreloop:goal-bg",
+          parentSessionId: "session:conversation:chat-bg",
+          notifyPolicy: "done_only",
+          replyTargetSource: "pinned_run",
+          pinnedReplyTarget: {
+            channel: "plugin_gateway",
+            target_id: "C123",
+            thread_id: "1710000000.000100",
+          },
+        },
+      },
+    });
+  });
+
   it("sends schedule run-now requests as daemon command envelopes", async () => {
     const envelopes: unknown[] = [];
     server.setCommandEnvelopeHook((envelope) => {
