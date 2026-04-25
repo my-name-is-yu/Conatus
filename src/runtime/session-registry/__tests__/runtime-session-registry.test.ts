@@ -288,6 +288,69 @@ describe("RuntimeSessionRegistry", () => {
     }));
   });
 
+  it("projects a completed CoreLoop handoff graph from durable ledger records", async () => {
+    await stateManager.writeRaw("chat/sessions/chat-coreloop.json", {
+      id: "chat-coreloop",
+      cwd: "/repo",
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:01:00.000Z",
+      title: "CoreLoop handoff",
+      messages: [],
+    });
+
+    const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
+    await ledger.ensureReady();
+    await ledger.create({
+      id: "run:coreloop:handoff",
+      kind: "coreloop_run",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      parent_session_id: "session:conversation:chat-coreloop",
+      child_session_id: "session:coreloop:worker-handoff",
+      title: "CoreLoop handoff",
+      workspace: "/repo",
+      created_at: "2026-04-25T00:02:00.000Z",
+      started_at: "2026-04-25T00:03:00.000Z",
+      status: "running",
+      source_refs: [{
+        kind: "supervisor_state",
+        id: null,
+        path: null,
+        relative_path: "runtime/supervisor-state.json",
+        updated_at: "2026-04-25T00:03:00.000Z",
+      }],
+    });
+    await ledger.terminal("run:coreloop:handoff", {
+      status: "succeeded",
+      completed_at: "2026-04-25T00:04:00.000Z",
+      summary: "CoreLoop completed.",
+    });
+
+    const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+
+    expect(snapshot.sessions).toContainEqual(expect.objectContaining({
+      id: "session:conversation:chat-coreloop",
+      kind: "conversation",
+    }));
+    expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:coreloop:handoff",
+      kind: "coreloop_run",
+      parent_session_id: "session:conversation:chat-coreloop",
+      child_session_id: "session:coreloop:worker-handoff",
+      status: "succeeded",
+    }));
+    expect(snapshot.sessions).toContainEqual(expect.objectContaining({
+      id: "session:coreloop:worker-handoff",
+      kind: "coreloop",
+      parent_session_id: "session:conversation:chat-coreloop",
+      status: "ended",
+      attachable: false,
+      state_ref: expect.objectContaining({
+        relative_path: "runtime/supervisor-state.json",
+      }),
+    }));
+  });
+
   it("does not project idle supervisor workers as active CoreLoop runs", async () => {
     await stateManager.writeRaw("supervisor-state.json", {
       workers: [

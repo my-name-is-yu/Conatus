@@ -64,7 +64,7 @@ export class RuntimeSessionRegistry {
     await this.projectChatAndAgentSessions(sessions, backgroundRuns, warnings);
     await this.projectSupervisorState(sessions, backgroundRuns, warnings);
     await this.projectProcessSessions(backgroundRuns, warnings);
-    await this.projectLedgerRuns(backgroundRuns, warnings);
+    await this.projectLedgerRuns(sessions, backgroundRuns, warnings);
 
     sessions.sort(compareByUpdatedAtThenId);
     backgroundRuns.sort(compareByUpdatedAtThenId);
@@ -374,13 +374,15 @@ export class RuntimeSessionRegistry {
       const goalId = stringField(worker, "goalId");
       if (!goalId) continue;
       const startedAt = numberToIso(worker["startedAt"]) ?? updatedAt;
-      const sessionId = coreLoopSessionId(workerId);
+      const sessionId = stringField(worker, "sessionId") ?? coreLoopSessionId(workerId);
+      const runId = stringField(worker, "backgroundRunId") ?? coreLoopRunId(workerId);
+      const parentSessionId = stringField(worker, "parentSessionId");
       const title = goalId ? `CoreLoop goal ${goalId}` : `CoreLoop worker ${workerId}`;
       sessions.push({
         schema_version: "runtime-session-v1",
         id: sessionId,
         kind: "coreloop",
-        parent_session_id: null,
+        parent_session_id: parentSessionId,
         title,
         workspace: null,
         status: "active",
@@ -396,9 +398,9 @@ export class RuntimeSessionRegistry {
       });
       backgroundRuns.push(BackgroundRunSchema.parse({
         schema_version: "background-run-v1",
-        id: coreLoopRunId(workerId),
+        id: runId,
         kind: "coreloop_run",
-        parent_session_id: null,
+        parent_session_id: parentSessionId,
         child_session_id: sessionId,
         process_session_id: null,
         status: "running",
@@ -475,6 +477,7 @@ export class RuntimeSessionRegistry {
   }
 
   private async projectLedgerRuns(
+    sessions: RuntimeSession[],
     backgroundRuns: BackgroundRun[],
     warnings: RuntimeSessionRegistryWarning[],
   ): Promise<void> {
@@ -491,8 +494,14 @@ export class RuntimeSessionRegistry {
     }
 
     const byId = new Map(backgroundRuns.map((run) => [run.id, run]));
+    const sessionIds = new Set(sessions.map((session) => session.id));
     for (const run of ledgerRuns) {
-      byId.set(run.id, mergeLedgerRunWithProjection(run, byId.get(run.id)));
+      const merged = mergeLedgerRunWithProjection(run, byId.get(run.id));
+      byId.set(run.id, merged);
+      if (merged.kind === "coreloop_run" && merged.child_session_id && !sessionIds.has(merged.child_session_id)) {
+        sessions.push(coreLoopSessionFromLedgerRun(merged));
+        sessionIds.add(merged.child_session_id);
+      }
     }
     backgroundRuns.splice(0, backgroundRuns.length, ...byId.values());
   }
@@ -625,6 +634,36 @@ function mergeLedgerRunWithProjection(ledgerRun: BackgroundRun, projectedRun: Ba
     error: projectedRun.error ?? ledgerRun.error,
     source_refs: [...ledgerRun.source_refs, ...projectedRun.source_refs],
   });
+}
+
+function coreLoopSessionFromLedgerRun(run: BackgroundRun): RuntimeSession {
+  const stateRef = run.source_refs.find((ref) => ref.kind === "supervisor_state") ?? null;
+  const createdAt = run.started_at ?? run.created_at;
+  return {
+    schema_version: "runtime-session-v1",
+    id: run.child_session_id!,
+    kind: "coreloop",
+    parent_session_id: run.parent_session_id,
+    title: run.title ?? run.id,
+    workspace: run.workspace,
+    status: coreLoopSessionStatusFromRunStatus(run.status),
+    created_at: createdAt,
+    updated_at: run.updated_at,
+    last_event_at: run.updated_at,
+    transcript_ref: null,
+    state_ref: stateRef,
+    reply_target: null,
+    resumable: false,
+    attachable: isActiveRunStatus(run.status),
+    source_refs: run.source_refs,
+  };
+}
+
+function coreLoopSessionStatusFromRunStatus(status: BackgroundRunStatus): RuntimeSessionStatus {
+  if (status === "queued" || status === "running") return "active";
+  if (status === "lost") return "lost";
+  if (status === "unknown") return "unknown";
+  return "ended";
 }
 
 function isActiveRunStatus(status: BackgroundRunStatus): boolean {

@@ -89,6 +89,7 @@ import {
   handleInboundEnvelope as handleInboundEnvelopeFn,
   handleRuntimeControlCommand as handleRuntimeControlCommandFn,
   handleScheduleRunNowCommand as handleScheduleRunNowCommandFn,
+  type BackgroundRunStartMetadata,
 } from "./runner-commands.js";
 import { runDaemonGoalCycleLoop } from "./runner-goal-cycle.js";
 import { WaitDeadlineResolver, type WaitDeadlineResolution } from "./wait-deadline-resolver.js";
@@ -321,6 +322,7 @@ export class DaemonRunner {
       loop_count: 0,
       active_goals: [],
       status: "stopped",
+      runtime_root: this.runtimeRoot,
       crash_count: 0,
       last_error: null,
       last_resident_at: null,
@@ -646,8 +648,8 @@ export class DaemonRunner {
     await handleInboundEnvelopeFn(this as never, envelope);
   }
 
-  private async handleGoalStartCommand(goalId: string): Promise<void> {
-    await handleGoalStartCommandFn(this as never, goalId);
+  private async handleGoalStartCommand(goalId: string, metadata?: BackgroundRunStartMetadata): Promise<void> {
+    await handleGoalStartCommandFn(this as never, goalId, metadata);
   }
 
   private async handleGoalStopCommand(goalId: string): Promise<void> {

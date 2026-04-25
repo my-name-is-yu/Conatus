@@ -10,6 +10,8 @@ import { GoalLeaseManager } from '../goal-lease-manager.js';
 import { JournalBackedQueue, type JournalBackedQueueClaim } from '../queue/journal-backed-queue.js';
 import { StateFenceError } from '../../base/utils/errors.js';
 import { getPulseedDirPath } from '../../base/utils/paths.js';
+import type { BackgroundRunLedger } from '../store/background-run-store.js';
+import type { BackgroundRun, RuntimeSessionRef } from '../session-registry/types.js';
 
 export interface SupervisorConfig {
   concurrency: number;
@@ -29,8 +31,10 @@ export interface SupervisorDeps {
   driveSystem: DriveSystem;
   stateManager: StateManager;
   logger?: Logger;
+  backgroundRunLedger?: Pick<BackgroundRunLedger, 'load' | 'link' | 'started' | 'terminal'>;
   onCycleComplete?: (goalId: string, result: WorkerResult) => Promise<void> | void;
   onGoalComplete?: (goalId: string, result: WorkerResult) => Promise<void> | void;
+  onBackgroundRunTerminal?: (run: BackgroundRun, result: WorkerResult) => Promise<void> | void;
   onEscalation?: (goalId: string, crashCount: number, lastError: string) => void;
 }
 
@@ -40,6 +44,9 @@ export interface SupervisorState {
     goalId: string | null;
     startedAt: number;
     iterations: number;
+    backgroundRunId?: string | null;
+    sessionId?: string | null;
+    parentSessionId?: string | null;
   }>;
   crashCounts: Record<string, number>;
   suspendedGoals: string[];
@@ -51,9 +58,19 @@ interface DurableGoalActivation {
   claim: JournalBackedQueueClaim;
   ownerToken: string;
   attemptId: string;
+  backgroundRun?: GoalActivationBackgroundRun;
 }
 
 type GoalActivation = DurableGoalActivation;
+
+export interface GoalActivationBackgroundRun {
+  backgroundRunId: string;
+  parentSessionId?: string | null;
+}
+
+export interface ActivateGoalOptions {
+  backgroundRun?: GoalActivationBackgroundRun;
+}
 
 const DEFAULT_CONFIG: SupervisorConfig = {
   concurrency: 4,
@@ -66,9 +83,22 @@ const DEFAULT_CONFIG: SupervisorConfig = {
   leaseRenewIntervalMs: 10_000,
 };
 
+function workerStatusToBackgroundRunStatus(
+  status: WorkerResult['status'],
+): 'succeeded' | 'failed' | 'cancelled' {
+  if (status === 'completed') return 'succeeded';
+  if (status === 'stopped') return 'cancelled';
+  return 'failed';
+}
+
 export class LoopSupervisor {
   private workers: GoalWorker[] = [];
   private activeGoals: Map<string, GoalWorker> = new Map();
+  private activeBackgroundRuns: Map<string, {
+    backgroundRunId: string;
+    sessionId: string;
+    parentSessionId: string | null;
+  }> = new Map();
   private crashCounts: Map<string, number> = new Map();
   private suspendedGoals: Set<string> = new Set();
   private stoppedGoals: Set<string> = new Set();
@@ -90,6 +120,9 @@ export class LoopSupervisor {
     const workerCfg: GoalWorkerConfig = { iterationsPerCycle: this.config.iterationsPerCycle };
     for (let i = 0; i < this.config.concurrency; i++) {
       this.workers.push(new GoalWorker(this.deps.coreLoopFactory(), workerCfg, {
+        onRunStart: () => {
+          this.persistState();
+        },
         onRunComplete: async (loopResult, cumulativeIterations) => {
           await this.deps.onCycleComplete?.(loopResult.goalId, {
             goalId: loopResult.goalId,
@@ -131,12 +164,22 @@ export class LoopSupervisor {
 
   getState(): SupervisorState {
     return {
-      workers: this.workers.map(w => ({
-        workerId: w.id,
-        goalId: w.getCurrentGoalId(),
-        startedAt: w.getStartedAt(),
-        iterations: w.getIterations(),
-      })),
+      workers: this.workers.map(w => {
+        const backgroundRun = this.activeBackgroundRuns.get(w.id);
+        return {
+          workerId: w.id,
+          goalId: w.getCurrentGoalId(),
+          startedAt: w.getStartedAt(),
+          iterations: w.getIterations(),
+          ...(backgroundRun
+            ? {
+                backgroundRunId: backgroundRun.backgroundRunId,
+                sessionId: backgroundRun.sessionId,
+                parentSessionId: backgroundRun.parentSessionId,
+              }
+            : {}),
+        };
+      }),
       crashCounts: Object.fromEntries(this.crashCounts),
       suspendedGoals: [...this.suspendedGoals],
       updatedAt: Date.now(),
@@ -166,10 +209,10 @@ export class LoopSupervisor {
     }
   }
 
-  activateGoal(goalId: string): void {
+  activateGoal(goalId: string, options: ActivateGoalOptions = {}): void {
     this.stoppedGoals.delete(goalId);
     this.suspendedGoals.delete(goalId);
-    this.enqueueGoalActivation(goalId);
+    this.enqueueGoalActivation(goalId, options);
   }
 
   deactivateGoal(goalId: string): void {
@@ -189,19 +232,29 @@ export class LoopSupervisor {
     });
   }
 
-  private enqueueGoalActivation(goalId: string): void {
+  private enqueueGoalActivation(goalId: string, options: ActivateGoalOptions = {}): void {
     if (this.stoppedGoals.has(goalId)) {
       return;
     }
 
+    const backgroundRunId = options.backgroundRun?.backgroundRunId;
     const envelope = createEnvelope({
       type: 'event',
       name: 'goal_activated',
       source: 'supervisor',
       goal_id: goalId,
-      payload: {},
+      payload: backgroundRunId
+        ? {
+            backgroundRun: {
+              backgroundRunId,
+              ...(options.backgroundRun?.parentSessionId !== undefined
+                ? { parentSessionId: options.backgroundRun.parentSessionId }
+                : {}),
+            },
+          }
+        : {},
       priority: 'normal',
-      dedupe_key: `goal_activated:${goalId}`,
+      dedupe_key: backgroundRunId ? `goal_activated:${goalId}:${backgroundRunId}` : `goal_activated:${goalId}`,
     });
 
     const accepted = this.deps.journalQueue.accept(envelope);
@@ -226,7 +279,9 @@ export class LoopSupervisor {
 
         const goalId = dispatch.goalId;
         if (this.activeGoals.has(goalId)) {
-          this.activeGoals.get(goalId)!.requestExtend();
+          const activeWorker = this.activeGoals.get(goalId)!;
+          activeWorker.requestExtend();
+          await this.markCoalescedBackgroundRun(dispatch, activeWorker);
           await this.completeClaim(dispatch);
           continue;
         }
@@ -274,6 +329,21 @@ export class LoopSupervisor {
       claim,
       ownerToken: claim.claimToken,
       attemptId: claim.claimToken,
+      backgroundRun: this.extractActivationBackgroundRun(claim.envelope.payload),
+    };
+  }
+
+  private extractActivationBackgroundRun(payload: unknown): GoalActivationBackgroundRun | undefined {
+    if (!payload || typeof payload !== 'object') return undefined;
+    const backgroundRun = (payload as Record<string, unknown>)['backgroundRun'];
+    if (!backgroundRun || typeof backgroundRun !== 'object') return undefined;
+    const input = backgroundRun as Record<string, unknown>;
+    const backgroundRunId = input['backgroundRunId'];
+    if (typeof backgroundRunId !== 'string' || backgroundRunId.trim() === '') return undefined;
+    const parentSessionId = input['parentSessionId'];
+    return {
+      backgroundRunId,
+      ...(typeof parentSessionId === 'string' || parentSessionId === null ? { parentSessionId } : {}),
     };
   }
 
@@ -341,6 +411,8 @@ export class LoopSupervisor {
     const stopRenewal = this.startLeaseRenewLoop(activation, () => {
       ownershipLost = true;
     });
+    this.setActiveBackgroundRun(worker, activation);
+    await this.markBackgroundRunStarted(activation, worker);
 
     try {
       const result: WorkerResult = await worker.execute(goalId);
@@ -356,6 +428,7 @@ export class LoopSupervisor {
             crashCount: count,
           });
           this.deps.onEscalation?.(goalId, count, result.error ?? 'unknown error');
+          await this.markBackgroundRunTerminal(activation, result);
           await this.failClaim(
             activation,
             result.error ?? 'goal suspended after max crashes',
@@ -387,13 +460,143 @@ export class LoopSupervisor {
         });
       }
 
+      await this.markBackgroundRunTerminal(activation, result);
       await this.completeClaim(activation, ownershipLost);
     } finally {
       stopRenewal();
       this.clearWriteFence(goalId);
       await this.releaseExecutionLease(activation);
       this.activeGoals.delete(goalId);
+      this.activeBackgroundRuns.delete(worker.id);
       this.persistState();
+    }
+  }
+
+  private coreLoopSessionId(worker: GoalWorker): string {
+    return `session:coreloop:${worker.id}`;
+  }
+
+  private setActiveBackgroundRun(worker: GoalWorker, activation: GoalActivation): void {
+    const runId = activation.backgroundRun?.backgroundRunId;
+    if (!runId) return;
+    this.activeBackgroundRuns.set(worker.id, {
+      backgroundRunId: runId,
+      sessionId: this.coreLoopSessionId(worker),
+      parentSessionId: activation.backgroundRun?.parentSessionId ?? null,
+    });
+  }
+
+  private supervisorStateRef(): RuntimeSessionRef {
+    return {
+      kind: 'supervisor_state',
+      id: null,
+      path: this.config.stateFilePath,
+      relative_path: null,
+      updated_at: null,
+    };
+  }
+
+  private async mergeBackgroundRunSourceRefs(
+    runId: string,
+    refs: RuntimeSessionRef[],
+  ): Promise<RuntimeSessionRef[]> {
+    const existing = await this.deps.backgroundRunLedger?.load(runId).catch(() => null);
+    const currentRefs = existing?.source_refs ?? [];
+    const merged = [...currentRefs];
+    for (const ref of refs) {
+      const duplicate = merged.some((existingRef) =>
+        existingRef.kind === ref.kind
+        && existingRef.id === ref.id
+        && existingRef.path === ref.path
+        && existingRef.relative_path === ref.relative_path
+      );
+      if (!duplicate) merged.push(ref);
+    }
+    return merged;
+  }
+
+  private async markBackgroundRunStarted(activation: GoalActivation, worker: GoalWorker): Promise<void> {
+    const runId = activation.backgroundRun?.backgroundRunId;
+    if (!runId || !this.deps.backgroundRunLedger) return;
+    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [this.supervisorStateRef()]);
+    try {
+      if (activation.backgroundRun?.parentSessionId !== undefined) {
+        await this.deps.backgroundRunLedger.link(runId, {
+          parent_session_id: activation.backgroundRun.parentSessionId,
+          child_session_id: this.coreLoopSessionId(worker),
+          source_refs: sourceRefs,
+        });
+      }
+      await this.deps.backgroundRunLedger.started(runId, {
+        child_session_id: this.coreLoopSessionId(worker),
+        source_refs: sourceRefs,
+      });
+    } catch (err) {
+      this.deps.logger?.warn('Failed to mark background run started', {
+        goalId: activation.goalId,
+        backgroundRunId: runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async markBackgroundRunTerminal(activation: GoalActivation, result: WorkerResult): Promise<void> {
+    const runId = activation.backgroundRun?.backgroundRunId;
+    if (!runId || !this.deps.backgroundRunLedger) return;
+    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [this.supervisorStateRef()]);
+    try {
+      const run = await this.deps.backgroundRunLedger.terminal(runId, {
+        status: workerStatusToBackgroundRunStatus(result.status),
+        summary: `CoreLoop ${result.status} after ${result.totalIterations} iteration(s).`,
+        error: result.error ?? null,
+        source_refs: sourceRefs,
+      });
+      if (run.notify_policy !== 'silent' && run.pinned_reply_target) {
+        await this.deps.onBackgroundRunTerminal?.(run, result);
+      }
+    } catch (err) {
+      this.deps.logger?.warn('Failed to mark background run terminal', {
+        goalId: activation.goalId,
+        backgroundRunId: runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async markCoalescedBackgroundRun(activation: GoalActivation, activeWorker: GoalWorker): Promise<void> {
+    const runId = activation.backgroundRun?.backgroundRunId;
+    if (!runId || !this.deps.backgroundRunLedger) return;
+    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [this.supervisorStateRef()]);
+    const childSessionId = this.coreLoopSessionId(activeWorker);
+    try {
+      await this.deps.backgroundRunLedger.link(runId, {
+        parent_session_id: activation.backgroundRun?.parentSessionId ?? null,
+        child_session_id: childSessionId,
+        source_refs: sourceRefs,
+      });
+      await this.deps.backgroundRunLedger.started(runId, {
+        child_session_id: childSessionId,
+        source_refs: sourceRefs,
+      });
+      const run = await this.deps.backgroundRunLedger.terminal(runId, {
+        status: "cancelled",
+        summary: `CoreLoop activation coalesced into active worker ${activeWorker.id}.`,
+        source_refs: sourceRefs,
+      });
+      if (run.notify_policy !== 'silent' && run.pinned_reply_target) {
+        await this.deps.onBackgroundRunTerminal?.(run, {
+          goalId: activation.goalId,
+          status: 'stopped',
+          totalIterations: 0,
+          durationMs: 0,
+        });
+      }
+    } catch (err) {
+      this.deps.logger?.warn('Failed to settle coalesced background run', {
+        goalId: activation.goalId,
+        backgroundRunId: runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

@@ -12,6 +12,14 @@ import type { JournalBackedQueue, JournalBackedQueueAcceptResult } from "../queu
 import { writeChatMessageEvent } from "./maintenance.js";
 import { runCommandWithHealth as runCommandWithHealthFn } from "./runner-errors.js";
 
+export interface BackgroundRunStartMetadata {
+  backgroundRunId: string;
+  parentSessionId?: string | null;
+  notifyPolicy?: "silent" | "done_only" | "state_changes";
+  replyTargetSource?: "pinned_run" | "parent_session" | "none";
+  pinnedReplyTarget?: Record<string, unknown> | null;
+}
+
 export interface DaemonRunnerCommandContext {
   runtimeRoot?: string;
   logger: Logger;
@@ -80,15 +88,47 @@ export async function handleGoalStartCommand(
     "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state"
   >,
   goalId: string,
+  metadata?: BackgroundRunStartMetadata,
 ): Promise<void> {
   if (!context.currentGoalIds.includes(goalId)) {
     context.currentGoalIds.push(goalId);
   }
   context.refreshOperationalState();
   await context.saveDaemonState();
-  context.supervisor?.activateGoal(goalId);
+  context.supervisor?.activateGoal(goalId, metadata?.backgroundRunId ? { backgroundRun: metadata } : undefined);
   context.abortSleep();
   await context.broadcastGoalUpdated(goalId, "active");
+}
+
+export function extractBackgroundRunStartMetadata(envelope: Envelope): BackgroundRunStartMetadata | undefined {
+  const payload = envelope.payload;
+  if (!payload || typeof payload !== "object") return undefined;
+  const backgroundRun = (payload as Record<string, unknown>)["backgroundRun"];
+  if (!backgroundRun || typeof backgroundRun !== "object") return undefined;
+  const input = backgroundRun as Record<string, unknown>;
+  const backgroundRunId = input["backgroundRunId"];
+  if (typeof backgroundRunId !== "string" || backgroundRunId.trim() === "") return undefined;
+
+  const parentSessionId = input["parentSessionId"];
+  const notifyPolicy = input["notifyPolicy"];
+  const replyTargetSource = input["replyTargetSource"];
+  const pinnedReplyTarget = input["pinnedReplyTarget"];
+
+  return {
+    backgroundRunId,
+    ...(typeof parentSessionId === "string" || parentSessionId === null ? { parentSessionId } : {}),
+    ...(notifyPolicy === "silent" || notifyPolicy === "done_only" || notifyPolicy === "state_changes"
+      ? { notifyPolicy }
+      : {}),
+    ...(replyTargetSource === "pinned_run" || replyTargetSource === "parent_session" || replyTargetSource === "none"
+      ? { replyTargetSource }
+      : {}),
+    ...(pinnedReplyTarget && typeof pinnedReplyTarget === "object"
+      ? { pinnedReplyTarget: pinnedReplyTarget as Record<string, unknown> }
+      : pinnedReplyTarget === null
+        ? { pinnedReplyTarget: null }
+        : {}),
+  };
 }
 
 export async function handleGoalStopCommand(

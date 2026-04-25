@@ -1435,6 +1435,9 @@ export class ChatRunner {
       daemonClient: this.deps.daemonClient,
       stateManager: this.deps.stateManager,
       chatHistory: history,
+      sessionId: this.history?.getSessionId() ?? null,
+      workspace: this.sessionCwd ?? process.cwd(),
+      replyTarget: this.runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
     };
 
     const tendCommand = new TendCommand();
@@ -1511,7 +1514,34 @@ export class ChatRunner {
     }
 
     try {
-      await this.deps.daemonClient.startGoal(goalId);
+      const tendDeps: TendDeps = {
+        llmClient: this.deps.llmClient as ILLMClient,
+        goalNegotiator: this.deps.goalNegotiator as GoalNegotiator,
+        daemonClient: this.deps.daemonClient,
+        stateManager: this.deps.stateManager,
+        chatHistory: this.history?.getMessages() ?? [],
+        sessionId: this.history?.getSessionId() ?? null,
+        workspace: this.sessionCwd ?? process.cwd(),
+        replyTarget: this.runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
+      };
+      const result = await new TendCommand().startAcceptedGoal(goalId, maxIterations, tendDeps);
+      if (!result.success) {
+        if (subscriber) {
+          subscriber.unsubscribe();
+          this.activeSubscribers.delete(goalId);
+        }
+        return {
+          success: false,
+          output: result.message,
+          elapsed_ms: Date.now() - start,
+        };
+      }
+      const shortId = goalId.length > 12 ? goalId.slice(0, 12) : goalId;
+      return {
+        success: true,
+        output: `[tend] ${shortId}: Started — daemon is now tending your goal${maxIterations !== undefined ? ` (max ${maxIterations} iterations)` : ""}.\nBackground run: ${result.backgroundRunId}\nRun 'pulseed status' to check progress.`,
+        elapsed_ms: Date.now() - start,
+      };
     } catch (err) {
       if (subscriber) {
         subscriber.unsubscribe();
@@ -1524,14 +1554,6 @@ export class ChatRunner {
         elapsed_ms: Date.now() - start,
       };
     }
-
-    const iterNote = maxIterations !== undefined ? ` (max ${maxIterations} iterations)` : "";
-    const shortId = goalId.length > 12 ? goalId.slice(0, 12) : goalId;
-    return {
-      success: true,
-      output: `[tend] ${shortId}: Started — daemon is now tending your goal${iterNote}.\nRun 'pulseed status' to check progress.`,
-      elapsed_ms: Date.now() - start,
-    };
   }
 
   /**
