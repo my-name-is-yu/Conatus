@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
@@ -85,6 +85,64 @@ describe("GoalNegotiator", () => {
   // ─── negotiate() — Dimension Decomposition ───
 
   describe("negotiate() dimension decomposition", () => {
+    it("does not persist a goal when timeout wins before commit", async () => {
+      let callCount = 0;
+      const slowLLM = {
+        sendMessage: vi.fn(async () => {
+          const index = callCount++;
+          if (index === 0) {
+            return {
+              content: SINGLE_DIMENSION_RESPONSE,
+              usage: { input_tokens: 10, output_tokens: SINGLE_DIMENSION_RESPONSE.length },
+              stop_reason: "end_turn",
+            };
+          }
+          if (index === 1) {
+            return {
+              content: FEASIBILITY_REALISTIC,
+              usage: { input_tokens: 10, output_tokens: FEASIBILITY_REALISTIC.length },
+              stop_reason: "end_turn",
+            };
+          }
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                content: RESPONSE_MESSAGE_ACCEPT,
+                usage: { input_tokens: 10, output_tokens: RESPONSE_MESSAGE_ACCEPT.length },
+                stop_reason: "end_turn",
+              });
+            }, 200);
+          });
+        }),
+        parseJSON: <T,>(content: string, schema: { parse: (value: unknown) => T }) => schema.parse(JSON.parse(content)),
+      };
+      const ethicsGate = {
+        check: vi.fn().mockResolvedValue(JSON.parse(PASS_VERDICT)),
+      };
+      const negotiator = new GoalNegotiator(stateManager, slowLLM as never, ethicsGate as unknown as EthicsGate, observationEngine);
+
+      const result = negotiator.negotiate("Slow goal", { timeoutMs: 100 });
+      const observed = result.then(
+        () => null,
+        (err) => err
+      );
+
+      for (let attempt = 0; attempt < 10 && slowLLM.sendMessage.mock.calls.length < 3; attempt += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(slowLLM.sendMessage).toHaveBeenCalledTimes(3);
+
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const err = await observed;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toBe("Goal negotiation timed out after 100ms");
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(await stateManager.listGoalIds()).toEqual([]);
+    });
+
     it("records decomposition in negotiation log", async () => {
       const mockLLM = createMockLLMClient([
         PASS_VERDICT,

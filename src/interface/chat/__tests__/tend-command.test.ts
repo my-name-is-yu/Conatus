@@ -162,6 +162,7 @@ describe("TendCommand", () => {
       const result = await cmd.generateGoal("Fix the login bug", goalNegotiator);
       expect(goalNegotiator.negotiate).toHaveBeenCalledWith("Fix the login bug", {
         constraints: ["source: tend (auto-generated from chat)"],
+        timeoutMs: 300_000,
       });
       expect(result.id).toBe(goal.id);
     });

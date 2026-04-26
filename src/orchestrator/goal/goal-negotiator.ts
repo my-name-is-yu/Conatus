@@ -98,15 +98,27 @@ export class GoalNegotiator {
     }
   ): Promise<{ goal: Goal; response: NegotiationResponse; log: NegotiationLog }> {
     const timeoutMs = options?.timeoutMs ?? 120_000;
+    let timedOut = false;
     let handle: ReturnType<typeof setTimeout>;
     const timeoutPromise = new Promise<never>((_, reject) => {
       handle = setTimeout(
-        () => reject(new Error(`Goal negotiation timed out after ${timeoutMs}ms`)),
+        () => {
+          timedOut = true;
+          reject(new Error(`Goal negotiation timed out after ${timeoutMs}ms`));
+        },
         timeoutMs
       );
     });
+    const timeoutGuard = {
+      throwIfTimedOut: () => {
+        if (timedOut) throw new Error(`Goal negotiation timed out after ${timeoutMs}ms`);
+      },
+      markCommitStarted: () => {
+        clearTimeout(handle!);
+      },
+    };
     try {
-      return await Promise.race([this._negotiate(rawGoalDescription, options), timeoutPromise]);
+      return await Promise.race([this._negotiate(rawGoalDescription, options, timeoutGuard), timeoutPromise]);
     } finally {
       clearTimeout(handle!);
     }
@@ -119,6 +131,10 @@ export class GoalNegotiator {
       constraints?: string[];
       timeHorizonDays?: number;
       workspaceContext?: string;
+    },
+    timeoutGuard?: {
+      throwIfTimedOut: () => void;
+      markCommitStarted: () => void;
     }
   ): Promise<{ goal: Goal; response: NegotiationResponse; log: NegotiationLog }> {
     const goalId = randomUUID();
@@ -136,6 +152,7 @@ export class GoalNegotiator {
 
     // Step 0: Ethics Gate
     const ethicsVerdict = await this.ethicsGate.check("goal", goalId, rawGoalDescription);
+    timeoutGuard?.throwIfTimedOut();
     if (ethicsVerdict.verdict === "reject") throw new EthicsRejectedError(ethicsVerdict);
     const ethicsFlags = ethicsVerdict.verdict === "flag" ? ethicsVerdict.risks : undefined;
 
@@ -147,6 +164,7 @@ export class GoalNegotiator {
       this.llmClient,
       options?.workspaceContext
     );
+    timeoutGuard?.throwIfTimedOut();
     log.step2_decomposition = { dimensions, method: "llm" };
 
     // Step 3: Initial Baseline
@@ -181,6 +199,7 @@ export class GoalNegotiator {
         main_risks: [],
       };
     });
+    timeoutGuard?.throwIfTimedOut();
     log.step4_evaluation = { path: "qualitative", dimensions: feasibilityResults };
 
     // Step 4b: Capability Check
@@ -193,6 +212,7 @@ export class GoalNegotiator {
         feasibilityResults,
         log
       );
+      timeoutGuard?.throwIfTimedOut();
     }
 
     // Step 5: Response
@@ -210,6 +230,7 @@ export class GoalNegotiator {
       ethicsFlags,
       initialConfidence
     );
+    timeoutGuard?.throwIfTimedOut();
 
     log.step5_response = {
       type: responseType,
@@ -249,6 +270,8 @@ export class GoalNegotiator {
       updated_at: now,
     });
 
+    timeoutGuard?.throwIfTimedOut();
+    timeoutGuard?.markCommitStarted();
     await this.stateManager.saveGoal(goal);
     await this.saveNegotiationLog(goalId, log);
 

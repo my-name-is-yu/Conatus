@@ -51,6 +51,7 @@ export interface TendResult {
 // --- Constants ---
 
 const MAX_HISTORY_MESSAGES = 20;
+const DEFAULT_TEND_GOAL_NEGOTIATION_TIMEOUT_MS = 300_000;
 const SUMMARY_PROMPT = `You are analyzing a developer's chat conversation to extract their main objective.
 Summarize what the user wants to achieve in 1-3 sentences. Focus on concrete, measurable outcomes.
 Be specific -- mention file names, metrics, or technical goals if present.
@@ -113,6 +114,7 @@ export class TendCommand {
   async generateGoal(summary: string, goalNegotiator: GoalNegotiator): Promise<Goal> {
     const result = await goalNegotiator.negotiate(summary, {
       constraints: ["source: tend (auto-generated from chat)"],
+      timeoutMs: DEFAULT_TEND_GOAL_NEGOTIATION_TIMEOUT_MS,
     });
     return result.goal;
   }
