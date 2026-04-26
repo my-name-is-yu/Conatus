@@ -988,6 +988,16 @@ export function FullscreenChat({
     });
   }, [maxScrollOffset, viewport.maxVisibleRows]);
 
+  useInput((inputChar, key) => {
+    const scrollRequest = getScrollRequest(inputChar, key);
+    if (!scrollRequest) return;
+    logTuiDebug("fullscreen-chat", "processing-scroll-request", {
+      direction: scrollRequest.direction,
+      kind: scrollRequest.kind,
+    });
+    applyScroll(scrollRequest.direction, scrollRequest.kind);
+  }, { isActive: isProcessing });
+
   const handleSubmit = useCallback((value: string) => {
     logTuiDebug("fullscreen-chat", "submit-attempt", {
       value,
