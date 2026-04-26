@@ -4,6 +4,7 @@ import type { RankedCandidate } from "../../../platform/code-search/contracts.js
 import { saveCodeSearchSession } from "../../../platform/code-search/session-store.js";
 import { validateFilePath } from "../../fs/FileValidationTool/FileValidationTool.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
+import { resolveCodeSearchRoot } from "../code-search-root.js";
 import { MAX_OUTPUT_CHARS, PERMISSION_LEVEL, READ_ONLY, TAGS } from "./constants.js";
 import { DESCRIPTION } from "./prompt.js";
 
@@ -64,7 +65,18 @@ export class CodeSearchTool implements ITool<CodeSearchInput, unknown> {
 
   async call(input: CodeSearchInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const cwd = input.path ? validateFilePath(input.path, context.cwd).resolved : context.cwd;
+    let cwd: string;
+    try {
+      cwd = resolveCodeSearchRoot(input, context, "code_search");
+    } catch (err) {
+      return {
+        success: false,
+        data: { candidates: [], candidateIds: [], totalCandidates: 0, warnings: [(err as Error).message] },
+        summary: `Code search failed: ${(err as Error).message}`,
+        error: (err as Error).message,
+        durationMs: Date.now() - startTime,
+      };
+    }
     const orchestrator = new SearchOrchestrator(cwd);
     const session = await orchestrator.searchWithState({ ...input, cwd });
     saveCodeSearchSession(session, cwd);
@@ -89,7 +101,15 @@ export class CodeSearchTool implements ITool<CodeSearchInput, unknown> {
   }
 
   async checkPermissions(input: CodeSearchInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
-    if (!context || !input.path) return { status: "allowed" };
+    if (!context) return { status: "allowed" };
+    try {
+      resolveCodeSearchRoot(input, context, "code_search");
+    } catch (err) {
+      return { status: "denied", reason: (err as Error).message };
+    }
+    if (!input.path) {
+      return { status: "allowed" };
+    }
     const validation = validateFilePath(input.path, context.cwd, context.executionPolicy?.protectedPaths);
     if (!validation.valid) {
       return { status: "needs_approval", reason: `Searching outside the working directory: ${validation.resolved}` };

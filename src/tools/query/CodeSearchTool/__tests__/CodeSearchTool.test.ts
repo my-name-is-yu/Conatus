@@ -126,6 +126,54 @@ describe("code search tools", () => {
     expect((read.data as { ranges: Array<{ file: string }> }).ranges[0].file).toBe("src/alpha.ts");
   });
 
+  it("refuses to default-search the home directory", async () => {
+    const result = await new CodeSearchTool().call(
+      { task: "find alphaValue", intent: "explain" },
+      { ...context, cwd: os.homedir() },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("refused broad root");
+  });
+
+  it("refuses explicit broad paths before permission approval can allow them", async () => {
+    const tool = new CodeSearchTool();
+    const permission = await tool.checkPermissions(
+      { task: "find alphaValue", intent: "explain", path: os.homedir() },
+      context,
+    );
+    expect(permission).toMatchObject({ status: "denied" });
+
+    const registry = new ToolRegistry();
+    registry.register(tool);
+    const executor = new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+
+    const result = await executor.execute("code_search", {
+      task: "find alphaValue",
+      intent: "explain",
+      path: os.homedir(),
+    }, context);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("refused broad explicit path");
+  });
+
+  it("defaults nested package searches to the project root", async () => {
+    const nested = path.join(root, "src");
+    const result = await new CodeSearchTool().call(
+      { task: "find alphaValue", intent: "explain" },
+      { ...context, cwd: nested },
+    );
+
+    expect(result.success).toBe(true);
+    const data = result.data as { candidates: Array<{ file: string }> };
+    expect(data.candidates[0]?.file).toBe("src/alpha.ts");
+  });
+
   it("code_search_repair parses verification output and suggests candidates", async () => {
     const result = await new CodeSearchRepairTool().call({
       priorTask: { task: "fix alphaValue", intent: "bugfix" },
@@ -135,5 +183,38 @@ describe("code search tools", () => {
     expect(result.success).toBe(true);
     expect((result.data as { signal: { kind: string }; candidates: unknown[] }).signal.kind).toBe("undefined_symbol");
     expect((result.data as { candidates: unknown[] }).candidates.length).toBeGreaterThan(0);
+  });
+
+  it("code_search_repair refuses broad explicit and implicit roots through the executor", async () => {
+    const repair = new CodeSearchRepairTool();
+    const permission = await repair.checkPermissions({
+      priorTask: { task: "fix alphaValue", intent: "bugfix" },
+      verificationOutput: "ReferenceError: alphaValue is not defined\n    at src/alpha.ts:1:1",
+      path: os.homedir(),
+    }, context);
+    expect(permission).toMatchObject({ status: "denied" });
+
+    const registry = new ToolRegistry();
+    registry.register(repair);
+    const executor = new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+
+    const explicit = await executor.execute("code_search_repair", {
+      priorTask: { task: "fix alphaValue", intent: "bugfix" },
+      verificationOutput: "ReferenceError: alphaValue is not defined\n    at src/alpha.ts:1:1",
+      path: os.homedir(),
+    }, context);
+    expect(explicit.success).toBe(false);
+    expect(explicit.error).toContain("refused broad explicit path");
+
+    const implicit = await repair.call({
+      priorTask: { task: "fix alphaValue", intent: "bugfix" },
+      verificationOutput: "ReferenceError: alphaValue is not defined\n    at src/alpha.ts:1:1",
+    }, { ...context, cwd: os.homedir() });
+    expect(implicit.success).toBe(false);
+    expect(implicit.error).toContain("refused broad root");
   });
 });
