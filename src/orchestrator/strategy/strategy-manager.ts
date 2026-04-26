@@ -168,16 +168,36 @@ export class StrategyManager extends StrategyManagerBase {
         const tasksDir = path.join(this.stateManager.getBaseDir(), "tasks", goalId);
         try {
           const files = await fsp.readdir(tasksDir);
+          const runningTasks: Array<{
+            id: string;
+            startedAtMs: number;
+            createdAtMs: number;
+          }> = [];
           for (const file of files) {
             if (!file.endsWith(".json") || file === "task-history.json") continue;
             const raw = await this.stateManager.readRaw(
               `tasks/${goalId}/${file}`
             ) as Record<string, unknown> | null;
             if (raw && raw["status"] === "running" && typeof raw["id"] === "string") {
-              taskId = raw["id"] as string;
-              break;
+              const startedAtMs = typeof raw["started_at"] === "string"
+                ? Date.parse(raw["started_at"])
+                : Number.NaN;
+              const createdAtMs = typeof raw["created_at"] === "string"
+                ? Date.parse(raw["created_at"])
+                : Number.NaN;
+              runningTasks.push({
+                id: raw["id"] as string,
+                startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : Number.NEGATIVE_INFINITY,
+                createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : Number.NEGATIVE_INFINITY,
+              });
             }
           }
+          runningTasks.sort((left, right) =>
+            right.startedAtMs - left.startedAtMs
+            || right.createdAtMs - left.createdAtMs
+            || left.id.localeCompare(right.id)
+          );
+          taskId = runningTasks[0]?.id;
         } catch {
           // Directory may not exist yet — fall through to history scan
         }
@@ -202,8 +222,10 @@ export class StrategyManager extends StrategyManagerBase {
               targetTask = history[history.length - 1];
             }
             if (targetTask) {
-              // Bug 1 fix: appendTaskHistory writes { task_id: task.id, ... }
-              const tid = targetTask["task_id"];
+              // Support both the current { task_id } shape and older { id } entries.
+              const tid = typeof targetTask["task_id"] === "string"
+                ? targetTask["task_id"]
+                : targetTask["id"];
               if (typeof tid === "string") taskId = tid;
             }
           }

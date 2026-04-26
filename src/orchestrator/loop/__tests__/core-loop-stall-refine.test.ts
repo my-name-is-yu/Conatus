@@ -727,4 +727,289 @@ describe("detectStallsAndRebalance — gap history indexing reuse", () => {
     expect(globalHistory.has("dim1")).toBe(true);
     expect(globalHistory.has("stale-dim")).toBe(false);
   });
+
+  it("excludes wait-suppressed dimensions from global stall checks", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({
+      id: "goal-1",
+      dimensions: [
+        {
+          name: "dim1",
+          label: "Dim 1",
+          current_value: 0.2,
+          threshold: { type: "min", value: 1.0 },
+          confidence: 0.5,
+          observation_method: {
+            type: "manual",
+            source: "manual",
+            schedule: null,
+            endpoint: null,
+            confidence_tier: "self_report",
+          },
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+        {
+          name: "dim2",
+          label: "Dim 2",
+          current_value: 0.4,
+          threshold: { type: "min", value: 1.0 },
+          confidence: 0.5,
+          observation_method: {
+            type: "manual",
+            source: "manual",
+            schedule: null,
+            endpoint: null,
+            confidence_tier: "self_report",
+          },
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory("goal-1", [
+      {
+        iteration: 0,
+        timestamp: new Date().toISOString(),
+        gap_vector: [
+          { dimension_name: "dim1", normalized_weighted_gap: 0.8 },
+          { dimension_name: "dim2", normalized_weighted_gap: 0.4 },
+        ],
+        confidence_vector: [],
+      },
+    ]);
+
+    const portfolioManager = {
+      isWaitStrategy: vi.fn().mockImplementation(
+        (strategy: Record<string, unknown>) => typeof strategy["wait_until"] === "string"
+      ),
+      shouldRebalance: vi.fn(),
+      rebalance: vi.fn(),
+    };
+    const depsWithPortfolio = {
+      ...deps,
+      portfolioManager,
+      strategyManager: {
+        ...deps.strategyManager,
+        getPortfolio: vi.fn().mockResolvedValue({
+          goal_id: "goal-1",
+          strategies: [
+            {
+              id: "wait-1",
+              state: "active",
+              primary_dimension: "dim1",
+              wait_until: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        }),
+      } as unknown as StrategyManager,
+    };
+    (depsWithPortfolio.stallDetector.isSuppressed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (depsWithPortfolio.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockReturnValue(null);
+    const globalCheck = depsWithPortfolio.stallDetector.checkGlobalStall as ReturnType<typeof vi.fn>;
+    globalCheck.mockReturnValue(null);
+
+    const ctx = buildPhaseCtx(depsWithPortfolio as unknown as CoreLoopDeps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(result.waitSuppressed).toBe(true);
+    expect(depsWithPortfolio.stallDetector.checkDimensionStall).toHaveBeenCalledTimes(1);
+    expect(depsWithPortfolio.stallDetector.checkDimensionStall).toHaveBeenCalledWith(
+      "goal-1",
+      "dim2",
+      [{ normalized_gap: 0.4 }]
+    );
+    const globalHistory = globalCheck.mock.calls[0]?.[1] as Map<string, Array<{ normalized_gap: number }>>;
+    expect(globalHistory.has("dim1")).toBe(false);
+    expect(globalHistory.get("dim2")).toEqual([{ normalized_gap: 0.4 }]);
+  });
+
+  it("suppresses only the WaitStrategy primary_dimension, not every target_dimension", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({
+      id: "goal-1",
+      dimensions: [
+        {
+          name: "dim1",
+          label: "Dim 1",
+          current_value: 0.2,
+          threshold: { type: "min", value: 1.0 },
+          confidence: 0.5,
+          observation_method: {
+            type: "manual",
+            source: "manual",
+            schedule: null,
+            endpoint: null,
+            confidence_tier: "self_report",
+          },
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+        {
+          name: "dim2",
+          label: "Dim 2",
+          current_value: 0.4,
+          threshold: { type: "min", value: 1.0 },
+          confidence: 0.5,
+          observation_method: {
+            type: "manual",
+            source: "manual",
+            schedule: null,
+            endpoint: null,
+            confidence_tier: "self_report",
+          },
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory("goal-1", [
+      {
+        iteration: 0,
+        timestamp: new Date().toISOString(),
+        gap_vector: [
+          { dimension_name: "dim1", normalized_weighted_gap: 0.8 },
+          { dimension_name: "dim2", normalized_weighted_gap: 0.4 },
+        ],
+        confidence_vector: [],
+      },
+    ]);
+
+    const portfolioManager = {
+      isWaitStrategy: vi.fn().mockReturnValue(true),
+      shouldRebalance: vi.fn(),
+      rebalance: vi.fn(),
+    };
+    const depsWithPortfolio = {
+      ...deps,
+      portfolioManager,
+      strategyManager: {
+        ...deps.strategyManager,
+        getPortfolio: vi.fn().mockResolvedValue({
+          goal_id: "goal-1",
+          strategies: [
+            {
+              id: "wait-1",
+              state: "active",
+              primary_dimension: "dim1",
+              target_dimensions: ["dim1", "dim2"],
+              wait_until: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        }),
+      } as unknown as StrategyManager,
+    };
+    (depsWithPortfolio.stallDetector.isSuppressed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (depsWithPortfolio.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockReturnValue(null);
+    const globalCheck = depsWithPortfolio.stallDetector.checkGlobalStall as ReturnType<typeof vi.fn>;
+    globalCheck.mockReturnValue(null);
+
+    const ctx = buildPhaseCtx(depsWithPortfolio, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(depsWithPortfolio.stallDetector.checkDimensionStall).toHaveBeenCalledTimes(1);
+    expect(depsWithPortfolio.stallDetector.checkDimensionStall).toHaveBeenCalledWith(
+      "goal-1",
+      "dim2",
+      [{ normalized_gap: 0.4 }]
+    );
+    const globalHistory = globalCheck.mock.calls[0]?.[1] as Map<string, Array<{ normalized_gap: number }>>;
+    expect(globalHistory.has("dim1")).toBe(false);
+    expect(globalHistory.has("dim2")).toBe(true);
+  });
+
+  it("skips global stall checks when every dimension is wait-suppressed", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({
+      id: "goal-1",
+      dimensions: [
+        {
+          name: "dim1",
+          label: "Dim 1",
+          current_value: 0.2,
+          threshold: { type: "min", value: 1.0 },
+          confidence: 0.5,
+          observation_method: {
+            type: "manual",
+            source: "manual",
+            schedule: null,
+            endpoint: null,
+            confidence_tier: "self_report",
+          },
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory("goal-1", [
+      {
+        iteration: 0,
+        timestamp: new Date().toISOString(),
+        gap_vector: [{ dimension_name: "dim1", normalized_weighted_gap: 0.8 }],
+        confidence_vector: [],
+      },
+    ]);
+
+    const depsWithPortfolio = {
+      ...deps,
+      portfolioManager: {
+        isWaitStrategy: vi.fn().mockReturnValue(true),
+        shouldRebalance: vi.fn(),
+        rebalance: vi.fn(),
+      },
+      strategyManager: {
+        ...deps.strategyManager,
+        getPortfolio: vi.fn().mockResolvedValue({
+          goal_id: "goal-1",
+          strategies: [
+            {
+              id: "wait-1",
+              state: "active",
+              primary_dimension: "dim1",
+              wait_until: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        }),
+      } as unknown as StrategyManager,
+    };
+    (depsWithPortfolio.stallDetector.isSuppressed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (depsWithPortfolio.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+    const ctx = buildPhaseCtx(depsWithPortfolio as unknown as CoreLoopDeps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(depsWithPortfolio.stallDetector.checkDimensionStall).not.toHaveBeenCalled();
+    expect(depsWithPortfolio.stallDetector.checkGlobalStall).not.toHaveBeenCalled();
+    expect(result.stallDetected).toBe(false);
+    expect(result.waitSuppressed).toBe(true);
+  });
 });

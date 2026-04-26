@@ -103,9 +103,13 @@ A global stall is the most serious state. Something fundamental is likely wrong 
 
 ### 2.5 Suppressing Stall Detection During Intentional Waits (plateau_until)
 
-When the `plateau_until` field (see `task-lifecycle.md` §2.6) is set, stall detection behavior changes as follows.
+When an intentional wait is active, stall detection behavior changes as follows.
+In the current runtime, stall suppression keys off the active WaitStrategy's
+`wait_until`, while `task.plateau_until` is only a mirrored task-local hint for
+consumers that do not load the portfolio.
 
-**Suppression condition**: A task or dimension has `plateau_until` set, and the current time is before `plateau_until`.
+**Suppression condition**: The active wait timestamp is set, and the current
+time is before that timestamp.
 
 ```
 plateau_until is set AND current_time < plateau_until
@@ -113,9 +117,18 @@ plateau_until is set AND current_time < plateau_until
   → None of the detection types from §2.1–§2.4 are triggered
 ```
 
+**WaitStrategy mapping**: In the current CoreLoop integration, an active
+`WaitStrategy` contributes suppression only for its `primary_dimension`. Its
+`target_dimensions` are not suppressed automatically. This matches wait expiry,
+which also evaluates a single canonical dimension rather than a bundle of
+dimensions.
+
 **Lifting suppression**: Normal stall detection resumes the moment `plateau_until` becomes a past datetime. Gap changes that accumulated during the suppression period are evaluated in the first loop after suppression is lifted.
 
-**Preventing misuse**: `plateau_until` is a field for intentional waiting. Using it to "hide a stall" is prohibited. Only the strategy layer (the LLM when generating tasks) can set it; executors cannot change it ad hoc.
+**Preventing misuse**: This suppression window is for intentional waiting.
+Using it to "hide a stall" is prohibited. In practice, PulSeed derives it from
+strategy-layer wait state and mirrors it into task state; executors must not
+invent or extend it ad hoc.
 
 **Relationship to §6's plateau concept**: The "intentional 'waiting' strategy" described in §6 ("Stall vs. Plateau") is formalized through `plateau_until`. If `plateau_until` is set, suppression is applied mechanically. If a stall occurs without it being set, the graduated response in §4 applies normally.
 

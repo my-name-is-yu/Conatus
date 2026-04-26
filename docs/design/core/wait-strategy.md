@@ -27,9 +27,9 @@ for meaningful results — this sense of timing is also part of strategy.")
 |--------|----------------|
 | **TimeHorizonEngine** | "Can we afford to wait?" — `canAffordWait` closure inside `TimeBudgetWithWait` (time-horizon.md §10) |
 | **PortfolioManager** | "Should we wait?" — expiry handling via `handleWaitStrategyExpiry`, duck-type check via `isWaitStrategy` (portfolio-management.md §7) |
-| **StallDetector** | Suppresses stall alerts when `plateau_until` is set and in the future (stall-detection.md §2.5) |
-| **StrategyManager** | Creates WaitStrategy instances via `createWaitStrategy()` with `state=candidate`, `allocation=0` |
-| **CoreLoop (phases-b)** | Iterates portfolio strategies each tick; calls expiry handler for any WaitStrategy |
+| **StallDetector** | Evaluates `isSuppressed(plateauUntil)` when the loop decides whether a dimension should participate in stall detection (stall-detection.md §2.5) |
+| **StrategyManager** | Creates WaitStrategy instances via `createWaitStrategy()` with `state=candidate`, `allocation=0`, and mirrors `wait_until` into the active task's `plateau_until` on activation |
+| **CoreLoop task cycle** | Collects active WaitStrategies, suppresses stalled dimensions whose wait window is still open, and later calls expiry handling |
 
 No single module owns the full wait lifecycle. This is intentional — each module
 answers exactly one question.
@@ -55,7 +55,7 @@ Key base-schema fields used by wait logic:
 | Field | Type | Role |
 |-------|------|------|
 | `gap_snapshot_at_start` | `number \| null` | Baseline gap captured when strategy becomes active. `handleWaitStrategyExpiry` returns null (skips evaluation) if this is null. |
-| `primary_dimension` | `string` | Dimension used for gap comparison at expiry. |
+| `primary_dimension` | `string` | Canonical dimension for this wait. Expiry comparison and stall suppression both key off this field. |
 | `allocation` | `number` | Always `0` for WaitStrategy — it generates no tasks. |
 
 Duck-type detection (`isWaitStrategy` in `portfolio-allocation.ts`):
@@ -84,12 +84,15 @@ The lifecycle follows the path: **candidate → active → expiry check → outc
 **Creation** (`StrategyManager.createWaitStrategy`):
 - Sets `state="candidate"`, `allocation=0`, `gap_snapshot_at_start=null`.
 - WaitStrategy-specific fields (`wait_reason`, `wait_until`, `measurement_plan`,
-  `fallback_strategy_id`) are stored. The portfolio persists only base `Strategy`
-  fields (`StrategySchema.parse` strips extended fields on save).
+  `fallback_strategy_id`) are stored in the portfolio and mirrored into
+  `strategies/<goalId>/wait-meta/<strategyId>.json` for durable wait observation metadata.
 
 **Activation**:
 - Caller transitions state to `active`. At activation, `gap_snapshot_at_start`
   captures the current gap value — this becomes the baseline for expiry evaluation.
+- If the activated strategy is a WaitStrategy, `StrategyManager.activateMultiple()`
+  mirrors `wait_until` into the current task's `plateau_until`. The active task file
+  is preferred; `task-history.json` is only a fallback lookup path.
 
 **Expiry check** (`handleWaitStrategyExpiry` in `portfolio-rebalance.ts`):
 1. If `!isWaitStrategy(strategy)` → skip.
@@ -109,10 +112,16 @@ See portfolio-management.md §7.3 for the full wait execution flow.
 
 ## 5. CoreLoop Integration
 
-In `core-loop-phases-b.ts`, the `rebalancePortfolio` function handles
-WaitStrategy expiry on every loop tick:
+In the current CoreLoop implementation, `iteration-kernel.ts` first checks
+whether an active wait should keep the loop in observe-only mode. If the loop
+does proceed, `task-cycle.ts` performs stall suppression and
+`portfolio-manager.ts` handles WaitStrategy expiry:
 
 ```
+for each active WaitStrategy in portfolio.strategies:
+  if stallDetector.isSuppressed(strategy.wait_until):
+    skip dimension stall detection for strategy.primary_dimension
+
 for each strategy in portfolio.strategies:
   if portfolioManager.isWaitStrategy(strategy):
     trigger = portfolioManager.handleWaitStrategyExpiry(goalId, strategy.id)
@@ -120,17 +129,23 @@ for each strategy in portfolio.strategies:
       portfolioManager.rebalance(goalId, trigger)
 ```
 
-This runs after stall detection and portfolio rebalance. Errors are caught and
-treated as non-fatal — a WaitStrategy expiry failure does not abort the loop.
+The observe-only check happens before normal task generation. Later expiry and
+rebalance handling is non-fatal — a WaitStrategy failure does not abort the loop.
 
-**Stall suppression**: When a WaitStrategy is active and `plateau_until` is set,
-`StallDetector.isSuppressed(plateauUntil)` returns true, suppressing all stall
-detection for that dimension (stall-detection.md §2.5). Suppression lifts
-automatically once `plateau_until` becomes a past datetime.
+**Stall suppression**: The loop currently treats `WaitStrategy.wait_until` as the
+authoritative suppression source and uses `StallDetector.isSuppressed(waitUntil)`
+to suppress stall detection for the WaitStrategy's `primary_dimension`. This is
+intentionally narrower than `target_dimensions`: a wait may be informed by
+multiple dimensions, but the actual wait/no-wait decision, baseline snapshot,
+and expiry judgment are all anchored to one canonical dimension. The task field
+`plateau_until` is a mirror for task-local consumers that do not load the
+portfolio. Suppression lifts automatically once the wait timestamp becomes past.
 
-**Current gap**: The `canAffordWait` gate from TimeHorizonEngine is NOT wired
-into this path. CoreLoop does not call `canAffordWait` before entering a wait.
-See §6 for planned integration.
+**Current gap**: The `canAffordWait` gate from TimeHorizonEngine is only
+partially wired. `StrategyManager.activateMultiple()` accepts a
+`canAffordWait` hook and blocks activation when the caller supplies one, but
+CoreLoop does not yet derive and pass the closure from
+`TimeHorizonEngine.getTimeBudget()`. See §6 for planned integration.
 
 ---
 
@@ -138,8 +153,8 @@ See §6 for planned integration.
 
 | Gap | Description |
 |-----|-------------|
-| **canAffordWait gate wiring** | `TimeHorizonEngine.getTimeBudget()` returns a `canAffordWait` closure, but no caller in the orchestrator layer invokes it. Future: wire into CoreLoop or PortfolioManager before activating a WaitStrategy. |
-| **plateau_until write path** | portfolio-management.md §7.3 specifies "set `wait_until` as `plateau_until`" but no code writes `plateau_until` when a WaitStrategy becomes active. `StallDetector.isSuppressed` exists but is never called from the CoreLoop stall path. Owner and storage location TBD. |
+| **canAffordWait gate wiring** | `TimeHorizonEngine.getTimeBudget()` returns a `canAffordWait` closure, but CoreLoop does not yet pass that closure into `StrategyManager.activateMultiple()`. Activation-time enforcement exists once the caller supplies the hook. |
+| **Authoritative wait state is split across portfolio + task mirror** | The portfolio WaitStrategy is authoritative for CoreLoop suppression and expiry, while `task.plateau_until` is a best-effort mirror for task-local consumers. Consumers that only read task state must tolerate stale mirrors. |
 | **Effect latency estimation** | Heuristic categorization of action types (e.g., "deploy" → hours, "marketing" → days) to auto-suggest `wait_until` durations. Currently the LLM proposes durations without structured guidance. |
 | **Adaptive observation frequency** | Reducing observation frequency during waits to save tokens. `TimeHorizonEngine.suggestObservationInterval` exists (time-horizon.md §7) but is not connected to wait state. |
 | **LLM-assisted duration estimation** | Using the LLM to estimate effect latency based on action type and domain context. |
@@ -155,10 +170,11 @@ See §6 for planned integration.
 | `isWaitStrategy` duck-type check | `src/orchestrator/strategy/portfolio-allocation.ts` |
 | `createWaitStrategy` | `src/orchestrator/strategy/strategy-manager.ts` |
 | `handleWaitStrategyExpiry` | `src/orchestrator/strategy/portfolio-rebalance.ts` (called via `portfolio-manager.ts`) |
+| Activation-time `plateau_until` mirror | `src/orchestrator/strategy/strategy-manager.ts` (`activateMultiple()` / `_applyWaitStrategyPlateauUntil()`) |
 | `canAffordWait` closure | `src/platform/time/time-horizon-engine.ts` (`getTimeBudget` return value) |
 | `TimeBudgetWithWait` type | `src/base/types/time-horizon.ts` |
 | `isSuppressed` (plateau_until) | `src/platform/drive/stall-detector.ts` |
-| CoreLoop wait iteration | `src/orchestrator/loop/core-loop-phases-b.ts` (`rebalancePortfolio`) |
+| CoreLoop wait iteration + stall suppression | `src/orchestrator/loop/core-loop/task-cycle.ts` / `src/orchestrator/loop/core-loop/iteration-kernel.ts` |
 
 ---
 
@@ -205,5 +221,6 @@ exists only as an in-memory computation result, never persisted.
 | Duck-type detection | Strategies are plain Zod-parsed objects; no class hierarchy |
 | Closure for `canAffordWait` | Captures time snapshot consistently; avoids passing 5 parameters per call |
 | `fallback_strategy_id` nullable | Not every wait has a fallback; null means rebalance from scratch |
-| `plateau_until` owned by StallDetector | Suppression is a detection concern, not a strategy concern |
+| `plateau_until` mirrored onto tasks from WaitStrategy activation | Wait ownership starts in the strategy layer, while task-local mirroring keeps non-portfolio consumers aligned |
+| Stall suppression is `primary_dimension`-only | Wait expiry also evaluates one canonical dimension; suppressing every `target_dimension` would hide unrelated stalls behind one wait |
 | `allocation=0` for waits | WaitStrategy generates no tasks; allocation is nominal |

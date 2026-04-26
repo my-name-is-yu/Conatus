@@ -172,7 +172,9 @@ export async function detectStallsAndRebalance(
             const ws = s as Record<string, unknown>;
             const waitUntil = typeof ws["wait_until"] === "string" ? ws["wait_until"] as string : null;
             if (!ctx.deps.stallDetector.isSuppressed(waitUntil)) continue;
-            // Suppress only the primary_dimension of this WaitStrategy
+            // Suppression is intentionally primary_dimension-only. Wait expiry,
+            // baseline capture, and outcome evaluation are all keyed to the
+            // canonical wait dimension rather than every target_dimension.
             const primaryDim = typeof ws["primary_dimension"] === "string" ? ws["primary_dimension"] as string : null;
             if (primaryDim) {
               suppressedDimensions.add(primaryDim);
@@ -225,7 +227,15 @@ export async function detectStallsAndRebalance(
 
     // Global stall check
     if (!result.stallDetected) {
-      await checkGlobalStall(ctx, goalId, goal, result, gapHistoryByDimension, stallActionHints);
+      await checkGlobalStall(
+        ctx,
+        goalId,
+        goal,
+        result,
+        gapHistoryByDimension,
+        suppressedDimensions,
+        stallActionHints
+      );
     }
 
     // Portfolio: check rebalance after stall detection
@@ -412,16 +422,33 @@ async function checkGlobalStall(
   goal: Goal,
   result: LoopIterationResult,
   gapHistoryByDimension: Map<string, Array<{ normalized_gap: number }>>,
+  suppressedDimensions: ReadonlySet<string>,
   stallActionHints?: StallActionHints
 ): Promise<void> {
-  const globalStall = ctx.deps.stallDetector.checkGlobalStall(goalId, gapHistoryByDimension);
+  const activeGapHistoryByDimension =
+    suppressedDimensions.size === 0
+      ? gapHistoryByDimension
+      : new Map(
+          Array.from(gapHistoryByDimension.entries()).filter(
+            ([dimensionName]) => !suppressedDimensions.has(dimensionName)
+          )
+        );
+  if (activeGapHistoryByDimension.size === 0) {
+    return;
+  }
+
+  const globalStall = ctx.deps.stallDetector.checkGlobalStall(goalId, activeGapHistoryByDimension);
   if (!globalStall) return;
 
   result.stallDetected = true;
   result.stallReport = globalStall;
 
-  const firstDimHistory = gapHistoryByDimension.get(goal.dimensions[0]?.name ?? "") ?? [];
-  const firstDimName = goal.dimensions[0]?.name ?? "";
+  const firstActiveDimension =
+    goal.dimensions.find((dimension) => !suppressedDimensions.has(dimension.name))?.name
+    ?? activeGapHistoryByDimension.keys().next().value
+    ?? "";
+  const firstDimHistory = activeGapHistoryByDimension.get(firstActiveDimension) ?? [];
+  const firstDimName = firstActiveDimension;
 
   // Pass escalationLevel=1 so that escalationLevel+1=2, preserving the original global PIVOT level
   await applyStallAction(ctx, goalId, goal, firstDimHistory, globalStall, 1, firstDimName, result, "global ", stallActionHints);
