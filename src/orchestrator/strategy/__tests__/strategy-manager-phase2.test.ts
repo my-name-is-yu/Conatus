@@ -67,6 +67,42 @@ afterEach(() => {
   fs.rmSync(tempDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
 });
 
+async function writeTaskFixture(
+  goalId: string,
+  taskId: string,
+  overrides: Record<string, unknown> = {}
+): Promise<void> {
+  await stateManager.writeRaw(`tasks/${goalId}/${taskId}.json`, {
+    id: taskId,
+    goal_id: goalId,
+    strategy_id: null,
+    target_dimensions: ["quality"],
+    primary_dimension: "quality",
+    work_description: "Wait for an external signal",
+    rationale: "Track the active task linked to the wait strategy",
+    approach: "Observe only",
+    success_criteria: [],
+    scope_boundary: {
+      in_scope: ["observation"],
+      out_of_scope: ["execution"],
+      blast_radius: "none",
+    },
+    constraints: [],
+    plateau_until: null,
+    estimated_duration: null,
+    consecutive_failure_count: 0,
+    reversibility: "unknown",
+    task_category: "observation",
+    status: "pending",
+    started_at: null,
+    completed_at: null,
+    timeout_at: null,
+    heartbeat_at: null,
+    created_at: "2026-04-27T00:00:00.000Z",
+    ...overrides,
+  });
+}
+
 // ─── Phase 2 methods ───
 
 describe("Phase 2 methods", () => {
@@ -212,6 +248,229 @@ describe("Phase 2 methods", () => {
       const portfolio = await manager.getPortfolio("goal-1");
       const stored = portfolio!.strategies.find((s) => s.id === wait.id);
       expect(stored!.gap_snapshot_at_start).toBe(0.42);
+    });
+
+    it("mirrors wait_until into a currently running task plateau_until", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const waitUntil = "2026-04-27T03:00:00.000Z";
+      const wait = await manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external signal",
+        wait_reason: "Awaiting external signal",
+        wait_until: waitUntil,
+        measurement_plan: "Check signal after wait",
+        fallback_strategy_id: null,
+        target_dimensions: ["quality"],
+        primary_dimension: "quality",
+      });
+      await writeTaskFixture("goal-1", "task-running", {
+        status: "running",
+        started_at: "2026-04-27T00:00:00.000Z",
+        strategy_id: wait.id,
+      });
+
+      await manager.activateMultiple("goal-1", [wait.id]);
+
+      const storedTask = await stateManager.readRaw("tasks/goal-1/task-running.json") as Record<string, unknown>;
+      expect(storedTask["plateau_until"]).toBe(waitUntil);
+    });
+
+    it("falls back to task-history task_id entries when no running task file is found", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const waitUntil = "2026-04-27T03:00:00.000Z";
+      const wait = await manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external signal",
+        wait_reason: "Awaiting external signal",
+        wait_until: waitUntil,
+        measurement_plan: "Check signal after wait",
+        fallback_strategy_id: null,
+        target_dimensions: ["quality"],
+        primary_dimension: "quality",
+      });
+      await writeTaskFixture("goal-1", "task-pending", {
+        strategy_id: wait.id,
+      });
+      await stateManager.writeRaw("tasks/goal-1/task-history.json", [
+        {
+          task_id: "task-pending",
+          strategy_id: wait.id,
+          status: "pending",
+        },
+      ]);
+
+      await manager.activateMultiple("goal-1", [wait.id]);
+
+      const storedTask = await stateManager.readRaw("tasks/goal-1/task-pending.json") as Record<string, unknown>;
+      expect(storedTask["plateau_until"]).toBe(waitUntil);
+    });
+
+    it("supports legacy task-history entries that only store id", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const waitUntil = "2026-04-27T03:00:00.000Z";
+      const wait = await manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external signal",
+        wait_reason: "Awaiting external signal",
+        wait_until: waitUntil,
+        measurement_plan: "Check signal after wait",
+        fallback_strategy_id: null,
+        target_dimensions: ["quality"],
+        primary_dimension: "quality",
+      });
+      await writeTaskFixture("goal-1", "task-legacy", {
+        strategy_id: wait.id,
+      });
+      await stateManager.writeRaw("tasks/goal-1/task-history.json", [
+        {
+          id: "task-legacy",
+          strategy_id: wait.id,
+          status: "pending",
+        },
+      ]);
+
+      await manager.activateMultiple("goal-1", [wait.id]);
+
+      const storedTask = await stateManager.readRaw("tasks/goal-1/task-legacy.json") as Record<string, unknown>;
+      expect(storedTask["plateau_until"]).toBe(waitUntil);
+    });
+
+    it("prefers the live running task file over stale task-history entries", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const waitUntil = "2026-04-27T03:00:00.000Z";
+      const wait = await manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external signal",
+        wait_reason: "Awaiting external signal",
+        wait_until: waitUntil,
+        measurement_plan: "Check signal after wait",
+        fallback_strategy_id: null,
+        target_dimensions: ["quality"],
+        primary_dimension: "quality",
+      });
+      await writeTaskFixture("goal-1", "task-running", {
+        status: "running",
+        started_at: "2026-04-27T00:00:00.000Z",
+        strategy_id: wait.id,
+      });
+      await writeTaskFixture("goal-1", "task-stale");
+      await stateManager.writeRaw("tasks/goal-1/task-history.json", [
+        {
+          task_id: "task-stale",
+          status: "pending",
+        },
+      ]);
+
+      await manager.activateMultiple("goal-1", [wait.id]);
+
+      const runningTask = await stateManager.readRaw("tasks/goal-1/task-running.json") as Record<string, unknown>;
+      const staleTask = await stateManager.readRaw("tasks/goal-1/task-stale.json") as Record<string, unknown>;
+      expect(runningTask["plateau_until"]).toBe(waitUntil);
+      expect(staleTask["plateau_until"]).toBeNull();
+    });
+
+    it("prefers a strategy-matching running task over a newer unrelated running task", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const waitUntil = "2026-04-27T03:00:00.000Z";
+      const wait = await manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external signal",
+        wait_reason: "Awaiting external signal",
+        wait_until: waitUntil,
+        measurement_plan: "Check signal after wait",
+        fallback_strategy_id: null,
+        target_dimensions: ["quality"],
+        primary_dimension: "quality",
+      });
+      await writeTaskFixture("goal-1", "task-target", {
+        status: "running",
+        started_at: "2026-04-27T00:00:00.000Z",
+        strategy_id: wait.id,
+      });
+      await writeTaskFixture("goal-1", "task-other", {
+        status: "running",
+        started_at: "2026-04-27T00:30:00.000Z",
+        strategy_id: "other-strategy",
+      });
+
+      await manager.activateMultiple("goal-1", [wait.id]);
+
+      const targetTask = await stateManager.readRaw("tasks/goal-1/task-target.json") as Record<string, unknown>;
+      const otherTask = await stateManager.readRaw("tasks/goal-1/task-other.json") as Record<string, unknown>;
+      expect(targetTask["plateau_until"]).toBe(waitUntil);
+      expect(otherTask["plateau_until"]).toBeNull();
+    });
+
+    it("prefers a strategy-matching task-history entry over unrelated pending tasks", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const waitUntil = "2026-04-27T03:00:00.000Z";
+      const wait = await manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external signal",
+        wait_reason: "Awaiting external signal",
+        wait_until: waitUntil,
+        measurement_plan: "Check signal after wait",
+        fallback_strategy_id: null,
+        target_dimensions: ["quality"],
+        primary_dimension: "quality",
+      });
+      await writeTaskFixture("goal-1", "task-other", {
+        strategy_id: "other-strategy",
+      });
+      await writeTaskFixture("goal-1", "task-target", {
+        strategy_id: wait.id,
+      });
+      await stateManager.writeRaw("tasks/goal-1/task-history.json", [
+        {
+          task_id: "task-other",
+          strategy_id: "other-strategy",
+          status: "pending",
+        },
+        {
+          task_id: "task-target",
+          strategy_id: wait.id,
+          status: "pending",
+        },
+      ]);
+
+      await manager.activateMultiple("goal-1", [wait.id]);
+
+      const targetTask = await stateManager.readRaw("tasks/goal-1/task-target.json") as Record<string, unknown>;
+      const otherTask = await stateManager.readRaw("tasks/goal-1/task-other.json") as Record<string, unknown>;
+      expect(targetTask["plateau_until"]).toBe(waitUntil);
+      expect(otherTask["plateau_until"]).toBeNull();
+    });
+
+    it("does not mirror wait_until into a task owned by a different strategy", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const waitUntil = "2026-04-27T03:00:00.000Z";
+      const wait = await manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external signal",
+        wait_reason: "Awaiting external signal",
+        wait_until: waitUntil,
+        measurement_plan: "Check signal after wait",
+        fallback_strategy_id: null,
+        target_dimensions: ["quality"],
+        primary_dimension: "quality",
+      });
+      await writeTaskFixture("goal-1", "task-other", {
+        status: "running",
+        started_at: "2026-04-27T00:30:00.000Z",
+        strategy_id: "other-strategy",
+      });
+      await stateManager.writeRaw("tasks/goal-1/task-history.json", [
+        {
+          task_id: "task-other",
+          strategy_id: "other-strategy",
+          status: "running",
+        },
+      ]);
+
+      await manager.activateMultiple("goal-1", [wait.id]);
+
+      const otherTask = await stateManager.readRaw("tasks/goal-1/task-other.json") as Record<string, unknown>;
+      expect(otherTask["plateau_until"]).toBeNull();
     });
   });
 

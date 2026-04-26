@@ -31,11 +31,18 @@ import type { CapabilityAcquisitionOutcome } from "./capability.js";
 import type { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 import { buildWaitApprovalId } from "../../strategy/portfolio-rebalance.js";
+import type { WaitStrategyActivationContext } from "../../strategy/strategy-manager-base.js";
+import type { GapObservation } from "../../../base/types/time-horizon.js";
 
 // ─── Phase 5 ───
 
 const WAIT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const WAIT_APPROVAL_REMINDER_MS = 15 * 60 * 1000;
+
+type DimensionGapSample = {
+  normalized_gap: number;
+  timestamp: string;
+};
 
 function resolveGoalWorkspacePath(goal: Goal): string | undefined {
   const constraint = goal.constraints.find((entry) => entry.startsWith("workspace_path:"));
@@ -137,6 +144,12 @@ export async function detectStallsAndRebalance(
   try {
     const gapHistory = await ctx.deps.stateManager.loadGapHistory(goalId);
     const gapHistoryByDimension = indexGapHistoryByDimension(goal, gapHistory);
+    const waitActivationContext = buildWaitStrategyActivationContext(
+      ctx,
+      goalId,
+      goal,
+      gapHistoryByDimension
+    );
 
     // Gather tool-based workspace evidence for stall detection (Phase 6)
     if (ctx.toolExecutor) {
@@ -172,7 +185,9 @@ export async function detectStallsAndRebalance(
             const ws = s as Record<string, unknown>;
             const waitUntil = typeof ws["wait_until"] === "string" ? ws["wait_until"] as string : null;
             if (!ctx.deps.stallDetector.isSuppressed(waitUntil)) continue;
-            // Suppress only the primary_dimension of this WaitStrategy
+            // Suppression is intentionally primary_dimension-only. Wait expiry,
+            // baseline capture, and outcome evaluation are all keyed to the
+            // canonical wait dimension rather than every target_dimension.
             const primaryDim = typeof ws["primary_dimension"] === "string" ? ws["primary_dimension"] as string : null;
             if (primaryDim) {
               suppressedDimensions.add(primaryDim);
@@ -218,19 +233,40 @@ export async function detectStallsAndRebalance(
         }
 
         const escalationLevel = await ctx.deps.stallDetector.getEscalationLevel(goalId, dim.name);
-        await applyStallAction(ctx, goalId, goal, dimGapHistory, stallReport, escalationLevel, dim.name, result, "", stallActionHints);
+        await applyStallAction(
+          ctx,
+          goalId,
+          goal,
+          dimGapHistory,
+          stallReport,
+          escalationLevel,
+          dim.name,
+          result,
+          "",
+          stallActionHints,
+          waitActivationContext
+        );
         break;
       }
     }
 
     // Global stall check
     if (!result.stallDetected) {
-      await checkGlobalStall(ctx, goalId, goal, result, gapHistoryByDimension, stallActionHints);
+      await checkGlobalStall(
+        ctx,
+        goalId,
+        goal,
+        result,
+        gapHistoryByDimension,
+        suppressedDimensions,
+        stallActionHints,
+        waitActivationContext
+      );
     }
 
     // Portfolio: check rebalance after stall detection
     if (ctx.deps.portfolioManager) {
-      await rebalancePortfolio(ctx, goalId, goal);
+      await rebalancePortfolio(ctx, goalId, goal, waitActivationContext);
     }
   } catch (err) {
     ctx.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
@@ -240,8 +276,8 @@ export async function detectStallsAndRebalance(
 function indexGapHistoryByDimension(
   goal: Goal,
   gapHistory: GapHistoryEntry[]
-): Map<string, Array<{ normalized_gap: number }>> {
-  const indexedHistory = new Map<string, Array<{ normalized_gap: number }>>();
+): Map<string, DimensionGapSample[]> {
+  const indexedHistory = new Map<string, DimensionGapSample[]>();
 
   for (const dim of goal.dimensions) {
     indexedHistory.set(dim.name, []);
@@ -258,12 +294,69 @@ function indexGapHistoryByDimension(
         continue;
       }
 
-      const normalizedGap = { normalized_gap: gap.normalized_weighted_gap ?? 1 };
+      const normalizedGap = {
+        normalized_gap: gap.normalized_weighted_gap ?? 1,
+        timestamp: entry.timestamp,
+      };
       dimHistory.push(normalizedGap);
     }
   }
 
   return indexedHistory;
+}
+
+function buildWaitStrategyActivationContext(
+  ctx: PhaseCtx,
+  goalId: string,
+  goal: Goal,
+  gapHistoryByDimension: ReadonlyMap<string, DimensionGapSample[]>
+): WaitStrategyActivationContext | undefined {
+  if (!ctx.timeHorizonEngine) {
+    return undefined;
+  }
+
+  const velocityByDimension = new Map<string, number>();
+  for (const [dimensionName, dimHistory] of gapHistoryByDimension.entries()) {
+    if (dimHistory.length < 2) continue;
+    const currentGap = dimHistory[dimHistory.length - 1]?.normalized_gap;
+    if (typeof currentGap !== "number" || !Number.isFinite(currentGap)) continue;
+    const observations: GapObservation[] = dimHistory.map((entry) => ({
+      timestamp: entry.timestamp,
+      normalizedGap: entry.normalized_gap,
+    }));
+    const pacing = ctx.timeHorizonEngine.evaluatePacing(
+      goalId,
+      currentGap,
+      goal.deadline ?? null,
+      observations
+    );
+    if (Number.isFinite(pacing.velocityPerHour)) {
+      velocityByDimension.set(dimensionName, pacing.velocityPerHour);
+    }
+  }
+
+  return {
+    getCurrentGap: (_goalId, dimension) => {
+      const history = gapHistoryByDimension.get(dimension);
+      return history && history.length > 0
+        ? history[history.length - 1]?.normalized_gap ?? null
+        : null;
+    },
+    canAffordWait: ({ strategy, waitHours, currentGap, initialGap, startedAt }) => {
+      const velocityPerHour = velocityByDimension.get(strategy.primary_dimension);
+      if (velocityPerHour === undefined) {
+        return false;
+      }
+      const budget = ctx.timeHorizonEngine!.getTimeBudget(
+        goal.deadline ?? null,
+        goal.created_at ?? startedAt,
+        currentGap,
+        initialGap,
+        velocityPerHour
+      );
+      return budget.canAffordWait(waitHours);
+    },
+  };
 }
 
 // ─── Shared stall-action helper ───
@@ -279,13 +372,14 @@ async function applyStallAction(
   ctx: PhaseCtx,
   goalId: string,
   goal: Goal,
-  dimHistory: Array<{ normalized_gap: number }>,
+  dimHistory: DimensionGapSample[],
   stallReport: StallReport,
   escalationLevel: number,
   incrementDimName: string,
   result: LoopIterationResult,
   logPrefix: string,
-  stallActionHints?: StallActionHints
+  stallActionHints?: StallActionHints,
+  waitActivationContext?: WaitStrategyActivationContext
 ): Promise<void> {
   if (ctx.deps.learningPipeline) {
     try {
@@ -334,7 +428,12 @@ async function applyStallAction(
       goalId,
       evidence: analysis?.evidence,
     });
-    await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+    await ctx.deps.strategyManager.onStallDetected(
+      goalId,
+      3,
+      goal.origin ?? "general",
+      waitActivationContext
+    );
     result.pivotOccurred = true;
   } else {
     // PIVOT: switch strategy, but check pivot count limit first
@@ -350,13 +449,19 @@ async function applyStallAction(
         pivotCount,
         maxPivotCount,
       });
-      await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+      await ctx.deps.strategyManager.onStallDetected(
+        goalId,
+        3,
+        goal.origin ?? "general",
+        waitActivationContext
+      );
       result.pivotOccurred = true;
     } else {
       const newStrategy = await ctx.deps.strategyManager.onStallDetected(
         goalId,
         escalationLevel + 1,
-        goal.origin ?? "general"
+        goal.origin ?? "general",
+        waitActivationContext
       );
       if (newStrategy) {
         result.pivotOccurred = true;
@@ -411,27 +516,58 @@ async function checkGlobalStall(
   goalId: string,
   goal: Goal,
   result: LoopIterationResult,
-  gapHistoryByDimension: Map<string, Array<{ normalized_gap: number }>>,
-  stallActionHints?: StallActionHints
+  gapHistoryByDimension: Map<string, DimensionGapSample[]>,
+  suppressedDimensions: ReadonlySet<string>,
+  stallActionHints?: StallActionHints,
+  waitActivationContext?: WaitStrategyActivationContext
 ): Promise<void> {
-  const globalStall = ctx.deps.stallDetector.checkGlobalStall(goalId, gapHistoryByDimension);
+  const activeGapHistoryByDimension =
+    suppressedDimensions.size === 0
+      ? gapHistoryByDimension
+      : new Map(
+          Array.from(gapHistoryByDimension.entries()).filter(
+            ([dimensionName]) => !suppressedDimensions.has(dimensionName)
+          )
+        );
+  if (activeGapHistoryByDimension.size === 0) {
+    return;
+  }
+
+  const globalStall = ctx.deps.stallDetector.checkGlobalStall(goalId, activeGapHistoryByDimension);
   if (!globalStall) return;
 
   result.stallDetected = true;
   result.stallReport = globalStall;
 
-  const firstDimHistory = gapHistoryByDimension.get(goal.dimensions[0]?.name ?? "") ?? [];
-  const firstDimName = goal.dimensions[0]?.name ?? "";
+  const firstActiveDimension =
+    goal.dimensions.find((dimension) => !suppressedDimensions.has(dimension.name))?.name
+    ?? activeGapHistoryByDimension.keys().next().value
+    ?? "";
+  const firstDimHistory = activeGapHistoryByDimension.get(firstActiveDimension) ?? [];
+  const firstDimName = firstActiveDimension;
 
   // Pass escalationLevel=1 so that escalationLevel+1=2, preserving the original global PIVOT level
-  await applyStallAction(ctx, goalId, goal, firstDimHistory, globalStall, 1, firstDimName, result, "global ", stallActionHints);
+  await applyStallAction(
+    ctx,
+    goalId,
+    goal,
+    firstDimHistory,
+    globalStall,
+    1,
+    firstDimName,
+    result,
+    "global ",
+    stallActionHints,
+    waitActivationContext
+  );
 }
 
 /** Portfolio rebalance: check for normal rebalance triggers after stall detection. */
 async function rebalancePortfolio(
   ctx: PhaseCtx,
   goalId: string,
-  goal: Goal
+  goal: Goal,
+  waitActivationContext?: WaitStrategyActivationContext
 ): Promise<void> {
   if (!ctx.deps.portfolioManager) return;
   try {
@@ -439,7 +575,12 @@ async function rebalancePortfolio(
     if (rebalanceTrigger) {
       const rebalanceResult = await ctx.deps.portfolioManager.rebalance(goalId, rebalanceTrigger);
       if (rebalanceResult.new_generation_needed) {
-        await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+        await ctx.deps.strategyManager.onStallDetected(
+          goalId,
+          3,
+          goal.origin ?? "general",
+          waitActivationContext
+        );
       }
     }
   } catch {
@@ -514,6 +655,13 @@ export async function evaluateWaitStrategiesForObserveOnly(
     return { observeOnly: false, newGenerationNeeded: false, outcome: null };
   }
 
+  const waitActivationContext = buildWaitStrategyActivationContext(
+    ctx,
+    goalId,
+    goal,
+    indexGapHistoryByDimension(goal, await ctx.deps.stateManager.loadGapHistory(goalId))
+  );
+
   try {
     const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
     if (!portfolio) {
@@ -529,7 +677,8 @@ export async function evaluateWaitStrategiesForObserveOnly(
 
       const waitOutcome = await ctx.deps.portfolioManager.handleWaitStrategyExpiry(
         goalId,
-        strategy.id
+        strategy.id,
+        waitActivationContext
       );
       if (!waitOutcome) {
         continue;
@@ -553,7 +702,12 @@ export async function evaluateWaitStrategiesForObserveOnly(
       if (waitTrigger) {
         const rebalanceResult = await ctx.deps.portfolioManager.rebalance(goalId, waitTrigger);
         if (rebalanceResult.new_generation_needed) {
-          await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+          await ctx.deps.strategyManager.onStallDetected(
+            goalId,
+            3,
+            goal.origin ?? "general",
+            waitActivationContext
+          );
           result.waitObserveOnly = false;
           return { observeOnly: false, newGenerationNeeded: true, outcome: waitOutcome };
         }
