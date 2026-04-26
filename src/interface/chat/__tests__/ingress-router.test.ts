@@ -87,4 +87,45 @@ describe("IngressRouter", () => {
     expect(route.kind).toBe("agent_loop");
     expect(route.lane).toBe("fast");
   });
+
+  it("routes explicit long-running work requests to daemon-backed tend", () => {
+    const route = router.selectRoute(
+      buildStandaloneIngressMessage({
+        text: "coreloopの方でscore0.98行くまで取り組んで",
+        channel: "tui",
+        platform: "local_tui",
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      }),
+      {
+        hasLightweightLlm: true,
+        hasAgentLoop: true,
+        hasToolLoop: true,
+        hasDaemonTend: true,
+      }
+    );
+
+    expect(route.kind).toBe("daemon_tend");
+    expect(route.lane).toBe("durable");
+    expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
+  });
+
+  it("keeps explanatory long-running-task questions on the fast lane", () => {
+    const route = router.selectRoute(
+      buildStandaloneIngressMessage({
+        text: "長期タスクだとどうしてエラーになるの？",
+      }),
+      {
+        hasLightweightLlm: true,
+        hasAgentLoop: true,
+        hasToolLoop: true,
+        hasDaemonTend: true,
+      }
+    );
+
+    expect(route.kind).toBe("agent_loop");
+    expect(route.lane).toBe("fast");
+  });
 });
