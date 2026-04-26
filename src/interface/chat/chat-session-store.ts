@@ -149,9 +149,13 @@ function normalizeAgentLoopStatus(
   session: ChatSession,
   agentLoopState: AgentLoopSessionState | null,
 ): AgentLoopDiscovery {
-  const metadataStatus = session.agentLoopStatus ?? session.agentLoop?.status ?? null;
   const statePath = session.agentLoopStatePath ?? session.agentLoop?.statePath ?? null;
-  const resumableMetadata = session.agentLoopResumable ?? session.agentLoop?.resumable ?? null;
+  const topLevelStatePath = optionalString(session.agentLoopStatePath);
+  const nestedStatePath = optionalString(session.agentLoop?.statePath);
+  const allowNestedMetadata = !topLevelStatePath || topLevelStatePath === nestedStatePath;
+  const metadataStatus = session.agentLoopStatus ?? (allowNestedMetadata ? session.agentLoop?.status ?? null : null);
+  const resumableMetadata = session.agentLoopResumable ?? (allowNestedMetadata ? session.agentLoop?.resumable ?? null : null);
+  const metadataUpdatedAt = session.agentLoopUpdatedAt ?? (allowNestedMetadata ? session.agentLoop?.updatedAt ?? null : null);
 
   if (agentLoopState) {
     const status = agentLoopState.status;
@@ -168,7 +172,7 @@ function normalizeAgentLoopStatus(
       statePath,
       status: metadataStatus,
       resumable: resumableMetadata ?? metadataStatus !== "completed",
-      updatedAt: session.agentLoopUpdatedAt ?? session.agentLoop?.updatedAt ?? null,
+      updatedAt: metadataUpdatedAt,
     };
   }
 
@@ -176,7 +180,7 @@ function normalizeAgentLoopStatus(
     statePath,
     status: "missing",
     resumable: resumableMetadata ?? false,
-    updatedAt: session.agentLoopUpdatedAt ?? session.agentLoop?.updatedAt ?? null,
+    updatedAt: metadataUpdatedAt,
   };
 }
 
@@ -186,12 +190,12 @@ async function loadAgentLoopState(
   session: ChatSession,
 ): Promise<AgentLoopDiscovery> {
   const statePaths: string[] = [];
-  const metadataPaths = [
-    optionalString(session.agentLoopStatePath),
-    optionalString(session.agentLoop?.statePath),
-  ];
-  for (const candidate of metadataPaths) {
-    const resolved = resolvePathWithinBaseDir(baseDir, candidate);
+  const topLevelPath = resolvePathWithinBaseDir(baseDir, optionalString(session.agentLoopStatePath));
+  const nestedPath = !topLevelPath
+    ? resolvePathWithinBaseDir(baseDir, optionalString(session.agentLoop?.statePath))
+    : null;
+
+  for (const resolved of [topLevelPath, nestedPath]) {
     if (resolved && !statePaths.includes(resolved.relative)) statePaths.push(resolved.relative);
   }
 
