@@ -5,7 +5,28 @@ import type { IndexedFile } from "../contracts.js";
 import { classifyGeneratedPath } from "../generated-detector.js";
 import { isSearchablePath, toRepoRelative } from "../path-policy.js";
 
-const IGNORED_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".cache"]);
+const IGNORED_DIRS = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".jj",
+  ".sl",
+  ".claude",
+  ".claire",
+  ".cache",
+  ".dist-delete",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  "archive",
+  "tmp",
+  "vendor",
+  "worktree",
+  "worktrees",
+]);
+
+const HIDDEN_DIR_ALLOWLIST = new Set([".github"]);
 
 function languageFor(filePath: string): string {
   const ext = path.extname(filePath).slice(1);
@@ -28,7 +49,11 @@ async function walk(root: string, dir: string, result: string[], maxFiles: numbe
   for (const entry of entries) {
     if (result.length >= maxFiles) return;
     if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) continue;
+      if (
+        IGNORED_DIRS.has(entry.name)
+        || entry.name.startsWith(".dist-delete")
+        || (entry.name.startsWith(".") && !HIDDEN_DIR_ALLOWLIST.has(entry.name))
+      ) continue;
       await walk(root, path.join(dir, entry.name), result, maxFiles);
       continue;
     }

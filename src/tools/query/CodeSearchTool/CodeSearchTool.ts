@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { SearchOrchestrator } from "../../../platform/code-search/orchestrator.js";
+import type { RankedCandidate } from "../../../platform/code-search/contracts.js";
+import { saveCodeSearchSession } from "../../../platform/code-search/session-store.js";
 import { validateFilePath } from "../../fs/FileValidationTool/FileValidationTool.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 import { MAX_OUTPUT_CHARS, PERMISSION_LEVEL, READ_ONLY, TAGS } from "./constants.js";
@@ -19,8 +21,27 @@ export const CodeSearchInputSchema = z.object({
     maxFusionCandidates: z.number().int().positive().optional(),
     maxRerankCandidates: z.number().int().positive().optional(),
   }).optional(),
+  outputLimit: z.number().int().positive().max(80).optional(),
 });
 export type CodeSearchInput = z.infer<typeof CodeSearchInputSchema>;
+
+function compactCandidate(candidate: RankedCandidate): Record<string, unknown> {
+  return {
+    id: candidate.id,
+    file: candidate.file,
+    range: candidate.range,
+    symbol: candidate.symbol ? {
+      name: candidate.symbol.name,
+      kind: candidate.symbol.kind,
+      stableKey: candidate.symbol.stableKey,
+    } : undefined,
+    confidence: candidate.confidence,
+    readRecommendation: candidate.readRecommendation,
+    rerankScore: Number(candidate.rerankScore.toFixed(3)),
+    sourceRetrievers: candidate.sourceRetrievers,
+    reasons: candidate.reasons.slice(0, 4),
+  };
+}
 
 export class CodeSearchTool implements ITool<CodeSearchInput, unknown> {
   readonly metadata: ToolMetadata = {
@@ -46,12 +67,21 @@ export class CodeSearchTool implements ITool<CodeSearchInput, unknown> {
     const cwd = input.path ? validateFilePath(input.path, context.cwd).resolved : context.cwd;
     const orchestrator = new SearchOrchestrator(cwd);
     const session = await orchestrator.searchWithState({ ...input, cwd });
+    saveCodeSearchSession(session, cwd);
+    const visibleCandidates = session.candidates.slice(0, input.outputLimit ?? 40);
     return {
       success: true,
       data: {
         queryId: session.queryId,
-        candidates: session.candidates,
-        trace: session.trace,
+        candidates: visibleCandidates.map(compactCandidate),
+        candidateIds: visibleCandidates.map((candidate) => candidate.id),
+        totalCandidates: session.candidates.length,
+        trace: {
+          queryId: session.trace.queryId,
+          retrieversUsed: session.trace.retrieversUsed,
+          candidatesReturnedByRetriever: session.trace.candidatesReturnedByRetriever,
+          warnings: session.trace.warnings,
+        },
         warnings: session.trace.warnings,
       },
       summary: `Code search returned ${session.candidates.length} ranked candidates for ${input.intent ?? "inferred"} intent`,

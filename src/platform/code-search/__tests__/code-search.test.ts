@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SearchOrchestrator } from "../orchestrator.js";
 import { ProgressiveReader } from "../progressive-reader.js";
+import { buildFileIndex } from "../indexes/file-index.js";
 import { getCodeSearchIndexes } from "../indexes/index-store.js";
 import { parseVerificationSignal } from "../verification-retrieval.js";
 
@@ -79,5 +80,17 @@ describe("code search platform", () => {
 
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.some((candidate) => candidate.reasons.some((reason) => reason.includes("verification:")))).toBe(true);
+  });
+
+  it("excludes hidden worktree directories before applying the file cap", async () => {
+    await fsp.mkdir(path.join(root, ".claude", "worktrees", "old", "src"), { recursive: true });
+    for (let i = 0; i < 40; i += 1) {
+      await fsp.writeFile(path.join(root, ".claude", "worktrees", "old", "src", `stale-${i}.ts`), `export const stale${i} = ${i};\n`);
+    }
+
+    const files = await buildFileIndex(root, 10);
+
+    expect(files.some((file) => file.path.startsWith(".claude/"))).toBe(false);
+    expect(files.some((file) => file.path === "src/service.ts")).toBe(true);
   });
 });

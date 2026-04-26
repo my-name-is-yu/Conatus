@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getCodeSearchIndexes } from "../../../platform/code-search/indexes/index-store.js";
 import { ProgressiveReader } from "../../../platform/code-search/progressive-reader.js";
+import { getCodeSearchSession, resolveCodeSearchCandidates } from "../../../platform/code-search/session-store.js";
 import { validateFilePath } from "../../fs/FileValidationTool/FileValidationTool.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 import { MAX_OUTPUT_CHARS, PERMISSION_LEVEL, READ_ONLY, TAGS } from "./constants.js";
@@ -35,7 +36,7 @@ const CandidateSchema = z.object({
 }).passthrough();
 
 export const CodeReadContextInputSchema = z.object({
-  candidates: z.array(CandidateSchema),
+  candidates: z.array(CandidateSchema).optional().default([]),
   candidateIds: z.array(z.string()).optional(),
   queryId: z.string().optional(),
   phase: z.enum(["locate", "understand", "plan_edit", "edit", "verify", "repair"]).optional(),
@@ -69,7 +70,19 @@ export class CodeReadContextTool implements ITool<CodeReadContextInput, unknown>
     const cwd = input.path ? validateFilePath(input.path, context.cwd).resolved : context.cwd;
     const indexes = await getCodeSearchIndexes(cwd);
     const reader = new ProgressiveReader(cwd, indexes);
-    const bundle = await reader.read(input.candidates as never, {
+    const candidates = input.queryId
+      ? resolveCodeSearchCandidates(input.queryId, input.candidateIds)
+      : input.candidates;
+    if (input.queryId && candidates.length === 0) {
+      return {
+        success: false,
+        data: null,
+        summary: `No code_search candidates found for queryId ${input.queryId}`,
+        error: `No code_search candidates found for queryId ${input.queryId}`,
+        durationMs: Date.now() - startTime,
+      };
+    }
+    const bundle = await reader.read(candidates as never, {
       queryId: input.queryId,
       candidateIds: input.candidateIds,
       phase: input.phase,
@@ -91,7 +104,9 @@ export class CodeReadContextTool implements ITool<CodeReadContextInput, unknown>
     if (!rootValidation.valid) {
       return { status: "needs_approval", reason: `Reading outside the working directory: ${rootValidation.resolved}` };
     }
-    for (const candidate of input.candidates) {
+    const storedCandidates = input.queryId ? resolveCodeSearchCandidates(input.queryId, input.candidateIds) : [];
+    const candidates = input.queryId ? storedCandidates : input.candidates;
+    for (const candidate of candidates) {
       const validation = validateFilePath(candidate.file, rootValidation.resolved, context.executionPolicy?.protectedPaths);
       if (!validation.valid) {
         return { status: "needs_approval", reason: `Reading outside the working directory: ${validation.resolved}` };
