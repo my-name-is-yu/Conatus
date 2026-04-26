@@ -93,4 +93,17 @@ describe("code search platform", () => {
     expect(files.some((file) => file.path.startsWith(".claude/"))).toBe(false);
     expect(files.some((file) => file.path === "src/service.ts")).toBe(true);
   });
+
+  it("excludes build-output prefixes before indexing declaration artifacts", async () => {
+    await fsp.mkdir(path.join(root, "dist-tui-test", "interface", "tui"), { recursive: true });
+    await fsp.mkdir(path.join(root, "coverage-c8", "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "dist-tui-test", "interface", "tui", "chat.d.ts"), "export declare const staleChat: string;\n");
+    await fsp.writeFile(path.join(root, "coverage-c8", "src", "chat.ts"), "export const staleCoverage = true;\n");
+
+    const files = await buildFileIndex(root, 50);
+
+    expect(files.some((file) => file.path.startsWith("dist-tui-test/"))).toBe(false);
+    expect(files.some((file) => file.path.startsWith("coverage-c8/"))).toBe(false);
+    expect(files.some((file) => file.path === "src/service.ts")).toBe(true);
+  });
 });

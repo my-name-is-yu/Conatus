@@ -10,6 +10,7 @@ import { clearCodeSearchSessionsForTests } from "../../../../platform/code-searc
 import { CodeReadContextTool } from "../../CodeReadContextTool/CodeReadContextTool.js";
 import { CodeSearchRepairTool } from "../../CodeSearchRepairTool/CodeSearchRepairTool.js";
 import { CodeSearchTool } from "../CodeSearchTool.js";
+import { MAX_OUTPUT_CHARS } from "../constants.js";
 import type { ToolCallContext } from "../../../types.js";
 
 describe("code search tools", () => {
@@ -76,6 +77,7 @@ describe("code search tools", () => {
     expect(search.success).toBe(true);
     expect(search.truncated).toBeUndefined();
     expect(typeof search.data).toBe("object");
+    expect(JSON.stringify(search.data).length).toBeLessThan(MAX_OUTPUT_CHARS);
     const data = search.data as { queryId: string; candidateIds: string[]; totalCandidates: number };
     expect(data.totalCandidates).toBeGreaterThan(40);
 

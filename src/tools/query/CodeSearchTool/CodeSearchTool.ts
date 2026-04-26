@@ -21,7 +21,7 @@ export const CodeSearchInputSchema = z.object({
     maxFusionCandidates: z.number().int().positive().optional(),
     maxRerankCandidates: z.number().int().positive().optional(),
   }).optional(),
-  outputLimit: z.number().int().positive().max(80).optional(),
+  outputLimit: z.number().int().positive().max(40).optional(),
 });
 export type CodeSearchInput = z.infer<typeof CodeSearchInputSchema>;
 
@@ -38,8 +38,8 @@ function compactCandidate(candidate: RankedCandidate): Record<string, unknown> {
     confidence: candidate.confidence,
     readRecommendation: candidate.readRecommendation,
     rerankScore: Number(candidate.rerankScore.toFixed(3)),
-    sourceRetrievers: candidate.sourceRetrievers,
-    reasons: candidate.reasons.slice(0, 4),
+    retrievers: candidate.sourceRetrievers.slice(0, 3),
+    reason: candidate.reasons[0],
   };
 }
 
@@ -68,7 +68,7 @@ export class CodeSearchTool implements ITool<CodeSearchInput, unknown> {
     const orchestrator = new SearchOrchestrator(cwd);
     const session = await orchestrator.searchWithState({ ...input, cwd });
     saveCodeSearchSession(session, cwd);
-    const visibleCandidates = session.candidates.slice(0, input.outputLimit ?? 40);
+    const visibleCandidates = session.candidates.slice(0, input.outputLimit ?? 20);
     return {
       success: true,
       data: {
@@ -79,14 +79,12 @@ export class CodeSearchTool implements ITool<CodeSearchInput, unknown> {
         trace: {
           queryId: session.trace.queryId,
           retrieversUsed: session.trace.retrieversUsed,
-          candidatesReturnedByRetriever: session.trace.candidatesReturnedByRetriever,
-          warnings: session.trace.warnings,
         },
-        warnings: session.trace.warnings,
+        warnings: session.trace.warnings.slice(0, 5),
       },
       summary: `Code search returned ${session.candidates.length} ranked candidates for ${input.intent ?? "inferred"} intent`,
       durationMs: Date.now() - startTime,
-      artifacts: session.candidates.map((candidate) => candidate.file),
+      artifacts: visibleCandidates.map((candidate) => candidate.file),
     };
   }
 

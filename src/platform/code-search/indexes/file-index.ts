@@ -27,6 +27,7 @@ const IGNORED_DIRS = new Set([
 ]);
 
 const HIDDEN_DIR_ALLOWLIST = new Set([".github"]);
+const IGNORED_DIR_PREFIXES = ["dist-", "build-", "out-", "target-", "coverage-", ".dist-delete"];
 
 function languageFor(filePath: string): string {
   const ext = path.extname(filePath).slice(1);
@@ -51,7 +52,7 @@ async function walk(root: string, dir: string, result: string[], maxFiles: numbe
     if (entry.isDirectory()) {
       if (
         IGNORED_DIRS.has(entry.name)
-        || entry.name.startsWith(".dist-delete")
+        || IGNORED_DIR_PREFIXES.some((prefix) => entry.name.startsWith(prefix))
         || (entry.name.startsWith(".") && !HIDDEN_DIR_ALLOWLIST.has(entry.name))
       ) continue;
       await walk(root, path.join(dir, entry.name), result, maxFiles);
