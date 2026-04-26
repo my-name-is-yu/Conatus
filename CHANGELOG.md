@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3] - 2026-04-26
+
+### Added
+- Added Kaggle training and benchmark tools, plus chat AgentLoop exposure for running Kaggle workflows from PulSeed (#740, #741)
+- Added runtime session registry, CLI/runtime session surfaces, background run ledger, and CoreLoop background handoff support for long-running work (#744, #745, #746, #747, #748)
+- Added structured code search tools and richer chat visibility for current tool activity, intent, checkpoints, diffs, working context, failure recovery guidance, and interrupt redirects (#757, #758, #759, #760, #761, #762, #763, #764)
+
+### Changed
+- Routed long-running chat work to daemon-backed execution so extended tasks can continue through the runtime path (#765)
+- Bumped the package version to `0.5.3`
+
+### Fixed
+- Fixed TUI text copy, long-text rendering, paste behavior, scroll behavior while processing, and fullscreen mouse interaction handling (#749)
+
 ## [0.5.2] - 2026-04-24
 
 ### Added
