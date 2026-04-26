@@ -483,9 +483,9 @@ export function Chat({
       setScrollOffset(0);
       return;
     }
-    onSubmit(trimmed);
+    onSubmit(value);
     setInput("");
-    setHistory((prev) => [...prev, trimmed]);
+    setHistory((prev) => [...prev, value]);
     setHistoryIdx(-1);
     setScrollOffset(0);
   };
