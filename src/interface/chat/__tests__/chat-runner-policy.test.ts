@@ -139,6 +139,44 @@ describe("ChatRunner policy commands", () => {
     expect(result.output).toContain("Forked chat session");
   });
 
+  it("/fork clears stale native agentloop metadata from the new session", async () => {
+    const stateManager = makeMockStateManager();
+    const runner = new ChatRunner(makeDeps({ stateManager }));
+    runner.startSessionFromLoadedSession({
+      id: "source-session",
+      cwd: "/repo",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:01:00.000Z",
+      title: "Source",
+      messages: [
+        { role: "user", content: "continue", timestamp: "2026-04-01T00:00:00.000Z", turnIndex: 0 },
+      ],
+      agentLoopStatePath: "chat/agentloop/source-session.state.json",
+      agentLoopStatus: "running",
+      agentLoopResumable: true,
+      agentLoopUpdatedAt: "2026-04-01T00:02:00.000Z",
+      agentLoop: {
+        statePath: "chat/agentloop/source-session.state.json",
+        status: "running",
+        resumable: true,
+        updatedAt: "2026-04-01T00:02:00.000Z",
+      },
+    });
+
+    const result = await runner.execute("/fork Branch copy", "/repo");
+
+    expect(result.success).toBe(true);
+    const writeCalls = vi.mocked(stateManager.writeRaw).mock.calls;
+    expect(writeCalls.length).toBeGreaterThan(0);
+    const persistedSession = writeCalls.at(-1)?.[1] as Record<string, unknown>;
+    expect(persistedSession["id"]).not.toBe("source-session");
+    expect(persistedSession["agentLoopStatePath"]).toBe(`chat/agentloop/${persistedSession["id"]}.state.json`);
+    expect(persistedSession["agentLoopStatus"]).toBeUndefined();
+    expect(persistedSession["agentLoopResumable"]).toBeUndefined();
+    expect(persistedSession["agentLoopUpdatedAt"]).toBeUndefined();
+    expect(persistedSession["agentLoop"]).toBeUndefined();
+  });
+
   it("/undo removes the latest turn from chat history", async () => {
     const runner = new ChatRunner(makeDeps());
     runner.startSession("/repo");
