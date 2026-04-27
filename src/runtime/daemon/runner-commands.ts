@@ -11,6 +11,7 @@ import type { LoopSupervisor } from "../executor/index.js";
 import type { JournalBackedQueue, JournalBackedQueueAcceptResult } from "../queue/journal-backed-queue.js";
 import { writeChatMessageEvent } from "./maintenance.js";
 import { runCommandWithHealth as runCommandWithHealthFn } from "./runner-errors.js";
+import type { WaitResumeActivation } from "../../base/types/goal-activation.js";
 
 export interface BackgroundRunStartMetadata {
   backgroundRunId: string;
@@ -18,6 +19,11 @@ export interface BackgroundRunStartMetadata {
   notifyPolicy?: "silent" | "done_only" | "state_changes";
   replyTargetSource?: "pinned_run" | "parent_session" | "none";
   pinnedReplyTarget?: Record<string, unknown> | null;
+}
+
+export interface GoalStartMetadata {
+  backgroundRun?: BackgroundRunStartMetadata;
+  waitResume?: WaitResumeActivation;
 }
 
 export interface DaemonRunnerCommandContext {
@@ -88,24 +94,35 @@ export async function handleGoalStartCommand(
     "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state"
   >,
   goalId: string,
-  metadata?: BackgroundRunStartMetadata,
+  metadata?: GoalStartMetadata,
 ): Promise<void> {
   if (!context.currentGoalIds.includes(goalId)) {
     context.currentGoalIds.push(goalId);
   }
   context.refreshOperationalState();
   await context.saveDaemonState();
-  context.supervisor?.activateGoal(goalId, metadata?.backgroundRunId ? { backgroundRun: metadata } : undefined);
+  context.supervisor?.activateGoal(goalId, metadata);
   context.abortSleep();
   await context.broadcastGoalUpdated(goalId, "active");
 }
 
-export function extractBackgroundRunStartMetadata(envelope: Envelope): BackgroundRunStartMetadata | undefined {
+export function extractGoalStartMetadata(envelope: Envelope): GoalStartMetadata | undefined {
   const payload = envelope.payload;
   if (!payload || typeof payload !== "object") return undefined;
-  const backgroundRun = (payload as Record<string, unknown>)["backgroundRun"];
-  if (!backgroundRun || typeof backgroundRun !== "object") return undefined;
-  const input = backgroundRun as Record<string, unknown>;
+  const value = payload as Record<string, unknown>;
+  const backgroundRun = extractBackgroundRun(value["backgroundRun"]);
+  const waitResume = extractWaitResume(value["wait_resume"]);
+  if (!backgroundRun && !waitResume) return undefined;
+
+  return {
+    ...(backgroundRun ? { backgroundRun } : {}),
+    ...(waitResume ? { waitResume } : {}),
+  };
+}
+
+function extractBackgroundRun(payload: unknown): BackgroundRunStartMetadata | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const input = payload as Record<string, unknown>;
   const backgroundRunId = input["backgroundRunId"];
   if (typeof backgroundRunId !== "string" || backgroundRunId.trim() === "") return undefined;
 
@@ -128,6 +145,24 @@ export function extractBackgroundRunStartMetadata(envelope: Envelope): Backgroun
       : pinnedReplyTarget === null
         ? { pinnedReplyTarget: null }
         : {}),
+  };
+}
+
+function extractWaitResume(payload: unknown): WaitResumeActivation | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const input = payload as Record<string, unknown>;
+  if (input["type"] !== "wait_resume") return undefined;
+  const strategyId = input["strategyId"];
+  if (typeof strategyId !== "string" || strategyId.trim() === "") return undefined;
+  const scheduleEntryId = input["scheduleEntryId"];
+  const nextObserveAt = input["nextObserveAt"];
+  const waitReason = input["waitReason"];
+  return {
+    type: "wait_resume",
+    strategyId,
+    ...(typeof scheduleEntryId === "string" ? { scheduleEntryId } : {}),
+    ...(typeof nextObserveAt === "string" || nextObserveAt === null ? { nextObserveAt } : {}),
+    ...(typeof waitReason === "string" || waitReason === null ? { waitReason } : {}),
   };
 }
 
@@ -306,27 +341,5 @@ export async function handleApprovalResponseCommand(
   }
   if (goalId && context.eventServer) {
     await context.eventServer.resolveApproval(requestId, approved);
-  }
-}
-
-export async function handleCronTaskDue(
-  context: Pick<DaemonRunnerCommandContext, "logger"> & {
-    cronScheduler?: {
-      markFired(taskId: string): Promise<void>;
-    };
-  },
-  taskId: string,
-): Promise<void> {
-  if (!context.cronScheduler) {
-    return;
-  }
-  try {
-    await context.cronScheduler.markFired(taskId);
-    context.logger.info(`Cron task fired: ${taskId}`);
-  } catch (err) {
-    context.logger.warn(`Cron task ${taskId} failed`, {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    await context.cronScheduler.markFired(taskId);
   }
 }

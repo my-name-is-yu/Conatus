@@ -31,8 +31,13 @@ export async function scheduleHistory(engine: ScheduleEngine, argv: string[]): P
     for (const record of records) {
       const error = record.error_message ? ` error=${record.error_message}` : "";
       const output = record.output_summary ? ` output=${record.output_summary}` : "";
+      const activation =
+        record.activation_kind === "wait_resume"
+          ? ` activation=${record.activation_kind}:${record.wait_strategy_id ?? record.strategy_id ?? "unknown"}`
+          : "";
+      const internal = record.internal ? " internal" : "";
       console.log(
-        `  ${record.fired_at}  ${record.reason}  ${record.status}  attempt=${record.attempt}${error}${output}`
+        `  ${record.fired_at}  ${record.reason}  ${record.status}${internal}  attempt=${record.attempt}${activation}${error}${output}`
       );
     }
   } catch (err) {

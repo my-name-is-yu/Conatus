@@ -824,7 +824,6 @@ describe("DaemonRunner durable runtime", () => {
     vi.spyOn(daemon as any, "runRuntimeStoreMaintenance").mockResolvedValue(undefined);
     vi.spyOn(daemon as any, "proactiveTick").mockResolvedValue(undefined);
     vi.spyOn(daemon as any, "saveDaemonState").mockResolvedValue(undefined);
-    vi.spyOn(daemon as any, "processCronTasks").mockResolvedValue(undefined);
     vi.spyOn(daemon as any, "processScheduleEntries").mockResolvedValue(undefined);
     const adaptiveIntervalSpy = vi
       .spyOn(daemon as any, "calculateAdaptiveInterval")
@@ -1532,7 +1531,6 @@ describe("DaemonRunner durable runtime", () => {
       currentGoalIds: ["goal-1"],
       driveSystem: driveSystem as never,
       supervisor: null,
-      processCronTasks: vi.fn().mockResolvedValue(undefined),
       processScheduleEntries: vi.fn().mockResolvedValue(undefined),
       proactiveTick: vi.fn().mockResolvedValue(undefined),
       saveDaemonState: saveSpy,
@@ -1579,7 +1577,6 @@ describe("DaemonRunner durable runtime", () => {
       currentGoalIds: ["goal-2"],
       driveSystem: driveSystem as never,
       supervisor,
-      processCronTasks: vi.fn().mockResolvedValue(undefined),
       processScheduleEntries: vi.fn().mockResolvedValue(undefined),
       proactiveTick: vi.fn().mockResolvedValue(undefined),
       saveDaemonState: saveSpy,

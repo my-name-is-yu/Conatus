@@ -29,6 +29,70 @@ describe("ScheduleEngine", () => {
     expect(entries).toEqual([]);
   });
 
+  it("migrates legacy scheduled-tasks.json into schedules.json on load", async () => {
+    fs.writeFileSync(
+      path.join(tempDir, "scheduled-tasks.json"),
+      JSON.stringify([
+        {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          cron: "0 9 * * *",
+          prompt: "Legacy prompt",
+          type: "reflection",
+          enabled: true,
+          last_fired_at: null,
+          permanent: false,
+          created_at: "2026-04-01T00:00:00.000Z",
+        },
+      ], null, 2),
+      "utf-8",
+    );
+
+    const entries = await engine.loadEntries();
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.layer).toBe("cron");
+    expect(entries[0]?.cron?.prompt_template).toBe("Legacy prompt");
+    expect(fs.existsSync(path.join(tempDir, "scheduled-tasks.legacy-migrated.json"))).toBe(true);
+  });
+
+  it("does not overwrite schedules.json when legacy scheduled-tasks.json still exists", async () => {
+    await engine.addEntry({
+      name: "existing-schedule",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 30, jitter_factor: 0 },
+      enabled: true,
+      heartbeat: {
+        check_type: "custom",
+        check_config: { command: "echo ok" },
+        failure_threshold: 3,
+        timeout_ms: 5000,
+      },
+    });
+
+    fs.writeFileSync(
+      path.join(tempDir, "scheduled-tasks.json"),
+      JSON.stringify([
+        {
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          cron: "0 9 * * *",
+          prompt: "Legacy prompt",
+          type: "custom",
+          enabled: true,
+          last_fired_at: null,
+          permanent: false,
+          created_at: "2026-04-01T00:00:00.000Z",
+        },
+      ], null, 2),
+      "utf-8",
+    );
+
+    const reloaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+
+    expect(reloaded).toHaveLength(1);
+    expect(reloaded[0]?.name).toBe("existing-schedule");
+    expect(fs.existsSync(path.join(tempDir, "scheduled-tasks.json"))).toBe(true);
+  });
+
   it("adds and persists a heartbeat entry", async () => {
     const entry = await engine.addEntry({
       name: "http-check",

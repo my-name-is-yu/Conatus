@@ -27,7 +27,7 @@ export async function cmdSchedule(
 
   switch (subcommand) {
     case "list":
-      return await scheduleList(engine);
+      return scheduleListWithArgs(engine, argv.slice(1));
     case "show":
     case "get":
       return scheduleShow(engine, argv.slice(1));
@@ -57,7 +57,7 @@ export async function cmdSchedule(
       return await scheduleSuggestions(baseDir, engine, argv.slice(1));
     default:
       console.log("Usage: pulseed schedule <list|show|add|edit|pause|resume|run|history|cost|remove|presets|suggestions>");
-      console.log("  list                              List all schedule entries");
+      console.log("  list [--all]                      List schedule entries (internal wait schedules hidden by default)");
       console.log("  show <id>                         Show one schedule entry as JSON");
       console.log("  add                               Add a heartbeat entry or preset");
       console.log("  edit <id>                         Edit name, trigger, enabled state, or layer config");
@@ -72,8 +72,20 @@ export async function cmdSchedule(
   }
 }
 
-async function scheduleList(engine: ScheduleEngine): Promise<void> {
-  const entries = engine.getEntries();
+function scheduleListWithArgs(engine: ScheduleEngine, argv: string[]): void {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      all: { type: "boolean", default: false },
+      internal: { type: "boolean", default: false },
+    },
+    strict: false,
+  });
+  const includeInternal = values.all || values.internal;
+  const allEntries = engine.getEntries();
+  const entries = includeInternal
+    ? allEntries
+    : allEntries.filter((entry) => entry.metadata?.internal !== true);
   if (entries.length === 0) {
     console.log("No schedule entries.");
     return;
@@ -91,11 +103,29 @@ async function scheduleList(engine: ScheduleEngine): Promise<void> {
       `  ${entry.id.slice(0, 8)}  [${entry.layer}] ${entry.name}  (${schedule})  ${status}  source: ${source}  last: ${lastFired}`
     );
   }
+  if (!includeInternal) {
+    const hiddenCount = allEntries.length - entries.length;
+    if (hiddenCount > 0) {
+      console.log(`  (${hiddenCount} internal schedule entr${hiddenCount === 1 ? "y" : "ies"} hidden; use --all to show)`);
+    }
+  }
 }
 
 function scheduleShow(engine: ScheduleEngine, argv: string[]): void {
   const entry = getScheduleOrPrintError(engine, argv[0]);
   if (!entry) return;
+  if (entry.metadata?.internal === true && entry.metadata.activation_kind === "wait_resume") {
+    console.log(JSON.stringify({
+      ...entry,
+      internal_projection: {
+        kind: "wait_resume",
+        goal_id: entry.metadata.goal_id ?? entry.goal_trigger?.goal_id ?? null,
+        strategy_id: entry.metadata.strategy_id ?? null,
+        wait_strategy_id: entry.metadata.wait_strategy_id ?? null,
+      },
+    }, null, 2));
+    return;
+  }
   console.log(JSON.stringify(entry, null, 2));
 }
 

@@ -30,6 +30,8 @@ import {
   detectStrategyGap,
   unwrapStrategyResponse,
 } from "./strategy-helpers.js";
+import { syncWaitStrategyScheduleProjection } from "../../runtime/schedule/wait-projection.js";
+import { isWaitStrategy } from "./portfolio-allocation.js";
 
 type RawStrategyCandidate = z.infer<typeof StrategyArraySchema>[number];
 
@@ -440,6 +442,13 @@ export class StrategyManagerBase {
       s.id === strategyId ? updated : s
     );
     await this.savePortfolio(goalId, portfolio);
+    if (isWaitStrategy(updated)) {
+      await syncWaitStrategyScheduleProjection({
+        baseDir: this.stateManager.getBaseDir(),
+        goalId,
+        strategyId,
+      }).catch(() => undefined);
+    }
 
     // Archive terminated/completed strategies to history
     if (newState === "terminated" || newState === "completed") {

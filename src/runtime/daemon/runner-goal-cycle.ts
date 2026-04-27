@@ -44,7 +44,7 @@ function buildDaemonStatusPayload(context: GoalCycleRunnerContext): Record<strin
 function applyWaitDeadlineStatus(context: GoalCycleRunnerContext, waitDeadlines: unknown): void {
   const resolution = waitDeadlines as {
     next_observe_at?: string | null;
-    waiting_goals?: Array<{ wait_reason?: string; approval_pending?: boolean }>;
+    waiting_goals?: Array<{ wait_reason?: string; approval_pending?: boolean; activation_kind?: string; internal_schedule?: boolean }>;
   } | null | undefined;
   const waitingGoals = Array.isArray(resolution?.waiting_goals) ? resolution.waiting_goals : [];
   context.state.waiting_goals = waitingGoals;
@@ -79,7 +79,10 @@ export async function runDaemonGoalCycleLoop(context: GoalCycleRunnerContext): P
         applyWaitDeadlineStatus(context, waitDeadlines);
       }
       const scheduledActiveGoals = await context.determineActiveGoals(goalIds, cycleSnapshot);
-      const dueWaitGoalIds = waitDeadlines ? getDueWaitGoalIds(waitDeadlines) : [];
+      const dueWaitGoalIds =
+        waitDeadlines && !context.scheduleEngine
+          ? getDueWaitGoalIds(waitDeadlines)
+          : [];
       const activeGoals = [...new Set([...scheduledActiveGoals, ...dueWaitGoalIds])];
       await context.maybeRefreshProviderRuntime(activeGoals.length);
 
@@ -148,12 +151,7 @@ export async function runDaemonGoalCycleLoop(context: GoalCycleRunnerContext): P
         void context.eventServer.broadcast?.("daemon_status", buildDaemonStatusPayload(context));
       }
 
-      await context.processCronTasks();
       await context.processScheduleEntries();
-
-      if (context.state.loop_count > 0 && context.state.loop_count % 100 === 0) {
-        await context.expireCronTasks();
-      }
 
       if (context.running) {
         await context.proactiveTick();

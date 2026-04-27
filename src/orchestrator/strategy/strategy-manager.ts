@@ -10,6 +10,7 @@ import {
   type WaitStrategyActivationContext,
 } from "./strategy-manager-base.js";
 import { getCurrentGapForDimension } from "./portfolio-rebalance.js";
+import { syncWaitStrategyScheduleProjection } from "../../runtime/schedule/wait-projection.js";
 
 export { VALID_TRANSITIONS, StrategyArraySchema, buildGenerationPrompt, redistributeAllocation, detectStrategyGap } from "./strategy-helpers.js";
 export { StrategyManagerBase } from "./strategy-manager-base.js";
@@ -132,6 +133,17 @@ export class StrategyManager extends StrategyManagerBase {
 
     // Gap 2: For any activated WaitStrategy, write wait_until to the active task plateau_until
     await this._applyWaitStrategyPlateauUntil(goalId, activated);
+    await Promise.all(
+      activated
+        .filter((strategy) => isWaitStrategy(strategy))
+        .map((strategy) =>
+          syncWaitStrategyScheduleProjection({
+            baseDir: this.stateManager.getBaseDir(),
+            goalId,
+            strategyId: strategy.id,
+          }).catch(() => undefined)
+        )
+    );
 
     return activated;
   }
@@ -358,6 +370,11 @@ export class StrategyManager extends StrategyManagerBase {
       `strategies/${goalId}/wait-meta/${waitStrategy.id}.json`,
       buildDefaultWaitMetadata(waitStrategy)
     );
+    await syncWaitStrategyScheduleProjection({
+      baseDir: this.stateManager.getBaseDir(),
+      goalId,
+      strategyId: waitStrategy.id,
+    }).catch(() => undefined);
 
     this.strategyIndex.set(waitStrategy.id, goalId);
     return waitStrategy;
@@ -393,6 +410,13 @@ export class StrategyManager extends StrategyManagerBase {
     );
     portfolio.strategies = redistributeAllocation(withSuspended, strategyId, freedAllocation);
     await this.savePortfolio(goalId, portfolio);
+    if (isWaitStrategy(suspended)) {
+      await syncWaitStrategyScheduleProjection({
+        baseDir: this.stateManager.getBaseDir(),
+        goalId,
+        strategyId,
+      }).catch(() => undefined);
+    }
 
     return suspended;
   }
@@ -444,6 +468,13 @@ export class StrategyManager extends StrategyManagerBase {
     });
 
     await this.savePortfolio(goalId, portfolio);
+    if (isWaitStrategy(resumed)) {
+      await syncWaitStrategyScheduleProjection({
+        baseDir: this.stateManager.getBaseDir(),
+        goalId,
+        strategyId,
+      }).catch(() => undefined);
+    }
     return resumed;
   }
 

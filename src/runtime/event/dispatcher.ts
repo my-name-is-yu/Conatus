@@ -2,14 +2,12 @@ import { JournalBackedQueue, type JournalBackedQueueClaim } from "../queue/journ
 import type { Envelope } from "../types/envelope.js";
 import type { Logger } from "../logger.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
-import type { CronTask } from "../types/cron.js";
 
 export interface EventDispatcherDeps {
   journalQueue: JournalBackedQueue;
   logger?: Logger;
   onGoalActivate?: (goalId: string, envelope: Envelope) => Promise<void> | void;
   onExternalEvent?: (event: unknown, envelope: Envelope) => Promise<void> | void;
-  onCronTaskDue?: (task: CronTask, envelope: Envelope) => Promise<void> | void;
 }
 
 export interface EventDispatcherConfig {
@@ -103,10 +101,6 @@ export class EventDispatcher {
           throw new Error("schedule_activated event is missing goal_id");
         }
         await this.deps.onGoalActivate?.(goalId, envelope);
-        return;
-      }
-      case "cron_task_due": {
-        await this.deps.onCronTaskDue?.(envelope.payload as CronTask, envelope);
         return;
       }
       default: {

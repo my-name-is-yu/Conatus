@@ -16,13 +16,14 @@ import type { MemoryLifecycleManager } from "../../platform/knowledge/memory/mem
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
 import { detectChange } from "../change-detector.js";
 import { executeReflectionCronJob, executeSoilPublishCronJob } from "./engine-cron-reflection.js";
+import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 
 interface LayerDeps {
   baseDir?: string;
   dataSourceRegistry?: Map<string, IDataSourceAdapter> | DataSourceRegistry;
   llmClient?: ILLMClient;
   notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
-  coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> };
+  coreLoop?: { run(goalId: string, options?: { maxIterations?: number; activation?: GoalRunActivationContext }): Promise<any> };
   stateManager?: StateManager;
   reportingEngine?: { generateNotification(type: string, context: Record<string, unknown>): Promise<any> };
   hookManager?: HookManager;
@@ -248,6 +249,16 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
   }
 
   try {
+    if (entry.metadata?.activation_kind === "wait_resume") {
+      return ScheduleResultSchema.parse({
+        entry_id: entry.id,
+        status: "ok",
+        duration_ms: Date.now() - start,
+        fired_at: firedAt,
+        goal_id: cfg.goal_id,
+      });
+    }
+
     const result = await deps.coreLoop.run(cfg.goal_id, { maxIterations: cfg.max_iterations });
     const tokensUsed = result?.tokensUsed ?? 0;
     if (result) {

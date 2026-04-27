@@ -19,7 +19,6 @@ import {
   SlackChannelAdapter,
   loadBuiltinGatewayIntegrations,
 } from "../../../runtime/gateway/index.js";
-import { CronScheduler } from "../../../runtime/cron-scheduler.js";
 import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
@@ -324,9 +323,6 @@ export async function cmdStart(
     eventServer.broadcast("notification_report", report);
   });
 
-  // Gap 4: Create CronScheduler for scheduled tasks
-  const cronScheduler = new CronScheduler(daemonBaseDir);
-
   // Create ScheduleEngine with data source registry and LLM client
   const scheduleEngine = new ScheduleEngine({
     baseDir: daemonBaseDir,
@@ -400,7 +396,6 @@ export async function cmdStart(
     eventServer,
     gateway,
     llmClient: deps.llmClient,
-    cronScheduler,
     scheduleEngine,
     memoryLifecycle: deps.memoryLifecycleManager,
     knowledgeManager: deps.knowledgeManager,
@@ -543,9 +538,11 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     }
     for (const waitGoal of waitingGoals.slice(0, 5)) {
       const approval = waitGoal.approval_pending ? ", approval pending" : "";
+      const source = waitGoal.internal_schedule ? ", schedule-projected" : "";
+      const activation = waitGoal.activation_kind ? `, ${waitGoal.activation_kind}` : "";
       lines.push(
         `  - ${waitGoal.goal_id}/${waitGoal.strategy_id}: observe `
-          + `${formatRelativeTime(waitGoal.next_observe_at)} (${waitGoal.wait_reason}${approval})`
+          + `${formatRelativeTime(waitGoal.next_observe_at)} (${waitGoal.wait_reason}${approval}${source}${activation})`
       );
     }
     if (waitingGoals.length > 5) {

@@ -142,6 +142,8 @@ describe("cmdDaemonStatus", () => {
           wait_until: "2026-04-24T12:30:00.000Z",
           wait_reason: "approval required before resume",
           approval_pending: true,
+          activation_kind: "wait_resume",
+          internal_schedule: true,
         },
       ],
       next_observe_at: "2026-04-24T12:30:00.000Z",
@@ -167,7 +169,7 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Approvals:      1 pending");
     expect(output).toContain("goal-wait/wait-1");
     expect(output).toContain("observe 30m from now");
-    expect(output).toContain("approval required before resume, approval pending");
+    expect(output).toContain("approval required before resume, approval pending, schedule-projected, wait_resume");
   });
 
   it("prints runtime KPI status when health snapshot exists", async () => {

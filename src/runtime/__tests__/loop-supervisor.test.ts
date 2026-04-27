@@ -356,7 +356,7 @@ describe("LoopSupervisor", () => {
 
       journalQueue.accept(createEnvelope({
         type: 'event',
-        name: 'cron_task_due',
+        name: 'schedule_report_ready',
         source: 'test',
         goal_id: undefined,
         payload: { taskId: 'task-1' },
@@ -370,7 +370,7 @@ describe("LoopSupervisor", () => {
       expect(snapshot.pending.normal).toHaveLength(1);
       expect(snapshot.pending.normal[0]).toBeDefined();
       const queueState = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "queue.json"), "utf8"));
-      expect(queueState.records[snapshot.pending.normal[0]].envelope.name).toBe('cron_task_due');
+      expect(queueState.records[snapshot.pending.normal[0]].envelope.name).toBe('schedule_report_ready');
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { CoreLoop } from '../../orchestrator/loop/core-loop.js';
 import type { LoopResult } from '../../orchestrator/loop/core-loop.js';
+import type { GoalRunActivationContext } from '../../base/types/goal-activation.js';
 
 export interface GoalWorkerConfig {
   iterationsPerCycle: number; // default 5
@@ -39,7 +40,7 @@ export class GoalWorker {
     this.id = randomUUID();
   }
 
-  async execute(goalId: string): Promise<WorkerResult> {
+  async execute(goalId: string, activation?: GoalRunActivationContext): Promise<WorkerResult> {
     this.status = 'running';
     this.currentGoalId = goalId;
     this.startedAt = Date.now();
@@ -54,6 +55,7 @@ export class GoalWorker {
         this.extendRequested = false;
         lastResult = await this.coreLoop.run(goalId, {
           maxIterations: this.config.iterationsPerCycle,
+          ...(activation ? { activation } : {}),
         });
         cumulativeIterations += lastResult.totalIterations;
         this.currentIterations = cumulativeIterations;

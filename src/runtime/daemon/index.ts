@@ -18,10 +18,8 @@ export {
 export {
   collectGoalCycleScheduleSnapshot,
   determineActiveGoalsForCycle,
-  expireOldCronTasks,
   getMaxGapScoreForGoals,
   getNextIntervalForGoals,
-  processCronTasksForDaemon,
   processScheduleEntriesForDaemon,
   runRuntimeStoreMaintenanceCycle,
   runProactiveMaintenance,

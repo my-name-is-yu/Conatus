@@ -7,6 +7,7 @@ import {
   type ScheduleResult,
 } from "../types/schedule.js";
 import { executeCron, executeGoalTrigger, executeProbe } from "./engine-layers.js";
+import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 import {
   ScheduleHistoryStore,
   type ScheduleRunHistoryRecord,
@@ -23,6 +24,7 @@ import { hasConfiguredSoilPublishProvider } from "../../platform/soil/publish/in
 import { buildSchedulePresetEntry } from "./presets.js";
 import type { IScheduleSource } from "./source.js";
 import { ScheduleEntryStore } from "./entry-store.js";
+import { migrateLegacyCronTasksIfNeeded } from "./legacy-cron-migration.js";
 import {
   addEntryForEngine,
   addEntryInMemory,
@@ -60,7 +62,7 @@ interface ScheduleEngineDeps {
   // Using Record<string,unknown> here allows ScheduleEngine to dispatch without constructing
   // a full Report object. Full Report integration deferred to Phase 4.
   notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
-  coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> };
+  coreLoop?: { run(goalId: string, options?: { maxIterations?: number; activation?: GoalRunActivationContext }): Promise<any> };
   stateManager?: StateManager;
   reportingEngine?: { generateNotification(type: string, context: Record<string, unknown>): Promise<any> };
   hookManager?: HookManager;
@@ -81,7 +83,7 @@ export class ScheduleEngine {
   private dataSourceRegistry?: Map<string, IDataSourceAdapter> | DataSourceRegistry;
   private llmClient?: ILLMClient;
   private notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
-  private coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> };
+  private coreLoop?: { run(goalId: string, options?: { maxIterations?: number; activation?: GoalRunActivationContext }): Promise<any> };
   private stateManager?: StateManager;
   private reportingEngine?: { generateNotification(type: string, context: Record<string, unknown>): Promise<any> };
   private hookManager?: HookManager;
@@ -112,7 +114,10 @@ export class ScheduleEngine {
   // ─── Persistence ───
 
   async loadEntries(): Promise<ScheduleEntry[]> {
-    this.entries = await this.readEntriesFromDisk();
+    this.entries = await this.entryStore.withLock(async () => {
+      await migrateLegacyCronTasksIfNeeded({ baseDir: this.baseDir, logger: this.logger });
+      return this.readEntriesFromDisk();
+    });
     await this.projectCurrentSchedulesToSoil();
     return this.entries;
   }

@@ -99,12 +99,13 @@ export async function runEntryNowForEngine(
     if (escalationResult !== null) finalResult = escalationResult;
   }
 
-  if (applied) {
-    await host.recordHistory({
-      entry_id: applied.entry?.id ?? entry.id,
-      entry_name: applied.entry?.name ?? entry.name,
-      layer: entry.layer,
-      result: { ...finalResult, failure_kind: applied.failureKind },
+    if (applied) {
+      const entryMetadata = applied.entry?.metadata ?? entry.metadata;
+      await host.recordHistory({
+        entry_id: applied.entry?.id ?? entry.id,
+        entry_name: applied.entry?.name ?? entry.name,
+        layer: entry.layer,
+        result: { ...finalResult, failure_kind: applied.failureKind },
       reason: "manual_run",
       attempt: applied.attempt,
       scheduled_for: scheduledFor,
@@ -163,6 +164,7 @@ export async function tickEngine(host: ScheduleExecutionHost): Promise<ScheduleR
     }
 
     if (applied) {
+      const entryMetadata = applied.entry?.metadata ?? descriptor.entry.metadata;
       await host.recordHistory({
         entry_id: applied.entry?.id ?? descriptor.entry.id,
         entry_name: applied.entry?.name ?? descriptor.entry.name,
@@ -175,6 +177,10 @@ export async function tickEngine(host: ScheduleExecutionHost): Promise<ScheduleR
         finished_at: applied.finishedAt,
         retry_at: applied.retryAt,
         failure_kind: applied.failureKind,
+        activation_kind: entryMetadata?.activation_kind ?? null,
+        strategy_id: entryMetadata?.strategy_id ?? null,
+        wait_strategy_id: entryMetadata?.wait_strategy_id ?? null,
+        internal: entryMetadata?.internal === true,
       });
     }
 
@@ -225,6 +231,7 @@ export async function executeEscalationTargetEntryForEngine(
     return outcome;
   });
   if (applied) {
+    const entryMetadata = applied.entry?.metadata ?? targetEntry.metadata;
     await host.recordHistory({
       entry_id: targetEntry.id,
       entry_name: targetEntry.name,
@@ -237,6 +244,10 @@ export async function executeEscalationTargetEntryForEngine(
       finished_at: applied.finishedAt,
       retry_at: applied.retryAt,
       failure_kind: applied.failureKind,
+      activation_kind: entryMetadata?.activation_kind ?? null,
+      strategy_id: entryMetadata?.strategy_id ?? null,
+      wait_strategy_id: entryMetadata?.wait_strategy_id ?? null,
+      internal: entryMetadata?.internal === true,
     });
   }
   return result;

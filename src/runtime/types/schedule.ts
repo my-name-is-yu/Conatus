@@ -71,6 +71,11 @@ export const ScheduleEntryMetadataSchema = z.object({
   external_id: z.string().optional(),
   dependency_hints: z.array(z.string()).default([]),
   note: z.string().optional(),
+  internal: z.boolean().optional(),
+  activation_kind: z.enum(["wait_resume"]).optional(),
+  goal_id: z.string().optional(),
+  strategy_id: z.string().optional(),
+  wait_strategy_id: z.string().optional(),
 });
 
 export type ScheduleEntryMetadata = z.infer<typeof ScheduleEntryMetadataSchema>;

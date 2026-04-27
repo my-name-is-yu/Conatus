@@ -248,4 +248,167 @@ describe("cmdSchedule", () => {
       cleanupTempDir(tempDir);
     }
   });
+
+  it("shows wait-resume activation metadata in history output", async () => {
+    const tempDir = makeTempDir("schedule-command-history-wait-resume-");
+    try {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const engine = new ScheduleEngine({ baseDir: tempDir });
+      await engine.loadEntries();
+      const entry = await engine.addEntry({
+        name: "Wait resume goal-1/wait-1",
+        layer: "goal_trigger",
+        trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+        enabled: true,
+        metadata: {
+          source: "manual",
+          internal: true,
+          activation_kind: "wait_resume",
+          goal_id: "goal-1",
+          strategy_id: "wait-1",
+          wait_strategy_id: "wait-1",
+          dependency_hints: [],
+        },
+        goal_trigger: {
+          goal_id: "goal-1",
+          max_iterations: 10,
+          skip_if_active: false,
+        },
+      });
+      const now = new Date().toISOString();
+      await fs.writeFile(
+        path.join(tempDir, "schedule-history.json"),
+        JSON.stringify([
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            entry_id: entry.id,
+            entry_name: entry.name,
+            layer: entry.layer,
+            reason: "cadence",
+            attempt: 0,
+            scheduled_for: now,
+            started_at: now,
+            finished_at: now,
+            retry_at: null,
+            status: "ok",
+            duration_ms: 10,
+            fired_at: now,
+            tokens_used: 0,
+            escalated_to: null,
+            activation_kind: "wait_resume",
+            strategy_id: "wait-1",
+            wait_strategy_id: "wait-1",
+            internal: true,
+          },
+        ]),
+        "utf8",
+      );
+
+      await cmdSchedule(makeStateManager(tempDir), ["history", entry.id, "--limit", "1"]);
+      const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(output).toContain("internal");
+      expect(output).toContain("activation=wait_resume:wait-1");
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  it("hides internal wait-resume schedules from list by default and shows them with --all", async () => {
+    const tempDir = makeTempDir("schedule-command-internal-filter-");
+    try {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const engine = new ScheduleEngine({ baseDir: tempDir });
+      await engine.loadEntries();
+      await engine.addEntry({
+        name: "visible-check",
+        layer: "heartbeat",
+        trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
+        enabled: true,
+        metadata: {
+          source: "manual",
+          dependency_hints: [],
+        },
+        heartbeat: {
+          check_type: "custom",
+          check_config: { command: "echo ok" },
+          failure_threshold: 3,
+          timeout_ms: 5000,
+        },
+      });
+      await engine.addEntry({
+        name: "Wait resume goal-1/wait-1",
+        layer: "goal_trigger",
+        trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+        enabled: true,
+        metadata: {
+          source: "manual",
+          internal: true,
+          activation_kind: "wait_resume",
+          goal_id: "goal-1",
+          strategy_id: "wait-1",
+          wait_strategy_id: "wait-1",
+          dependency_hints: [],
+        },
+        goal_trigger: {
+          goal_id: "goal-1",
+          max_iterations: 10,
+          skip_if_active: false,
+        },
+      });
+
+      await cmdSchedule(makeStateManager(tempDir), ["list"]);
+      const defaultOutput = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(defaultOutput).toContain("visible-check");
+      expect(defaultOutput).not.toContain("Wait resume goal-1/wait-1");
+      expect(defaultOutput).toContain("internal schedule entry hidden");
+
+      logSpy.mockClear();
+      await cmdSchedule(makeStateManager(tempDir), ["list", "--all"]);
+      const allOutput = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(allOutput).toContain("visible-check");
+      expect(allOutput).toContain("Wait resume goal-1/wait-1");
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  it("shows internal wait projection details in schedule show output", async () => {
+    const tempDir = makeTempDir("schedule-command-show-internal-");
+    try {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const engine = new ScheduleEngine({ baseDir: tempDir });
+      await engine.loadEntries();
+      const entry = await engine.addEntry({
+        name: "Wait resume goal-1/wait-1",
+        layer: "goal_trigger",
+        trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+        enabled: true,
+        metadata: {
+          source: "manual",
+          internal: true,
+          activation_kind: "wait_resume",
+          goal_id: "goal-1",
+          strategy_id: "wait-1",
+          wait_strategy_id: "wait-1",
+          dependency_hints: [],
+        },
+        goal_trigger: {
+          goal_id: "goal-1",
+          max_iterations: 10,
+          skip_if_active: false,
+        },
+      });
+
+      await cmdSchedule(makeStateManager(tempDir), ["show", entry.id]);
+      const output = JSON.parse(String(logSpy.mock.calls[0]?.[0]));
+      expect(output.internal_projection).toEqual({
+        kind: "wait_resume",
+        goal_id: "goal-1",
+        strategy_id: "wait-1",
+        wait_strategy_id: "wait-1",
+      });
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
 });

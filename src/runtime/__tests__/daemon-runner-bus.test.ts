@@ -413,6 +413,7 @@ describe("DaemonRunner durable runtime wiring", () => {
           activated_at: new Date().toISOString(),
         },
       ]),
+      getEntries: vi.fn().mockReturnValue([]),
     };
 
     const deps = makeDeps(tmpDir, {
@@ -467,6 +468,7 @@ describe("DaemonRunner durable runtime wiring", () => {
           duration_ms: 1,
         },
       ]),
+      getEntries: vi.fn().mockReturnValue([]),
     };
 
     const deps = makeDeps(tmpDir, {
@@ -507,22 +509,22 @@ describe("DaemonRunner durable runtime wiring", () => {
       getPort: vi.fn().mockReturnValue(41700),
       setActiveWorkersProvider: vi.fn(),
     };
-    const mockCronScheduler = {
-      getDueTasks: vi.fn().mockResolvedValue([
+    const mockScheduleEngine = {
+      tick: vi.fn().mockResolvedValue([
         {
-          id: "task-1",
-          cron: "*/5 * * * *",
-          type: "goal",
+          entry_id: "schedule-1",
           goal_id: "g-1",
+          status: "ok",
+          duration_ms: 1,
+          fired_at: new Date().toISOString(),
         },
       ]),
-      markFired: vi.fn().mockResolvedValue(undefined),
-      expireOldTasks: vi.fn().mockResolvedValue(undefined),
+      getEntries: vi.fn().mockReturnValue([]),
     };
 
     const deps = makeDeps(tmpDir, {
       eventServer: mockEventServer as any,
-      cronScheduler: mockCronScheduler as any,
+      scheduleEngine: mockScheduleEngine as any,
       config: { check_interval_ms: 50 },
     });
 
@@ -530,7 +532,17 @@ describe("DaemonRunner durable runtime wiring", () => {
     currentDaemon = daemon;
     currentStartPromise = daemon.start([]);
 
-    await waitFor(() => mockCronScheduler.markFired.mock.calls.length > 0);
+    await waitFor(() => mockScheduleEngine.tick.mock.calls.length > 0);
+    await waitFor(() => {
+      const queue = readRuntimeQueue(tmpDir);
+      return Object.values(queue.records).some(
+        (entry: any) =>
+          entry.status === "completed"
+          && entry.envelope?.type === "event"
+          && entry.envelope?.name === "schedule_activated"
+          && entry.envelope?.dedupe_key === "schedule-1"
+      );
+    });
 
     const queue = readRuntimeQueue(tmpDir);
     expect(Object.values(queue.records)).toEqual(
@@ -539,12 +551,66 @@ describe("DaemonRunner durable runtime wiring", () => {
           status: "completed",
           envelope: expect.objectContaining({
             type: "event",
-            name: "cron_task_due",
-            dedupe_key: "cron-task-1",
+            name: "schedule_activated",
+            dedupe_key: "schedule-1",
           }),
         }),
       ])
     );
-    expect(mockCronScheduler.markFired).toHaveBeenCalledWith("task-1");
+  });
+
+  it("propagates wait resume metadata from schedule activation into CoreLoop run", async () => {
+    const mockEventServer = {
+      setEnvelopeHook: vi.fn(),
+      setCommandEnvelopeHook: vi.fn(),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      startFileWatcher: vi.fn(),
+      stopFileWatcher: vi.fn(),
+      getPort: vi.fn().mockReturnValue(41700),
+      setActiveWorkersProvider: vi.fn(),
+    };
+    const waitEntry = {
+      id: "wait-entry-1",
+      next_fire_at: "2026-04-28T10:00:00.000Z",
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "g-wait",
+        wait_strategy_id: "wait-1",
+        note: "Awaiting external completion",
+      },
+    };
+    const mockScheduleEngine = {
+      tick: vi.fn().mockResolvedValue([
+        {
+          entry_id: "wait-entry-1",
+          status: "ok",
+          goal_id: "g-wait",
+          duration_ms: 1,
+          fired_at: new Date().toISOString(),
+        },
+      ]),
+      getEntries: vi.fn().mockReturnValue([waitEntry]),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      eventServer: mockEventServer as any,
+      scheduleEngine: mockScheduleEngine as any,
+      config: { check_interval_ms: 50 },
+    });
+
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+    currentStartPromise = daemon.start([]);
+
+    const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
+    await waitFor(() =>
+      runMock.mock.calls.some((call: unknown[]) =>
+        call[0] === "g-wait"
+        && typeof call[1] === "object"
+        && (call[1] as Record<string, any>).activation?.waitResume?.strategyId === "wait-1"
+      )
+    );
   });
 });

@@ -23,6 +23,7 @@ import {
   calculateGapDeltaForStrategy as _calculateGapDeltaForStrategy,
 } from "./portfolio-rebalance.js";
 import { ApprovalStore } from "../../runtime/store/approval-store.js";
+import { syncWaitStrategyScheduleProjection } from "../../runtime/schedule/wait-projection.js";
 import {
   isWaitStrategy,
   checkStrategyTermination,
@@ -409,7 +410,14 @@ export class PortfolioManager {
         if (typeof getBaseDir !== "function") return null;
         return new ApprovalStore(path.join(getBaseDir.call(this.stateManager), "runtime")).load(approvalId);
       },
-      (gId, sId, metadata) => this.stateManager.writeRaw(`strategies/${gId}/wait-meta/${sId}.json`, metadata),
+      async (gId, sId, metadata) => {
+        await this.stateManager.writeRaw(`strategies/${gId}/wait-meta/${sId}.json`, metadata);
+        await syncWaitStrategyScheduleProjection({
+          baseDir: this.stateManager.getBaseDir(),
+          goalId: gId,
+          strategyId: sId,
+        }).catch(() => undefined);
+      },
       () => {
         const getBaseDir = this.stateManager.getBaseDir;
         return typeof getBaseDir === "function" ? getBaseDir.call(this.stateManager) : null;

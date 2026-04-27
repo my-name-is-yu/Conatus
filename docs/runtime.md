@@ -69,10 +69,20 @@ pulseed schedule history <id> --limit 10
 pulseed schedule remove <id>
 ```
 
+Internal wait-resume projections are also stored in the ScheduleEngine, but they
+are hidden from `pulseed schedule list` by default so operator views stay
+focused on user-managed schedules. Use `pulseed schedule list --all` to inspect
+those internal entries, and `pulseed schedule show <id>` to see the
+`internal_projection` block for a projected wait-resume entry.
+
 `run` executes an entry immediately and records it as manual history. When the
 daemon is running, the request is accepted by the daemon and runs inside the
 resident ScheduleEngine; otherwise the CLI falls back to a local validation run.
 It does not resume a paused schedule unless `resume` is used separately.
+
+Schedule history also records internal wait-resume activations. A projected wait
+re-entry appears with `internal` history and `activation=wait_resume:<strategy>`
+metadata so operators can trace which wait strategy caused the goal to resume.
 
 ## What runtime does not explain
 

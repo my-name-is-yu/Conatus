@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { StateManager } from "../../base/state/state-manager.js";
 import { WaitDeadlineResolver, clampIntervalToNextWaitDeadline, getDueWaitGoalIds } from "../daemon/wait-deadline-resolver.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { ScheduleEntrySchema } from "../types/schedule.js";
 
 let tempDir: string;
 let stateManager: StateManager;
@@ -46,8 +47,44 @@ function makeActiveWaitStrategy(overrides: Record<string, unknown> = {}): Record
   };
 }
 
+async function writeProjectedWaitSchedule(nextFireAt: string, overrides: Record<string, unknown> = {}): Promise<void> {
+  await stateManager.writeRaw("schedules.json", [
+    ScheduleEntrySchema.parse({
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Wait resume goal-1/wait-1",
+      layer: "goal_trigger",
+      trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+      enabled: true,
+      metadata: {
+        source: "manual",
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "goal-1",
+        strategy_id: "wait-1",
+        wait_strategy_id: "wait-1",
+        note: "Awaiting file completion",
+      },
+      goal_trigger: { goal_id: "goal-1", max_iterations: 10, skip_if_active: false },
+      created_at: "2026-04-24T12:00:00.000Z",
+      updated_at: "2026-04-24T12:00:00.000Z",
+      last_fired_at: null,
+      next_fire_at: nextFireAt,
+      consecutive_failures: 0,
+      last_escalation_at: null,
+      escalation_timestamps: [],
+      total_executions: 0,
+      total_tokens_used: 0,
+      max_tokens_per_day: 100000,
+      tokens_used_today: 0,
+      budget_reset_at: null,
+      baseline_results: [],
+      ...overrides,
+    }),
+  ]);
+}
+
 describe("WaitDeadlineResolver", () => {
-  it("resolves next_observe_at from durable wait metadata", async () => {
+  it("reads next_observe_at from projected internal wait schedules", async () => {
     await stateManager.writeRaw("strategies/goal-1/portfolio.json", {
       goal_id: "goal-1",
       strategies: [makeActiveWaitStrategy()],
@@ -60,6 +97,7 @@ describe("WaitDeadlineResolver", () => {
       conditions: [{ type: "time_until", until: "2026-04-24T12:03:00.000Z" }],
       resume_plan: { action: "complete_wait" },
     });
+    await writeProjectedWaitSchedule("2026-04-24T12:03:00.000Z");
 
     const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
 
@@ -73,7 +111,7 @@ describe("WaitDeadlineResolver", () => {
     ]);
   });
 
-  it("falls back to wait_until when legacy wait metadata has no conditions", async () => {
+  it("uses projected next_fire_at even when wait metadata has no conditions", async () => {
     await stateManager.writeRaw("strategies/goal-1/portfolio.json", {
       goal_id: "goal-1",
       strategies: [makeActiveWaitStrategy()],
@@ -83,13 +121,14 @@ describe("WaitDeadlineResolver", () => {
     await stateManager.writeRaw("strategies/goal-1/wait-meta/wait-1.json", {
       wait_until: "2026-04-24T12:10:00.000Z",
     });
+    await writeProjectedWaitSchedule("2026-04-24T12:10:00.000Z");
 
     const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
 
     expect(resolution.next_observe_at).toBe("2026-04-24T12:10:00.000Z");
   });
 
-  it("does not throw and falls back to wait_until when wait metadata is malformed", async () => {
+  it("does not throw when wait metadata is malformed and keeps schedule timing", async () => {
     await stateManager.writeRaw("strategies/goal-1/portfolio.json", {
       goal_id: "goal-1",
       strategies: [makeActiveWaitStrategy()],
@@ -102,6 +141,7 @@ describe("WaitDeadlineResolver", () => {
       conditions: [{ type: "metric_threshold", metric: "quality", operator: "gte" }],
       resume_plan: { action: "complete_wait" },
     });
+    await writeProjectedWaitSchedule("2026-04-24T12:10:00.000Z");
 
     const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
 
@@ -115,7 +155,7 @@ describe("WaitDeadlineResolver", () => {
     ]);
   });
 
-  it("lets durable next_observe_at postpone an original wait_until after re-wait", async () => {
+  it("lets projected next_fire_at postpone an original wait_until after re-wait", async () => {
     await stateManager.writeRaw("strategies/goal-1/portfolio.json", {
       goal_id: "goal-1",
       strategies: [makeActiveWaitStrategy()],
@@ -129,6 +169,7 @@ describe("WaitDeadlineResolver", () => {
       next_observe_at: "2026-04-24T12:30:00.000Z",
       resume_plan: { action: "complete_wait" },
     });
+    await writeProjectedWaitSchedule("2026-04-24T12:30:00.000Z");
 
     const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
 
@@ -162,6 +203,7 @@ describe("WaitDeadlineResolver", () => {
       },
       resume_plan: { action: "complete_wait" },
     });
+    await writeProjectedWaitSchedule("2026-04-24T12:15:00.000Z");
 
     const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
 
@@ -177,5 +219,23 @@ describe("WaitDeadlineResolver", () => {
     );
 
     expect(clamped).toBe(60_000);
+  });
+
+  it("prefers projected internal wait schedules when available", async () => {
+    await writeProjectedWaitSchedule("2026-04-24T12:03:00.000Z");
+
+    const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
+
+    expect(resolution).toEqual({
+      next_observe_at: "2026-04-24T12:03:00.000Z",
+      waiting_goals: [
+        expect.objectContaining({
+          goal_id: "goal-1",
+          strategy_id: "wait-1",
+          next_observe_at: "2026-04-24T12:03:00.000Z",
+          wait_reason: "Awaiting file completion",
+        }),
+      ],
+    });
   });
 });
