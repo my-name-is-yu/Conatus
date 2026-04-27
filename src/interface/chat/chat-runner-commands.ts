@@ -1,7 +1,4 @@
-import type { StateManager } from "../../base/state/state-manager.js";
-import { getPulseedDirPath } from "../../base/utils/paths.js";
-import { loadProviderConfig } from "../../base/llm/provider-config.js";
-import { TaskSchema, type Task } from "../../base/types/task.js";
+import type { Task } from "../../base/types/task.js";
 import type { Goal } from "../../base/types/goal.js";
 import type { ILLMClient, LLMResponse } from "../../base/llm/llm-client.js";
 import type { LoadedChatSession } from "./chat-session-store.js";
@@ -13,11 +10,28 @@ import { EventSubscriber } from "./event-subscriber.js";
 import type { ChatEvent } from "./chat-events.js";
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
 import {
-  collectGoalUsage,
-  collectScheduleUsage,
-  listRecoverableArchivedGoalIds,
-  readTasksForGoal,
-} from "./chat-runner-state.js";
+  activeGoals,
+  buildGoalUsageSummary,
+  buildScheduleUsageSummary,
+  deterministicChatSummary,
+  findTask,
+  formatConfig,
+  formatGoalLine,
+  formatHistory,
+  formatTask,
+  formatTaskLine,
+  formatUsageCounter,
+  hasUsage,
+  loadGoals,
+  normalizeUsageCounter,
+  parseTaskArgs,
+  readProviderConfigSummary,
+  readTasksForGoalFromState,
+  resolveGoalForTasks,
+  usageFromLLMResponse,
+  zeroUsageCounter,
+  type ProviderConfigSummary,
+} from "./chat-runner-command-helpers.js";
 import { checkGitChanges } from "./chat-runner-support.js";
 import { formatFailureRecovery } from "./failure-recovery.js";
 import {
@@ -67,16 +81,6 @@ Review and branching
 
 Deferred
   /retry is intentionally not supported yet.`;
-
-interface ProviderConfigSummary {
-  provider: string;
-  model: string;
-  adapter: string;
-  light_model?: string;
-  base_url?: string;
-  codex_cli_path?: string;
-  has_api_key: boolean;
-}
 
 export interface PendingTendState {
   goalId: string;
@@ -355,45 +359,19 @@ export class ChatRunnerCommandHandler {
   }
 
   private formatHistory(session: LoadedChatSession): string {
-    const title = session.title ? ` "${session.title}"` : "";
-    if (session.messages.length === 0) {
-      return `Session ${session.id}${title} has no messages.`;
-    }
-    const lines = session.messages.map((message) => {
-      const role = message.role === "assistant" ? "Assistant" : "User";
-      return `${role}: ${message.content}`;
-    });
-    return `Session ${session.id}${title} (${session.cwd})\n${lines.join("\n")}`;
+    return formatHistory(session);
   }
 
   private async loadGoals(): Promise<Goal[]> {
-    const goalIds = await this.host.deps.stateManager.listGoalIds();
-    const goals = await Promise.all(goalIds.map((id) => this.host.deps.stateManager.loadGoal(id)));
-    return goals.filter((goal): goal is Goal => goal !== null);
-  }
-
-  private async listAllGoalIds(): Promise<string[]> {
-    const activeIds = await this.host.deps.stateManager.listGoalIds();
-    const archivedIds = await this.host.deps.stateManager.listArchivedGoals();
-    const stateManager = this.host.deps.stateManager as StateManager & { getBaseDir?: () => string };
-    const recoverableArchivedIds = typeof stateManager.getBaseDir === "function"
-      ? await listRecoverableArchivedGoalIds(stateManager.getBaseDir())
-      : [];
-    return [...new Set([...activeIds, ...archivedIds, ...recoverableArchivedIds])];
+    return loadGoals(this.host.deps.stateManager);
   }
 
   private activeGoals(goals: Goal[]): Goal[] {
-    return goals.filter((goal) => goal.status === "active" || goal.status === "waiting" || goal.loop_status === "running");
+    return activeGoals(goals);
   }
 
   private formatGoalLine(goal: Goal): string {
-    const dimensions = goal.dimensions.length === 0
-      ? "no dimensions"
-      : goal.dimensions
-        .slice(0, 3)
-        .map((dimension) => `${dimension.name}: ${String(dimension.current_value)} target ${JSON.stringify(dimension.threshold)}`)
-        .join("; ");
-    return `${goal.id} - ${goal.title} [${goal.status}, loop ${goal.loop_status}] ${dimensions}`;
+    return formatGoalLine(goal);
   }
 
   private async handleStatus(args: string, start: number): Promise<ChatRunResult> {
@@ -447,22 +425,15 @@ export class ChatRunnerCommandHandler {
   }
 
   private async readTasksForGoal(goalId: string): Promise<Task[]> {
-    const stateManager = this.host.deps.stateManager as StateManager & { getBaseDir?: () => string };
-    if (typeof stateManager.getBaseDir !== "function") return [];
-    return readTasksForGoal(stateManager.getBaseDir(), goalId);
+    return readTasksForGoalFromState(this.host.deps.stateManager, goalId);
   }
 
   private async resolveGoalForTasks(selector: string): Promise<{ goalId?: string; error?: string }> {
-    if (selector) return { goalId: selector };
-    const active = this.activeGoals(await this.loadGoals());
-    if (active.length === 1) return { goalId: active[0].id };
-    if (active.length === 0) return { error: "No active goals found. Use /tasks <goal-id>." };
-    return { error: "Multiple active goals found. Use /tasks <goal-id>." };
+    return resolveGoalForTasks(this.host.deps.stateManager, selector);
   }
 
   private formatTaskLine(task: Task): string {
-    const verdict = task.verification_verdict ? `, verdict ${task.verification_verdict}` : "";
-    return `${task.id} - ${task.status}${verdict}: ${task.work_description}`;
+    return formatTaskLine(task);
   }
 
   private async handleTasks(args: string, start: number): Promise<ChatRunResult> {
@@ -482,57 +453,15 @@ export class ChatRunnerCommandHandler {
   }
 
   private parseTaskArgs(args: string): { taskId?: string; goalId?: string } {
-    const parts = args.split(/\s+/).filter(Boolean);
-    const goalFlagIndex = parts.indexOf("--goal");
-    if (goalFlagIndex >= 0) {
-      const goalId = parts[goalFlagIndex + 1];
-      parts.splice(goalFlagIndex, goalId ? 2 : 1);
-      return { taskId: parts[0], goalId };
-    }
-    return { taskId: parts[0], goalId: parts[1] };
+    return parseTaskArgs(args);
   }
 
   private async findTask(taskId: string, goalId?: string): Promise<{ task?: Task; matches: Array<{ goalId: string; task: Task }> }> {
-    const goalIds = goalId ? [goalId] : await this.listAllGoalIds();
-    const matches: Array<{ goalId: string; task: Task }> = [];
-    for (const candidateGoalId of goalIds) {
-      let raw: unknown | null = null;
-      try {
-        raw = await this.host.deps.stateManager.readRaw(`tasks/${candidateGoalId}/${taskId}.json`);
-      } catch {
-        raw = null;
-      }
-      if (!raw) {
-        const tasks = await this.readTasksForGoal(candidateGoalId);
-        const matched = tasks.find((task) => task.id === taskId || task.id.startsWith(taskId));
-        if (matched) matches.push({ goalId: candidateGoalId, task: matched });
-        continue;
-      }
-      const parsed = TaskSchema.safeParse(raw);
-      if (parsed.success) matches.push({ goalId: candidateGoalId, task: parsed.data });
-    }
-    return { task: matches.length === 1 ? matches[0].task : undefined, matches };
+    return findTask(this.host.deps.stateManager, taskId, goalId);
   }
 
   private formatTask(task: Task): string {
-    const lines = [
-      `Task: ${task.id}`,
-      `Goal: ${task.goal_id}`,
-      `Status: ${task.status}`,
-      `Category: ${task.task_category}`,
-      `Created: ${task.created_at}`,
-      `Work: ${task.work_description}`,
-      `Approach: ${task.approach}`,
-    ];
-    if (task.started_at) lines.push(`Started: ${task.started_at}`);
-    if (task.completed_at) lines.push(`Completed: ${task.completed_at}`);
-    if (task.verification_verdict) lines.push(`Verification: ${task.verification_verdict}`);
-    if (task.verification_evidence?.length) lines.push(`Evidence: ${task.verification_evidence.join("; ")}`);
-    if (task.success_criteria.length > 0) {
-      lines.push("Success criteria:");
-      lines.push(...task.success_criteria.map((criterion) => `- ${criterion.description}`));
-    }
-    return lines.join("\n");
+    return formatTask(task);
   }
 
   private async handleTask(args: string, start: number): Promise<ChatRunResult> {
@@ -555,32 +484,12 @@ export class ChatRunnerCommandHandler {
     return { success: true, output: this.formatTask(found.task), elapsed_ms: Date.now() - start };
   }
 
-  private providerConfigBaseDir(): string {
-    const stateManager = this.host.deps.stateManager as StateManager & { getBaseDir?: () => string };
-    return typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
-  }
-
   private async readProviderConfigSummary(): Promise<ProviderConfigSummary> {
-    const config = await loadProviderConfig({
-      baseDir: this.providerConfigBaseDir(),
-      saveMigration: false,
-    });
-    return {
-      provider: config.provider,
-      model: config.model,
-      adapter: config.adapter,
-      light_model: config.light_model,
-      base_url: config.base_url,
-      codex_cli_path: config.codex_cli_path,
-      has_api_key: Boolean(config.api_key),
-    };
+    return readProviderConfigSummary(this.host.deps.stateManager);
   }
 
   private formatConfig(config: ProviderConfigSummary): string {
-    return Object.entries(config)
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => `${key}: ${typeof value === "string" && /key|token|secret/i.test(key) ? "[masked]" : String(value)}`)
-      .join("\n");
+    return formatConfig(config);
   }
 
   private async handleConfig(start: number): Promise<ChatRunResult> {
@@ -618,38 +527,23 @@ export class ChatRunnerCommandHandler {
   }
 
   private zeroUsageCounter(): ChatUsageCounter {
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    return zeroUsageCounter();
   }
 
   private normalizeUsageCounter(usage: ChatUsageCounter): ChatUsageCounter {
-    const inputTokens = Number.isFinite(usage.inputTokens) ? Math.max(0, Math.floor(usage.inputTokens)) : 0;
-    const outputTokens = Number.isFinite(usage.outputTokens) ? Math.max(0, Math.floor(usage.outputTokens)) : 0;
-    const totalTokens = Number.isFinite(usage.totalTokens)
-      ? Math.max(0, Math.floor(usage.totalTokens))
-      : inputTokens + outputTokens;
-    return { inputTokens, outputTokens, totalTokens };
+    return normalizeUsageCounter(usage);
   }
 
   private usageFromLLMResponse(response: LLMResponse): ChatUsageCounter {
-    const inputTokens = response.usage?.input_tokens ?? 0;
-    const outputTokens = response.usage?.output_tokens ?? 0;
-    return {
-      inputTokens,
-      outputTokens,
-      totalTokens: inputTokens + outputTokens,
-    };
+    return usageFromLLMResponse(response);
   }
 
   private hasUsage(usage: ChatUsageCounter): boolean {
-    return usage.totalTokens > 0 || usage.inputTokens > 0 || usage.outputTokens > 0;
+    return hasUsage(usage);
   }
 
   private formatUsageCounter(prefix: string, usage: ChatUsageCounter): string[] {
-    return [
-      `${prefix} input tokens:  ${usage.inputTokens}`,
-      `${prefix} output tokens: ${usage.outputTokens}`,
-      `${prefix} total tokens:  ${usage.totalTokens}`,
-    ];
+    return formatUsageCounter(prefix, usage);
   }
 
   private async handleUsage(args: string, start: number): Promise<ChatRunResult> {
@@ -686,26 +580,14 @@ export class ChatRunnerCommandHandler {
       if (!goalId) {
         return { success: false, output: "Usage: /usage goal <goal-id>", elapsed_ms: Date.now() - start };
       }
-      const summary = await collectGoalUsage(this.host.deps.stateManager.getBaseDir(), goalId);
-      const lines = [
-        `Usage summary (${scope} scope)`,
-        `Goal: ${summary.goalId}`,
-        `Tasks observed: ${summary.taskCount}`,
-        `Terminal tasks: ${summary.terminalTaskCount}`,
-        `Total tokens: ${summary.totalTokens}`,
-      ];
+      const lines = await buildGoalUsageSummary(this.host.deps.stateManager, goalId);
       return { success: true, output: lines.join("\n"), elapsed_ms: Date.now() - start };
     }
 
     if (scope === "schedule") {
       const period = tokens[1] ?? "7d";
       try {
-        const summary = await collectScheduleUsage(this.host.deps.stateManager.getBaseDir(), period);
-        const lines = [
-          `Usage summary (schedule, ${summary.period})`,
-          `Runs: ${summary.runs}`,
-          `Total tokens: ${summary.totalTokens}`,
-        ];
+        const lines = await buildScheduleUsageSummary(this.host.deps.stateManager, period);
         return { success: true, output: lines.join("\n"), elapsed_ms: Date.now() - start };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -721,8 +603,7 @@ export class ChatRunnerCommandHandler {
   }
 
   private deterministicChatSummary(messages: ChatSession["messages"]): string {
-    const lines = messages.map((message) => `${message.role}: ${message.content.replace(/\s+/g, " ").trim()}`);
-    return lines.join("\n").slice(0, 4_000);
+    return deterministicChatSummary(messages);
   }
 
   private async summarizeChatForCompaction(messages: ChatSession["messages"], existingSummary?: string): Promise<{ summary: string; usedLlm: boolean }> {

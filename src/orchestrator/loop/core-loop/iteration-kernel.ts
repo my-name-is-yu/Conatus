@@ -26,7 +26,6 @@ import {
   type StateDiffState,
 } from "./control.js";
 import { handleCapabilityAcquisition } from "./capability.js";
-import { loadDreamActivationState } from "../../../platform/dream/dream-activation.js";
 import { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
 import { CorePhaseRuntime } from "./phase-runtime.js";
 import {
@@ -38,9 +37,15 @@ import {
   buildVerificationEvidenceSpec,
 } from "./phase-specs.js";
 import type { CorePhasePolicyRegistry } from "./phase-policy.js";
-import { CoreDecisionEngine } from "./decision-engine.js";
+import type { CoreDecisionEngine } from "./decision-engine.js";
 import type { ITimeHorizonEngine } from "../../../platform/time/time-horizon-engine.js";
 import type { DriveScore } from "../../../base/types/drive.js";
+import type { CorePhaseKind } from "../../execution/agent-loop/core-phase-runner.js";
+import { findActiveWaitObservationInput } from "./iteration-kernel-wait.js";
+import {
+  autoAcquireKnowledgeForDreamStall,
+  autoAcquireKnowledgeForRefresh,
+} from "./iteration-kernel-knowledge.js";
 
 export interface CoreIterationKernelDeps {
   deps: CoreLoopDeps;
@@ -108,7 +113,7 @@ export class CoreIterationKernel {
       policyRegistry: this.deps.corePhasePolicyRegistry,
     });
     const rememberPhase = (execution: {
-      phase: import("../../execution/agent-loop/core-phase-runner.js").CorePhaseKind;
+      phase: CorePhaseKind;
       status: "skipped" | "completed" | "low_confidence" | "failed";
       summary?: string;
       traceId?: string;
@@ -207,7 +212,7 @@ export class CoreIterationKernel {
         .join(", ")}`
     );
 
-    const activeWait = await this.findActiveWaitObservationInput(goalId, goal.title);
+    const activeWait = await findActiveWaitObservationInput(this.deps.deps, goalId, goal.title);
     if (activeWait) {
       const waitObservationPhase = await runPhase("wait-observation-agentic", () =>
         corePhaseRuntime.run(
@@ -380,22 +385,13 @@ export class CoreIterationKernel {
       this.deps.deps.toolExecutor
     ) {
       try {
-        const acquired = await this.deps.deps.knowledgeManager.acquireWithTools(
-          knowledgeAcquisitionDecision.question,
+        const acquiredCount = await autoAcquireKnowledgeForRefresh(
+          this.deps.deps,
+          this.deps.logger,
           goalId,
-          this.deps.deps.toolExecutor,
-          {
-            cwd: process.cwd(),
-            goalId,
-            trustBalance: 0,
-            preApproved: true,
-            approvalFn: async () => false,
-          }
+          knowledgeAcquisitionDecision.question
         );
-        for (const entry of acquired) {
-          await this.deps.deps.knowledgeManager.saveKnowledge(goalId, entry);
-        }
-        if (acquired.length > 0) {
+        if (acquiredCount > 0) {
           result.nextIterationDirective = this.deps.coreDecisionEngine.buildNextIterationDirective({
             knowledgeRefreshPhase: knowledgeRefresh,
             replanningPhase: replanningOptions,
@@ -404,7 +400,7 @@ export class CoreIterationKernel {
           });
           this.deps.logger?.info("CoreLoop: knowledge_refresh auto-acquired knowledge and skipped execution", {
             goalId,
-            acquiredCount: acquired.length,
+            acquiredCount,
           });
           await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
           result.skipped = true;
@@ -422,51 +418,23 @@ export class CoreIterationKernel {
 
     if (result.stallDetected && this.deps.deps.knowledgeManager && this.deps.deps.toolExecutor) {
       try {
-        const activation = await loadDreamActivationState(this.deps.deps.stateManager.getBaseDir());
-        if (activation.flags.autoAcquireKnowledge) {
-          const portfolio = await Promise.resolve(
-            this.deps.deps.strategyManager.getPortfolio(goalId)
-          ).catch(() => null);
-          const observationContext = {
-            observations: goal.dimensions.map((dimension) => ({
-              name: dimension.name,
-              current_value: dimension.current_value,
-              confidence: dimension.confidence,
-            })),
-            strategies: portfolio?.strategies ?? null,
-            confidence:
-              gapVector.gaps.reduce((sum, gap) => sum + gap.confidence, 0) /
-              Math.max(gapVector.gaps.length, 1),
-          };
-          const gapSignal = await this.deps.deps.knowledgeManager.detectKnowledgeGap(observationContext);
-          if (gapSignal) {
-            const acquired = await this.deps.deps.knowledgeManager.acquireWithTools(
-              gapSignal.missing_knowledge,
-              goalId,
-              this.deps.deps.toolExecutor,
-              {
-                cwd: process.cwd(),
-                goalId,
-                trustBalance: 0,
-                preApproved: true,
-                approvalFn: async () => false,
-              }
-            );
-            for (const entry of acquired) {
-              await this.deps.deps.knowledgeManager.saveKnowledge(goalId, entry);
-            }
-            if (acquired.length > 0) {
-              this.deps.logger?.info(
-                "CoreLoop: dream auto-acquired knowledge and skipped execution for context refresh",
-                { goalId, acquiredCount: acquired.length }
-              );
-              await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
-              result.skipped = true;
-              result.skipReason = "dream_auto_acquire_knowledge";
-              result.elapsedMs = Date.now() - startTime;
-              return result;
-            }
-          }
+        const acquiredCount = await autoAcquireKnowledgeForDreamStall(
+          this.deps.deps,
+          this.deps.logger,
+          goalId,
+          goal,
+          gapVector
+        );
+        if (acquiredCount > 0) {
+          this.deps.logger?.info(
+            "CoreLoop: dream auto-acquired knowledge and skipped execution for context refresh",
+            { goalId, acquiredCount }
+          );
+          await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
+          result.skipped = true;
+          result.skipReason = "dream_auto_acquire_knowledge";
+          result.elapsedMs = Date.now() - startTime;
+          return result;
         }
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: autoAcquireKnowledge failed (non-fatal)", {
@@ -584,56 +552,5 @@ export class CoreIterationKernel {
 
     result.elapsedMs = Date.now() - startTime;
     return result;
-  }
-
-  private async findActiveWaitObservationInput(
-    goalId: string,
-    goalTitle: string
-  ): Promise<{
-    goalTitle: string;
-    waitStrategyId: string;
-    waitReason: string;
-    waitUntil: string;
-    nextObserveAt?: string | null;
-    conditions: string[];
-    processRefs: string[];
-    artifactRefs: string[];
-    approvalPending: boolean;
-  } | null> {
-    if (typeof this.deps.deps.strategyManager.getPortfolio !== "function") return null;
-    const portfolio = await Promise.resolve(this.deps.deps.strategyManager.getPortfolio(goalId)).catch(() => null);
-    if (!portfolio || !this.deps.deps.portfolioManager) return null;
-    const strategy = portfolio.strategies.find((candidate) =>
-      candidate.state === "active" && this.deps.deps.portfolioManager?.isWaitStrategy(candidate)
-    ) as { id: string; wait_reason?: string; wait_until?: string } | undefined;
-    if (!strategy || typeof strategy.wait_until !== "string") return null;
-
-    const metadataPath = `strategies/${goalId}/wait-meta/${strategy.id}.json`;
-    const rawMetadata = await Promise.resolve(this.deps.deps.stateManager.readRaw(metadataPath)).catch(() => null);
-    const metadata = rawMetadata && typeof rawMetadata === "object" ? rawMetadata as Record<string, unknown> : {};
-    const nextObserveAt = typeof metadata["next_observe_at"] === "string" ? metadata["next_observe_at"] : strategy.wait_until;
-    const nextObserveAtMs = Date.parse(nextObserveAt);
-    if (!Number.isFinite(nextObserveAtMs) || nextObserveAtMs > Date.now()) return null;
-    const conditions = Array.isArray(metadata["conditions"]) ? metadata["conditions"] : [];
-    const processRefs = Array.isArray(metadata["process_refs"]) ? metadata["process_refs"] : [];
-    const artifactRefs = Array.isArray(metadata["artifact_refs"]) ? metadata["artifact_refs"] : [];
-    const latestObservation = metadata["latest_observation"];
-    const latest = latestObservation && typeof latestObservation === "object"
-      ? latestObservation as Record<string, unknown>
-      : {};
-    const latestEvidence = latest["evidence"] && typeof latest["evidence"] === "object"
-      ? latest["evidence"] as Record<string, unknown>
-      : {};
-    return {
-      goalTitle,
-      waitStrategyId: strategy.id,
-      waitReason: typeof strategy.wait_reason === "string" ? strategy.wait_reason : "waiting",
-      waitUntil: strategy.wait_until,
-      nextObserveAt,
-      conditions: conditions.map((condition) => JSON.stringify(condition)),
-      processRefs: processRefs.map((ref) => JSON.stringify(ref)),
-      artifactRefs: artifactRefs.map((ref) => JSON.stringify(ref)),
-      approvalPending: Boolean(metadata["approval_pending"] ?? latestEvidence["approval_pending"]),
-    };
   }
 }
