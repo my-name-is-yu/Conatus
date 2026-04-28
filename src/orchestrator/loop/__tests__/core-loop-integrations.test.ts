@@ -24,6 +24,7 @@ import {
   StrategyManager as RealStrategyManager,
   type StrategyManager,
 } from "../../strategy/strategy-manager.js";
+import { PortfolioManager } from "../../strategy/portfolio-manager.js";
 import type { DriveSystem } from "../../../platform/drive/drive-system.js";
 import type { AdapterRegistry, IAdapter } from "../../execution/adapter-layer.js";
 import type { GapVector } from "../../../base/types/gap.js";
@@ -351,6 +352,44 @@ function createMockDeps(tmpDir: string): {
       adapterRegistry,
       adapter,
     },
+  };
+}
+
+function makeWaitStrategyForCoreLoop(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "wait-strategy-1",
+    goal_id: "goal-1",
+    target_dimensions: ["dim1"],
+    primary_dimension: "dim1",
+    hypothesis: "Wait for the training run to finish",
+    expected_effect: [],
+    resource_estimate: {
+      sessions: 0,
+      duration: { value: 1, unit: "hours" },
+      llm_calls: null,
+    },
+    state: "active",
+    allocation: 1,
+    created_at: "2026-04-24T00:00:00.000Z",
+    started_at: "2026-04-24T00:00:00.000Z",
+    completed_at: null,
+    gap_snapshot_at_start: 0.8,
+    tasks_generated: [],
+    effectiveness_score: null,
+    consecutive_stall_count: 0,
+    source_template_id: null,
+    cross_goal_context: null,
+    rollback_target_id: null,
+    max_pivot_count: 2,
+    pivot_count: 0,
+    toolset_locked: false,
+    allowed_tools: [],
+    required_tools: [],
+    wait_reason: "Observe Kaggle training completion",
+    wait_until: new Date(Date.now() - 100_000).toISOString(),
+    measurement_plan: "Resume when process exits and inspect metrics",
+    fallback_strategy_id: null,
+    ...overrides,
   };
 }
 
@@ -1188,6 +1227,131 @@ describe("CoreLoop", async () => {
       await loop.runOneIteration("goal-1", 0);
 
       expect(mocks.strategyManager.onStallDetected).toHaveBeenCalledWith("goal-1", 3, expect.any(String), undefined);
+    });
+
+    it("uses the real wait expiry path through PortfolioManager when the current process session has exited", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal({
+        dimensions: [makeDimension({ name: "dim1" })],
+      }));
+
+      const waitStrategy = makeWaitStrategyForCoreLoop();
+      const processSessionId = "sess-current";
+      const processSessionDir = path.join(tmpDir, "runtime", "process-sessions");
+      fs.mkdirSync(processSessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(processSessionDir, `${processSessionId}.json`),
+        JSON.stringify({ session_id: processSessionId, running: false, exitCode: 0, pid: 4242 }),
+      );
+
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+      await mocks.stateManager.writeRaw("gaps/goal-1/current.json", { dim1: 0.4 });
+      await mocks.stateManager.writeRaw(`strategies/goal-1/wait-meta/${waitStrategy.id}.json`, {
+        schema_version: 1,
+        wait_until: waitStrategy.wait_until,
+        conditions: [{ type: "process_session_exited", session_id: processSessionId }],
+        resume_plan: { action: "complete_wait" },
+        process_refs: [{
+          session_id: processSessionId,
+          metadata_relative_path: path.join("runtime", "process-sessions", `${processSessionId}.json`),
+        }],
+      });
+
+      const portfolioManager = new PortfolioManager(
+        mocks.strategyManager as unknown as RealStrategyManager,
+        mocks.stateManager,
+      );
+      const depsWithPM = { ...deps, portfolioManager };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+      const persistedWaitMeta = await mocks.stateManager.readRaw(`strategies/goal-1/wait-meta/${waitStrategy.id}.json`) as Record<string, unknown>;
+
+      expect(result.waitExpired).toBe(true);
+      expect(result.waitStrategyId).toBe(waitStrategy.id);
+      expect(result.waitExpiryOutcome).toMatchObject({ status: "improved", strategy_id: waitStrategy.id });
+      expect(result.skipped).toBe(true);
+      expect(result.skipReason).toBe("wait_observe_only");
+      expect(mocks.strategyManager.updateState).toHaveBeenCalledWith(waitStrategy.id, "completed");
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+      expect(persistedWaitMeta["latest_observation"]).toMatchObject({
+        status: "satisfied",
+        resume_hint: "wait_conditions_satisfied",
+      });
+    });
+
+    it("does not resume from a stale previous process session when the current session is still running", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal({
+        dimensions: [makeDimension({ name: "dim1" })],
+      }));
+
+      const waitStrategy = makeWaitStrategyForCoreLoop();
+      const currentSessionId = "sess-current";
+      const staleSessionId = "sess-previous";
+      const processSessionDir = path.join(tmpDir, "runtime", "process-sessions");
+      fs.mkdirSync(processSessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(processSessionDir, `${currentSessionId}.json`),
+        JSON.stringify({ session_id: currentSessionId, running: true, exitCode: null }),
+      );
+      fs.writeFileSync(
+        path.join(processSessionDir, `${staleSessionId}.json`),
+        JSON.stringify({ session_id: staleSessionId, running: false, exitCode: 0, pid: 4141 }),
+      );
+
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+      mocks.stallDetector.isSuppressed.mockReturnValue(true);
+      await mocks.stateManager.writeRaw("gaps/goal-1/current.json", { dim1: 0.4 });
+      await mocks.stateManager.writeRaw(`strategies/goal-1/wait-meta/${waitStrategy.id}.json`, {
+        schema_version: 1,
+        wait_until: waitStrategy.wait_until,
+        conditions: [{ type: "process_session_exited", session_id: currentSessionId }],
+        resume_plan: { action: "complete_wait" },
+        process_refs: [
+          {
+            session_id: staleSessionId,
+            metadata_relative_path: path.join("runtime", "process-sessions", `${staleSessionId}.json`),
+          },
+          {
+            session_id: currentSessionId,
+            metadata_relative_path: path.join("runtime", "process-sessions", `${currentSessionId}.json`),
+          },
+        ],
+      });
+
+      const portfolioManager = new PortfolioManager(
+        mocks.strategyManager as unknown as RealStrategyManager,
+        mocks.stateManager,
+      );
+      const depsWithPM = { ...deps, portfolioManager };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+      const persistedWaitMeta = await mocks.stateManager.readRaw(`strategies/goal-1/wait-meta/${waitStrategy.id}.json`) as Record<string, unknown>;
+
+      expect(result.waitSuppressed).toBe(true);
+      expect(result.waitStrategyId).toBe(waitStrategy.id);
+      expect(result.waitExpiryOutcome).toMatchObject({
+        status: "not_due",
+        strategy_id: waitStrategy.id,
+      });
+      expect(result.skipped).toBe(true);
+      expect(result.skipReason).toBe("wait_not_due");
+      expect(mocks.strategyManager.updateState).not.toHaveBeenCalled();
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+      expect(persistedWaitMeta["latest_observation"]).toMatchObject({
+        status: "stale",
+        resume_hint: `process session still running: ${currentSessionId}`,
+      });
     });
 
     it("handles WaitStrategy expiry check — calls rebalance when handleWaitStrategyExpiry returns a trigger", async () => {
