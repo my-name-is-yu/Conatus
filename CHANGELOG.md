@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.4] - 2026-04-29
+
+### Added
+- Added durable session-control completion routing, dormant runtime surfaces, long-running runtime artifacts, and shared wait/process session plumbing across runtime execution paths (#770, #778, #781)
+- Added regression coverage for loaded chat session cleanup and chat runtime/CoreLoop helper flows so stale session and process-state bugs are exercised through production-facing paths (#773, #782)
+
+### Changed
+- Tightened verified planner reuse so only verified playbooks can be reused and wakeups/scheduling behavior stay aligned with the newer runtime orchestration flow (#779)
+- Continued the internal platform/runtime maintainability split across chat runner, daemon CLI, session registry, wait-cycle helpers, and orchestration hotspots without changing the public package surface (#774, #775, #776, #777)
+- Bumped the package version to `0.5.4`
+
+### Fixed
+- Fixed broad-search/tool-timeout safeguards, Kaggle workspace and `~` cwd smoke blockers, timed-out goal negotiation writes, stale AgentLoop metadata in forked chat sessions, wait-strategy task mirroring, verified planner trust gating regressions, long-running runtime artifact linkage, and TUI slash command parity (#767, #768, #772, #779, #780, #781)
+
 ## [0.5.3] - 2026-04-26
 
 ### Added
