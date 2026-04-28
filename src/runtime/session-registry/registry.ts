@@ -58,6 +58,12 @@ interface SupervisorStateLike {
   updatedAt?: unknown;
 }
 
+function chatLifecycleToRuntimeStatus(status: string | null | undefined): RuntimeSession["status"] {
+  if (status === "queued" || status === "running" || status === "waiting") return "active";
+  if (status === "completed" || status === "failed") return "ended";
+  return "idle";
+}
+
 const PROCESS_SESSION_DIR = path.join("runtime", "process-sessions");
 
 export class RuntimeSessionRegistry {
@@ -150,17 +156,17 @@ export class RuntimeSessionRegistry {
         schema_version: "runtime-session-v1",
         id: conversationId,
         kind: "conversation",
-        parent_session_id: null,
+        parent_session_id: chat.parentSessionId ? conversationSessionId(chat.parentSessionId) : null,
         title: chat.title,
         workspace: chat.cwd,
-        status: "idle",
+        status: chatLifecycleToRuntimeStatus(chat.sessionStatus),
         created_at: chat.createdAt,
-        updated_at: chat.updatedAt,
-        last_event_at: chat.updatedAt,
+        updated_at: chat.completedAt ?? chat.updatedAt,
+        last_event_at: chat.completedAt ?? chat.updatedAt,
         transcript_ref: chatSource,
         state_ref: null,
-        reply_target: null,
-        resumable: true,
+        reply_target: chat.notificationReplyTarget ?? null,
+        resumable: chat.sessionStatus !== "completed",
         attachable: false,
         source_refs: [chatSource],
       });

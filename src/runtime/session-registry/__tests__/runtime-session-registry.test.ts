@@ -67,6 +67,70 @@ describe("RuntimeSessionRegistry", () => {
     });
   });
 
+  it("projects spawned child conversations with their parent conversation runtime id", async () => {
+    await stateManager.writeRaw("chat/sessions/chat-parent.json", {
+      id: "chat-parent",
+      cwd: "/repo",
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:10:00.000Z",
+      title: "Parent chat",
+      messages: [],
+    });
+    await stateManager.writeRaw("chat/sessions/chat-child.json", {
+      id: "chat-child",
+      cwd: "/repo",
+      createdAt: "2026-04-25T00:15:00.000Z",
+      updatedAt: "2026-04-25T00:20:00.000Z",
+      title: "Child chat",
+      parentSessionId: "chat-parent",
+      spawnedBySessionId: "chat-parent",
+      spawnedAt: "2026-04-25T00:15:00.000Z",
+      messages: [],
+    });
+
+    const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+    const childConversation = snapshot.sessions.find((session) => session.id === "session:conversation:chat-child");
+
+    expect(childConversation).toMatchObject({
+      id: "session:conversation:chat-child",
+      kind: "conversation",
+      parent_session_id: "session:conversation:chat-parent",
+    });
+  });
+
+  it("projects conversation lifecycle status and durable reply target from chat session metadata", async () => {
+    await stateManager.writeRaw("chat/sessions/chat-notify.json", {
+      id: "chat-notify",
+      cwd: "/repo",
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:20:00.000Z",
+      title: "Notify chat",
+      sessionStatus: "completed",
+      sessionSummary: "done",
+      completedAt: "2026-04-25T00:30:00.000Z",
+      notificationReplyTarget: {
+        channel: "plugin_gateway",
+        target_id: "chat-123",
+        thread_id: "msg-1",
+      },
+      messages: [],
+    });
+
+    const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+    const conversation = snapshot.sessions.find((session) => session.id === "session:conversation:chat-notify");
+
+    expect(conversation).toMatchObject({
+      id: "session:conversation:chat-notify",
+      status: "ended",
+      updated_at: "2026-04-25T00:30:00.000Z",
+      reply_target: expect.objectContaining({
+        channel: "plugin_gateway",
+        target_id: "chat-123",
+      }),
+      resumable: false,
+    });
+  });
+
   it("does not report a running process sidecar with a dead pid as running", async () => {
     await stateManager.writeRaw("runtime/process-sessions/proc-dead.json", makeProcessSnapshot({
       session_id: "proc-dead",

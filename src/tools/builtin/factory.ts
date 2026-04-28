@@ -82,6 +82,7 @@ import { TaskGetTool } from "../query/TaskGetTool/TaskGetTool.js";
 import { TaskListTool } from "../query/TaskListTool/TaskListTool.js";
 import { ToolSearchTool } from "../query/ToolSearchTool/ToolSearchTool.js";
 import { TrustStateTool } from "../query/TrustStateTool/TrustStateTool.js";
+import { createRuntimeSessionTools } from "../query/runtime-session-tools.js";
 import { CreateScheduleTool } from "../schedule/CreateScheduleTool/CreateScheduleTool.js";
 import { GetScheduleTool } from "../schedule/GetScheduleTool/GetScheduleTool.js";
 import { ListSchedulesTool } from "../schedule/ListSchedulesTool/ListSchedulesTool.js";
@@ -201,6 +202,7 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
       new GoalStateTool(deps.stateManager),
       new TrustStateTool(deps.stateManager),
       new SessionHistoryTool(deps.stateManager),
+      ...createRuntimeSessionTools(deps.stateManager),
       new ProgressHistoryTool(deps.stateManager),
       new TaskListTool(deps.stateManager),
       new TaskGetTool(deps.stateManager),

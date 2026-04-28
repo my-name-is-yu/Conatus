@@ -5,6 +5,7 @@
 
 import { z } from "zod";
 import type { StateManager } from "../../base/state/state-manager.js";
+import { RuntimeReplyTargetSchema, type RuntimeReplyTarget } from "../../runtime/session-registry/types.js";
 
 // ─── Schemas ───
 
@@ -48,6 +49,27 @@ export const ChatSessionSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string().optional(),
   title: z.string().trim().min(1).max(200).nullable().optional(),
+  parentSessionId: z.string().nullable().optional(),
+  spawnedBySessionId: z.string().nullable().optional(),
+  spawnedByRuntimeSessionId: z.string().nullable().optional(),
+  spawnedAt: z.string().nullable().optional(),
+  sessionStatus: z.enum(["idle", "queued", "running", "waiting", "completed", "failed"]).nullable().optional(),
+  sessionSummary: z.string().nullable().optional(),
+  completedAt: z.string().nullable().optional(),
+  goalId: z.string().nullable().optional(),
+  strategyId: z.string().nullable().optional(),
+  notificationPolicy: z.enum(["silent", "important_only", "periodic", "all_terminal"]).nullable().optional(),
+  ownerId: z.string().nullable().optional(),
+  ownerClaimedAt: z.string().nullable().optional(),
+  waitingUntil: z.string().nullable().optional(),
+  waitingCondition: z.string().nullable().optional(),
+  retryCount: z.number().int().nonnegative().nullable().optional(),
+  lastRetryAt: z.string().nullable().optional(),
+  lastResumedAt: z.string().nullable().optional(),
+  notificationReplyTarget: RuntimeReplyTargetSchema.nullable().optional(),
+  parentNotificationStatus: z.enum(["none", "pending", "sent", "failed"]).nullable().optional(),
+  parentNotificationSummary: z.string().nullable().optional(),
+  parentNotifiedAt: z.string().nullable().optional(),
   messages: z.array(ChatMessageSchema),
   compactionSummary: z.string().optional(),
   agentLoopStatePath: z.string().nullable().optional(),
@@ -185,6 +207,98 @@ export class ChatHistory {
       this.session.agentLoopStatePath = statePath;
     } else {
       delete this.session.agentLoopStatePath;
+    }
+  }
+
+  setNotificationReplyTarget(target: RuntimeReplyTarget | null): void {
+    if (target) {
+      this.session.notificationReplyTarget = target;
+    } else {
+      delete this.session.notificationReplyTarget;
+    }
+  }
+
+  setSessionLifecycle(input: {
+    status?: "idle" | "queued" | "running" | "waiting" | "completed" | "failed" | null;
+    summary?: string | null;
+    completedAt?: string | null;
+    goalId?: string | null;
+    strategyId?: string | null;
+    notificationPolicy?: "silent" | "important_only" | "periodic" | "all_terminal" | null;
+    ownerId?: string | null;
+    ownerClaimedAt?: string | null;
+    waitingUntil?: string | null;
+    waitingCondition?: string | null;
+    retryCount?: number | null;
+    lastRetryAt?: string | null;
+    lastResumedAt?: string | null;
+    parentNotificationStatus?: "none" | "pending" | "sent" | "failed" | null;
+    parentNotificationSummary?: string | null;
+    parentNotifiedAt?: string | null;
+  }): void {
+    if (input.status !== undefined) {
+      if (input.status) this.session.sessionStatus = input.status;
+      else delete this.session.sessionStatus;
+    }
+    if (input.summary !== undefined) {
+      if (input.summary !== null) this.session.sessionSummary = input.summary;
+      else delete this.session.sessionSummary;
+    }
+    if (input.completedAt !== undefined) {
+      if (input.completedAt !== null) this.session.completedAt = input.completedAt;
+      else delete this.session.completedAt;
+    }
+    if (input.goalId !== undefined) {
+      if (input.goalId !== null) this.session.goalId = input.goalId;
+      else delete this.session.goalId;
+    }
+    if (input.strategyId !== undefined) {
+      if (input.strategyId !== null) this.session.strategyId = input.strategyId;
+      else delete this.session.strategyId;
+    }
+    if (input.notificationPolicy !== undefined) {
+      if (input.notificationPolicy !== null) this.session.notificationPolicy = input.notificationPolicy;
+      else delete this.session.notificationPolicy;
+    }
+    if (input.ownerId !== undefined) {
+      if (input.ownerId !== null) this.session.ownerId = input.ownerId;
+      else delete this.session.ownerId;
+    }
+    if (input.ownerClaimedAt !== undefined) {
+      if (input.ownerClaimedAt !== null) this.session.ownerClaimedAt = input.ownerClaimedAt;
+      else delete this.session.ownerClaimedAt;
+    }
+    if (input.waitingUntil !== undefined) {
+      if (input.waitingUntil !== null) this.session.waitingUntil = input.waitingUntil;
+      else delete this.session.waitingUntil;
+    }
+    if (input.waitingCondition !== undefined) {
+      if (input.waitingCondition !== null) this.session.waitingCondition = input.waitingCondition;
+      else delete this.session.waitingCondition;
+    }
+    if (input.retryCount !== undefined) {
+      if (input.retryCount !== null) this.session.retryCount = input.retryCount;
+      else delete this.session.retryCount;
+    }
+    if (input.lastRetryAt !== undefined) {
+      if (input.lastRetryAt !== null) this.session.lastRetryAt = input.lastRetryAt;
+      else delete this.session.lastRetryAt;
+    }
+    if (input.lastResumedAt !== undefined) {
+      if (input.lastResumedAt !== null) this.session.lastResumedAt = input.lastResumedAt;
+      else delete this.session.lastResumedAt;
+    }
+    if (input.parentNotificationStatus !== undefined) {
+      if (input.parentNotificationStatus) this.session.parentNotificationStatus = input.parentNotificationStatus;
+      else delete this.session.parentNotificationStatus;
+    }
+    if (input.parentNotificationSummary !== undefined) {
+      if (input.parentNotificationSummary !== null) this.session.parentNotificationSummary = input.parentNotificationSummary;
+      else delete this.session.parentNotificationSummary;
+    }
+    if (input.parentNotifiedAt !== undefined) {
+      if (input.parentNotifiedAt !== null) this.session.parentNotifiedAt = input.parentNotifiedAt;
+      else delete this.session.parentNotifiedAt;
     }
   }
 

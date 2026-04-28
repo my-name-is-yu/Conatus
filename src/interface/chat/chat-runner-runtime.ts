@@ -37,6 +37,27 @@ export function loadedSessionToChatSession(session: LoadedChatSession): ChatSess
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     messages: [...session.messages],
+    ...(session.parentSessionId ? { parentSessionId: session.parentSessionId } : {}),
+    ...(session.spawnedBySessionId ? { spawnedBySessionId: session.spawnedBySessionId } : {}),
+    ...(session.spawnedByRuntimeSessionId ? { spawnedByRuntimeSessionId: session.spawnedByRuntimeSessionId } : {}),
+    ...(session.spawnedAt ? { spawnedAt: session.spawnedAt } : {}),
+    ...(session.sessionStatus ? { sessionStatus: session.sessionStatus } : {}),
+    ...(session.sessionSummary ? { sessionSummary: session.sessionSummary } : {}),
+    ...(session.completedAt ? { completedAt: session.completedAt } : {}),
+    ...(session.goalId ? { goalId: session.goalId } : {}),
+    ...(session.strategyId ? { strategyId: session.strategyId } : {}),
+    ...(session.notificationPolicy ? { notificationPolicy: session.notificationPolicy } : {}),
+    ...(session.ownerId ? { ownerId: session.ownerId } : {}),
+    ...(session.ownerClaimedAt ? { ownerClaimedAt: session.ownerClaimedAt } : {}),
+    ...(session.waitingUntil ? { waitingUntil: session.waitingUntil } : {}),
+    ...(session.waitingCondition ? { waitingCondition: session.waitingCondition } : {}),
+    ...(session.retryCount !== null && session.retryCount !== undefined ? { retryCount: session.retryCount } : {}),
+    ...(session.lastRetryAt ? { lastRetryAt: session.lastRetryAt } : {}),
+    ...(session.lastResumedAt ? { lastResumedAt: session.lastResumedAt } : {}),
+    ...(session.notificationReplyTarget ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+    ...(session.parentNotificationStatus ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
+    ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
+    ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
     ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
     ...(session.title ? { title: session.title } : {}),
     ...(session.agentLoopStatePath ? { agentLoopStatePath: session.agentLoopStatePath } : {}),
@@ -219,10 +240,11 @@ function compactSessionLine(session: RuntimeSession): string {
   const title = formatRuntimeTitle(session.title);
   const updated = formatRuntimeTimestamp(session.updated_at ?? session.last_event_at ?? session.created_at);
   const workspace = session.workspace ? `, cwd ${session.workspace}` : "";
+  const parent = session.parent_session_id ? `, parent ${session.parent_session_id}` : "";
   const resumable = session.resumable ? ", resumable" : "";
   const attachable = session.attachable ? ", attachable" : "";
   const runtimeId = displayId === session.id ? "" : `, runtime ${session.id}`;
-  return `- ${displayId}${title} [${session.kind}, ${session.status}], updated ${updated}${workspace}${resumable}${attachable}${runtimeId}`;
+  return `- ${displayId}${title} [${session.kind}, ${session.status}], updated ${updated}${workspace}${parent}${resumable}${attachable}${runtimeId}`;
 }
 
 export function formatRuntimeSessionsList(snapshot: RuntimeSessionRegistrySnapshot): string {
