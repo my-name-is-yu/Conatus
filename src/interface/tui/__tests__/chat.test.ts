@@ -37,12 +37,25 @@ describe("getMatchingSuggestions", () => {
   it("hides suggestions for an exact slash command so enter can submit", () => {
     expect(getMatchingSuggestions("/help", [])).toEqual([]);
     expect(getMatchingSuggestions("/config", [])).toEqual([]);
+    expect(getMatchingSuggestions("/?", [])).toEqual([]);
+    expect(getMatchingSuggestions("/d", [])).toEqual([]);
   });
 
   it("keeps suggestions for partial slash commands", () => {
     const matches = getMatchingSuggestions("/he", []);
     expect(matches.length).toBeGreaterThan(0);
     expect(matches[0]?.name).toBe("/help");
+  });
+
+  it("suggests ChatRunner-owned commands that are usable from TUI", () => {
+    const names = getMatchingSuggestions("/", []).map((suggestion) => suggestion.name);
+
+    expect(names).toContain("/sessions");
+    expect(names).toContain("/resume");
+    expect(names).toContain("/tasks");
+    expect(names).toContain("/tend");
+    expect(names).toContain("/config");
+    expect(names).toContain("/review");
   });
 
   it("hides goal suggestions when a goal arg is fully typed", () => {

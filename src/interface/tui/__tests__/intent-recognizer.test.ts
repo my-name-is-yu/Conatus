@@ -50,6 +50,11 @@ describe("IntentRecognizer — keyword matching", () => {
     expect(result.intent).toBe("help");
   });
 
+  it("recognizes help alias: '/?'", async () => {
+    const result = await recognizer.recognize("/?");
+    expect(result.intent).toBe("help");
+  });
+
   it("recognizes help: '?'", async () => {
     const result = await recognizer.recognize("?");
     expect(result.intent).toBe("help");
@@ -111,6 +116,11 @@ describe("IntentRecognizer — keyword matching", () => {
 
   it("recognizes dashboard: '/dashboard'", async () => {
     const result = await recognizer.recognize("/dashboard");
+    expect(result.intent).toBe("dashboard");
+  });
+
+  it("recognizes dashboard alias: '/d'", async () => {
+    const result = await recognizer.recognize("/d");
     expect(result.intent).toBe("dashboard");
   });
 

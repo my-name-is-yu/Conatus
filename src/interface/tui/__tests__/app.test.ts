@@ -185,6 +185,46 @@ describe("standalone slash command routing", () => {
     screen.unmount();
   });
 
+  it("routes ChatRunner-only slash commands from the TUI surface", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const intentRecognizer = {
+      recognize: vi.fn(async () => ({ intent: "unknown", raw: "/tasks" })),
+    };
+    const actionHandler = {
+      handle: vi.fn(async () => ({ messages: ["unexpected"] })),
+    };
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      intentRecognizer: intentRecognizer as any,
+      actionHandler: actionHandler as any,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/tasks goal-1");
+    await testState.lastChatProps!.onSubmit("/config");
+
+    expect(chatRunner.execute).toHaveBeenNthCalledWith(1, "/tasks goal-1", "~/workspace");
+    expect(chatRunner.execute).toHaveBeenNthCalledWith(2, "/config", "~/workspace");
+    expect(intentRecognizer.recognize).not.toHaveBeenCalled();
+    expect(actionHandler.handle).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
   it("routes input during processing to ChatRunner interrupt redirect", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
