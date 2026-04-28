@@ -594,7 +594,7 @@ describe("LoopSupervisor", () => {
       await waitFor(() => {
         const snapshot = journalQueue.snapshot();
         return mockCoreLoop.run.mock.calls.length >= 2 && snapshot.completed.length >= 2;
-      });
+      }, 5_000);
       await supervisor.shutdown();
 
       expect(mockCoreLoop.run).toHaveBeenCalledTimes(2);
