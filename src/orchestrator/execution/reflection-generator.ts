@@ -175,6 +175,23 @@ export async function getReflectionsForGoal(
     .slice(0, limit);
 }
 
+export async function getFailureReflectionsForGoal(
+  knowledgeManager: KnowledgeManager,
+  goalId: string,
+  limit = 5,
+  logger?: ReflectionLogger,
+): Promise<ReflectionNote[]> {
+  const reflections = await getReflectionsForGoal(
+    knowledgeManager,
+    goalId,
+    limit * 3,
+    logger,
+  );
+  return reflections
+    .filter((reflection) => reflection.outcome !== "success")
+    .slice(0, limit);
+}
+
 // --- formatReflectionsForPrompt ---
 
 export function formatReflectionsForPrompt(reflections: ReflectionNote[]): string {

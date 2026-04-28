@@ -89,6 +89,7 @@ function makeStrategy(overrides: Partial<Strategy> = {}): Strategy {
 }
 
 const STRATEGY_TEMPLATES_ACTIVATION = {
+  verifiedPlannerHintsOnly: false,
   semanticWorkingMemory: false,
   crossGoalLessons: false,
   semanticContext: false,

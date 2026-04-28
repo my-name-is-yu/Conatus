@@ -11,7 +11,8 @@ import { TaskGroupSchema } from "../../../base/types/index.js";
 import type { TaskGroup } from "../../../base/types/index.js";
 import type { TaskPipeline } from "../../../base/types/pipeline.js";
 import { wrapXmlTag, formatReflections, formatLessons } from "../../../prompt/formatters.js";
-import { getReflectionsForGoal } from "../reflection-generator.js";
+import { loadDreamActivationState } from "../../../platform/dream/dream-activation.js";
+import { getFailureReflectionsForGoal, getReflectionsForGoal } from "../reflection-generator.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 
@@ -265,13 +266,17 @@ export async function generateTask(
     adapterType === "openai_codex_cli" || adapterType === "claude_code_cli";
   const maxGenerationTokens = isCodeExecutionContext ? 1024 : 1536;
   const modelTier: "light" | "main" = isCodeExecutionContext ? "light" : "main";
+  const dreamActivation = await loadDreamActivationState(deps.stateManager.getBaseDir()).catch(() => null);
+  const verifiedPlannerHintsOnly = dreamActivation?.flags.verifiedPlannerHintsOnly ?? true;
   // Build optional reflections and lessons XML blocks
   let reflectionsBlock = "";
   let lessonsBlock = "";
 
   if (deps.knowledgeManager) {
     try {
-      const reflections = await getReflectionsForGoal(deps.knowledgeManager, goalId, 5, deps.logger);
+      const reflections = verifiedPlannerHintsOnly
+        ? await getFailureReflectionsForGoal(deps.knowledgeManager, goalId, 5, deps.logger)
+        : await getReflectionsForGoal(deps.knowledgeManager, goalId, 5, deps.logger);
       if (reflections.length > 0) {
         reflectionsBlock = wrapXmlTag(
           "past_reflections",
@@ -289,7 +294,7 @@ export async function generateTask(
     }
   }
 
-  if (deps.memoryLifecycle) {
+  if (deps.memoryLifecycle && !verifiedPlannerHintsOnly) {
     try {
       const memory = await deps.memoryLifecycle.selectForWorkingMemory(
         goalId,

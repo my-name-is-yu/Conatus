@@ -162,7 +162,7 @@ describe("TaskLifecycle", async () => {
       expect(userMessage).toContain("goal-42");
     });
 
-    it("injects learned pattern hints into task generation when dream activation is enabled", async () => {
+    it("does not inject learned pattern hints when verified-only planner mode is enabled", async () => {
       const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(spy);
 
@@ -194,6 +194,7 @@ describe("TaskLifecycle", async () => {
       ]);
       await saveDreamConfig({
         activation: {
+          verifiedPlannerHintsOnly: true,
           semanticWorkingMemory: false,
           crossGoalLessons: false,
           semanticContext: false,
@@ -210,11 +211,11 @@ describe("TaskLifecycle", async () => {
       await lifecycle.generateTask("goal-42", "completion_rate");
 
       const userMessage = spy.calls[0]!.messages[0]!.content;
-      expect(userMessage).toContain("Learned pattern hints");
-      expect(userMessage).toContain("step-by-step signup hints");
+      expect(userMessage).not.toContain("Learned pattern hints");
+      expect(userMessage).not.toContain("step-by-step signup hints");
     });
 
-    it("injects workflow recovery hints into task generation when dream activation is enabled", async () => {
+    it("does not inject workflow recovery hints when verified-only planner mode is enabled", async () => {
       const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(spy);
 
@@ -261,6 +262,128 @@ describe("TaskLifecycle", async () => {
       });
       await saveDreamConfig({
         activation: {
+          verifiedPlannerHintsOnly: true,
+          semanticWorkingMemory: false,
+          crossGoalLessons: false,
+          semanticContext: false,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: false,
+          playbookHints: false,
+          workflowHints: true,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, stateManager.getBaseDir());
+
+      await lifecycle.generateTask("goal-42", "verification");
+
+      const userMessage = spy.calls[0]!.messages[0]!.content;
+      expect(userMessage).not.toContain("Workflow recovery hints");
+      expect(userMessage).not.toContain("Stall recovery: confidence stall");
+    });
+
+    it("allows learned pattern hints when verified-only planner mode is explicitly disabled", async () => {
+      const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
+      const lifecycle = createLifecycle(spy);
+
+      await stateManager.saveGoal({
+        id: "goal-42",
+        title: "Improve onboarding completion",
+        description: "Reduce user drop-off during signup",
+        status: "active",
+        dimensions: [],
+        parent_id: null,
+        child_goal_ids: [],
+        success_criteria: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+      await stateManager.writeRaw("learning/goal-42_patterns.json", [
+        {
+          pattern_id: "pat-1",
+          type: "task_generation",
+          description: "Use step-by-step signup hints before proposing new UI changes",
+          confidence: 0.82,
+          evidence_count: 4,
+          source_goal_ids: ["goal-42"],
+          applicable_domains: ["signup", "onboarding"],
+          embedding_id: null,
+          created_at: new Date().toISOString(),
+          last_applied_at: null,
+        },
+      ]);
+      await saveDreamConfig({
+        activation: {
+          verifiedPlannerHintsOnly: false,
+          semanticWorkingMemory: false,
+          crossGoalLessons: false,
+          semanticContext: false,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: true,
+          playbookHints: false,
+          workflowHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, stateManager.getBaseDir());
+
+      await lifecycle.generateTask("goal-42", "completion_rate");
+
+      const userMessage = spy.calls[0]!.messages[0]!.content;
+      expect(userMessage).toContain("Learned pattern hints");
+      expect(userMessage).toContain("step-by-step signup hints");
+    });
+
+    it("allows workflow recovery hints when verified-only planner mode is explicitly disabled", async () => {
+      const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
+      const lifecycle = createLifecycle(spy);
+
+      await stateManager.saveGoal({
+        id: "goal-42",
+        title: "Improve daemon recovery",
+        description: "Avoid repeated confidence stalls during verification",
+        status: "active",
+        dimensions: [],
+        parent_id: null,
+        child_goal_ids: [],
+        success_criteria: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+      await stateManager.writeRaw("dream/workflows.json", {
+        version: "dream-workflows-v1",
+        generated_at: new Date().toISOString(),
+        workflows: [
+          {
+            workflow_id: "dream-workflow:test-stall",
+            type: "stall_recovery",
+            title: "Stall recovery: confidence stall",
+            description: "Change strategy when verification confidence stalls.",
+            applicability: {
+              goal_ids: ["goal-42"],
+              task_ids: [],
+              event_types: ["StallDetected"],
+              signals: ["confidence_stall", "verification"],
+            },
+            preconditions: ["A stall was detected."],
+            steps: ["Pause repeated attempts.", "Inspect the verification signal.", "Change strategy."],
+            failure_modes: ["confidence_stall"],
+            recovery_steps: ["Re-plan before retrying."],
+            evidence_refs: ["dream/events/goal-42.jsonl#L1"],
+            evidence_count: 2,
+            success_count: 0,
+            failure_count: 2,
+            confidence: 0.73,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      });
+      await saveDreamConfig({
+        activation: {
+          verifiedPlannerHintsOnly: false,
           semanticWorkingMemory: false,
           crossGoalLessons: false,
           semanticContext: false,
@@ -348,6 +471,7 @@ describe("TaskLifecycle", async () => {
       });
       await saveDreamConfig({
         activation: {
+          verifiedPlannerHintsOnly: true,
           semanticWorkingMemory: false,
           crossGoalLessons: false,
           semanticContext: false,
@@ -450,6 +574,7 @@ describe("TaskLifecycle", async () => {
       });
       await saveDreamConfig({
         activation: {
+          verifiedPlannerHintsOnly: true,
           semanticWorkingMemory: false,
           crossGoalLessons: false,
           semanticContext: false,

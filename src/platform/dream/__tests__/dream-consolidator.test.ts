@@ -55,6 +55,7 @@ describe("DreamConsolidator", () => {
         agentMemoryEntries: 1,
         learnedPatterns: 0,
         workflowRecords: 0,
+        verifiedPlaybooks: 0,
         previousRecords: 0,
         recordsWritten: 1,
         recordsSuperseded: 0,

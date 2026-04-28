@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import type { DreamWorkflowRecord } from "../dream/dream-event-workflows.js";
+import type { DreamPlaybookRecord } from "../dream/playbook-memory.js";
 import type { LearnedPattern } from "../knowledge/types/learning.js";
 import type { SoilMemoryHealthSnapshot } from "./health.js";
 import {
@@ -74,6 +75,31 @@ function dreamWorkflowSection(workflow: DreamWorkflowRecord): string {
   return lines.join("\n");
 }
 
+function dreamPlaybookSection(playbook: DreamPlaybookRecord): string {
+  const lines = [
+    `## ${playbook.playbook_id}`,
+    "",
+    `- Status: ${playbook.status}`,
+    `- Title: ${playbook.title}`,
+    `- Summary: ${trimText(playbook.summary, 360)}`,
+    `- Verification confidence: ${playbook.verification.confidence}`,
+    `- Verified successes: ${playbook.usage.verified_success_count}`,
+    `- Successful / failed reuse: ${playbook.usage.successful_reuse_count} / ${playbook.usage.failed_reuse_count}`,
+    `- Goal IDs: ${bulletList(playbook.applicability.goal_ids, "none")}`,
+    `- Dimensions: ${bulletList(playbook.applicability.primary_dimensions, "none")}`,
+    `- Categories: ${bulletList(playbook.applicability.task_categories, "none")}`,
+    `- Last verified: ${playbook.verification.last_verified_at}`,
+    `- Updated: ${playbook.updated_at}`,
+    "",
+    ...sectionList("### Preconditions", playbook.preconditions),
+    ...sectionList("### Recommended steps", playbook.recommended_steps),
+    ...sectionList("### Verification checks", playbook.verification_checks.map((check) => `${check.description} (${check.verification_method})`)),
+    ...sectionList("### Failure warnings", playbook.failure_warnings),
+    ...sectionList("### Evidence", playbook.evidence_refs),
+  ];
+  return lines.join("\n");
+}
+
 function healthFindingSection(snapshot: SoilMemoryHealthSnapshot): string[] {
   if (snapshot.findings.length === 0) {
     return ["No health findings."];
@@ -110,14 +136,18 @@ function compileMissBucketSection(snapshot: SoilMemoryHealthSnapshot): string[] 
 
 export async function projectDreamKnowledgeToSoil(input: SoilProjectionOptions & {
   learnedPatterns: LearnedPattern[];
+  verifiedPlaybooks: DreamPlaybookRecord[];
   workflowRecords: DreamWorkflowRecord[];
 }): Promise<void> {
   const generatedAt = nowIso(input.clock);
   const learningSourcePath = path.join(input.baseDir, "learning");
+  const playbookSourcePath = path.join(input.baseDir, "dream", "playbooks");
   const workflowSourcePath = path.join(input.baseDir, "dream", "workflows.json");
   const learningSourceHash = await sourceHashFromFileOrValue(learningSourcePath, input.learnedPatterns);
+  const playbookSourceHash = await sourceHashFromFileOrValue(playbookSourcePath, input.verifiedPlaybooks);
   const workflowSourceHash = await sourceHashFromFileOrValue(workflowSourcePath, input.workflowRecords);
   const learnedPatterns = sortByDate(input.learnedPatterns, (pattern) => pattern.created_at);
+  const verifiedPlaybooks = sortByDate(input.verifiedPlaybooks, (playbook) => playbook.updated_at);
   const workflowRecords = sortByDate(input.workflowRecords, (workflow) => workflow.updated_at);
 
   await writeProjectedPage(input, {
@@ -149,6 +179,39 @@ export async function projectDreamKnowledgeToSoil(input: SoilProjectionOptions &
       "## Patterns",
       "",
       ...(learnedPatterns.length > 0 ? learnedPatterns.map((pattern) => learnedPatternSection(pattern)) : ["No learned patterns."]),
+      "",
+    ].join("\n"),
+  });
+
+  await writeProjectedPage(input, {
+    frontmatter: SoilPageFrontmatterSchema.parse({
+      ...baseFrontmatter({
+        soilId: "dream/playbooks/index",
+        title: "Verified playbooks",
+        kind: "knowledge",
+        route: "knowledge",
+        createdAt: verifiedPlaybooks.at(-1)?.created_at ?? generatedAt,
+        updatedAt: verifiedPlaybooks.at(0)?.updated_at ?? generatedAt,
+        generatedAt,
+        sourceRefs: sourceRefsFromPaths("runtime_json", [{ sourcePath: playbookSourcePath, sourceHash: playbookSourceHash, reliability: "high" }]),
+        sourceTruth: "runtime_json",
+        renderedFrom: "dream-consolidator",
+        domain: "verified-playbooks",
+        summary: `${verifiedPlaybooks.length} verified playbook records`,
+        inputChecksums: { [playbookSourcePath]: playbookSourceHash },
+      }),
+      compiled_memory_schema: SOIL_COMPILED_MEMORY_SCHEMA_VERSION,
+    }),
+    body: [
+      "# Verified playbooks",
+      "",
+      `- Playbooks: ${verifiedPlaybooks.length}`,
+      `- Statuses: ${bulletList([...new Set(verifiedPlaybooks.map((playbook) => playbook.status))].sort(), "none")}`,
+      `- Generated: ${generatedAt}`,
+      "",
+      "## Playbooks",
+      "",
+      ...(verifiedPlaybooks.length > 0 ? verifiedPlaybooks.map((playbook) => dreamPlaybookSection(playbook)) : ["No verified playbooks."]),
       "",
     ].join("\n"),
   });

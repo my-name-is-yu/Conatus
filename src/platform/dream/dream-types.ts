@@ -170,6 +170,7 @@ export const DreamLogConfigSchema = z.object({
     deepTokenBudget: z.number().int().positive().default(200_000),
   }).default({}),
   activation: z.object({
+    verifiedPlannerHintsOnly: z.boolean().default(true),
     semanticWorkingMemory: z.boolean().default(true),
     crossGoalLessons: z.boolean().default(true),
     semanticContext: z.boolean().default(true),

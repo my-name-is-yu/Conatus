@@ -158,6 +158,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
     buildEnrichedKnowledgeContext({
       goalId,
       knowledgeContext: baseKnowledgeContext,
+      stateManager: context.stateManager,
       ...context.enrichmentDeps(),
     })
   );

@@ -1,50 +1,66 @@
 import { describe, expect, it, vi } from "vitest";
+import { StateManager } from "../../../base/state/state-manager.js";
+import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { buildEnrichedKnowledgeContext } from "../task/task-context-enricher.js";
 
 vi.mock("../reflection-generator.js", () => ({
-  getReflectionsForGoal: vi.fn(),
+  getFailureReflectionsForGoal: vi.fn(),
   formatReflectionsForPrompt: vi.fn(),
 }));
 
 import {
-  getReflectionsForGoal,
+  getFailureReflectionsForGoal,
   formatReflectionsForPrompt,
 } from "../reflection-generator.js";
 
 describe("buildEnrichedKnowledgeContext", () => {
   it("appends transfer snippets and formatted reflections", async () => {
-    vi.mocked(getReflectionsForGoal).mockResolvedValue([{ id: "r1" }] as never);
+    const tmpDir = makeTempDir("context-enricher-");
+    const stateManager = new StateManager(tmpDir);
+    vi.mocked(getFailureReflectionsForGoal).mockResolvedValue([{ id: "r1" }] as never);
     vi.mocked(formatReflectionsForPrompt).mockReturnValue("reflection context");
 
-    const result = await buildEnrichedKnowledgeContext({
-      goalId: "goal-1",
-      knowledgeContext: "base context",
-      knowledgeTransfer: {
-        detectCandidatesRealtime: vi.fn().mockResolvedValue({
-          contextSnippets: ["snippet A", "snippet B"],
-        }),
-      } as never,
-      knowledgeManager: {} as never,
-    });
+    try {
+      const result = await buildEnrichedKnowledgeContext({
+        goalId: "goal-1",
+        knowledgeContext: "base context",
+        knowledgeTransfer: {
+          detectCandidatesRealtime: vi.fn().mockResolvedValue({
+            contextSnippets: ["snippet A", "snippet B"],
+          }),
+        } as never,
+        knowledgeManager: {} as never,
+        stateManager,
+      });
 
-    expect(result).toBe("base context\nsnippet A\nsnippet B\nreflection context");
+      expect(result).toBe("base context\nreflection context");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
   });
 
   it("continues without enrichment when transfer lookup fails", async () => {
-    vi.mocked(getReflectionsForGoal).mockResolvedValue([]);
+    const tmpDir = makeTempDir("context-enricher-fail-");
+    const stateManager = new StateManager(tmpDir);
+    vi.mocked(getFailureReflectionsForGoal).mockResolvedValue([]);
     vi.mocked(formatReflectionsForPrompt).mockReturnValue("");
     const warn = vi.fn();
 
-    const result = await buildEnrichedKnowledgeContext({
-      goalId: "goal-2",
-      knowledgeContext: "base context",
-      knowledgeTransfer: {
-        detectCandidatesRealtime: vi.fn().mockRejectedValue(new Error("boom")),
-      } as never,
-      logger: { warn } as never,
-    });
+    try {
+      const result = await buildEnrichedKnowledgeContext({
+        goalId: "goal-2",
+        knowledgeContext: "base context",
+        knowledgeTransfer: {
+          detectCandidatesRealtime: vi.fn().mockRejectedValue(new Error("boom")),
+        } as never,
+        logger: { warn } as never,
+        stateManager,
+      });
 
-    expect(result).toBe("base context");
-    expect(warn).toHaveBeenCalled();
+      expect(result).toBe("base context");
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
   });
 });

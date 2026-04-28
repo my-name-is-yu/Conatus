@@ -535,6 +535,7 @@ describe("CoreLoop", async () => {
       await mocks.stateManager.saveGoal(makeGoal());
       await saveDreamConfig({
         activation: {
+          verifiedPlannerHintsOnly: false,
           semanticWorkingMemory: false,
           crossGoalLessons: true,
           semanticContext: false,
@@ -639,6 +640,7 @@ describe("CoreLoop", async () => {
       await mocks.stateManager.saveGoal(makeGoal());
       await saveDreamConfig({
         activation: {
+          verifiedPlannerHintsOnly: true,
           semanticWorkingMemory: false,
           crossGoalLessons: false,
           semanticContext: false,

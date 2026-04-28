@@ -78,6 +78,7 @@ describe("dream soil sync", () => {
       agentMemoryEntries: 1,
       learnedPatterns: 1,
       workflowRecords: 0,
+      verifiedPlaybooks: 0,
       previousRecords: 0,
       recordsWritten: 2,
       chunksWritten: 2,
@@ -112,6 +113,7 @@ describe("dream soil sync", () => {
     });
     expect(repository.applyMutation).not.toHaveBeenCalled();
     expect(report.recordsWritten).toBe(0);
+    expect(report.verifiedPlaybooks).toBe(0);
   });
 
   it("tombstones previous Dream-origin records when current files are gone", async () => {
@@ -154,6 +156,7 @@ describe("dream soil sync", () => {
       agentMemoryEntries: 0,
       learnedPatterns: 0,
       workflowRecords: 0,
+      verifiedPlaybooks: 0,
       previousRecords: 1,
       recordsWritten: 0,
       chunksWritten: 0,
@@ -218,6 +221,7 @@ describe("dream soil sync", () => {
       agentMemoryEntries: 0,
       learnedPatterns: 0,
       workflowRecords: 1,
+      verifiedPlaybooks: 0,
       recordsWritten: 1,
       chunksWritten: 1,
     });
@@ -227,5 +231,78 @@ describe("dream soil sync", () => {
     expect(workflowPage?.frontmatter.compiled_memory_schema).toBe("soil-compiled-memory-v1");
     expect(workflowPage?.body).toContain("Change strategy when confidence stalls.");
     expect(workflowPage?.body).toContain("dream/events/goal-a.jsonl#L1");
+  });
+
+  it("projects promoted playbooks into Soil while leaving raw dream records out of planner mutation paths", async () => {
+    tmpDir = makeTempDir("dream-soil-sync-playbook-");
+    await fs.mkdir(path.join(tmpDir, "dream", "playbooks"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, "dream", "playbooks", "verified-provider.json"),
+      JSON.stringify({
+        playbook_id: "dream-playbook-provider",
+        status: "promoted",
+        kind: "verified_execution",
+        title: "Repair provider config boundary",
+        summary: "Verified workflow for provider boundary fixes.",
+        source_signature: "provider-boundary",
+        applicability: {
+          goal_ids: ["goal-a"],
+          primary_dimensions: ["type_safety"],
+          task_categories: ["verification"],
+          terms: ["provider", "config", "typecheck"],
+        },
+        preconditions: ["Constraint: keep validation strict"],
+        recommended_steps: ["Patch the narrow boundary", "Run focused typecheck"],
+        verification_checks: [
+          {
+            description: "Focused typecheck passes",
+            verification_method: "npm run typecheck",
+            blocking: true,
+          },
+        ],
+        failure_warnings: ["Do not widen runtime acceptance"],
+        evidence_refs: ["Focused typecheck passed"],
+        source_task_ids: ["task-provider"],
+        verification: {
+          verdict: "pass",
+          confidence: 0.91,
+          last_verified_at: "2026-04-12T06:00:00.000Z",
+        },
+        usage: {
+          retrieved_count: 0,
+          verified_success_count: 2,
+          successful_reuse_count: 0,
+          failed_reuse_count: 0,
+        },
+        governance: {
+          created_by: "dream",
+          review_state: "verified",
+          auto_generated: true,
+          user_editable: true,
+          auto_mutation: "forbidden",
+        },
+        created_at: "2026-04-12T05:00:00.000Z",
+        updated_at: "2026-04-12T06:00:00.000Z",
+      }),
+      "utf8"
+    );
+    const repository: DreamSoilSyncRepository = {
+      loadRecords: vi.fn().mockResolvedValue([]),
+      applyMutation: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const report = await syncDreamOutputsToSoil({ baseDir: tmpDir, repository });
+
+    expect(report).toMatchObject({
+      verifiedPlaybooks: 1,
+      recordsWritten: 0,
+    });
+    expect(repository.applyMutation).not.toHaveBeenCalled();
+
+    const playbookPage = await readSoilMarkdownFile(path.join(tmpDir, "soil", "dream", "playbooks", "index.md"));
+    expect(playbookPage?.frontmatter.soil_id).toBe("dream/playbooks/index");
+    expect(playbookPage?.frontmatter.compiled_memory_schema).toBe("soil-compiled-memory-v1");
+    expect(playbookPage?.body).toContain("Repair provider config boundary");
+    expect(playbookPage?.body).toContain("Focused typecheck passes");
   });
 });

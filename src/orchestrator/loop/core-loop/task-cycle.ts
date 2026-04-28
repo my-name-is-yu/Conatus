@@ -276,7 +276,11 @@ export async function runTaskCycleWithContext(
       }
     }
 
-    if (activationFlags?.crossGoalLessons && ctx.deps.memoryLifecycleManager) {
+    if (
+      activationFlags?.crossGoalLessons &&
+      ctx.deps.memoryLifecycleManager &&
+      !activationFlags.verifiedPlannerHintsOnly
+    ) {
       try {
         await runPhase("collect-cross-goal-lessons", async () => {
           const topDimension = driveScores[0]?.dimension_name ?? goal.dimensions[0]?.name ?? "";

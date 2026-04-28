@@ -271,6 +271,7 @@ export class TaskLifecycle {
     try {
       const baseDir = this.stateManager.getBaseDir();
       const dreamActivation = await loadDreamActivationState(baseDir);
+      const verifiedPlannerHintsOnly = dreamActivation.flags.verifiedPlannerHintsOnly ?? true;
       if (
         dreamActivation.flags.learnedPatternHints ||
         dreamActivation.flags.playbookHints ||
@@ -284,7 +285,7 @@ export class TaskLifecycle {
           knowledgeContext ?? "",
         ].join(" ");
 
-        if (dreamActivation.flags.learnedPatternHints) {
+        if (dreamActivation.flags.learnedPatternHints && !verifiedPlannerHintsOnly) {
           const patterns = await loadLearnedPatterns(baseDir, goalId);
           const hints = selectPatternHints(patterns, query);
           const formattedHints = formatPatternHints(hints);
@@ -309,7 +310,7 @@ export class TaskLifecycle {
           }
         }
 
-        if (dreamActivation.flags.workflowHints) {
+        if (dreamActivation.flags.workflowHints && !verifiedPlannerHintsOnly) {
           const workflows = await loadDreamWorkflows(baseDir);
           const hints = selectWorkflowHints(workflows, query, { goalId, targetDimension });
           const formattedHints = formatWorkflowHints(hints);
@@ -627,6 +628,7 @@ export class TaskLifecycle {
     return {
       knowledgeTransfer: this.knowledgeTransfer,
       knowledgeManager: this.knowledgeManager,
+      stateManager: this.stateManager,
       logger: this.logger,
     };
   }
