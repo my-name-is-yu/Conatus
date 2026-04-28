@@ -12,6 +12,7 @@ import { StateFenceError } from '../../base/utils/errors.js';
 import { getPulseedDirPath } from '../../base/utils/paths.js';
 import type { BackgroundRunLedger } from '../store/background-run-store.js';
 import type { BackgroundRun, RuntimeSessionRef } from '../session-registry/types.js';
+import type { WaitResumeActivation } from '../../base/types/goal-activation.js';
 
 export interface SupervisorConfig {
   concurrency: number;
@@ -59,6 +60,7 @@ interface DurableGoalActivation {
   ownerToken: string;
   attemptId: string;
   backgroundRun?: GoalActivationBackgroundRun;
+  waitResume?: WaitResumeActivation;
 }
 
 type GoalActivation = DurableGoalActivation;
@@ -70,6 +72,7 @@ export interface GoalActivationBackgroundRun {
 
 export interface ActivateGoalOptions {
   backgroundRun?: GoalActivationBackgroundRun;
+  waitResume?: WaitResumeActivation;
 }
 
 const DEFAULT_CONFIG: SupervisorConfig = {
@@ -243,16 +246,19 @@ export class LoopSupervisor {
       name: 'goal_activated',
       source: 'supervisor',
       goal_id: goalId,
-      payload: backgroundRunId
-        ? {
-            backgroundRun: {
-              backgroundRunId,
-              ...(options.backgroundRun?.parentSessionId !== undefined
-                ? { parentSessionId: options.backgroundRun.parentSessionId }
-                : {}),
-            },
-          }
-        : {},
+      payload: {
+        ...(backgroundRunId
+          ? {
+              backgroundRun: {
+                backgroundRunId,
+                ...(options.backgroundRun?.parentSessionId !== undefined
+                  ? { parentSessionId: options.backgroundRun.parentSessionId }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(options.waitResume ? { wait_resume: options.waitResume } : {}),
+      },
       priority: 'normal',
       dedupe_key: backgroundRunId ? `goal_activated:${goalId}:${backgroundRunId}` : `goal_activated:${goalId}`,
     });
@@ -330,6 +336,7 @@ export class LoopSupervisor {
       ownerToken: claim.claimToken,
       attemptId: claim.claimToken,
       backgroundRun: this.extractActivationBackgroundRun(claim.envelope.payload),
+      waitResume: this.extractActivationWaitResume(claim.envelope.payload),
     };
   }
 
@@ -344,6 +351,23 @@ export class LoopSupervisor {
     return {
       backgroundRunId,
       ...(typeof parentSessionId === 'string' || parentSessionId === null ? { parentSessionId } : {}),
+    };
+  }
+
+  private extractActivationWaitResume(payload: unknown): WaitResumeActivation | undefined {
+    if (!payload || typeof payload !== 'object') return undefined;
+    const waitResume = (payload as Record<string, unknown>)['wait_resume'];
+    if (!waitResume || typeof waitResume !== 'object') return undefined;
+    const input = waitResume as Record<string, unknown>;
+    if (input['type'] !== 'wait_resume') return undefined;
+    const strategyId = input['strategyId'];
+    if (typeof strategyId !== 'string' || strategyId.trim() === '') return undefined;
+    return {
+      type: 'wait_resume',
+      strategyId,
+      ...(typeof input['scheduleEntryId'] === 'string' ? { scheduleEntryId: input['scheduleEntryId'] as string } : {}),
+      ...(typeof input['nextObserveAt'] === 'string' || input['nextObserveAt'] === null ? { nextObserveAt: input['nextObserveAt'] as string | null } : {}),
+      ...(typeof input['waitReason'] === 'string' || input['waitReason'] === null ? { waitReason: input['waitReason'] as string | null } : {}),
     };
   }
 
@@ -415,7 +439,9 @@ export class LoopSupervisor {
     await this.markBackgroundRunStarted(activation, worker);
 
     try {
-      const result: WorkerResult = await worker.execute(goalId);
+      const result: WorkerResult = await worker.execute(goalId, {
+        ...(activation.waitResume ? { waitResume: activation.waitResume } : {}),
+      });
 
       if (result.status === 'error') {
         const count = (this.crashCounts.get(goalId) ?? 0) + 1;

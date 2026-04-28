@@ -23,6 +23,7 @@ import { StaticCorePhasePolicyRegistry } from "./core-loop/phase-policy.js";
 import { CoreDecisionEngine } from "./core-loop/decision-engine.js";
 import type { CorePhasePolicyRegistry } from "./core-loop/phase-policy.js";
 import { CoreIterationKernel } from "./core-loop/iteration-kernel.js";
+import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 
 // Re-export types for backward compatibility
 export type {
@@ -89,6 +90,7 @@ export class CoreLoop {
   private timeHorizonEngine?: ITimeHorizonEngine;
   /** Last known pacing result — updated each iteration for adaptive delay. */
   private lastPacingResult?: PacingResult;
+  private currentActivationContext?: GoalRunActivationContext;
 
   constructor(deps: CoreLoopDeps, config?: LoopConfig, stateDiff?: StateDiffCalculator) {
     this.deps = deps;
@@ -112,7 +114,7 @@ export class CoreLoop {
    */
   async run(
     goalId: string,
-    options?: { maxIterations?: number; onProgress?: CoreLoopDeps["onProgress"] }
+    options?: { maxIterations?: number; onProgress?: CoreLoopDeps["onProgress"]; activation?: GoalRunActivationContext }
   ): Promise<LoopResult> {
     const depsWithMutableProgress = this.deps as CoreLoopDeps;
     const previousOnProgress = depsWithMutableProgress.onProgress;
@@ -123,6 +125,7 @@ export class CoreLoop {
     if (options?.maxIterations !== undefined) {
       this.config.maxIterations = options.maxIterations;
     }
+    this.currentActivationContext = options?.activation;
 
     try {
     const startedAt = new Date().toISOString();
@@ -361,6 +364,7 @@ export class CoreLoop {
       tokensUsed: totalTokens,
     };
     } finally {
+      this.currentActivationContext = undefined;
       depsWithMutableProgress.onProgress = previousOnProgress;
       this.config.maxIterations = previousMaxIterations;
     }
@@ -390,6 +394,7 @@ export class CoreLoop {
       capabilityFailures: this.learning.getCapabilityFailures(),
       incrementTransferCounter: () => this.learning.incrementTransferCounter(),
       getPendingDirective: (id) => this.pendingIterationDirectives.get(id),
+      getActivationContext: () => this.currentActivationContext,
     }).run({ goalId, loopIndex, isFirstIteration });
     if (result.nextIterationDirective) {
       this.pendingIterationDirectives.set(goalId, result.nextIterationDirective);

@@ -1,12 +1,11 @@
-import { PortfolioSchema } from "../../base/types/strategy.js";
 import {
-  buildDefaultWaitMetadata,
   normalizeWaitMetadata,
-  resolveWaitNextObserveAt,
   type WaitMetadata,
   type WaitStrategy,
+  parseStrategy,
 } from "../../base/types/strategy.js";
 import { isWaitStrategy } from "../../orchestrator/strategy/portfolio-allocation.js";
+import { ScheduleEntryListSchema, type ScheduleEntry } from "../types/schedule.js";
 
 export interface WaitDeadlineResolution {
   next_observe_at: string | null;
@@ -17,6 +16,8 @@ export interface WaitDeadlineResolution {
     wait_until: string;
     wait_reason: string;
     approval_pending?: boolean;
+    activation_kind?: "wait_resume";
+    internal_schedule?: boolean;
   }>;
 }
 
@@ -28,38 +29,7 @@ export class WaitDeadlineResolver {
   constructor(private readonly stateManager: WaitDeadlineResolverState) {}
 
   async resolve(goalIds: string[]): Promise<WaitDeadlineResolution> {
-    const waitingGoals: WaitDeadlineResolution["waiting_goals"] = [];
-
-    for (const goalId of goalIds) {
-      const rawPortfolio = await this.stateManager.readRaw(`strategies/${goalId}/portfolio.json`);
-      if (!rawPortfolio) continue;
-
-      const portfolio = PortfolioSchema.safeParse(rawPortfolio);
-      if (!portfolio.success) continue;
-
-      for (const strategy of portfolio.data.strategies) {
-        if (!isWaitStrategy(strategy as Record<string, unknown>)) continue;
-        if (strategy.state !== "active") continue;
-
-        const waitStrategy = strategy as WaitStrategy;
-        const rawMetadata = await this.stateManager.readRaw(
-          `strategies/${goalId}/wait-meta/${waitStrategy.id}.json`
-        );
-        const metadata = normalizeWaitMetadataFailSoft(waitStrategy, rawMetadata);
-        const nextObserveAt = resolveNextObserveAt(waitStrategy, metadata);
-        if (!nextObserveAt) continue;
-
-        waitingGoals.push({
-          goal_id: goalId,
-          strategy_id: waitStrategy.id,
-          next_observe_at: nextObserveAt,
-          wait_until: waitStrategy.wait_until,
-          wait_reason: waitStrategy.wait_reason,
-          approval_pending: isApprovalPending(metadata),
-        });
-      }
-    }
-
+    const waitingGoals = await this.resolveFromInternalSchedules(goalIds);
     waitingGoals.sort((a, b) => Date.parse(a.next_observe_at) - Date.parse(b.next_observe_at));
 
     return {
@@ -70,6 +40,68 @@ export class WaitDeadlineResolver {
 
   clampInterval(intervalMs: number, resolution: WaitDeadlineResolution, nowMs = Date.now()): number {
     return clampIntervalToNextWaitDeadline(intervalMs, resolution.next_observe_at, nowMs);
+  }
+
+  private async resolveFromInternalSchedules(goalIds: string[]): Promise<WaitDeadlineResolution["waiting_goals"]> {
+    const rawSchedules = await this.stateManager.readRaw("schedules.json");
+    const parsedSchedules = ScheduleEntryListSchema.safeParse(rawSchedules);
+    if (!parsedSchedules.success) {
+      return [];
+    }
+
+    const waitingGoals = await Promise.all(parsedSchedules.data
+      .filter((entry) =>
+        entry.enabled
+        && entry.metadata?.internal === true
+        && entry.metadata.activation_kind === "wait_resume"
+        && typeof entry.metadata.goal_id === "string"
+        && typeof entry.metadata.wait_strategy_id === "string"
+        && goalIds.includes(entry.metadata.goal_id)
+      )
+      .map(async (entry) => this.resolveWaitGoalFromEntry(entry)));
+
+    return waitingGoals.filter((goal): goal is NonNullable<typeof goal> => goal !== null);
+  }
+
+  private async resolveWaitGoalFromEntry(
+    entry: ScheduleEntry
+  ): Promise<WaitDeadlineResolution["waiting_goals"][number] | null> {
+    const goalId = entry.metadata?.goal_id;
+    const strategyId = entry.metadata?.wait_strategy_id;
+    if (!goalId || !strategyId) return null;
+
+    const waitStrategy = await this.loadWaitStrategy(goalId, strategyId);
+    const metadata = waitStrategy
+      ? normalizeWaitMetadataFailSoft(
+          waitStrategy,
+          await this.stateManager.readRaw(`strategies/${goalId}/wait-meta/${strategyId}.json`)
+        )
+      : null;
+
+    return {
+      goal_id: goalId,
+      strategy_id: strategyId,
+      next_observe_at: entry.next_fire_at,
+      wait_until: waitStrategy?.wait_until ?? entry.next_fire_at,
+      wait_reason: waitStrategy?.wait_reason ?? entry.metadata?.note ?? "waiting",
+      approval_pending: metadata ? isApprovalPending(metadata) : false,
+      activation_kind: entry.metadata?.activation_kind,
+      internal_schedule: entry.metadata?.internal === true,
+    };
+  }
+
+  private async loadWaitStrategy(goalId: string, strategyId: string): Promise<WaitStrategy | null> {
+    const rawPortfolio = await this.stateManager.readRaw(`strategies/${goalId}/portfolio.json`);
+    if (!rawPortfolio || typeof rawPortfolio !== "object") return null;
+    const strategies = (rawPortfolio as Record<string, unknown>)["strategies"];
+    if (!Array.isArray(strategies)) return null;
+    const match = strategies
+      .map((candidate) => parseStrategy(candidate))
+      .find((candidate) => candidate.id === strategyId);
+    if (!match || !isWaitStrategy(match as Record<string, unknown>) || match.state !== "active") {
+      return null;
+    }
+    return match as WaitStrategy;
   }
 }
 
@@ -89,15 +121,8 @@ function normalizeWaitMetadataFailSoft(
   try {
     return normalizeWaitMetadata(waitStrategy, data);
   } catch {
-    return buildDefaultWaitMetadata(waitStrategy);
+    return normalizeWaitMetadata(waitStrategy, null);
   }
-}
-
-export function resolveNextObserveAt(
-  waitStrategy: WaitStrategy,
-  metadata: WaitMetadata
-): string | null {
-  return resolveWaitNextObserveAt(waitStrategy, metadata);
 }
 
 export function getDueWaitGoalIds(

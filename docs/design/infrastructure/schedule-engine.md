@@ -58,19 +58,21 @@ The ScheduleEngine core handles scheduling mechanics (when to fire) and layer di
 ```
 DaemonRunner
   |-- CoreLoop (existing -- goal pursuit)
-  |-- CronScheduler (existing -- reflection/consolidation tasks)
-  +-- ScheduleEngine (new -- proactive scheduling)
+  +-- ScheduleEngine (proactive scheduling + internal future activations)
        |-- GoalTrigger  -> CoreLoop.run(goal)
        |-- Probe        -> DataSource.fetch() -> conditional LLM -> maybe escalate
        |-- Cron         -> LLM processing every time (human rhythm)
        +-- Heartbeat    -> mechanical check only -> escalate on failure
 ```
 
-The existing `CronScheduler` handles simple prompt-based tasks (reflection, consolidation). The ScheduleEngine supersedes it for all new scheduling needs and provides a migration path for existing CronScheduler tasks.
+The legacy `CronScheduler` has been removed. Reflection, consolidation, and
+custom cron-style work now live in ScheduleEngine `cron` entries, and future
+activations such as wait-resume wakeups are projected into internal
+ScheduleEngine entries instead of being managed by a parallel deadline system.
 
-### 2.2 Relationship to existing CronScheduler
+### 2.2 Relationship to legacy cron tasks
 
-The existing `CronScheduler` (`src/runtime/cron-scheduler.ts`) supports three task types: `reflection`, `consolidation`, and `custom`. These map cleanly to ScheduleEngine layers:
+Legacy cron task categories map cleanly to ScheduleEngine layers:
 
 | Existing CronTask type | ScheduleEngine layer | Rationale |
 |------------------------|---------------------|-----------|
@@ -78,7 +80,33 @@ The existing `CronScheduler` (`src/runtime/cron-scheduler.ts`) supports three ta
 | `consolidation` | Cron | Always produces LLM output |
 | `custom` | Cron or GoalTrigger | Depends on whether full CoreLoop is needed |
 
-Migration strategy: CronScheduler remains operational during the transition. New schedule entries use ScheduleEngine exclusively. A future milestone deprecates CronScheduler and migrates existing tasks.
+Migration status: legacy cron tasks are migrated into `schedules.json`, and the
+daemon now runs ScheduleEngine as the single runtime for scheduled work.
+
+### 2.3 WaitStrategy projection into ScheduleEngine
+
+`WaitStrategy` remains the semantic layer for "why PulSeed is waiting", but the
+future activation that wakes the goal back up is represented as an internal
+ScheduleEngine entry.
+
+Current model:
+
+- `WaitStrategy` stores the waiting rationale, conditions, and resume plan
+- wait metadata stores the latest observation and approval state
+- ScheduleEngine stores the next wakeup as an internal `goal_trigger` entry with
+  `metadata.activation_kind = "wait_resume"`
+
+This keeps "future activations" in one runtime even though their meaning differs:
+
+- user-managed schedules such as daily briefs and health checks
+- internally projected wait-resume wakeups
+
+Operator visibility follows that split:
+
+- `pulseed schedule list` hides internal wait-resume entries by default
+- `pulseed schedule list --all` shows them for diagnostics
+- schedule history records `activation=wait_resume:<strategy_id>`
+- daemon status reports wait entries as `schedule-projected`
 
 ---
 

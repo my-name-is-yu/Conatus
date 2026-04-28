@@ -24,6 +24,10 @@ export const ScheduleRunHistoryRecordSchema = ScheduleResultSchema.extend({
   started_at: z.string().datetime(),
   finished_at: z.string().datetime(),
   retry_at: z.string().datetime().nullable().default(null),
+  activation_kind: z.enum(["wait_resume"]).nullable().default(null),
+  strategy_id: z.string().nullable().default(null),
+  wait_strategy_id: z.string().nullable().default(null),
+  internal: z.boolean().default(false),
 });
 
 export type ScheduleRunHistoryRecord = z.infer<typeof ScheduleRunHistoryRecordSchema>;
@@ -40,6 +44,10 @@ export interface ScheduleRunHistoryInput {
   finished_at: string;
   retry_at?: string | null;
   failure_kind?: ScheduleFailureKind | null;
+  activation_kind?: "wait_resume" | null;
+  strategy_id?: string | null;
+  wait_strategy_id?: string | null;
+  internal?: boolean;
 }
 
 export class ScheduleHistoryStore {
@@ -88,6 +96,10 @@ export class ScheduleHistoryStore {
       finished_at: input.finished_at,
       retry_at: input.retry_at ?? null,
       failure_kind: input.failure_kind ?? input.result.failure_kind,
+      activation_kind: input.activation_kind ?? null,
+      strategy_id: input.strategy_id ?? null,
+      wait_strategy_id: input.wait_strategy_id ?? null,
+      internal: input.internal ?? false,
     });
 
     existing.push(parsed);

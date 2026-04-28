@@ -79,6 +79,8 @@ export const DaemonStateSchema = z.object({
     wait_until: z.string(),
     wait_reason: z.string(),
     approval_pending: z.boolean().optional(),
+    activation_kind: z.enum(["wait_resume"]).optional(),
+    internal_schedule: z.boolean().optional(),
   })).optional(),
   next_observe_at: z.string().nullable().optional(),
   last_observe_at: z.string().datetime().nullable().optional(),

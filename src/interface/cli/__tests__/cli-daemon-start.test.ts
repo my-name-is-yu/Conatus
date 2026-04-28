@@ -105,12 +105,6 @@ vi.mock("../../../runtime/event/server.js", () => ({
   }),
 }));
 
-vi.mock("../../../runtime/cron-scheduler.js", () => ({
-  CronScheduler: vi.fn().mockImplementation(function () {
-    return {};
-  }),
-}));
-
 vi.mock("../../../runtime/schedule/engine.js", () => ({
   ScheduleEngine: vi.fn().mockImplementation(function (args: unknown) {
     scheduleEngineArgs.push(args);

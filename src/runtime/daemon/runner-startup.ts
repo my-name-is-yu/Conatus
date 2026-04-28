@@ -16,7 +16,7 @@ import type { CoreLoop } from "../../orchestrator/loop/core-loop.js";
 import { CommandDispatcher } from "../command-dispatcher.js";
 import { EventDispatcher } from "../event/dispatcher.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
-import { extractBackgroundRunStartMetadata } from "./runner-commands.js";
+import { extractGoalStartMetadata } from "./runner-commands.js";
 
 const RUNTIME_LEADER_LEASE_MS = 30_000;
 const RUNTIME_LEADER_HEARTBEAT_MS = 10_000;
@@ -241,9 +241,9 @@ export async function startDaemonRunner(
       context.eventDispatcher = new EventDispatcher({
         journalQueue: context.journalQueue!,
         logger: context.logger,
-        onGoalActivate: async (goalId) => context.handleGoalStartCommand(goalId),
+        onGoalActivate: async (goalId, envelope) =>
+          context.handleGoalStartCommand(goalId, extractGoalStartMetadata(envelope)),
         onExternalEvent: async (event: unknown) => context.driveSystem.writeEvent(PulSeedEventSchema.parse(event)),
-        onCronTaskDue: async (task) => context.handleCronTaskDue(task.id),
       });
     }
     if (!context.commandDispatcher) {
@@ -252,7 +252,7 @@ export async function startDaemonRunner(
         logger: context.logger,
         onGoalStart: async (goalId, envelope) =>
           context.runCommandWithHealth("goal_start", () =>
-            context.handleGoalStartCommand(goalId, extractBackgroundRunStartMetadata(envelope))),
+            context.handleGoalStartCommand(goalId, extractGoalStartMetadata(envelope))),
         onGoalStop: async (goalId) =>
           context.runCommandWithHealth("goal_stop", () => context.handleGoalStopCommand(goalId)),
         onChatMessage: async (goalId, message) =>

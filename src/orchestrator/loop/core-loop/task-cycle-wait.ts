@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { Goal } from "../../../base/types/goal.js";
 import type { WaitExpiryOutcome } from "../../../base/types/strategy.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
+import { syncWaitStrategyScheduleProjection } from "../../../runtime/schedule/wait-projection.js";
 import { buildWaitApprovalId } from "../../strategy/portfolio-rebalance.js";
 import type { LoopIterationResult } from "./contracts.js";
 import type { PhaseCtx } from "./preparation.js";
@@ -25,7 +26,8 @@ export async function evaluateWaitStrategiesForObserveOnly(
   ctx: PhaseCtx,
   goalId: string,
   goal: Goal,
-  result: LoopIterationResult
+  result: LoopIterationResult,
+  preferredWaitStrategyId?: string
 ): Promise<WaitStrategyObservationDecision> {
   if (!ctx.deps.portfolioManager) {
     return { observeOnly: false, newGenerationNeeded: false, outcome: null };
@@ -46,7 +48,12 @@ export async function evaluateWaitStrategiesForObserveOnly(
 
     let firstNotDue: PendingWaitOutcome | null = null;
 
-    for (const strategy of portfolio.strategies) {
+    const prioritizedStrategies = [
+      ...portfolio.strategies.filter((strategy) => strategy.id === preferredWaitStrategyId),
+      ...portfolio.strategies.filter((strategy) => strategy.id !== preferredWaitStrategyId),
+    ];
+
+    for (const strategy of prioritizedStrategies) {
       if (strategy.state !== "active" || !ctx.deps.portfolioManager.isWaitStrategy(strategy)) {
         continue;
       }
@@ -216,6 +223,11 @@ async function postponeWaitObservationForApproval(
         expires_at: expiresAt,
       },
     });
+    await syncWaitStrategyScheduleProjection({
+      baseDir: ctx.deps.stateManager.getBaseDir(),
+      goalId,
+      strategyId: strategy.id,
+    }).catch(() => undefined);
   } catch (err) {
     ctx.logger?.warn("CoreLoop: failed to postpone wait observation for approval", {
       goalId,

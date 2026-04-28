@@ -613,6 +613,39 @@ describe("Phase 2 methods", () => {
 
       expect(s1.id).not.toBe(s2.id);
     });
+
+    it("projects an activated wait strategy into an internal schedule entry", async () => {
+      const mock = createMockLLMClient([]);
+      const manager = new StrategyManager(stateManager, mock);
+      const wait = await manager.createWaitStrategy("goal-1", {
+        hypothesis: "Wait for external data",
+        wait_reason: "Awaiting market data",
+        wait_until: "2026-04-29T00:00:00.000Z",
+        measurement_plan: "Check market data API",
+        fallback_strategy_id: null,
+        target_dimensions: ["word_count"],
+        primary_dimension: "word_count",
+      });
+
+      await manager.activateMultiple("goal-1", [wait.id]);
+
+      const schedules = await stateManager.readRaw("schedules.json");
+      expect(schedules).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            layer: "goal_trigger",
+            enabled: true,
+            next_fire_at: "2026-04-29T00:00:00.000Z",
+            metadata: expect.objectContaining({
+              internal: true,
+              activation_kind: "wait_resume",
+              goal_id: "goal-1",
+              wait_strategy_id: wait.id,
+            }),
+          }),
+        ])
+      );
+    });
   });
 
   describe("suspendStrategy", () => {

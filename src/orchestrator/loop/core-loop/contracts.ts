@@ -33,6 +33,7 @@ import type { ToolRegistry } from "../../../tools/registry.js";
 import type { CorePhaseRunner } from "../../execution/agent-loop/core-phase-runner.js";
 import type { CorePhasePolicyRegistry } from "./phase-policy.js";
 import type { CoreDecisionEngine } from "./decision-engine.js";
+import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 export type {
   LoopIterationResult,
   LoopResult,
@@ -171,6 +172,8 @@ export interface LoopConfig {
    */
   consolidationRawThreshold?: number;
 }
+
+export type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 
 // ─── Dependencies ───
 

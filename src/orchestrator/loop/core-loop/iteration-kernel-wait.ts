@@ -15,14 +15,17 @@ export interface ActiveWaitObservationInput {
 export async function findActiveWaitObservationInput(
   deps: CoreLoopDeps,
   goalId: string,
-  goalTitle: string
+  goalTitle: string,
+  preferredWaitStrategyId?: string
 ): Promise<ActiveWaitObservationInput | null> {
   if (typeof deps.strategyManager.getPortfolio !== "function") return null;
   const portfolio = await Promise.resolve(deps.strategyManager.getPortfolio(goalId)).catch(() => null);
   if (!portfolio || !deps.portfolioManager) return null;
-  const strategy = portfolio.strategies.find((candidate) =>
+  const activeWaitStrategies = portfolio.strategies.filter((candidate) =>
     candidate.state === "active" && deps.portfolioManager?.isWaitStrategy(candidate)
-  ) as { id: string; wait_reason?: string; wait_until?: string } | undefined;
+  ) as Array<{ id: string; wait_reason?: string; wait_until?: string }>;
+  const strategy = activeWaitStrategies.find((candidate) => candidate.id === preferredWaitStrategyId)
+    ?? activeWaitStrategies[0];
   if (!strategy || typeof strategy.wait_until !== "string") return null;
 
   const metadataPath = `strategies/${goalId}/wait-meta/${strategy.id}.json`;

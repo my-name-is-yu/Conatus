@@ -1,10 +1,10 @@
 /**
  * Phase A Scheduling E2E Tests
  *
- * Group 1: CronScheduler — register/fire/expire/remove jobs
+ * Group 1: ScheduleEngine cron layer — register/fire/remove/migrate jobs
  * Group 2: DaemonRunner proactive tick — idle detection → LLM suggestion
  * Group 3: DaemonRunner adaptive sleep — interval calculation based on time-of-day and activity
- * Group 4: Integration — CronScheduler reflection triggers DaemonRunner handling
+ * Group 4: Integration — ScheduleEngine and DaemonRunner share runtime state safely
  *
  * Real classes used where possible. Only LLM calls and CoreLoop are mocked.
  * vi.useFakeTimers() used for time-dependent tests.
@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { CronScheduler } from "../../src/runtime/cron-scheduler.js";
+import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
 import { DaemonRunner } from "../../src/runtime/daemon-runner.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
 import { DriveSystem } from "../../src/platform/drive/drive-system.js";
@@ -75,15 +75,15 @@ async function saveActiveGoal(stateManager: StateManager, id: string): Promise<v
   await stateManager.saveGoal(goal);
 }
 
-// ─── Group 1: CronScheduler ───
+// ─── Group 1: ScheduleEngine cron layer ───
 
-describe("Phase A — CronScheduler", () => {
+describe("Phase A — ScheduleEngine cron layer", () => {
   let tempDir: string;
-  let scheduler: CronScheduler;
+  let scheduleEngine: ScheduleEngine;
 
   beforeEach(() => {
     tempDir = makeTempDir("pulseed-cron-test-");
-    scheduler = new CronScheduler(tempDir);
+    scheduleEngine = new ScheduleEngine({ baseDir: tempDir });
   });
 
   afterEach(() => {
@@ -91,221 +91,130 @@ describe("Phase A — CronScheduler", () => {
     vi.useRealTimers();
   });
 
-  // ── Test 1: Register a job, verify it persists ──
-
-  it("addTask persists a new cron task to disk", async () => {
-    const task = await scheduler.addTask({
-      cron: "* * * * *",       // every minute
-      prompt: "Reflect on progress",
-      type: "reflection",
+  it("addEntry persists a new cron schedule entry to disk", async () => {
+    const entry = await scheduleEngine.addEntry({
+      name: "Reflect on progress",
+      layer: "cron",
+      trigger: { type: "cron", expression: "* * * * *", timezone: "UTC" },
       enabled: true,
-      last_fired_at: null,
-      permanent: false,
+      cron: {
+        job_kind: "prompt",
+        prompt_template: "Reflect on progress",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 100,
+      },
     });
 
-    expect(task.id).toBeTruthy();
-    expect(task.cron).toBe("* * * * *");
-    expect(task.type).toBe("reflection");
-    expect(task.enabled).toBe(true);
-    expect(task.last_fired_at).toBeNull();
+    expect(entry.id).toBeTruthy();
+    expect(entry.layer).toBe("cron");
+    expect(entry.trigger).toEqual({ type: "cron", expression: "* * * * *", timezone: "UTC" });
+    expect(entry.enabled).toBe(true);
+    expect(entry.last_fired_at).toBeNull();
 
-    // Verify it round-trips through loadTasks
-    const loaded = await scheduler.loadTasks();
+    const loaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
     expect(loaded).toHaveLength(1);
-    expect(loaded[0]!.id).toBe(task.id);
+    expect(loaded[0]!.id).toBe(entry.id);
   });
 
-  // ── Test 2: getDueTasks fires tasks that have never been fired ──
-
-  it("getDueTasks returns enabled tasks that have never fired", async () => {
-    // A task that runs every minute — never fired before — should be due
-    await scheduler.addTask({
-      cron: "* * * * *",
-      prompt: "Check status",
-      type: "reflection",
+  it("getDueEntries returns enabled cron entries whose next fire time has passed", async () => {
+    const entry = await scheduleEngine.addEntry({
+      name: "Check status",
+      layer: "cron",
+      trigger: { type: "cron", expression: "* * * * *", timezone: "UTC" },
       enabled: true,
-      last_fired_at: null,
-      permanent: false,
+      cron: {
+        job_kind: "prompt",
+        prompt_template: "Check status",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 100,
+      },
     });
+    const entries = scheduleEngine.getEntries();
+    entries[0] = { ...entries[0]!, next_fire_at: new Date(Date.now() - 1_000).toISOString() };
+    await scheduleEngine.saveEntries();
 
-    const due = await scheduler.getDueTasks();
+    const due = await scheduleEngine.getDueEntries();
     expect(due.length).toBeGreaterThanOrEqual(1);
-    expect(due[0]!.type).toBe("reflection");
+    expect(due.some((candidate) => candidate.id === entry.id)).toBe(true);
   });
 
-  // ── Test 3: markFired updates last_fired_at ──
-
-  it("markFired sets last_fired_at so task is no longer due immediately", async () => {
-    const task = await scheduler.addTask({
-      cron: "* * * * *",
-      prompt: "Consolidate memories",
-      type: "consolidation",
+  it("tick updates last_fired_at for a due cron entry", async () => {
+    const entry = await scheduleEngine.addEntry({
+      name: "Consolidate memories",
+      layer: "cron",
+      trigger: { type: "cron", expression: "* * * * *", timezone: "UTC" },
       enabled: true,
-      last_fired_at: null,
-      permanent: false,
+      cron: {
+        job_kind: "prompt",
+        prompt_template: "Consolidate memories",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 100,
+      },
     });
+    const entries = scheduleEngine.getEntries();
+    entries[0] = { ...entries[0]!, next_fire_at: new Date(Date.now() - 1_000).toISOString() };
+    await scheduleEngine.saveEntries();
 
-    // Should be due initially (never fired)
-    const before = await scheduler.getDueTasks();
-    expect(before.some((t) => t.id === task.id)).toBe(true);
+    const results = await scheduleEngine.tick();
+    expect(results.some((result) => result.entry_id === entry.id)).toBe(true);
 
-    // Mark as fired right now
-    await scheduler.markFired(task.id);
-
-    // Reload and confirm last_fired_at was set
-    const updated = await scheduler.loadTasks();
-    const fired = updated.find((t) => t.id === task.id);
+    const reloaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+    const fired = reloaded.find((candidate) => candidate.id === entry.id);
     expect(fired?.last_fired_at).not.toBeNull();
   });
 
-  // ── Test 4: removeTask deletes the job ──
-
-  it("removeTask removes the task from disk and returns true", async () => {
-    const taskA = await scheduler.addTask({
-      cron: "0 * * * *",
-      prompt: "Hourly check",
-      type: "custom",
+  it("removeEntry removes the schedule entry from disk and returns true", async () => {
+    const entry = await scheduleEngine.addEntry({
+      name: "Hourly check",
+      layer: "cron",
+      trigger: { type: "cron", expression: "0 * * * *", timezone: "UTC" },
       enabled: true,
-      last_fired_at: null,
-      permanent: false,
-    });
-    await scheduler.addTask({
-      cron: "0 0 * * *",
-      prompt: "Daily check",
-      type: "reflection",
-      enabled: true,
-      last_fired_at: null,
-      permanent: false,
+      cron: {
+        job_kind: "prompt",
+        prompt_template: "Hourly check",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 100,
+      },
     });
 
-    const removed = await scheduler.removeTask(taskA.id);
+    const removed = await scheduleEngine.removeEntry(entry.id);
     expect(removed).toBe(true);
 
-    const remaining = await scheduler.loadTasks();
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]!.cron).toBe("0 0 * * *");
+    const remaining = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+    expect(remaining).toHaveLength(0);
   });
 
-  it("removeTask returns false for a non-existent id", async () => {
-    const removed = await scheduler.removeTask("nonexistent-uuid");
+  it("removeEntry returns false for a non-existent id", async () => {
+    const removed = await scheduleEngine.removeEntry("00000000-0000-0000-0000-000000000000");
     expect(removed).toBe(false);
   });
 
-  // ── Test 5: Multiple jobs — correct firing order via getDueTasks ──
-
-  it("getDueTasks returns all enabled unfired tasks, skips disabled ones", async () => {
-    await scheduler.addTask({
-      cron: "* * * * *",
-      prompt: "Task A",
-      type: "reflection",
-      enabled: true,
-      last_fired_at: null,
-      permanent: false,
-    });
-    await scheduler.addTask({
-      cron: "* * * * *",
-      prompt: "Task B (disabled)",
-      type: "custom",
-      enabled: false,
-      last_fired_at: null,
-      permanent: false,
-    });
-    await scheduler.addTask({
-      cron: "* * * * *",
-      prompt: "Task C",
-      type: "consolidation",
-      enabled: true,
-      last_fired_at: null,
-      permanent: false,
-    });
-
-    const due = await scheduler.getDueTasks();
-    const prompts = due.map((t) => t.prompt);
-    expect(prompts).toContain("Task A");
-    expect(prompts).toContain("Task C");
-    expect(prompts).not.toContain("Task B (disabled)");
-  });
-
-  // ── Test 6: Auto-expiry — old non-permanent tasks are pruned ──
-
-  it("expireOldTasks removes tasks older than 7 days unless permanent", async () => {
-    // Valid UUIDs are required by the schema
-    const OLD_TASK_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-    const PERMANENT_TASK_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-    const RECENT_TASK_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-
-    // Create timestamps relative to real time (not fake timers)
-    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
-
-    // Manually write tasks to disk (bypassing addTask so we can set created_at)
-    const tasks = [
+  it("migrates legacy scheduled-tasks.json into schedules.json on load", async () => {
+    const legacyTasks = [
       {
-        id: OLD_TASK_ID,
-        cron: "* * * * *",
-        prompt: "Old task",
-        type: "reflection" as const,
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        cron: "0 9 * * *",
+        prompt: "Legacy reflection prompt",
+        type: "reflection",
         enabled: true,
         last_fired_at: null,
         permanent: false,
-        created_at: tenDaysAgo,
-      },
-      {
-        id: PERMANENT_TASK_ID,
-        cron: "* * * * *",
-        prompt: "Permanent task",
-        type: "consolidation" as const,
-        enabled: true,
-        last_fired_at: null,
-        permanent: true,
-        created_at: tenDaysAgo,
-      },
-      {
-        id: RECENT_TASK_ID,
-        cron: "* * * * *",
-        prompt: "Recent task",
-        type: "custom" as const,
-        enabled: true,
-        last_fired_at: null,
-        permanent: false,
-        created_at: new Date().toISOString(),
+        created_at: "2026-04-01T00:00:00.000Z",
       },
     ];
+    fs.writeFileSync(path.join(tempDir, "scheduled-tasks.json"), JSON.stringify(legacyTasks, null, 2), "utf-8");
 
-    await scheduler.saveTasks(tasks);
+    const loaded = await scheduleEngine.loadEntries();
 
-    await scheduler.expireOldTasks();
-
-    const remaining = await scheduler.loadTasks();
-    const ids = remaining.map((t) => t.id);
-
-    expect(ids).not.toContain(OLD_TASK_ID);       // expired — too old, not permanent
-    expect(ids).toContain(PERMANENT_TASK_ID);      // kept — permanent
-    expect(ids).toContain(RECENT_TASK_ID);         // kept — recent
-  });
-
-  // ── Test 7: Jitter does not prevent a task from ever being due ──
-
-  it("getDueTasks: task with last_fired_at in the far past is always due", async () => {
-    const STALE_TASK_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-
-    // Task that runs every minute, last fired an hour ago — definitely due regardless of jitter
-    const tasks = [
-      {
-        id: STALE_TASK_ID,
-        cron: "* * * * *",
-        prompt: "Stale task",
-        type: "reflection" as const,
-        enabled: true,
-        last_fired_at: oneHourAgo,
-        permanent: false,
-        created_at: new Date().toISOString(),
-      },
-    ];
-    await scheduler.saveTasks(tasks);
-
-    const due = await scheduler.getDueTasks();
-    expect(due.some((t) => t.id === STALE_TASK_ID)).toBe(true);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]?.layer).toBe("cron");
+    expect(loaded[0]?.cron?.prompt_template).toBe("Legacy reflection prompt");
+    expect(fs.existsSync(path.join(tempDir, "schedules.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, "scheduled-tasks.legacy-migrated.json"))).toBe(true);
   });
 });
 
@@ -664,9 +573,9 @@ describe("Phase A — DaemonRunner adaptive sleep (calculateAdaptiveInterval)", 
   });
 });
 
-// ─── Group 4: Integration — CronScheduler + DaemonRunner ───
+// ─── Group 4: Integration — ScheduleEngine + DaemonRunner ───
 
-describe("Phase A — Integration: CronScheduler triggers reflection", () => {
+describe("Phase A — Integration: ScheduleEngine shares runtime state with DaemonRunner", () => {
   let tempDir: string;
 
   beforeEach(() => {
@@ -678,48 +587,50 @@ describe("Phase A — Integration: CronScheduler triggers reflection", () => {
     vi.useRealTimers();
   });
 
-  // ── Test 17: CronScheduler getDueTasks is consumed per-loop ──
-
-  it("CronScheduler reflection tasks can be retrieved and marked fired each loop", async () => {
-    const scheduler = new CronScheduler(tempDir);
-
-    // Register a reflection task (fires every minute, never fired)
-    const task = await scheduler.addTask({
-      cron: "* * * * *",
-      prompt: "Reflect on recent observations",
-      type: "reflection",
+  it("ScheduleEngine cron entries can be retrieved and ticked each loop", async () => {
+    const engine = new ScheduleEngine({ baseDir: tempDir });
+    const entry = await engine.addEntry({
+      name: "Reflect on recent observations",
+      layer: "cron",
+      trigger: { type: "cron", expression: "* * * * *", timezone: "UTC" },
       enabled: true,
-      last_fired_at: null,
-      permanent: true,
+      cron: {
+        job_kind: "prompt",
+        prompt_template: "Reflect on recent observations",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 100,
+      },
     });
+    const entries = engine.getEntries();
+    entries[0] = { ...entries[0]!, next_fire_at: new Date(Date.now() - 1_000).toISOString() };
+    await engine.saveEntries();
 
-    // Simulate loop: get due tasks, process them, mark fired
-    const dueBefore = await scheduler.getDueTasks();
-    expect(dueBefore.some((t) => t.id === task.id)).toBe(true);
+    const dueBefore = await engine.getDueEntries();
+    expect(dueBefore.some((candidate) => candidate.id === entry.id)).toBe(true);
 
-    await scheduler.markFired(task.id);
+    await engine.tick();
 
-    // After marking fired just now, the task should NOT be immediately due again
-    // (last_fired_at is now — the cron prev time == now, so lastFired >= adjustedPrev)
-    const dueAfter = await scheduler.getDueTasks();
-    // It may or may not be due depending on exact jitter — just verify we can call it
-    expect(Array.isArray(dueAfter)).toBe(true);
+    const reloaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+    expect(reloaded.find((candidate) => candidate.id === entry.id)?.last_fired_at).not.toBeNull();
   });
 
-  // ── Test 18: DaemonRunner runs a loop and CronScheduler tasks persist independently ──
-
-  it("DaemonRunner runs loop while CronScheduler persists tasks to same directory", async () => {
+  it("DaemonRunner runs loop while ScheduleEngine persists entries to the same directory", async () => {
     const stateManager = new StateManager(tempDir);
-    const scheduler = new CronScheduler(tempDir);
+    const scheduleEngine = new ScheduleEngine({ baseDir: tempDir });
 
-    // Add a cron task
-    const cronTask = await scheduler.addTask({
-      cron: "* * * * *",
-      prompt: "Background consolidation",
-      type: "consolidation",
+    const entry = await scheduleEngine.addEntry({
+      name: "Background consolidation",
+      layer: "cron",
+      trigger: { type: "cron", expression: "* * * * *", timezone: "UTC" },
       enabled: true,
-      last_fired_at: null,
-      permanent: false,
+      cron: {
+        job_kind: "prompt",
+        prompt_template: "Background consolidation",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 100,
+      },
     });
 
     await saveActiveGoal(stateManager, "goal-integration");
@@ -749,57 +660,40 @@ describe("Phase A — Integration: CronScheduler triggers reflection", () => {
     await daemonInst_logger.close();
     expect(loopRan).toBe(true);
 
-    // CronScheduler's task file should still exist and be valid after daemon ran
-    const tasks = await scheduler.loadTasks();
-    expect(tasks.some((t) => t.id === cronTask.id)).toBe(true);
+    const entries = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+    expect(entries.some((candidate) => candidate.id === entry.id)).toBe(true);
   });
 
-  // ── Test 19: Full flow — schedule task, getDueTasks, markFired, expireOldTasks ──
-
-  it("full cron lifecycle: add → getDue → markFired → expire", async () => {
-    const scheduler = new CronScheduler(tempDir);
-
-    // Add a non-permanent task "8 days ago" — should expire
-    const EXPIRE_TASK_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
-    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
-    const tasks = [
+  it("full schedule lifecycle: legacy migrate → due → tick → remove", async () => {
+    const legacyTasks = [
       {
-        id: EXPIRE_TASK_ID,
+        id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
         cron: "0 * * * *",
         prompt: "Hourly check from last week",
-        type: "custom" as const,
+        type: "custom",
         enabled: true,
         last_fired_at: null,
         permanent: false,
-        created_at: eightDaysAgo,
+        created_at: "2026-04-01T00:00:00.000Z",
       },
     ];
-    await scheduler.saveTasks(tasks);
+    fs.writeFileSync(path.join(tempDir, "scheduled-tasks.json"), JSON.stringify(legacyTasks, null, 2), "utf-8");
 
-    // Add a fresh permanent task
-    const fresh = await scheduler.addTask({
-      cron: "* * * * *",
-      prompt: "Ongoing reflection",
-      type: "reflection",
-      enabled: true,
-      last_fired_at: null,
-      permanent: true,
-    });
+    const engine = new ScheduleEngine({ baseDir: tempDir });
+    const migrated = await engine.loadEntries();
+    expect(migrated).toHaveLength(1);
 
-    // Mark the fresh task fired (simulating a loop run)
-    await scheduler.markFired(fresh.id);
+    const dueEntry = { ...migrated[0]!, next_fire_at: new Date(Date.now() - 1_000).toISOString() };
+    engine.getEntries()[0] = dueEntry;
+    await engine.saveEntries();
 
-    // Expire old tasks
-    await scheduler.expireOldTasks();
+    await engine.tick();
 
-    const remaining = await scheduler.loadTasks();
-    const ids = remaining.map((t) => t.id);
+    const afterTick = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+    expect(afterTick[0]?.last_fired_at).not.toBeNull();
 
-    expect(ids).not.toContain(EXPIRE_TASK_ID);  // expired
-    expect(ids).toContain(fresh.id);             // permanent — kept
-
-    // Fresh task should have last_fired_at set
-    const freshTask = remaining.find((t) => t.id === fresh.id);
-    expect(freshTask?.last_fired_at).not.toBeNull();
+    const removed = await engine.removeEntry(afterTick[0]!.id);
+    expect(removed).toBe(true);
+    expect((await new ScheduleEngine({ baseDir: tempDir }).loadEntries())).toHaveLength(0);
   });
 });

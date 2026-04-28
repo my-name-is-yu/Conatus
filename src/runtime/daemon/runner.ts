@@ -13,7 +13,6 @@ import type { PulSeedEvent } from "../../base/types/drive.js";
 import type { DaemonConfig, DaemonState, ResidentActivity } from "../../base/types/daemon.js";
 import { DaemonConfigSchema } from "../../base/types/daemon.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
-import type { CronScheduler } from "../cron-scheduler.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
 import type { MemoryLifecycleManager } from "../../platform/knowledge/memory/memory-lifecycle.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
@@ -50,10 +49,8 @@ import {
   cleanupDaemonRun,
   collectGoalCycleScheduleSnapshot,
   determineActiveGoalsForCycle,
-  expireOldCronTasks,
   getMaxGapScoreForGoals,
   getNextIntervalForGoals,
-  processCronTasksForDaemon,
   processScheduleEntriesForDaemon,
   runRuntimeStoreMaintenanceCycle,
   restoreInterruptedGoals,
@@ -65,13 +62,12 @@ import {
   acceptRuntimeEnvelope as acceptRuntimeEnvelopeFn,
   handleApprovalResponseCommand as handleApprovalResponseCommandFn,
   handleChatMessageCommand as handleChatMessageCommandFn,
-  handleCronTaskDue as handleCronTaskDueFn,
   handleGoalStartCommand as handleGoalStartCommandFn,
   handleGoalStopCommand as handleGoalStopCommandFn,
   handleInboundEnvelope as handleInboundEnvelopeFn,
   handleRuntimeControlCommand as handleRuntimeControlCommandFn,
   handleScheduleRunNowCommand as handleScheduleRunNowCommandFn,
-  type BackgroundRunStartMetadata,
+  type GoalStartMetadata,
 } from "./runner-commands.js";
 import { runDaemonGoalCycleLoop } from "./runner-goal-cycle.js";
 import { WaitDeadlineResolver, type WaitDeadlineResolution } from "./wait-deadline-resolver.js";
@@ -147,7 +143,6 @@ export interface DaemonDeps {
   config?: Partial<DaemonConfig>;
   eventServer?: EventServer;
   llmClient?: ILLMClient;
-  cronScheduler?: CronScheduler;
   scheduleEngine?: ScheduleEngine;
   memoryLifecycle?: MemoryLifecycleManager;
   knowledgeManager?: KnowledgeManager;
@@ -205,7 +200,6 @@ export class DaemonRunner {
         ): Promise<unknown>;
       }
     | undefined;
-  private cronScheduler: CronScheduler | undefined;
   private scheduleEngine: ScheduleEngine | undefined;
   private memoryLifecycle: MemoryLifecycleManager | undefined;
   private knowledgeManager: KnowledgeManager | undefined;
@@ -249,7 +243,6 @@ export class DaemonRunner {
     this.eventServer = deps.eventServer;
     this.llmClient = deps.llmClient;
     this.reportingEngine = deps.reportingEngine;
-    this.cronScheduler = deps.cronScheduler;
     this.scheduleEngine = deps.scheduleEngine;
     this.memoryLifecycle = deps.memoryLifecycle;
     this.knowledgeManager = deps.knowledgeManager;
@@ -500,20 +493,6 @@ export class DaemonRunner {
     beginGracefulShutdownFn(this as never);
   }
 
-  // ─── Private: Cron Scheduler ───
-
-  /**
-   * Process due cron-scheduled tasks.
-   * Logs each task, executes based on type, and marks as fired.
-   */
-  private async processCronTasks(): Promise<void> {
-    await processCronTasksForDaemon({
-      cronScheduler: this.cronScheduler,
-      logger: this.logger,
-      acceptRuntimeEnvelope: (envelope) => this.acceptRuntimeEnvelope(envelope),
-    });
-  }
-
   /**
    * Process due schedule engine entries.
    */
@@ -551,13 +530,6 @@ export class DaemonRunner {
     });
   }
 
-  /**
-   * Expire old non-permanent cron tasks.
-   */
-  private async expireCronTasks(): Promise<void> {
-    await expireOldCronTasks(this.cronScheduler, this.logger);
-  }
-
   // ─── Private: Sleep ───
 
   /**
@@ -591,7 +563,7 @@ export class DaemonRunner {
     await handleInboundEnvelopeFn(this as never, envelope);
   }
 
-  private async handleGoalStartCommand(goalId: string, metadata?: BackgroundRunStartMetadata): Promise<void> {
+  private async handleGoalStartCommand(goalId: string, metadata?: GoalStartMetadata): Promise<void> {
     await handleGoalStartCommandFn(this as never, goalId, metadata);
   }
 
@@ -736,7 +708,6 @@ export class DaemonRunner {
       currentGoalIds: this.currentGoalIds,
       driveSystem: this.driveSystem,
       supervisor: this.supervisor,
-      processCronTasks: () => this.processCronTasks(),
       processScheduleEntries: () => this.processScheduleEntries(),
       proactiveTick: () => this.proactiveTick(),
       saveDaemonState: () => this.saveDaemonState(),
@@ -808,10 +779,6 @@ export class DaemonRunner {
     approved: boolean
   ): Promise<void> {
     await handleApprovalResponseCommandFn(this as never, goalId, requestId, approved);
-  }
-
-  private async handleCronTaskDue(taskId: string): Promise<void> {
-    await handleCronTaskDueFn(this as never, taskId);
   }
 
   private async runRuntimeStoreMaintenance(force = false): Promise<void> {

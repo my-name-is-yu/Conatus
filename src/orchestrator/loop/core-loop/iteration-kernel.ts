@@ -46,6 +46,7 @@ import {
   autoAcquireKnowledgeForDreamStall,
   autoAcquireKnowledgeForRefresh,
 } from "./iteration-kernel-knowledge.js";
+import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 
 export interface CoreIterationKernelDeps {
   deps: CoreLoopDeps;
@@ -61,6 +62,7 @@ export interface CoreIterationKernelDeps {
   capabilityFailures: Map<string, number>;
   incrementTransferCounter: () => number;
   getPendingDirective: (goalId: string) => NextIterationDirective | undefined;
+  getActivationContext: () => GoalRunActivationContext | undefined;
 }
 
 export interface RunCoreIterationInput {
@@ -107,6 +109,7 @@ export class CoreIterationKernel {
     };
 
     const result: LoopIterationResult = makeEmptyIterationResult(goalId, loopIndex);
+    const activationContext = this.deps.getActivationContext();
     const evidenceLedger = new CoreLoopEvidenceLedger();
     const corePhaseRuntime = new CorePhaseRuntime({
       phaseRunner: this.deps.deps.corePhaseRunner,
@@ -212,7 +215,12 @@ export class CoreIterationKernel {
         .join(", ")}`
     );
 
-    const activeWait = await findActiveWaitObservationInput(this.deps.deps, goalId, goal.title);
+    const activeWait = await findActiveWaitObservationInput(
+      this.deps.deps,
+      goalId,
+      goal.title,
+      activationContext?.waitResume?.strategyId
+    );
     if (activeWait) {
       const waitObservationPhase = await runPhase("wait-observation-agentic", () =>
         corePhaseRuntime.run(
@@ -230,7 +238,13 @@ export class CoreIterationKernel {
     }
 
     const waitObservationDecision = await runPhase("wait-observation", () =>
-      evaluateWaitStrategiesForObserveOnly(ctx, goalId, goal, result)
+      evaluateWaitStrategiesForObserveOnly(
+        ctx,
+        goalId,
+        goal,
+        result,
+        activationContext?.waitResume?.strategyId
+      )
     );
     if (waitObservationDecision.observeOnly) {
       result.skipped = true;

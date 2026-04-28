@@ -8,7 +8,6 @@ import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { DriveSystem, GoalActivationSnapshot } from "../../platform/drive/drive-system.js";
 import { createEnvelope } from "../types/envelope.js";
 import type { Envelope } from "../types/envelope.js";
-import type { CronScheduler } from "../cron-scheduler.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
 import type { Logger } from "../logger.js";
 import { ApprovalStore, OutboxStore, RuntimeHealthStore, createRuntimeStorePaths } from "../store/index.js";
@@ -131,41 +130,6 @@ export function getNextIntervalForGoals(config: DaemonConfig, goalIds: string[])
   return minInterval;
 }
 
-export async function processCronTasksForDaemon(params: {
-  cronScheduler?: CronScheduler;
-  logger: Logger;
-  acceptRuntimeEnvelope: (envelope: Envelope) => boolean;
-}): Promise<void> {
-  const { cronScheduler, logger, acceptRuntimeEnvelope } = params;
-  if (!cronScheduler) {
-    return;
-  }
-
-  try {
-    const dueTasks = await cronScheduler.getDueTasks();
-    for (const task of dueTasks) {
-      logger.info(`Cron task due: ${task.id} (type=${task.type})`, {
-        cron: task.cron,
-        type: task.type,
-      });
-
-      const envelope = createEnvelope({
-        type: "event",
-        name: "cron_task_due",
-        source: "cron-scheduler",
-        priority: "normal",
-        payload: task,
-        dedupe_key: `cron-${task.id}`,
-      });
-      acceptRuntimeEnvelope(envelope);
-    }
-  } catch (err) {
-    logger.warn("Failed to process cron tasks", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
 export async function processScheduleEntriesForDaemon(params: {
   scheduleEngine?: ScheduleEngine;
   logger: Logger;
@@ -193,37 +157,34 @@ export async function processScheduleEntriesForDaemon(params: {
         continue;
       }
 
+      const entry = scheduleEngine.getEntries().find((candidate) => candidate.id === result.entry_id);
+      const waitResume =
+        entry?.metadata?.activation_kind === "wait_resume" && entry.metadata.wait_strategy_id
+          ? {
+              type: "wait_resume" as const,
+              strategyId: entry.metadata.wait_strategy_id,
+              scheduleEntryId: entry.id,
+              nextObserveAt: entry.next_fire_at,
+              waitReason: entry.metadata.note ?? null,
+            }
+          : undefined;
+
       const envelope = createEnvelope({
         type: "event",
         name: "schedule_activated",
         source: "schedule-engine",
         goal_id: goalId,
         priority: "normal",
-        payload: result,
+        payload: {
+          ...result,
+          ...(waitResume ? { wait_resume: waitResume } : {}),
+        },
         dedupe_key: result.entry_id,
       });
       acceptRuntimeEnvelope(envelope);
     }
   } catch (err) {
     logger.error("Failed to process schedule entries", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-export async function expireOldCronTasks(
-  cronScheduler: CronScheduler | undefined,
-  logger: Logger,
-): Promise<void> {
-  if (!cronScheduler) {
-    return;
-  }
-
-  try {
-    await cronScheduler.expireOldTasks();
-    logger.debug("Expired old cron tasks");
-  } catch (err) {
-    logger.warn("Failed to expire cron tasks", {
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -442,7 +403,6 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
   currentGoalIds: string[];
   driveSystem: DriveSystem;
   supervisor: { activateGoal(goalId: string): void } | null;
-  processCronTasks: () => Promise<void>;
   processScheduleEntries: () => Promise<void>;
   proactiveTick: () => Promise<void>;
   runRuntimeStoreMaintenance?: () => Promise<void>;
@@ -464,7 +424,6 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
     params.supervisor?.activateGoal(goalId);
   }
 
-  await params.processCronTasks();
   await params.processScheduleEntries();
   await params.proactiveTick();
   await params.runRuntimeStoreMaintenance?.();
