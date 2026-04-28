@@ -83,6 +83,11 @@ import { TaskListTool } from "../query/TaskListTool/TaskListTool.js";
 import { ToolSearchTool } from "../query/ToolSearchTool/ToolSearchTool.js";
 import { TrustStateTool } from "../query/TrustStateTool/TrustStateTool.js";
 import { createRuntimeSessionTools } from "../query/runtime-session-tools.js";
+import {
+  RuntimeReportWriteTool,
+  RuntimeResultNormalizeTool,
+  WorkspaceImportTool,
+} from "../runtime/LongRunningRuntimeTools.js";
 import { CreateScheduleTool } from "../schedule/CreateScheduleTool/CreateScheduleTool.js";
 import { GetScheduleTool } from "../schedule/GetScheduleTool/GetScheduleTool.js";
 import { ListSchedulesTool } from "../schedule/ListSchedulesTool/ListSchedulesTool.js";
@@ -189,12 +194,15 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     new McpCallToolTool(),
     new McpListToolsTool(),
     new ReadTool(),
+    new RuntimeReportWriteTool(),
+    new RuntimeResultNormalizeTool(),
     new ShellCommandTool(),
     new ShellTool(),
     new SleepTool(),
     new TestRunnerTool(),
     new UpdatePlanTool(),
     new ViewImageTool(),
+    new WorkspaceImportTool(),
   ];
 
   if (deps?.stateManager) {

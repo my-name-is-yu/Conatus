@@ -211,7 +211,7 @@ export function processArtifacts(snapshot: ProcessSessionSnapshot): RuntimeArtif
 export function classifyArtifact(artifactPath: string): RuntimeArtifactRef["kind"] {
   const basename = path.basename(artifactPath).toLowerCase();
   if (basename.endsWith(".log") || basename.includes("log")) return "log";
-  if (basename.endsWith(".json") && (basename.includes("metric") || basename.includes("score"))) return "metrics";
+  if (basename.endsWith(".json") && (basename.includes("metric") || basename.includes("score") || basename.includes("result") || basename.includes("evidence"))) return "metrics";
   if (basename.endsWith(".md") || basename.endsWith(".txt")) return "report";
   if (basename.endsWith(".diff") || basename.endsWith(".patch")) return "diff";
   return "other";
