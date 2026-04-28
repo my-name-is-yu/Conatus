@@ -150,6 +150,7 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
 
   const mockStateManager = {
     getBaseDir: vi.fn().mockReturnValue(tmpDir),
+    readRaw: vi.fn().mockResolvedValue(null),
     loadGoal: vi.fn().mockResolvedValue(null),
     listGoalIds: vi.fn().mockResolvedValue([]),
   };

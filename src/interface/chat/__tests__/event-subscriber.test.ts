@@ -454,6 +454,50 @@ describe("EventSubscriber", () => {
       });
     });
 
+    it("projects session_completion into first-class notifications and chat events", () => {
+      const sub = makeSubscriber("goal-abc", "normal");
+      const notifications: TendNotification[] = [];
+      const chatEvents: ChatEvent[] = [];
+      sub.on("notification", (n: TendNotification) => notifications.push(n));
+      sub.on("chat_event", (event: ChatEvent) => chatEvents.push(event));
+
+      const raw = `id: 12\nevent: session_completion\ndata: {"session_id":"child-1","status":"completed","summary":"Heavy work finished"}`;
+      (sub as any).parseSSEMessage(raw);
+
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]).toMatchObject({
+        type: "complete",
+        goalId: "goal-abc",
+      });
+      expect(notifications[0].message).toContain("child-1");
+      expect(notifications[0].message).toContain("Heavy work finished");
+
+      expect(chatEvents).toHaveLength(1);
+      expect(chatEvents[0]).toMatchObject({
+        type: "activity",
+        kind: "commentary",
+      });
+      if (chatEvents[0].type === "activity") {
+        expect(chatEvents[0].message).toContain("Heavy work finished");
+        expect(chatEvents[0].sourceId).toBe("daemon:goal-abc:session_completion:child-1:completed");
+      }
+    });
+
+    it("uses failed session_completion status in projected source ids to avoid stale completed routing", () => {
+      const sub = makeSubscriber("goal-abc", "normal");
+      const chatEvents: ChatEvent[] = [];
+      sub.on("chat_event", (event: ChatEvent) => chatEvents.push(event));
+
+      const raw = `id: 13\nevent: session_completion\ndata: {"session_id":"child-1","status":"failed","summary":"Tests still failing"}`;
+      (sub as any).parseSSEMessage(raw);
+
+      expect(chatEvents).toHaveLength(1);
+      if (chatEvents[0].type === "activity") {
+        expect(chatEvents[0].sourceId).toBe("daemon:goal-abc:session_completion:child-1:failed");
+        expect(chatEvents[0].message).toContain("Tests still failing");
+      }
+    });
+
     it("projects snapshot approvals into chat events during bootstrap", async () => {
       const firstStream = new ReadableStream({
         start(controller) {

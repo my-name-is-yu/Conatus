@@ -19,6 +19,17 @@ export interface ChatSessionCatalogEntry {
   messageCount: number;
   createdAt: string;
   updatedAt: string;
+  parentSessionId: string | null;
+  sessionStatus?: "idle" | "queued" | "running" | "waiting" | "completed" | "failed" | null;
+  sessionSummary?: string | null;
+  completedAt?: string | null;
+  goalId?: string | null;
+  strategyId?: string | null;
+  notificationPolicy?: "silent" | "important_only" | "periodic" | "all_terminal" | null;
+  ownerId?: string | null;
+  waitingUntil?: string | null;
+  waitingCondition?: string | null;
+  notificationReplyTarget?: ChatSession["notificationReplyTarget"];
   agentLoopStatePath: string | null;
   agentLoopStatus: ChatSessionAgentLoopStatus;
   agentLoopResumable: boolean;
@@ -32,6 +43,27 @@ export interface LoadedChatSession {
   title: string | null;
   messages: ChatSession["messages"];
   compactionSummary?: string;
+  parentSessionId?: string | null;
+  spawnedBySessionId?: string | null;
+  spawnedByRuntimeSessionId?: string | null;
+  spawnedAt?: string | null;
+  sessionStatus?: "idle" | "queued" | "running" | "waiting" | "completed" | "failed" | null;
+  sessionSummary?: string | null;
+  completedAt?: string | null;
+  goalId?: string | null;
+  strategyId?: string | null;
+  notificationPolicy?: "silent" | "important_only" | "periodic" | "all_terminal" | null;
+  ownerId?: string | null;
+  ownerClaimedAt?: string | null;
+  waitingUntil?: string | null;
+  waitingCondition?: string | null;
+  retryCount?: number | null;
+  lastRetryAt?: string | null;
+  lastResumedAt?: string | null;
+  notificationReplyTarget?: ChatSession["notificationReplyTarget"];
+  parentNotificationStatus?: "none" | "pending" | "sent" | "failed" | null;
+  parentNotificationSummary?: string | null;
+  parentNotifiedAt?: string | null;
   agentLoopStatePath: string | null;
   agentLoopStatus: ChatSessionAgentLoopStatus;
   agentLoopResumable: boolean;
@@ -284,6 +316,27 @@ async function readSessionRecordWithMetadata(
     updatedAt: parsed.data.updatedAt ?? parsed.data.createdAt,
     title: normalizeTitle(parsed.data.title),
     messages: [...parsed.data.messages],
+    parentSessionId: optionalString(parsed.data.parentSessionId),
+    ...(optionalString(parsed.data.spawnedBySessionId) ? { spawnedBySessionId: optionalString(parsed.data.spawnedBySessionId) } : {}),
+    ...(optionalString(parsed.data.spawnedByRuntimeSessionId) ? { spawnedByRuntimeSessionId: optionalString(parsed.data.spawnedByRuntimeSessionId) } : {}),
+    ...(optionalString(parsed.data.spawnedAt) ? { spawnedAt: optionalString(parsed.data.spawnedAt) } : {}),
+    ...(parsed.data.sessionStatus ? { sessionStatus: parsed.data.sessionStatus } : {}),
+    ...(optionalString(parsed.data.sessionSummary) !== null ? { sessionSummary: optionalString(parsed.data.sessionSummary) } : {}),
+    ...(optionalString(parsed.data.completedAt) !== null ? { completedAt: optionalString(parsed.data.completedAt) } : {}),
+    ...(optionalString(parsed.data.goalId) !== null ? { goalId: optionalString(parsed.data.goalId) } : {}),
+    ...(optionalString(parsed.data.strategyId) !== null ? { strategyId: optionalString(parsed.data.strategyId) } : {}),
+    ...(parsed.data.notificationPolicy ? { notificationPolicy: parsed.data.notificationPolicy } : {}),
+    ...(optionalString(parsed.data.ownerId) !== null ? { ownerId: optionalString(parsed.data.ownerId) } : {}),
+    ...(optionalString(parsed.data.ownerClaimedAt) !== null ? { ownerClaimedAt: optionalString(parsed.data.ownerClaimedAt) } : {}),
+    ...(optionalString(parsed.data.waitingUntil) !== null ? { waitingUntil: optionalString(parsed.data.waitingUntil) } : {}),
+    ...(optionalString(parsed.data.waitingCondition) !== null ? { waitingCondition: optionalString(parsed.data.waitingCondition) } : {}),
+    ...(typeof parsed.data.retryCount === "number" ? { retryCount: parsed.data.retryCount } : {}),
+    ...(optionalString(parsed.data.lastRetryAt) !== null ? { lastRetryAt: optionalString(parsed.data.lastRetryAt) } : {}),
+    ...(optionalString(parsed.data.lastResumedAt) !== null ? { lastResumedAt: optionalString(parsed.data.lastResumedAt) } : {}),
+    ...(parsed.data.notificationReplyTarget ? { notificationReplyTarget: parsed.data.notificationReplyTarget } : {}),
+    ...(parsed.data.parentNotificationStatus ? { parentNotificationStatus: parsed.data.parentNotificationStatus } : {}),
+    ...(optionalString(parsed.data.parentNotificationSummary) !== null ? { parentNotificationSummary: optionalString(parsed.data.parentNotificationSummary) } : {}),
+    ...(optionalString(parsed.data.parentNotifiedAt) !== null ? { parentNotifiedAt: optionalString(parsed.data.parentNotifiedAt) } : {}),
     ...(parsed.data.compactionSummary ? { compactionSummary: parsed.data.compactionSummary } : {}),
     agentLoopStatePath: discovery.statePath,
     agentLoopStatus: discovery.status,
@@ -305,6 +358,17 @@ function buildCatalogEntry(record: SessionRecord): ChatSessionCatalogEntry {
     messageCount: session.messages.length,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    parentSessionId: session.parentSessionId ?? null,
+    sessionStatus: session.sessionStatus ?? null,
+    sessionSummary: session.sessionSummary ?? null,
+    completedAt: session.completedAt ?? null,
+    goalId: session.goalId ?? null,
+    strategyId: session.strategyId ?? null,
+    notificationPolicy: session.notificationPolicy ?? null,
+    ownerId: session.ownerId ?? null,
+    waitingUntil: session.waitingUntil ?? null,
+    waitingCondition: session.waitingCondition ?? null,
+    notificationReplyTarget: session.notificationReplyTarget ?? null,
     agentLoopStatePath: session.agentLoopStatePath,
     agentLoopStatus: session.agentLoopStatus,
     agentLoopResumable: session.agentLoopResumable,
@@ -318,6 +382,27 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     messages: [...session.messages],
+    ...(session.parentSessionId !== null ? { parentSessionId: session.parentSessionId } : {}),
+    ...(session.spawnedBySessionId !== null && session.spawnedBySessionId !== undefined ? { spawnedBySessionId: session.spawnedBySessionId } : {}),
+    ...(session.spawnedByRuntimeSessionId !== null && session.spawnedByRuntimeSessionId !== undefined ? { spawnedByRuntimeSessionId: session.spawnedByRuntimeSessionId } : {}),
+    ...(session.spawnedAt !== null && session.spawnedAt !== undefined ? { spawnedAt: session.spawnedAt } : {}),
+    ...(session.sessionStatus !== null && session.sessionStatus !== undefined ? { sessionStatus: session.sessionStatus } : {}),
+    ...(session.sessionSummary !== null && session.sessionSummary !== undefined ? { sessionSummary: session.sessionSummary } : {}),
+    ...(session.completedAt !== null && session.completedAt !== undefined ? { completedAt: session.completedAt } : {}),
+    ...(session.goalId !== null && session.goalId !== undefined ? { goalId: session.goalId } : {}),
+    ...(session.strategyId !== null && session.strategyId !== undefined ? { strategyId: session.strategyId } : {}),
+    ...(session.notificationPolicy !== null && session.notificationPolicy !== undefined ? { notificationPolicy: session.notificationPolicy } : {}),
+    ...(session.ownerId !== null && session.ownerId !== undefined ? { ownerId: session.ownerId } : {}),
+    ...(session.ownerClaimedAt !== null && session.ownerClaimedAt !== undefined ? { ownerClaimedAt: session.ownerClaimedAt } : {}),
+    ...(session.waitingUntil !== null && session.waitingUntil !== undefined ? { waitingUntil: session.waitingUntil } : {}),
+    ...(session.waitingCondition !== null && session.waitingCondition !== undefined ? { waitingCondition: session.waitingCondition } : {}),
+    ...(session.retryCount !== null && session.retryCount !== undefined ? { retryCount: session.retryCount } : {}),
+    ...(session.lastRetryAt !== null && session.lastRetryAt !== undefined ? { lastRetryAt: session.lastRetryAt } : {}),
+    ...(session.lastResumedAt !== null && session.lastResumedAt !== undefined ? { lastResumedAt: session.lastResumedAt } : {}),
+    ...(session.notificationReplyTarget !== null && session.notificationReplyTarget !== undefined ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+    ...(session.parentNotificationStatus !== null && session.parentNotificationStatus !== undefined ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
+    ...(session.parentNotificationSummary !== null && session.parentNotificationSummary !== undefined ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
+    ...(session.parentNotifiedAt !== null && session.parentNotifiedAt !== undefined ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
     ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
     ...(session.title !== null ? { title: session.title } : {}),
     ...(session.agentLoopStatePath !== null ? { agentLoopStatePath: session.agentLoopStatePath } : {}),
@@ -473,6 +558,27 @@ export class ChatSessionCatalog {
       updatedAt,
       title: normalizedTitle,
       messages: [...session.messages],
+      parentSessionId: session.parentSessionId,
+      ...(session.spawnedBySessionId ? { spawnedBySessionId: session.spawnedBySessionId } : {}),
+      ...(session.spawnedByRuntimeSessionId ? { spawnedByRuntimeSessionId: session.spawnedByRuntimeSessionId } : {}),
+      ...(session.spawnedAt ? { spawnedAt: session.spawnedAt } : {}),
+      ...(session.sessionStatus ? { sessionStatus: session.sessionStatus } : {}),
+      ...(session.sessionSummary ? { sessionSummary: session.sessionSummary } : {}),
+      ...(session.completedAt ? { completedAt: session.completedAt } : {}),
+      ...(session.goalId ? { goalId: session.goalId } : {}),
+      ...(session.strategyId ? { strategyId: session.strategyId } : {}),
+      ...(session.notificationPolicy ? { notificationPolicy: session.notificationPolicy } : {}),
+      ...(session.ownerId ? { ownerId: session.ownerId } : {}),
+      ...(session.ownerClaimedAt ? { ownerClaimedAt: session.ownerClaimedAt } : {}),
+      ...(session.waitingUntil ? { waitingUntil: session.waitingUntil } : {}),
+      ...(session.waitingCondition ? { waitingCondition: session.waitingCondition } : {}),
+      ...(session.retryCount !== null && session.retryCount !== undefined ? { retryCount: session.retryCount } : {}),
+      ...(session.lastRetryAt ? { lastRetryAt: session.lastRetryAt } : {}),
+      ...(session.lastResumedAt ? { lastResumedAt: session.lastResumedAt } : {}),
+      ...(session.notificationReplyTarget ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+      ...(session.parentNotificationStatus ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
+      ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
+      ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
       ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
       agentLoopStatePath: session.agentLoopStatePath,
       agentLoopStatus: session.agentLoopStatus,

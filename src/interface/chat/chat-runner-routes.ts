@@ -28,6 +28,7 @@ export interface ChatRunnerRouteHost {
   deps: ChatRunnerDeps;
   eventBridge: ChatRunnerEventBridge;
   activatedTools: Set<string>;
+  getConversationSessionId(): string | null;
   getSessionCwd(): string | null;
   getNativeAgentLoopStatePath(): string | null;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
@@ -145,6 +146,7 @@ export async function executeAgentLoopRoute(
       },
       toolCallContext: {
         executionPolicy: await host.getSessionExecutionPolicy(),
+        ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
       },
       ...(host.getNativeAgentLoopStatePath() ? { resumeStatePath: host.getNativeAgentLoopStatePath()! } : {}),
       ...(resumeState ? { resumeState } : {}),

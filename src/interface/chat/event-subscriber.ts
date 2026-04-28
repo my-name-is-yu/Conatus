@@ -37,6 +37,23 @@ interface RawChatResponseEvent {
   goal_id?: string;
   message?: string;
   status?: string;
+  session_completion?: {
+    session_id?: string;
+    runtime_session_id?: string;
+    parent_session_id?: string;
+    status?: string;
+    summary?: string;
+    completed_at?: string;
+  };
+}
+
+interface RawSessionCompletionEvent {
+  session_id?: string;
+  runtime_session_id?: string;
+  parent_session_id?: string;
+  status?: string;
+  summary?: string;
+  completed_at?: string;
 }
 
 interface RawLoopErrorEvent {
@@ -332,6 +349,22 @@ export class EventSubscriber extends EventEmitter {
       };
     }
 
+    if (eventType === "session_completion") {
+      const ev = data as RawSessionCompletionEvent;
+      const sessionId = ev.session_id ?? ev.runtime_session_id ?? "session";
+      const status = ev.status ?? "completed";
+      const summary = typeof ev.summary === "string" && ev.summary.trim().length > 0
+        ? ev.summary.trim()
+        : "No summary provided";
+      const icon = status === "failed" ? "⚠️" : "✅";
+      const label = status === "failed" ? "Failed" : "Completed";
+      return {
+        type: status === "failed" ? "error" : "complete",
+        goalId: this.goalId,
+        message: `${icon} [tend] ${shortId}: Child session ${sessionId} ${label.toLowerCase()} — ${summary}`,
+      };
+    }
+
     return null;
   }
 
@@ -348,6 +381,25 @@ export class EventSubscriber extends EventEmitter {
         type: "assistant_final",
         text,
         persisted: false,
+        ...this.createChatEventBase(eventType, data),
+      };
+    }
+
+    if (eventType === "session_completion") {
+      const completion = data as RawSessionCompletionEvent;
+      const summary = typeof completion.summary === "string" && completion.summary.trim().length > 0
+        ? completion.summary.trim()
+        : "Session completed";
+      return {
+        type: "activity",
+        kind: "commentary",
+        message: notification?.message ?? summary,
+        sourceId: this.createChatSourceId(eventType, data, notification ?? {
+          type: "complete",
+          goalId: this.goalId,
+          message: summary,
+        }),
+        transient: false,
         ...this.createChatEventBase(eventType, data),
       };
     }
@@ -434,6 +486,11 @@ export class EventSubscriber extends EventEmitter {
       return `${eventType}:${requestId}`;
     }
 
+    const sessionId = record?.["session_id"];
+    if (typeof sessionId === "string" && sessionId) {
+      return `${eventType}:${sessionId}`;
+    }
+
     if (this.lastOutboxSeq > 0) {
       return `${eventType}:${this.lastOutboxSeq}`;
     }
@@ -461,6 +518,10 @@ export class EventSubscriber extends EventEmitter {
       : null;
     const status = record?.["status"];
     if (typeof status === "string" && status) {
+      const sessionId = record?.["session_id"];
+      if (typeof sessionId === "string" && sessionId) {
+        return `daemon:${this.goalId}:${eventType}:${sessionId}:${status}`;
+      }
       return `daemon:${this.goalId}:${eventType}:${status}`;
     }
 

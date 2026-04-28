@@ -163,6 +163,8 @@ export interface ToolCallContext {
   timeoutMs?: number;
   /** Session identifier for correlation in audit logs */
   sessionId?: string;
+  /** Owning chat conversation session id when the tool runs inside chat. */
+  conversationSessionId?: string;
   /** Unique call identifier for correlation in audit logs */
   callId?: string;
   /** Optional logger for audit-trail events */

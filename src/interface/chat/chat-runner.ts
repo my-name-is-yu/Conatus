@@ -31,6 +31,7 @@ import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
 } from "../../runtime/store/runtime-operation-schemas.js";
+import type { RuntimeReplyTarget } from "../../runtime/session-registry/types.js";
 import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import {
   createIngressRouter,
@@ -106,6 +107,21 @@ export interface ChatRunnerExecutionOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+function normalizePinnedReplyTarget(replyTarget: RuntimeControlReplyTarget | null): RuntimeReplyTarget | null {
+  if (!replyTarget) return null;
+  const channel = replyTarget.channel ?? replyTarget.surface;
+  if (!channel) return null;
+  return {
+    channel,
+    target_id: replyTarget.conversation_id ?? replyTarget.identity_key ?? replyTarget.response_channel ?? null,
+    thread_id: replyTarget.message_id ?? null,
+    metadata: {
+      ...replyTarget,
+      ...(replyTarget.metadata ?? {}),
+    },
+  };
+}
 const standaloneIngressRouter = createIngressRouter();
 
 function resolveSelfIdentityResponse(input: string, baseDir: string): string | null {
@@ -349,6 +365,12 @@ export class ChatRunner {
     const gitRoot = this.sessionCwd ?? resolvedCwd;
     activeTurn.cwd = gitRoot;
     const history = this.history!;
+    const pinnedReplyTarget = normalizePinnedReplyTarget(
+      runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
+    );
+    if (pinnedReplyTarget) {
+      history.setNotificationReplyTarget(pinnedReplyTarget);
+    }
 
     this.eventBridge.emitEvent({
       type: "lifecycle_start",
@@ -581,6 +603,7 @@ export class ChatRunner {
       deps: this.deps,
       eventBridge: this.eventBridge,
       activatedTools: this.activatedTools,
+      getConversationSessionId: () => this.history?.getSessionId() ?? null,
       getSessionCwd: () => this.sessionCwd,
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
       getSessionExecutionPolicy: () => this.getSessionExecutionPolicy(),
