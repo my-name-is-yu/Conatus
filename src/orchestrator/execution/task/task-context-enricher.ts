@@ -3,7 +3,11 @@ import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/kno
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import { loadDreamActivationState } from "../../../platform/dream/dream-activation.js";
-import { getFailureReflectionsForGoal, formatReflectionsForPrompt } from "../reflection-generator.js";
+import {
+  getFailureReflectionsForGoal,
+  getReflectionsForGoal,
+  formatReflectionsForPrompt,
+} from "../reflection-generator.js";
 
 interface BuildEnrichedKnowledgeContextParams {
   goalId: string;
@@ -49,7 +53,9 @@ export async function buildEnrichedKnowledgeContext(
   if (!knowledgeManager) return enrichedKnowledgeContext;
 
   try {
-    const pastReflections = await getFailureReflectionsForGoal(knowledgeManager, goalId, 5, logger);
+    const pastReflections = verifiedPlannerHintsOnly
+      ? await getFailureReflectionsForGoal(knowledgeManager, goalId, 5, logger)
+      : await getReflectionsForGoal(knowledgeManager, goalId, 5, logger);
     if (pastReflections.length > 0) {
       const reflectionText = formatReflectionsForPrompt(pastReflections);
       enrichedKnowledgeContext = enrichedKnowledgeContext

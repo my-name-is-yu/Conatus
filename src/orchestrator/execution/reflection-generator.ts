@@ -151,7 +151,15 @@ export async function getReflectionsForGoal(
   logger?: ReflectionLogger,
 ): Promise<ReflectionNote[]> {
   const entries = await knowledgeManager.loadKnowledge(goalId, ["reflection"]);
+  return parseReflectionEntries(entries, goalId, logger)
+    .slice(0, limit);
+}
 
+function parseReflectionEntries(
+  entries: Awaited<ReturnType<KnowledgeManager["loadKnowledge"]>>,
+  goalId: string,
+  logger?: ReflectionLogger,
+): ReflectionNote[] {
   const reflections: ReflectionNote[] = [];
   for (const entry of entries) {
     try {
@@ -171,8 +179,7 @@ export async function getReflectionsForGoal(
   }
 
   return reflections
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .slice(0, limit);
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 export async function getFailureReflectionsForGoal(
@@ -181,13 +188,8 @@ export async function getFailureReflectionsForGoal(
   limit = 5,
   logger?: ReflectionLogger,
 ): Promise<ReflectionNote[]> {
-  const reflections = await getReflectionsForGoal(
-    knowledgeManager,
-    goalId,
-    limit * 3,
-    logger,
-  );
-  return reflections
+  const entries = await knowledgeManager.loadKnowledge(goalId, ["reflection"]);
+  return parseReflectionEntries(entries, goalId, logger)
     .filter((reflection) => reflection.outcome !== "success")
     .slice(0, limit);
 }

@@ -226,6 +226,7 @@ export async function runTaskCycleWithContext(
     if (ctx.deps.knowledgeManager) {
       try {
         await runPhase("collect-knowledge-context", async () => {
+          if (activationFlags?.verifiedPlannerHintsOnly) return;
           const topDimension = driveScores[0]?.dimension_name ?? goal.dimensions[0]?.name;
           if (!topDimension) return;
           let entries = await ctx.deps.knowledgeManager!.getRelevantKnowledge(goalId, topDimension);
@@ -305,6 +306,7 @@ export async function runTaskCycleWithContext(
     if (ctx.deps.memoryLifecycleManager) {
       try {
         await runPhase("select-working-memory", async () => {
+          if (activationFlags?.verifiedPlannerHintsOnly) return;
           const dimensions = goal.dimensions.map((d) => d.name);
           const maxDissatisfaction = driveScores.length > 0
             ? Math.max(...driveScores.map((s) => s.dissatisfaction))
