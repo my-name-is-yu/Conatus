@@ -238,7 +238,8 @@ export class StrategyManagerBase {
 
     try {
       const activation = await loadDreamActivationState(this.stateManager.getBaseDir());
-      if (activation.flags.strategyTemplates) {
+      const verifiedPlannerHintsOnly = activation.flags.verifiedPlannerHintsOnly ?? true;
+      if (activation.flags.strategyTemplates && !verifiedPlannerHintsOnly) {
         const goal = await this.stateManager.loadGoal(goalId);
         const templates = await loadStrategyTemplates(this.stateManager.getBaseDir());
         const matchedTemplates = selectTemplateCandidates(
@@ -269,7 +270,7 @@ export class StrategyManagerBase {
         }
       }
 
-      if (activation.flags.decisionHeuristics) {
+      if (activation.flags.decisionHeuristics && !verifiedPlannerHintsOnly) {
         const heuristics = await loadDecisionHeuristics(this.stateManager.getBaseDir());
         candidates = applyDecisionHeuristicsToCandidates(candidates, heuristics, {
           stallCount: Math.max(

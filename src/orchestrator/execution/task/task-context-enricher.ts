@@ -1,13 +1,20 @@
 import type { Logger } from "../../../runtime/logger.js";
 import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/knowledge-transfer.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
-import { getReflectionsForGoal, formatReflectionsForPrompt } from "../reflection-generator.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import { loadDreamActivationState } from "../../../platform/dream/dream-activation.js";
+import {
+  getFailureReflectionsForGoal,
+  getReflectionsForGoal,
+  formatReflectionsForPrompt,
+} from "../reflection-generator.js";
 
 interface BuildEnrichedKnowledgeContextParams {
   goalId: string;
   knowledgeContext?: string;
   knowledgeTransfer?: KnowledgeTransfer;
   knowledgeManager?: KnowledgeManager;
+  stateManager: StateManager;
   logger?: Logger;
 }
 
@@ -19,12 +26,15 @@ export async function buildEnrichedKnowledgeContext(
     knowledgeContext,
     knowledgeTransfer,
     knowledgeManager,
+    stateManager,
     logger,
   } = params;
 
   let enrichedKnowledgeContext = knowledgeContext;
+  const dreamActivation = await loadDreamActivationState(stateManager.getBaseDir()).catch(() => null);
+  const verifiedPlannerHintsOnly = dreamActivation?.flags.verifiedPlannerHintsOnly ?? true;
 
-  if (knowledgeTransfer) {
+  if (knowledgeTransfer && !verifiedPlannerHintsOnly) {
     try {
       const { contextSnippets } = await knowledgeTransfer.detectCandidatesRealtime(goalId);
       if (contextSnippets.length > 0) {
@@ -43,7 +53,9 @@ export async function buildEnrichedKnowledgeContext(
   if (!knowledgeManager) return enrichedKnowledgeContext;
 
   try {
-    const pastReflections = await getReflectionsForGoal(knowledgeManager, goalId, 5, logger);
+    const pastReflections = verifiedPlannerHintsOnly
+      ? await getFailureReflectionsForGoal(knowledgeManager, goalId, 5, logger)
+      : await getReflectionsForGoal(knowledgeManager, goalId, 5, logger);
     if (pastReflections.length > 0) {
       const reflectionText = formatReflectionsForPrompt(pastReflections);
       enrichedKnowledgeContext = enrichedKnowledgeContext

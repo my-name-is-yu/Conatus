@@ -12,6 +12,7 @@ import { TaskLifecycle } from "../task/task-lifecycle.js";
 import type { Task } from "../../../base/types/task.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveContext } from "../../../base/types/drive.js";
+import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -180,7 +181,7 @@ describe("TaskLifecycle — runTaskCycle helper branches", () => {
     expect(result.task.work_description).toContain("skipped");
   });
 
-  it("enriches knowledge context when realtime transfer returns snippets", async () => {
+  it("skips realtime transfer enrichment by default when verified-only mode is enabled", async () => {
     const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
     const knowledgeTransfer = {
       detectCandidatesRealtime: vi.fn().mockResolvedValue({
@@ -201,7 +202,48 @@ describe("TaskLifecycle — runTaskCycle helper branches", () => {
       createMockAdapter()
     );
 
-    expect(knowledgeTransfer.detectCandidatesRealtime).toHaveBeenCalledWith("goal-kt");
+    expect(knowledgeTransfer.detectCandidatesRealtime).not.toHaveBeenCalled();
+    expect(result.task).toBeDefined();
+  });
+
+  it("enriches knowledge context with realtime transfer snippets when verified-only mode is disabled", async () => {
+    await saveDreamConfig({
+      activation: {
+        verifiedPlannerHintsOnly: false,
+        semanticWorkingMemory: false,
+        crossGoalLessons: false,
+        semanticContext: false,
+        autoAcquireKnowledge: false,
+        learnedPatternHints: false,
+        playbookHints: false,
+        workflowHints: false,
+        strategyTemplates: false,
+        decisionHeuristics: false,
+        graphTraversal: false,
+      },
+    }, stateManager.getBaseDir());
+
+    const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
+    const knowledgeTransfer = {
+      detectCandidatesRealtime: vi.fn().mockResolvedValue({
+        contextSnippets: ["Snippet A", "Snippet B"],
+        candidates: [],
+      }),
+    };
+
+    const lifecycle = createLifecycle(llm, {
+      approvalFn: async () => true,
+      knowledgeTransfer: knowledgeTransfer as unknown as import("../../knowledge/transfer/knowledge-transfer.js").KnowledgeTransfer,
+    });
+
+    const result = await lifecycle.runTaskCycle(
+      "goal-kt-optout",
+      makeGapVector("goal-kt-optout", [{ name: "coverage", gap: 0.5 }]),
+      makeDriveContext(["coverage"]),
+      createMockAdapter()
+    );
+
+    expect(knowledgeTransfer.detectCandidatesRealtime).toHaveBeenCalledWith("goal-kt-optout");
     expect(result.task).toBeDefined();
   });
 

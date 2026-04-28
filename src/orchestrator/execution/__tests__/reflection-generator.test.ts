@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   generateReflection,
   saveReflectionAsKnowledge,
+  getFailureReflectionsForGoal,
   getReflectionsForGoal,
   formatReflectionsForPrompt,
 } from "../reflection-generator.js";
@@ -410,6 +411,59 @@ describe("getReflectionsForGoal()", () => {
     const results = await getReflectionsForGoal(km, "goal-1");
 
     expect(results).toHaveLength(0);
+  });
+});
+
+describe("getFailureReflectionsForGoal()", () => {
+  it("keeps searching past recent successes until it finds older failures", async () => {
+    const entries = [
+      makeKnowledgeEntry({
+        entry_id: "success-1",
+        acquired_at: "2026-03-20T13:00:00.000Z",
+        answer: JSON.stringify({
+          what_was_attempted: "Recent success 1",
+          outcome: "success",
+          why_it_worked_or_failed: "ok",
+          what_to_do_differently: "repeat",
+        }),
+      }),
+      makeKnowledgeEntry({
+        entry_id: "success-2",
+        acquired_at: "2026-03-20T12:00:00.000Z",
+        answer: JSON.stringify({
+          what_was_attempted: "Recent success 2",
+          outcome: "success",
+          why_it_worked_or_failed: "ok",
+          what_to_do_differently: "repeat",
+        }),
+      }),
+      makeKnowledgeEntry({
+        entry_id: "success-3",
+        acquired_at: "2026-03-20T11:00:00.000Z",
+        answer: JSON.stringify({
+          what_was_attempted: "Recent success 3",
+          outcome: "success",
+          why_it_worked_or_failed: "ok",
+          what_to_do_differently: "repeat",
+        }),
+      }),
+      makeKnowledgeEntry({
+        entry_id: "fail-1",
+        acquired_at: "2026-03-20T10:00:00.000Z",
+        answer: JSON.stringify({
+          what_was_attempted: "Older failure",
+          outcome: "fail",
+          why_it_worked_or_failed: "broke",
+          what_to_do_differently: "change approach",
+        }),
+      }),
+    ];
+    const km = makeMockKnowledgeManager(entries);
+
+    const results = await getFailureReflectionsForGoal(km, "goal-1", 1);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.reflection_id).toBe("fail-1");
   });
 });
 

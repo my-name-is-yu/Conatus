@@ -496,6 +496,21 @@ describe("CoreLoop", async () => {
     it("injects relevant knowledge into task generation context", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal());
+      await saveDreamConfig({
+        activation: {
+          verifiedPlannerHintsOnly: false,
+          semanticWorkingMemory: false,
+          crossGoalLessons: false,
+          semanticContext: false,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: false,
+          playbookHints: false,
+          workflowHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, mocks.stateManager.getBaseDir());
 
       const knowledgeEntries = [
         {
@@ -535,6 +550,7 @@ describe("CoreLoop", async () => {
       await mocks.stateManager.saveGoal(makeGoal());
       await saveDreamConfig({
         activation: {
+          verifiedPlannerHintsOnly: false,
           semanticWorkingMemory: false,
           crossGoalLessons: true,
           semanticContext: false,
@@ -576,6 +592,168 @@ describe("CoreLoop", async () => {
       const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
       expect(callArgs![4]).toContain("Cross-goal lessons");
       expect(callArgs![4]).toContain("migration checklist");
+    });
+
+    it("does not inject raw knowledge or semantic working memory when verified-only mode is enabled", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+      await saveDreamConfig({
+        activation: {
+          verifiedPlannerHintsOnly: true,
+          semanticWorkingMemory: true,
+          crossGoalLessons: false,
+          semanticContext: true,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: false,
+          playbookHints: false,
+          workflowHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, mocks.stateManager.getBaseDir());
+
+      const knowledgeManager = {
+        detectKnowledgeGap: vi.fn().mockResolvedValue(null),
+        generateAcquisitionTask: vi.fn(),
+        getRelevantKnowledge: vi.fn().mockResolvedValue([
+          {
+            entry_id: "e1",
+            question: "Raw knowledge",
+            answer: "should not be injected",
+            sources: [],
+            confidence: 0.9,
+            acquired_at: new Date().toISOString(),
+            acquisition_task_id: "t1",
+            superseded_by: null,
+            tags: ["dim1"],
+          },
+        ]),
+        searchKnowledge: vi.fn().mockResolvedValue([
+          {
+            entry_id: "e2",
+            question: "Semantic knowledge",
+            answer: "should also stay out",
+            sources: [],
+            confidence: 0.7,
+            acquired_at: new Date().toISOString(),
+            acquisition_task_id: "t2",
+            superseded_by: null,
+            tags: ["dim1"],
+          },
+        ]),
+        saveKnowledge: vi.fn(),
+        loadKnowledge: vi.fn().mockResolvedValue([]),
+        checkContradiction: vi.fn(),
+      };
+      const memoryLifecycleManager = {
+        selectForWorkingMemoryTierAware: vi.fn().mockResolvedValue({
+          shortTerm: [{ data_type: "note", data: { value: "raw working memory" } }],
+          lessons: [],
+        }),
+        selectForWorkingMemorySemantic: vi.fn().mockResolvedValue({
+          shortTerm: [{ data_type: "note", data: { value: "semantic working memory" } }],
+          lessons: [],
+        }),
+        onSatisficingJudgment: vi.fn(),
+      };
+
+      const loop = new CoreLoop(
+        {
+          ...deps,
+          knowledgeManager: knowledgeManager as any,
+          memoryLifecycleManager: memoryLifecycleManager as any,
+        },
+        { delayBetweenLoopsMs: 0 }
+      );
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(knowledgeManager.getRelevantKnowledge).not.toHaveBeenCalled();
+      expect(knowledgeManager.searchKnowledge).not.toHaveBeenCalled();
+      expect(memoryLifecycleManager.selectForWorkingMemoryTierAware).not.toHaveBeenCalled();
+      expect(memoryLifecycleManager.selectForWorkingMemorySemantic).not.toHaveBeenCalled();
+      const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
+      expect(callArgs![4]).toBeUndefined();
+    });
+
+    it("restores raw knowledge injection when verified-only mode is disabled", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+      await saveDreamConfig({
+        activation: {
+          verifiedPlannerHintsOnly: false,
+          semanticWorkingMemory: true,
+          crossGoalLessons: false,
+          semanticContext: true,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: false,
+          playbookHints: false,
+          workflowHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, mocks.stateManager.getBaseDir());
+
+      const knowledgeManager = {
+        detectKnowledgeGap: vi.fn().mockResolvedValue(null),
+        generateAcquisitionTask: vi.fn(),
+        getRelevantKnowledge: vi.fn().mockResolvedValue([
+          {
+            entry_id: "e1",
+            question: "Raw knowledge",
+            answer: "allowed when gate is off",
+            sources: [],
+            confidence: 0.9,
+            acquired_at: new Date().toISOString(),
+            acquisition_task_id: "t1",
+            superseded_by: null,
+            tags: ["dim1"],
+          },
+        ]),
+        searchKnowledge: vi.fn().mockResolvedValue([
+          {
+            entry_id: "e2",
+            question: "Semantic knowledge",
+            answer: "also allowed when gate is off",
+            sources: [],
+            confidence: 0.7,
+            acquired_at: new Date().toISOString(),
+            acquisition_task_id: "t2",
+            superseded_by: null,
+            tags: ["dim1"],
+          },
+        ]),
+        saveKnowledge: vi.fn(),
+        loadKnowledge: vi.fn().mockResolvedValue([]),
+        checkContradiction: vi.fn(),
+      };
+      const memoryLifecycleManager = {
+        selectForWorkingMemoryTierAware: vi.fn().mockResolvedValue({ shortTerm: [], lessons: [] }),
+        selectForWorkingMemorySemantic: vi.fn().mockResolvedValue({
+          shortTerm: [{ data_type: "note", data: { value: "semantic working memory" } }],
+          lessons: [],
+        }),
+        onSatisficingJudgment: vi.fn(),
+      };
+
+      const loop = new CoreLoop(
+        {
+          ...deps,
+          knowledgeManager: knowledgeManager as any,
+          memoryLifecycleManager: memoryLifecycleManager as any,
+        },
+        { delayBetweenLoopsMs: 0 }
+      );
+      await loop.runOneIteration("goal-1", 0);
+
+      expect(knowledgeManager.getRelevantKnowledge).toHaveBeenCalledOnce();
+      expect(knowledgeManager.searchKnowledge).toHaveBeenCalledOnce();
+      expect(memoryLifecycleManager.selectForWorkingMemoryTierAware).toHaveBeenCalledOnce();
+      expect(memoryLifecycleManager.selectForWorkingMemorySemantic).toHaveBeenCalledOnce();
+      const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
+      expect(callArgs![4]).toContain("allowed when gate is off");
+      expect(callArgs![4]).toContain("semantic working memory");
     });
 
     it("skips knowledge injection gracefully when getRelevantKnowledge returns empty", async () => {
@@ -639,6 +817,7 @@ describe("CoreLoop", async () => {
       await mocks.stateManager.saveGoal(makeGoal());
       await saveDreamConfig({
         activation: {
+          verifiedPlannerHintsOnly: true,
           semanticWorkingMemory: false,
           crossGoalLessons: false,
           semanticContext: false,

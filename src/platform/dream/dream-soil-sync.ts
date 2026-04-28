@@ -10,6 +10,7 @@ import { projectDreamKnowledgeToSoil, projectSoilFeedbackToSoil } from "../soil/
 import { loadSoilCompileMissObservations } from "../soil/feedback-store.js";
 import { inspectSoilMemoryHealth } from "../soil/health.js";
 import { loadDreamWorkflowRecords } from "./dream-event-workflows.js";
+import { loadDreamPlaybooks, type DreamPlaybookRecord } from "./playbook-memory.js";
 import { buildDreamSoilMutationIntent } from "./dream-soil-mutation.js";
 
 export interface DreamSoilSyncRepository {
@@ -27,6 +28,7 @@ export interface DreamSoilSyncReport {
   agentMemoryEntries: number;
   learnedPatterns: number;
   workflowRecords: number;
+  verifiedPlaybooks: number;
   previousRecords: number;
   recordsWritten: number;
   recordsSuperseded: number;
@@ -64,11 +66,16 @@ async function loadLearnedPatterns(baseDir: string): Promise<LearnedPattern[]> {
   return patterns;
 }
 
+async function loadVerifiedPlaybooks(baseDir: string): Promise<DreamPlaybookRecord[]> {
+  return loadDreamPlaybooks(baseDir, { statuses: ["promoted"] });
+}
+
 export async function syncDreamOutputsToSoil(input: DreamSoilSyncInput): Promise<DreamSoilSyncReport> {
-  const [agentMemoryEntries, learnedPatterns, workflowRecords] = await Promise.all([
+  const [agentMemoryEntries, learnedPatterns, workflowRecords, verifiedPlaybooks] = await Promise.all([
     loadAgentMemoryEntries(input.baseDir),
     loadLearnedPatterns(input.baseDir),
     loadDreamWorkflowRecords(input.baseDir),
+    loadVerifiedPlaybooks(input.baseDir),
   ]);
   const previousRecords = await input.repository.loadRecords({
     active_only: false,
@@ -97,6 +104,7 @@ export async function syncDreamOutputsToSoil(input: DreamSoilSyncInput): Promise
   await projectDreamKnowledgeToSoil({
     baseDir: input.baseDir,
     learnedPatterns,
+    verifiedPlaybooks,
     workflowRecords,
   });
   const compileMissObservations = await loadSoilCompileMissObservations({ baseDir: input.baseDir, limit: 500 });
@@ -113,6 +121,7 @@ export async function syncDreamOutputsToSoil(input: DreamSoilSyncInput): Promise
     agentMemoryEntries: agentMemoryEntries.length,
     learnedPatterns: learnedPatterns.length,
     workflowRecords: workflowRecords.length,
+    verifiedPlaybooks: verifiedPlaybooks.length,
     previousRecords: previousRecords.length,
     recordsWritten: intent.mutation.records.length,
     recordsSuperseded: intent.mutation.records.filter((record) => record.supersedes_record_id !== null).length,

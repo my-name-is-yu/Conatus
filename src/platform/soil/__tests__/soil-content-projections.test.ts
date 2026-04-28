@@ -211,6 +211,7 @@ describe("Soil content projections", () => {
       await projectDreamKnowledgeToSoil({
         baseDir,
         learnedPatterns: [],
+        verifiedPlaybooks: [],
         workflowRecords: [],
         clock: fixedClock,
       });
@@ -251,6 +252,7 @@ describe("Soil content projections", () => {
       await projectDreamKnowledgeToSoil({
         baseDir,
         learnedPatterns: [],
+        verifiedPlaybooks: [],
         workflowRecords: [taskOnlyWorkflow],
         clock: fixedClock,
       });
