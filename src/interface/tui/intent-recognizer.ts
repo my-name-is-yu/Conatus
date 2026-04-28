@@ -32,7 +32,7 @@ interface KeywordRule {
 
 const KEYWORD_RULES: KeywordRule[] = [
   {
-    pattern: /^\?(help)?$/i,
+    pattern: /^\/?\?(help)?$/i,
     intent: "help",
   },
   {
@@ -60,7 +60,7 @@ const KEYWORD_RULES: KeywordRule[] = [
     intent: "help",
   },
   {
-    pattern: /^\/dashboard$/i,
+    pattern: /^\/(dashboard|d)$/i,
     intent: "dashboard",
   },
 ];

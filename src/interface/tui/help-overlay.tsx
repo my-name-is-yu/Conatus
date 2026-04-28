@@ -53,6 +53,14 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
             <Text>Show current progress</Text>
           </Box>
           <Box>
+            <Box width={20}><Text color={theme.command} bold>/sessions</Text></Box>
+            <Text>List saved runtime sessions</Text>
+          </Box>
+          <Box>
+            <Box width={20}><Text color={theme.command} bold>/resume</Text></Box>
+            <Text>Resume a saved session</Text>
+          </Box>
+          <Box>
             <Box width={20}><Text color={theme.command} bold>/report</Text></Box>
             <Text>Generate a summary report</Text>
           </Box>
@@ -61,11 +69,19 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
             <Text>List all goals</Text>
           </Box>
           <Box>
-            <Box width={20}><Text color={theme.command} bold>/dashboard</Text></Box>
+            <Box width={20}><Text color={theme.command} bold>/tasks</Text></Box>
+            <Text>List tasks for a goal</Text>
+          </Box>
+          <Box>
+            <Box width={20}><Text color={theme.command} bold>/tend</Text></Box>
+            <Text>Start daemon-backed work from chat</Text>
+          </Box>
+          <Box>
+            <Box width={20}><Text color={theme.command} bold>/dashboard or /d</Text></Box>
             <Text>Toggle dashboard view</Text>
           </Box>
           <Box>
-            <Box width={20}><Text color={theme.command} bold>/help or ?</Text></Box>
+            <Box width={20}><Text color={theme.command} bold>/help or /?</Text></Box>
             <Text>Show this help</Text>
           </Box>
           <Box>
@@ -75,6 +91,10 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
           <Box>
             <Box width={20}><Text color={theme.command} bold>/settings</Text></Box>
             <Text>View and toggle config</Text>
+          </Box>
+          <Box>
+            <Box width={20}><Text color={theme.command} bold>/config</Text></Box>
+            <Text>Show provider configuration</Text>
           </Box>
           <Box>
             <Box width={20}><Text color={theme.command} bold>/permissions</Text></Box>

@@ -25,16 +25,31 @@ describe("TUI app routing helpers", () => {
   it("recognizes ChatRunner-owned slash commands from the TUI surface", () => {
     expect(isChatRunnerOwnedSlashCommand("/resume Work Session")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/sessions")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/title Work Session")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/cleanup --dry-run")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/status")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/status goal-1")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/history saved")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/compact")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/context")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/working-memory")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/goals")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/tasks goal-1")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/task task-1 goal-1")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/track")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/tend")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/config")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/model")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/permissions read-only")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/plugins")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/usage session")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/review")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/fork Follow-up")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/undo")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/retry")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/start goal-1")).toBe(false);
+    expect(isChatRunnerOwnedSlashCommand("/settings")).toBe(false);
+    expect(isChatRunnerOwnedSlashCommand("/dashboard")).toBe(false);
   });
 
   it("derives and clears displayed daemon goal from activeGoals", () => {
