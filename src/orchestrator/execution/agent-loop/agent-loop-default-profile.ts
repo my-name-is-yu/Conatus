@@ -159,6 +159,9 @@ const CHAT_ALLOWED_TOOLS = [
   "kaggle_submission_prepare",
   "kaggle_list_submissions",
   "kaggle_leaderboard_snapshot",
+  "runtime_report_write",
+  "runtime_result_normalize",
+  "workspace_import",
 ] as const;
 
 const REVIEW_ALLOWED_TOOLS = [

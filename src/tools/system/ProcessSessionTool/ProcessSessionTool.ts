@@ -190,6 +190,14 @@ export class ProcessSessionManager {
       .map((record) => this.snapshot(record));
   }
 
+  linkArtifacts(sessionId: string, artifactRefs: string[]): ProcessSessionSnapshot | null {
+    const record = this.sessions.get(sessionId);
+    if (!record) return null;
+    record.artifactRefs = dedupeStrings([...record.artifactRefs, ...artifactRefs]);
+    this.persistSnapshot(record);
+    return this.snapshot(record);
+  }
+
   async stopAll(): Promise<void> {
     await Promise.all([...this.sessions.values()].map(async (record) => {
       if (record.exitCode === null && !record.child.killed) {
@@ -575,6 +583,10 @@ function dedupeByJson(items: unknown[]): unknown[] {
     result.push(item);
   }
   return result;
+}
+
+function dedupeStrings(items: string[]): string[] {
+  return [...new Set(items)];
 }
 
 function relativePulseedPath(filePath: string): string | null {

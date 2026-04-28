@@ -31,6 +31,29 @@ export { SoilPublishTool } from "../execution/SoilPublishTool/SoilPublishTool.js
 export { SoilRebuildTool } from "../execution/SoilRebuildTool/SoilRebuildTool.js";
 export { WebSearchTool, createWebSearchClient } from "../network/WebSearchTool/WebSearchTool.js";
 export type { ISearchClient, SearchResult } from "../network/WebSearchTool/WebSearchTool.js";
+export {
+  LongRunningArtifactRefSchema,
+  LongRunningEvidenceSchema,
+  LongRunningNextActionSchema,
+  LongRunningNextActionTypeSchema,
+  LongRunningResultSchema,
+  LongRunningStatusSchema,
+  RuntimeReportWriteTool,
+  RuntimeResultNormalizeTool,
+  WorkspaceImportTool,
+  type LongRunningArtifactRef,
+  type LongRunningEvidence,
+  type LongRunningNextAction,
+  type LongRunningNextActionType,
+  type LongRunningResult,
+  type LongRunningStatus,
+  type RuntimeReportWriteInput,
+  type RuntimeReportWriteOutput,
+  type RuntimeResultNormalizeInput,
+  type RuntimeResultNormalizeOutput,
+  type WorkspaceImportInput,
+  type WorkspaceImportOutput,
+} from "../runtime/LongRunningRuntimeTools.js";
 export { GitHubReadTool, GitHubPrCreateTool } from "../network/GitHubCliTool/GitHubCliTool.js";
 export { McpListToolsTool, McpCallToolTool } from "../network/McpStdioTool/McpStdioTool.js";
 export { ToolSearchTool } from "../query/ToolSearchTool/ToolSearchTool.js";
