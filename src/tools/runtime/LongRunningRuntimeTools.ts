@@ -12,6 +12,10 @@ import type {
   ToolMetadata,
   ToolResult,
 } from "../types.js";
+import {
+  defaultProcessSessionManager,
+  type ProcessSessionManager,
+} from "../system/ProcessSessionTool/ProcessSessionTool.js";
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -157,6 +161,8 @@ export interface WorkspaceImportOutput {
 }
 
 export class RuntimeReportWriteTool implements ITool<RuntimeReportWriteInput, RuntimeReportWriteOutput> {
+  constructor(private readonly processSessionManager: ProcessSessionManager = defaultProcessSessionManager) {}
+
   readonly metadata: ToolMetadata = {
     name: "runtime_report_write",
     aliases: ["long_running_report_write", "run_report_write"],
@@ -191,7 +197,7 @@ export class RuntimeReportWriteTool implements ITool<RuntimeReportWriteInput, Ru
 
       if (input.process_session_id || result.source.process_session_id) {
         const sessionId = input.process_session_id ?? result.source.process_session_id!;
-        const warning = await linkProcessSessionArtifacts(sessionId, [
+        const warning = await linkProcessSessionArtifacts(this.processSessionManager, sessionId, [
           output.files.summary,
           output.files.result,
           output.files.next_action,
@@ -523,7 +529,7 @@ function normalizeFailures(value: Record<string, unknown>): string[] {
 
 function inferStatus(value: Record<string, unknown>): LongRunningStatus {
   const status = typeof value["status"] === "string" ? value["status"] : null;
-  if (status === "completed" || status === "complete" || status === "success") return "succeeded";
+  if (status === "succeeded" || status === "completed" || status === "complete" || status === "success") return "succeeded";
   if (status === "failed" || status === "error") return "failed";
   if (status === "running") return "running";
   if (status === "timed_out" || status === "timeout") return "timed_out";
@@ -626,7 +632,11 @@ async function resolveArtifactDirectory(runId?: string): Promise<string> {
   return directory;
 }
 
-async function linkProcessSessionArtifacts(sessionId: string, artifactPaths: string[]): Promise<string | null> {
+async function linkProcessSessionArtifacts(
+  processSessionManager: ProcessSessionManager,
+  sessionId: string,
+  artifactPaths: string[],
+): Promise<string | null> {
   try {
     const metadataPath = path.join(getPulseedDirPath(), "runtime", "process-sessions", `${sessionId}.json`);
     const value = await readJson(metadataPath);
@@ -636,6 +646,7 @@ async function linkProcessSessionArtifacts(sessionId: string, artifactPaths: str
       : [];
     const artifactRefs = [...new Set([...existing, ...artifactPaths])];
     await fs.writeFile(metadataPath, `${JSON.stringify({ ...value, artifactRefs }, null, 2)}\n`, "utf8");
+    processSessionManager.linkArtifacts(sessionId, artifactPaths);
     return null;
   } catch (err) {
     return `Could not link artifacts to process session ${sessionId}: ${messageFromError(err)}`;

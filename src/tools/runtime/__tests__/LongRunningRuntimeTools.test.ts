@@ -71,7 +71,7 @@ describe("LongRunningRuntimeTools", () => {
     const startTool = new ProcessSessionStartTool(manager);
     const readTool = new ProcessSessionReadTool(manager);
     const normalizeTool = new RuntimeResultNormalizeTool();
-    const reportTool = new RuntimeReportWriteTool();
+    const reportTool = new RuntimeReportWriteTool(manager);
     const runDir = path.join(tmpHome, "dummy-run");
     const looseMetricsPath = path.join(runDir, "loose-metrics.json");
     const trainLogPath = path.join(runDir, "train.log");
@@ -141,6 +141,13 @@ describe("LongRunningRuntimeTools", () => {
       const reportData = report.data as RuntimeReportWriteOutput;
       await expect(fs.readFile(reportData.files.summary, "utf8")).resolves.toContain("## Next Action");
       await expect(fs.readFile(reportData.files.next_action, "utf8")).resolves.toContain("long-running-next-action-v1");
+      const postLinkRead = await readTool.call({
+        session_id: session.session_id,
+        waitMs: 0,
+        maxChars: 128,
+        consume: false,
+      }, makeContext(tmpHome));
+      expect(postLinkRead.success).toBe(true);
 
       const sidecar = JSON.parse(
         await fs.readFile(path.join(tmpHome, "runtime", "process-sessions", `${session.session_id}.json`), "utf8")
@@ -191,5 +198,36 @@ describe("LongRunningRuntimeTools", () => {
     }, makeContext(tmpHome));
     expect(rejected.success).toBe(false);
     expect(rejected.error).toContain("symlink");
+  });
+
+  it("preserves canonical succeeded status during normalization", async () => {
+    const tool = new RuntimeResultNormalizeTool();
+
+    const normalized = await tool.call({
+      objective: "Accept already-canonical runtime status",
+      value: {
+        status: "succeeded",
+        metrics: {
+          balanced_accuracy: 0.91,
+        },
+      },
+      run_id: "canonical-succeeded-run",
+    }, makeContext(tmpHome));
+
+    expect(normalized.success).toBe(true);
+    const data = normalized.data as RuntimeResultNormalizeOutput;
+    expect(data.result).toMatchObject({
+      status: "succeeded",
+      next_action: expect.objectContaining({
+        type: "continue",
+      }),
+      evidence: [
+        expect.objectContaining({
+          kind: "metric",
+          label: "balanced_accuracy",
+          value: 0.91,
+        }),
+      ],
+    });
   });
 });
