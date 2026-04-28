@@ -183,6 +183,7 @@ describe("LongRunningRuntimeTools", () => {
     const tool = new WorkspaceImportTool();
 
     const imported = await tool.call({
+      overwrite: false,
       source_path: source,
       workspace_id: "demo-workspace",
     }, makeContext(tmpHome));
@@ -193,6 +194,7 @@ describe("LongRunningRuntimeTools", () => {
 
     await fs.symlink(path.join(tmpHome, "outside"), path.join(source, "escape-link"));
     const rejected = await tool.call({
+      overwrite: false,
       source_path: source,
       workspace_id: "demo-workspace-with-link",
     }, makeContext(tmpHome));
@@ -205,6 +207,7 @@ describe("LongRunningRuntimeTools", () => {
 
     const normalized = await tool.call({
       objective: "Accept already-canonical runtime status",
+      profile: "generic",
       value: {
         status: "succeeded",
         metrics: {
