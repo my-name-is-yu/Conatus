@@ -2,6 +2,8 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { ApprovalRequiredEvent } from "../approval-broker.js";
 import type { OutboxStore } from "../store/index.js";
+import { BrowserSessionStore } from "../interactive-automation/index.js";
+import { GuardrailStore } from "../guardrails/index.js";
 
 type ActiveWorkersProvider = () =>
   | Array<Record<string, unknown>>
@@ -13,6 +15,8 @@ export interface EventServerSnapshotData {
   approvals: ApprovalRequiredEvent[];
   active_workers: Array<Record<string, unknown>>;
   last_outbox_seq: number;
+  auth_sessions: Array<Record<string, unknown>>;
+  guardrails: Record<string, unknown> | null;
 }
 
 export class EventServerSnapshotReader {
@@ -23,11 +27,13 @@ export class EventServerSnapshotReader {
     outboxStore?: OutboxStore,
     activeWorkersProvider?: ActiveWorkersProvider
   ): Promise<EventServerSnapshotData> {
-    const [daemon, goals, latestOutbox, activeWorkers] = await Promise.all([
+    const [daemon, goals, latestOutbox, activeWorkers, authSessions, guardrails] = await Promise.all([
       this.readDaemonState(),
       this.readGoalSummaries(),
       outboxStore?.loadLatest() ?? Promise.resolve(null),
       activeWorkersProvider?.() ?? Promise.resolve([]),
+      this.readPendingAuthSessions(),
+      this.readGuardrailSnapshot(),
     ]);
 
     return {
@@ -36,6 +42,50 @@ export class EventServerSnapshotReader {
       approvals: approvalEvents,
       active_workers: activeWorkers,
       last_outbox_seq: latestOutbox?.seq ?? 0,
+      auth_sessions: authSessions,
+      guardrails,
+    };
+  }
+
+  private runtimeRoot(): string {
+    return path.join(path.dirname(this.eventsDir), "runtime");
+  }
+
+  private async readPendingAuthSessions(): Promise<Array<Record<string, unknown>>> {
+    const store = new BrowserSessionStore(this.runtimeRoot());
+    const sessions = await store.listPendingAuth();
+    return sessions.map((session) => ({
+      session_id: session.session_id,
+      provider_id: session.provider_id,
+      service_key: session.service_key,
+      workspace: session.workspace,
+      actor_key: session.actor_key,
+      state: session.state,
+      updated_at: session.updated_at,
+    }));
+  }
+
+  private async readGuardrailSnapshot(): Promise<Record<string, unknown> | null> {
+    const store = new GuardrailStore(this.runtimeRoot());
+    const [breakers, backpressure] = await Promise.all([
+      store.listBreakers(),
+      store.loadBackpressureSnapshot(),
+    ]);
+    const openBreakers = breakers
+      .filter((breaker) => breaker.state === "open" || breaker.state === "paused" || breaker.state === "half_open")
+      .map((breaker) => ({
+        key: breaker.key,
+        provider_id: breaker.provider_id,
+        service_key: breaker.service_key,
+        state: breaker.state,
+        failure_count: breaker.failure_count,
+        cooldown_until: breaker.cooldown_until ?? null,
+        updated_at: breaker.updated_at,
+      }));
+    return {
+      open_breakers: openBreakers,
+      backpressure_active: backpressure?.active ?? [],
+      backpressure_throttled: backpressure?.throttled ?? [],
     };
   }
 

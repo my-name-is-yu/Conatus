@@ -1,5 +1,13 @@
 import { z } from "zod";
 import type { InteractiveAutomationCapability, InteractiveAutomationProviderFamily, InteractiveAutomationRegistry } from "../../runtime/interactive-automation/index.js";
+import {
+  BrowserSessionStore,
+  type BrowserSessionScope,
+} from "../../runtime/interactive-automation/index.js";
+import {
+  BackpressureController,
+  CircuitBreakerController,
+} from "../../runtime/guardrails/index.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolDescriptionContext, ToolMetadata, ToolResult } from "../types.js";
 
 const TAGS = ["automation", "interactive"];
@@ -69,6 +77,12 @@ export const BrowserGetStateInputSchema = ProviderInputSchema.extend({
   sessionId: z.string().optional(),
 });
 export type BrowserGetStateInput = z.infer<typeof BrowserGetStateInputSchema>;
+
+export interface BrowserWorkflowRuntimeDeps {
+  browserSessionStore?: BrowserSessionStore;
+  circuitBreaker?: CircuitBreakerController;
+  backpressure?: BackpressureController;
+}
 
 abstract class AutomationTool<TInput> implements ITool<TInput> {
   abstract readonly metadata: ToolMetadata;
@@ -420,6 +434,14 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
   };
   readonly inputSchema = BrowserRunWorkflowInputSchema;
 
+  constructor(
+    registry: InteractiveAutomationRegistry,
+    policy: InteractiveAutomationToolPolicy = DEFAULT_INTERACTIVE_AUTOMATION_TOOL_POLICY,
+    private readonly runtimeDeps: BrowserWorkflowRuntimeDeps = {},
+  ) {
+    super(registry, policy);
+  }
+
   description(): string {
     return "Ask the configured browser automation provider to run a browser workflow.";
   }
@@ -430,14 +452,83 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
     const unavailable = await this.availableOrFail(provider, startTime);
     if (unavailable) return unavailable;
     if (!provider?.runBrowserWorkflow) return this.fail(`${provider?.id ?? "provider"} does not support browser workflows`, startTime);
-    const result = await provider.runBrowserWorkflow({
-      task: input.task,
-      startUrl: input.startUrl,
-      sessionId: input.sessionId,
-    });
-    return result.success
-      ? this.success({ providerId: provider.id, result }, result.summary, startTime)
-      : this.fail(result.error ?? result.summary, startTime);
+    const scope = buildBrowserScope(provider.id, input, _context);
+    const resolvedSessionId = input.sessionId
+      ?? await this.resolveSessionId(scope);
+    const breakerDecision = this.runtimeDeps.circuitBreaker
+      ? await this.runtimeDeps.circuitBreaker.beforeRun(provider.id, scope.serviceKey)
+      : { allowed: true as const };
+    if (!breakerDecision.allowed) {
+      return this.fail(`${provider.id} is paused by guardrail: ${breakerDecision.reason ?? "circuit breaker open"}`, startTime);
+    }
+
+    const runKey = `${provider.id}:${_context.callId ?? _context.sessionId ?? Date.now()}:${scope.serviceKey}`;
+    const permit = this.runtimeDeps.backpressure
+      ? await this.runtimeDeps.backpressure.acquire({
+        providerId: provider.id,
+        serviceKey: scope.serviceKey,
+        runKey,
+      })
+      : { ok: true as const };
+    if (!permit.ok) {
+      return this.fail(`${provider.id} backpressure active: ${permit.reason}`, startTime);
+    }
+
+    try {
+      const result = await provider.runBrowserWorkflow({
+        task: input.task,
+        startUrl: input.startUrl,
+        sessionId: resolvedSessionId,
+      });
+
+      if (result.success) {
+        if (this.runtimeDeps.browserSessionStore && result.sessionId) {
+          await this.runtimeDeps.browserSessionStore.recordAuthenticated({
+            sessionId: result.sessionId,
+            providerId: provider.id,
+            serviceKey: scope.serviceKey,
+            workspace: scope.workspace,
+            actorKey: scope.actorKey,
+            metadata: input.startUrl ? { startUrl: input.startUrl } : undefined,
+          });
+        }
+        await this.runtimeDeps.circuitBreaker?.recordSuccess(provider.id, scope.serviceKey);
+        return this.success({ providerId: provider.id, result }, result.summary, startTime);
+      }
+
+      if (result.authRequired && result.sessionId && this.runtimeDeps.browserSessionStore) {
+        await this.runtimeDeps.browserSessionStore.recordAuthRequired({
+          sessionId: result.sessionId,
+          providerId: provider.id,
+          serviceKey: scope.serviceKey,
+          workspace: scope.workspace,
+          actorKey: scope.actorKey,
+          failureCode: result.failureCode ?? null,
+          failureMessage: result.error ?? result.summary,
+          metadata: input.startUrl ? { startUrl: input.startUrl } : undefined,
+        });
+        const approved = await requestAuthHandoffApproval(_context, provider.id, scope, input.task, result.sessionId);
+        if (!approved) {
+          return this.fail(`Authentication handoff denied for ${scope.serviceKey}.`, startTime);
+        }
+        return this.fail(
+          `Authentication handoff recorded for ${scope.serviceKey} via ${provider.id}. Complete login in session ${result.sessionId} and rerun the workflow.`,
+          startTime,
+        );
+      }
+
+      if (result.failureCode && this.runtimeDeps.circuitBreaker) {
+        await this.runtimeDeps.circuitBreaker.recordFailure({
+          providerId: provider.id,
+          serviceKey: scope.serviceKey,
+          failureCode: result.failureCode,
+          failureMessage: result.error ?? result.summary,
+        });
+      }
+      return this.fail(result.error ?? result.summary, startTime);
+    } finally {
+      await this.runtimeDeps.backpressure?.release(runKey);
+    }
   }
 
   async checkPermissions(input: BrowserRunWorkflowInput): Promise<PermissionCheckResult> {
@@ -447,6 +538,56 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
   isConcurrencySafe(_input: BrowserRunWorkflowInput): boolean {
     return false;
   }
+
+  private async resolveSessionId(scope: BrowserSessionScope): Promise<string | undefined> {
+    if (!this.runtimeDeps.browserSessionStore) return undefined;
+    const latest = await this.runtimeDeps.browserSessionStore.findLatest(scope, ["authenticated"]);
+    return latest?.session_id;
+  }
+}
+
+function buildBrowserScope(
+  providerId: string,
+  input: BrowserRunWorkflowInput,
+  context: ToolCallContext,
+): BrowserSessionScope {
+  const serviceKey = browserServiceKey(input.startUrl);
+  return {
+    providerId,
+    serviceKey,
+    workspace: context.cwd,
+    actorKey: context.conversationSessionId ?? context.sessionId ?? context.goalId,
+  };
+}
+
+function browserServiceKey(startUrl?: string): string {
+  if (!startUrl) {
+    return "browser_workflow";
+  }
+  try {
+    return new URL(startUrl).hostname.toLowerCase();
+  } catch {
+    return "browser_workflow";
+  }
+}
+
+async function requestAuthHandoffApproval(
+  context: ToolCallContext,
+  providerId: string,
+  scope: BrowserSessionScope,
+  task: string,
+  sessionId: string,
+): Promise<boolean> {
+  const request = {
+    toolName: "browser_run_workflow",
+    input: { providerId, serviceKey: scope.serviceKey, sessionId, task },
+    reason: `Authentication handoff required for ${scope.serviceKey} via ${providerId}. Resume browser session ${sessionId} after login.`,
+    permissionLevel: "write_remote" as const,
+    isDestructive: false,
+    reversibility: "unknown" as const,
+  };
+  await context.onApprovalRequested?.(request);
+  return context.approvalFn(request);
 }
 
 export class BrowserGetStateTool extends AutomationTool<BrowserGetStateInput> {

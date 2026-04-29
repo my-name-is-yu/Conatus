@@ -161,4 +161,19 @@ describe("providers", () => {
       }),
     );
   });
+
+  it("classifies Manus authentication failures for browser workflows", async () => {
+    const fetchMock = vi.fn(async () => new Response("login required", { status: 401 }));
+    const provider = new ManusBrowserProvider({
+      apiKey: "test-key",
+      baseUrl: "https://manus.test",
+      fetch: fetchMock,
+    });
+
+    await expect(provider.runBrowserWorkflow({ task: "Open dashboard" })).resolves.toMatchObject({
+      success: false,
+      authRequired: true,
+      failureCode: "auth_required",
+    });
+  });
 });

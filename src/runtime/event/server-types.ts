@@ -21,6 +21,8 @@ export interface EventServerSnapshot {
   approvals: ApprovalRequiredEvent[];
   active_workers: Array<Record<string, unknown>>;
   last_outbox_seq: number;
+  auth_sessions?: unknown[];
+  guardrails?: Record<string, unknown> | null;
 }
 
 export type ActiveWorkersProvider = () =>

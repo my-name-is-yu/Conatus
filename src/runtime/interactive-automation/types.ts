@@ -94,6 +94,17 @@ export interface AutomationActionResult {
   error?: string;
 }
 
+export type AutomationFailureCode =
+  | "auth_required"
+  | "auth_expired"
+  | "permission_denied"
+  | "provider_unavailable"
+  | "rate_limited"
+  | "site_blocked"
+  | "navigation_failed"
+  | "verification_failed"
+  | "unknown_automation_error";
+
 export interface ResearchWebInput {
   query: string;
   maxResults?: number;
@@ -141,6 +152,9 @@ export interface BrowserWorkflowResult {
   sessionId?: string;
   data?: unknown;
   error?: string;
+  failureCode?: AutomationFailureCode;
+  authRequired?: boolean;
+  serviceKey?: string;
 }
 
 export interface InteractiveAutomationProvider {

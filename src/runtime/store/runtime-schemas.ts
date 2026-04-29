@@ -146,6 +146,71 @@ export const RuntimeHealthSnapshotSchema = z.object({
 });
 export type RuntimeHealthSnapshot = z.infer<typeof RuntimeHealthSnapshotSchema>;
 
+export const BrowserAutomationSessionStateSchema = z.enum([
+  "fresh",
+  "authenticated",
+  "auth_required",
+  "expired",
+  "blocked",
+  "unavailable",
+]);
+export type BrowserAutomationSessionState = z.infer<typeof BrowserAutomationSessionStateSchema>;
+
+export const BrowserAutomationSessionRecordSchema = z.object({
+  session_id: z.string(),
+  provider_id: z.string(),
+  service_key: z.string(),
+  workspace: z.string(),
+  actor_key: z.string(),
+  state: BrowserAutomationSessionStateSchema,
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+  last_auth_at: z.string().datetime().nullable().optional(),
+  expires_at: z.string().datetime().nullable().optional(),
+  last_failure_code: z.string().nullable().optional(),
+  last_failure_message: z.string().nullable().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+export type BrowserAutomationSessionRecord = z.infer<typeof BrowserAutomationSessionRecordSchema>;
+
+export const CircuitBreakerStateSchema = z.enum(["closed", "open", "half_open", "paused"]);
+export type CircuitBreakerState = z.infer<typeof CircuitBreakerStateSchema>;
+
+export const CircuitBreakerRecordSchema = z.object({
+  key: z.string(),
+  provider_id: z.string(),
+  service_key: z.string(),
+  state: CircuitBreakerStateSchema,
+  failure_count: z.number().int().nonnegative(),
+  last_failure_code: z.string().nullable().optional(),
+  last_failure_message: z.string().nullable().optional(),
+  last_failure_at: z.string().datetime().nullable().optional(),
+  opened_at: z.string().datetime().nullable().optional(),
+  cooldown_until: z.string().datetime().nullable().optional(),
+  updated_at: z.string().datetime(),
+});
+export type CircuitBreakerRecord = z.infer<typeof CircuitBreakerRecordSchema>;
+
+export const BackpressureLeaseSchema = z.object({
+  provider_id: z.string(),
+  service_key: z.string(),
+  run_key: z.string(),
+  acquired_at: z.string().datetime(),
+});
+export type BackpressureLease = z.infer<typeof BackpressureLeaseSchema>;
+
+export const BackpressureSnapshotSchema = z.object({
+  updated_at: z.string().datetime(),
+  active: z.array(BackpressureLeaseSchema),
+  throttled: z.array(z.object({
+    provider_id: z.string(),
+    service_key: z.string(),
+    reason: z.string(),
+    at: z.string().datetime(),
+  })).default([]),
+});
+export type BackpressureSnapshot = z.infer<typeof BackpressureSnapshotSchema>;
+
 export function summarizeRuntimeHealthStatus(
   components: Record<string, RuntimeHealthStatus>
 ): RuntimeHealthStatus {

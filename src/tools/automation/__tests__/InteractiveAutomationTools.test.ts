@@ -9,9 +9,15 @@ import { ToolRegistry } from "../../registry.js";
 import type { ToolCallContext } from "../../types.js";
 import { createBuiltinTools } from "../../builtin/index.js";
 import {
+  BrowserSessionStore,
   InteractiveAutomationRegistry,
   type InteractiveAutomationProvider,
 } from "../../../runtime/interactive-automation/index.js";
+import {
+  BackpressureController,
+  CircuitBreakerController,
+  GuardrailStore,
+} from "../../../runtime/guardrails/index.js";
 import {
   BrowserRunWorkflowTool,
   DesktopClickTool,
@@ -221,6 +227,270 @@ describe("interactive automation tools", () => {
       success: true,
       data: { providerId: "browser-test", result: { sessionId: "s1" } },
     });
+  });
+
+  it("records auth handoff requests for browser workflows that need login", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-auth-"));
+    try {
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-auth" },
+      });
+      registry.register({
+        id: "browser-auth",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-auth",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow: async () => ({
+          success: false,
+          summary: "login required",
+          error: "login required",
+          sessionId: "sess-auth",
+          authRequired: true,
+          failureCode: "auth_required",
+        }),
+      });
+      const store = new BrowserSessionStore(tmpRuntime);
+      const tool = new BrowserRunWorkflowTool(registry, undefined, {
+        browserSessionStore: store,
+        circuitBreaker: new CircuitBreakerController(new GuardrailStore(tmpRuntime)),
+        backpressure: new BackpressureController(new GuardrailStore(tmpRuntime)),
+      });
+      const approvalFn = vi.fn().mockResolvedValue(true);
+
+      const result = await tool.call(
+        { task: "Check dashboard", startUrl: "https://mail.google.com" },
+        makeContext({ approvalFn, conversationSessionId: "chat-1" }),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Authentication handoff recorded");
+      expect(approvalFn).toHaveBeenCalledWith(expect.objectContaining({
+        reason: expect.stringContaining("Authentication handoff required"),
+      }));
+      await expect(store.listPendingAuth()).resolves.toEqual([
+        expect.objectContaining({
+          session_id: "sess-auth",
+          provider_id: "browser-auth",
+          service_key: "mail.google.com",
+          actor_key: "chat-1",
+          state: "auth_required",
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses the latest authenticated browser session and ignores auth_required stale sessions", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-session-"));
+    try {
+      const store = new BrowserSessionStore(tmpRuntime);
+      await store.recordAuthenticated({
+        sessionId: "sess-good",
+        providerId: "browser-reuse",
+        serviceKey: "app.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-2",
+      });
+      await store.recordAuthRequired({
+        sessionId: "sess-stale",
+        providerId: "browser-reuse",
+        serviceKey: "app.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-2",
+        failureCode: "auth_required",
+        failureMessage: "login again",
+      });
+
+      const runBrowserWorkflow = vi.fn().mockResolvedValue({
+        success: true,
+        summary: "workflow done",
+        sessionId: "sess-good",
+      });
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-reuse" },
+      });
+      registry.register({
+        id: "browser-reuse",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-reuse",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow,
+      });
+
+      const tool = new BrowserRunWorkflowTool(registry, undefined, {
+        browserSessionStore: store,
+      });
+
+      await expect(
+        tool.call(
+          { task: "Resume app", startUrl: "https://app.example.com/home" },
+          makeContext({ conversationSessionId: "chat-2" }),
+        ),
+      ).resolves.toMatchObject({
+        success: true,
+        data: { result: { sessionId: "sess-good" } },
+      });
+      expect(runBrowserWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: "sess-good",
+      }));
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("opens a circuit breaker after repeated rate limit failures", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-breaker-"));
+    try {
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-breaker" },
+      });
+      const runBrowserWorkflow = vi.fn().mockResolvedValue({
+        success: false,
+        summary: "rate limited",
+        error: "rate limited",
+        failureCode: "rate_limited",
+      });
+      registry.register({
+        id: "browser-breaker",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-breaker",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow,
+      });
+      const guardrailStore = new GuardrailStore(tmpRuntime);
+      const tool = new BrowserRunWorkflowTool(registry, undefined, {
+        circuitBreaker: new CircuitBreakerController(guardrailStore),
+      });
+
+      await tool.call({ task: "Try once", startUrl: "https://api.example.com" }, makeContext());
+      await tool.call({ task: "Try twice", startUrl: "https://api.example.com" }, makeContext());
+      const blocked = await tool.call({ task: "Try thrice", startUrl: "https://api.example.com" }, makeContext());
+
+      expect(blocked.success).toBe(false);
+      expect(blocked.error).toContain("circuit breaker open");
+      expect(runBrowserWorkflow).toHaveBeenCalledTimes(2);
+      await expect(guardrailStore.listBreakers()).resolves.toEqual([
+        expect.objectContaining({
+          provider_id: "browser-breaker",
+          service_key: "api.example.com",
+          state: "open",
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("wires browser auth handoff and guardrails through createBuiltinTools with a production-style runtime root", async () => {
+    const tmpBaseDir = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-factory-"));
+    try {
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-factory" },
+      });
+      const runBrowserWorkflow = vi.fn()
+        .mockResolvedValueOnce({
+          success: false,
+          summary: "login required",
+          error: "login required",
+          sessionId: "sess-factory",
+          authRequired: true,
+          failureCode: "auth_required",
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          summary: "rate limited",
+          error: "rate limited",
+          failureCode: "rate_limited",
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          summary: "rate limited",
+          error: "rate limited",
+          failureCode: "rate_limited",
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          summary: "rate limited",
+          error: "rate limited",
+          failureCode: "rate_limited",
+        });
+      registry.register({
+        id: "browser-factory",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-factory",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow,
+      });
+
+      const tool = createBuiltinTools({
+        stateManager: { getBaseDir: () => tmpBaseDir } as never,
+        interactiveAutomationRegistry: registry,
+      }).find((candidate) => candidate.metadata.name === "browser_run_workflow") as BrowserRunWorkflowTool | undefined;
+
+      expect(tool).toBeDefined();
+
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const first = await tool!.call(
+        { task: "Open mail", startUrl: "https://mail.google.com" },
+        makeContext({ approvalFn, conversationSessionId: "chat-factory" }),
+      );
+      expect(first.success).toBe(false);
+      expect(first.error).toContain("Authentication handoff recorded");
+
+      const runtimeRoot = path.join(tmpBaseDir, "runtime");
+      const sessionStore = new BrowserSessionStore(runtimeRoot);
+      await expect(sessionStore.listPendingAuth()).resolves.toEqual([
+        expect.objectContaining({
+          session_id: "sess-factory",
+          provider_id: "browser-factory",
+          service_key: "mail.google.com",
+          actor_key: "chat-factory",
+          state: "auth_required",
+        }),
+      ]);
+
+      await tool!.call({ task: "Retry one", startUrl: "https://api.example.com" }, makeContext());
+      await tool!.call({ task: "Retry two", startUrl: "https://api.example.com" }, makeContext());
+      const blocked = await tool!.call({ task: "Retry three", startUrl: "https://api.example.com" }, makeContext());
+
+      expect(blocked.success).toBe(false);
+      expect(blocked.error).toContain("circuit breaker open");
+      expect(runBrowserWorkflow).toHaveBeenCalledTimes(3);
+      await expect(new GuardrailStore(runtimeRoot).listBreakers()).resolves.toEqual([
+        expect.objectContaining({
+          provider_id: "browser-factory",
+          service_key: "api.example.com",
+          state: "open",
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpBaseDir, { recursive: true, force: true });
+    }
   });
 
   it("registers automation tools for enabled production defaults and injected registries", async () => {

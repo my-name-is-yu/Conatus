@@ -44,6 +44,9 @@ import type { ChatRunnerDeps, ChatRunResult, RuntimeControlChatContext } from ".
 import type { SelectedChatRoute } from "./ingress-router.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
+import { BrowserSessionStore } from "../../runtime/interactive-automation/index.js";
+import { GuardrailStore } from "../../runtime/guardrails/index.js";
+import * as path from "node:path";
 
 export const COMMAND_HELP = `Available commands:
 Session
@@ -402,14 +405,47 @@ export class ChatRunnerCommandHandler {
     ]);
     const active = this.activeGoals(goals);
     const runtimeStatus = formatRuntimeStatus(runtimeSnapshot);
+    const guardrailStatus = await this.formatGuardrailStatus();
+    const statusSuffix = guardrailStatus ? `\n\n${guardrailStatus}` : "";
     if (active.length === 0) {
-      return { success: true, output: `No active goals found.\n\n${runtimeStatus}`, elapsed_ms: Date.now() - start };
+      return { success: true, output: `No active goals found.\n\n${runtimeStatus}${statusSuffix}`, elapsed_ms: Date.now() - start };
     }
     return {
       success: true,
-      output: `Active goals:\n${active.map((goal) => this.formatGoalLine(goal)).join("\n")}\n\n${runtimeStatus}`,
+      output: `Active goals:\n${active.map((goal) => this.formatGoalLine(goal)).join("\n")}\n\n${runtimeStatus}${statusSuffix}`,
       elapsed_ms: Date.now() - start,
     };
+  }
+
+  private async formatGuardrailStatus(): Promise<string | null> {
+    const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
+    const [pendingAuth, breakers, backpressure] = await Promise.all([
+      new BrowserSessionStore(runtimeRoot).listPendingAuth(),
+      new GuardrailStore(runtimeRoot).listBreakers(),
+      new GuardrailStore(runtimeRoot).loadBackpressureSnapshot(),
+    ]);
+    const lines: string[] = [];
+    if (pendingAuth.length > 0) {
+      lines.push("Auth handoffs pending:");
+      for (const session of pendingAuth.slice(0, 5)) {
+        lines.push(`- ${session.service_key} via ${session.provider_id} [${session.state}] session ${session.session_id}`);
+      }
+    }
+    const openBreakers = breakers.filter((breaker) =>
+      breaker.state === "open" || breaker.state === "paused" || breaker.state === "half_open"
+    );
+    if (openBreakers.length > 0) {
+      if (lines.length > 0) lines.push("");
+      lines.push("Guardrails:");
+      for (const breaker of openBreakers.slice(0, 5)) {
+        lines.push(`- breaker ${breaker.provider_id}/${breaker.service_key}: ${breaker.state} (failures ${breaker.failure_count})`);
+      }
+    }
+    if ((backpressure?.active.length ?? 0) > 0) {
+      if (lines.length > 0) lines.push("");
+      lines.push(`Backpressure active: ${backpressure?.active.length ?? 0} browser workflow(s) in flight`);
+    }
+    return lines.length > 0 ? lines.join("\n") : null;
   }
 
   private async handleGoals(start: number): Promise<ChatRunResult> {
