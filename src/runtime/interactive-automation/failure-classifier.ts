@@ -20,6 +20,13 @@ export function classifyAutomationFailure(params: {
   }
 
   const status = params.status ?? 0;
+  const error = (params.error ?? "").toLowerCase();
+  if (error.includes("expired") && (error.includes("session") || error.includes("auth"))) {
+    return { failureCode: "auth_expired", authRequired: true, retryable: false };
+  }
+  if (error.includes("login") || error.includes("sign in") || error.includes("authenticate")) {
+    return { failureCode: "auth_required", authRequired: true, retryable: false };
+  }
   if (status === 401) {
     return { failureCode: "auth_required", authRequired: true, retryable: false };
   }
@@ -33,13 +40,6 @@ export function classifyAutomationFailure(params: {
     return { failureCode: "provider_unavailable", authRequired: false, retryable: true };
   }
 
-  const error = (params.error ?? "").toLowerCase();
-  if (error.includes("login") || error.includes("sign in") || error.includes("authenticate")) {
-    return { failureCode: "auth_required", authRequired: true, retryable: false };
-  }
-  if (error.includes("expired") && (error.includes("session") || error.includes("auth"))) {
-    return { failureCode: "auth_expired", authRequired: true, retryable: false };
-  }
   if (error.includes("rate limit") || error.includes("too many requests")) {
     return { failureCode: "rate_limited", authRequired: false, retryable: true };
   }

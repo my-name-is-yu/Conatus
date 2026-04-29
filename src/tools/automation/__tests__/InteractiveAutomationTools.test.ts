@@ -268,8 +268,14 @@ describe("interactive automation tools", () => {
         makeContext({ approvalFn, conversationSessionId: "chat-1" }),
       );
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("Authentication handoff recorded");
+      expect(result.success).toBe(true);
+      expect(result.summary).toContain("Authentication handoff recorded");
+      expect(result.data).toEqual(expect.objectContaining({
+        status: "auth_handoff_pending",
+        sessionId: "sess-auth",
+        serviceKey: "mail.google.com",
+      }));
+      expect(result.contextModifier).toContain("Do not retry this browser workflow");
       expect(approvalFn).toHaveBeenCalledWith(expect.objectContaining({
         reason: expect.stringContaining("Authentication handoff required"),
       }));
@@ -459,8 +465,12 @@ describe("interactive automation tools", () => {
         { task: "Open mail", startUrl: "https://mail.google.com" },
         makeContext({ approvalFn, conversationSessionId: "chat-factory" }),
       );
-      expect(first.success).toBe(false);
-      expect(first.error).toContain("Authentication handoff recorded");
+      expect(first.success).toBe(true);
+      expect(first.summary).toContain("Authentication handoff recorded");
+      expect(first.data).toEqual(expect.objectContaining({
+        status: "auth_handoff_pending",
+        sessionId: "sess-factory",
+      }));
 
       const runtimeRoot = path.join(tmpBaseDir, "runtime");
       const sessionStore = new BrowserSessionStore(runtimeRoot);

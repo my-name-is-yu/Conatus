@@ -20,7 +20,10 @@ export interface EventServerSnapshotData {
 }
 
 export class EventServerSnapshotReader {
-  constructor(private readonly eventsDir: string) {}
+  constructor(
+    private readonly eventsDir: string,
+    private readonly configuredRuntimeRoot?: string,
+  ) {}
 
   async buildSnapshot(
     approvalEvents: ApprovalRequiredEvent[],
@@ -48,7 +51,7 @@ export class EventServerSnapshotReader {
   }
 
   private runtimeRoot(): string {
-    return path.join(path.dirname(this.eventsDir), "runtime");
+    return this.configuredRuntimeRoot ?? path.join(path.dirname(this.eventsDir), "runtime");
   }
 
   private async readPendingAuthSessions(): Promise<Array<Record<string, unknown>>> {

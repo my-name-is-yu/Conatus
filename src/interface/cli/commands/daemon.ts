@@ -294,7 +294,11 @@ export async function cmdStart(
   // Create EventServer for event-driven wake-ups and SSE clients.
   const eventServer = new EventServer(
     deps.driveSystem,
-    { port: resolvedDaemonConfig.event_server_port, eventsDir: getEventsDir(daemonBaseDir) },
+    {
+      port: resolvedDaemonConfig.event_server_port,
+      eventsDir: getEventsDir(daemonBaseDir),
+      runtimeRoot: resolveDaemonRuntimeRoot(daemonBaseDir, resolvedDaemonConfig.runtime_root),
+    },
     logger
   );
   const gateway = new IngressGateway(logger);

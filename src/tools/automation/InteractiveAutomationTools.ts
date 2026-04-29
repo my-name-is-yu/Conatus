@@ -511,10 +511,18 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
         if (!approved) {
           return this.fail(`Authentication handoff denied for ${scope.serviceKey}.`, startTime);
         }
-        return this.fail(
-          `Authentication handoff recorded for ${scope.serviceKey} via ${provider.id}. Complete login in session ${result.sessionId} and rerun the workflow.`,
-          startTime,
-        );
+        return {
+          success: true,
+          data: {
+            providerId: provider.id,
+            status: "auth_handoff_pending",
+            serviceKey: scope.serviceKey,
+            sessionId: result.sessionId,
+          },
+          summary: `Authentication handoff recorded for ${scope.serviceKey} via ${provider.id}.`,
+          contextModifier: `Authentication handoff is pending for ${scope.serviceKey} via ${provider.id} in session ${result.sessionId}. Do not retry this browser workflow until a human completes login and then resume with that same session.`,
+          durationMs: Date.now() - startTime,
+        };
       }
 
       if (result.failureCode && this.runtimeDeps.circuitBreaker) {

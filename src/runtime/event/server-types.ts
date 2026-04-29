@@ -7,6 +7,7 @@ export interface EventServerConfig {
   host?: string;
   port?: number;
   eventsDir?: string;
+  runtimeRoot?: string;
   stateManager?: StateManager;
   triggerMapper?: TriggerMapper;
   approvalBroker?: ApprovalBroker;

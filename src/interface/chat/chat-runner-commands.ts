@@ -43,6 +43,7 @@ import { formatRoute, formatRuntimeSessionsList, formatRuntimeStatus } from "./c
 import type { ChatRunnerDeps, ChatRunResult, RuntimeControlChatContext } from "./chat-runner.js";
 import type { SelectedChatRoute } from "./ingress-router.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
+import type { DaemonSnapshot } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import { BrowserSessionStore } from "../../runtime/interactive-automation/index.js";
 import { GuardrailStore } from "../../runtime/guardrails/index.js";
@@ -405,7 +406,8 @@ export class ChatRunnerCommandHandler {
     ]);
     const active = this.activeGoals(goals);
     const runtimeStatus = formatRuntimeStatus(runtimeSnapshot);
-    const guardrailStatus = await this.formatGuardrailStatus();
+    const daemonSnapshot = await this.loadDaemonSnapshot();
+    const guardrailStatus = await this.formatGuardrailStatus(daemonSnapshot);
     const statusSuffix = guardrailStatus ? `\n\n${guardrailStatus}` : "";
     if (active.length === 0) {
       return { success: true, output: `No active goals found.\n\n${runtimeStatus}${statusSuffix}`, elapsed_ms: Date.now() - start };
@@ -417,35 +419,80 @@ export class ChatRunnerCommandHandler {
     };
   }
 
-  private async formatGuardrailStatus(): Promise<string | null> {
-    const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
-    const [pendingAuth, breakers, backpressure] = await Promise.all([
-      new BrowserSessionStore(runtimeRoot).listPendingAuth(),
-      new GuardrailStore(runtimeRoot).listBreakers(),
-      new GuardrailStore(runtimeRoot).loadBackpressureSnapshot(),
-    ]);
+  private async loadDaemonSnapshot(): Promise<DaemonSnapshot | null> {
+    if (!this.host.deps.daemonClient) return null;
+    try {
+      return await this.host.deps.daemonClient.getSnapshot();
+    } catch {
+      return null;
+    }
+  }
+
+  private async formatGuardrailStatus(snapshot?: DaemonSnapshot | null): Promise<string | null> {
+    const remoteAuthSessions = Array.isArray(snapshot?.auth_sessions) ? snapshot.auth_sessions : null;
+    const remoteGuardrails = snapshot?.guardrails && typeof snapshot.guardrails === "object"
+      ? snapshot.guardrails
+      : null;
+    const pendingAuth = remoteAuthSessions ?? await this.loadPendingAuthSessionsFromRuntime();
+    const { openBreakers, backpressureActiveCount } = remoteGuardrails
+      ? this.extractGuardrailSummaryFromSnapshot(remoteGuardrails)
+      : await this.loadGuardrailsFromRuntime();
     const lines: string[] = [];
     if (pendingAuth.length > 0) {
       lines.push("Auth handoffs pending:");
       for (const session of pendingAuth.slice(0, 5)) {
-        lines.push(`- ${session.service_key} via ${session.provider_id} [${session.state}] session ${session.session_id}`);
+        const record = session as Record<string, unknown>;
+        lines.push(`- ${String(record["service_key"] ?? "unknown")} via ${String(record["provider_id"] ?? "unknown")} [${String(record["state"] ?? "unknown")}] session ${String(record["session_id"] ?? "unknown")}`);
       }
     }
-    const openBreakers = breakers.filter((breaker) =>
-      breaker.state === "open" || breaker.state === "paused" || breaker.state === "half_open"
-    );
     if (openBreakers.length > 0) {
       if (lines.length > 0) lines.push("");
       lines.push("Guardrails:");
       for (const breaker of openBreakers.slice(0, 5)) {
-        lines.push(`- breaker ${breaker.provider_id}/${breaker.service_key}: ${breaker.state} (failures ${breaker.failure_count})`);
+        const record = breaker as Record<string, unknown>;
+        lines.push(`- breaker ${String(record["provider_id"] ?? "unknown")}/${String(record["service_key"] ?? "unknown")}: ${String(record["state"] ?? "unknown")} (failures ${String(record["failure_count"] ?? "0")})`);
       }
     }
-    if ((backpressure?.active.length ?? 0) > 0) {
+    if (backpressureActiveCount > 0) {
       if (lines.length > 0) lines.push("");
-      lines.push(`Backpressure active: ${backpressure?.active.length ?? 0} browser workflow(s) in flight`);
+      lines.push(`Backpressure active: ${backpressureActiveCount} browser workflow(s) in flight`);
     }
     return lines.length > 0 ? lines.join("\n") : null;
+  }
+
+  private async loadPendingAuthSessionsFromRuntime(): Promise<Array<Record<string, unknown>>> {
+    const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
+    return new BrowserSessionStore(runtimeRoot).listPendingAuth() as Promise<Array<Record<string, unknown>>>;
+  }
+
+  private async loadGuardrailsFromRuntime(): Promise<{
+    openBreakers: Array<Record<string, unknown>>;
+    backpressureActiveCount: number;
+  }> {
+    const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
+    const [breakers, backpressure] = await Promise.all([
+      new GuardrailStore(runtimeRoot).listBreakers(),
+      new GuardrailStore(runtimeRoot).loadBackpressureSnapshot(),
+    ]);
+    return {
+      openBreakers: breakers.filter((breaker) =>
+        breaker.state === "open" || breaker.state === "paused" || breaker.state === "half_open"
+      ) as Array<Record<string, unknown>>,
+      backpressureActiveCount: backpressure?.active.length ?? 0,
+    };
+  }
+
+  private extractGuardrailSummaryFromSnapshot(guardrails: Record<string, unknown>): {
+    openBreakers: Array<Record<string, unknown>>;
+    backpressureActiveCount: number;
+  } {
+    const openBreakers = Array.isArray(guardrails["open_breakers"])
+      ? guardrails["open_breakers"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      : [];
+    const backpressureActiveCount = Array.isArray(guardrails["backpressure_active"])
+      ? guardrails["backpressure_active"].length
+      : 0;
+    return { openBreakers, backpressureActiveCount };
   }
 
   private async handleGoals(start: number): Promise<ChatRunResult> {
