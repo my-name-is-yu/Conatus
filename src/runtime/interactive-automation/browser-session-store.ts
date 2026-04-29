@@ -60,6 +60,7 @@ export class BrowserSessionStore {
         && record.workspace === scope.workspace
         && record.actor_key === scope.actorKey
         && states.includes(record.state)
+        && !isExpired(record.expires_at)
       )
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     return matches[0] ?? null;
@@ -147,4 +148,10 @@ export class BrowserSessionStore {
       metadata: updates.metadata ?? existing.metadata,
     });
   }
+}
+
+function isExpired(expiresAt?: string | null): boolean {
+  if (!expiresAt) return false;
+  const expiresAtMs = Date.parse(expiresAt);
+  return Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
 }

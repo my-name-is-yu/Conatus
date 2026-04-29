@@ -293,6 +293,64 @@ describe("interactive automation tools", () => {
     }
   });
 
+  it("records auth handoff requests even when the provider has no resumable session id yet", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-auth-no-session-"));
+    try {
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-auth-no-session" },
+      });
+      registry.register({
+        id: "browser-auth-no-session",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-auth-no-session",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow: async () => ({
+          success: false,
+          summary: "login required before session starts",
+          error: "login required before session starts",
+          authRequired: true,
+          failureCode: "auth_required",
+        }),
+      });
+      const store = new BrowserSessionStore(tmpRuntime);
+      const tool = new BrowserRunWorkflowTool(registry, undefined, {
+        browserSessionStore: store,
+      });
+
+      const result = await tool.call(
+        { task: "Open billing", startUrl: "https://billing.example.com" },
+        makeContext({ approvalFn: vi.fn().mockResolvedValue(true), conversationSessionId: "chat-no-session" }),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual(expect.objectContaining({
+        status: "auth_handoff_pending",
+        sessionId: "auth-handoff:browser-auth-no-session:billing.example.com:chat-no-session",
+        resumableSessionId: undefined,
+      }));
+      await expect(store.listPendingAuth()).resolves.toEqual([
+        expect.objectContaining({
+          session_id: "auth-handoff:browser-auth-no-session:billing.example.com:chat-no-session",
+          provider_id: "browser-auth-no-session",
+          service_key: "billing.example.com",
+          actor_key: "chat-no-session",
+          state: "auth_required",
+          metadata: expect.objectContaining({
+            resumable_session: null,
+          }),
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
   it("reuses the latest authenticated browser session and ignores auth_required stale sessions", async () => {
     const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-session-"));
     try {
@@ -357,6 +415,69 @@ describe("interactive automation tools", () => {
     }
   });
 
+  it("does not reuse authenticated browser sessions whose expires_at is already stale", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-session-expired-"));
+    try {
+      const store = new BrowserSessionStore(tmpRuntime);
+      await store.recordAuthenticated({
+        sessionId: "sess-expired",
+        providerId: "browser-expired",
+        serviceKey: "app.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-expired",
+        expiresAt: "2000-01-01T00:00:00.000Z",
+      });
+      await store.recordAuthenticated({
+        sessionId: "sess-fresh",
+        providerId: "browser-expired",
+        serviceKey: "app.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-expired",
+        expiresAt: "2999-01-01T00:00:00.000Z",
+      });
+
+      const runBrowserWorkflow = vi.fn().mockResolvedValue({
+        success: true,
+        summary: "workflow done",
+        sessionId: "sess-fresh",
+      });
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-expired" },
+      });
+      registry.register({
+        id: "browser-expired",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-expired",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow,
+      });
+
+      const tool = new BrowserRunWorkflowTool(registry, undefined, {
+        browserSessionStore: store,
+      });
+
+      await tool.call(
+        { task: "Resume app", startUrl: "https://app.example.com/home" },
+        makeContext({ conversationSessionId: "chat-expired" }),
+      );
+
+      expect(runBrowserWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: "sess-fresh",
+      }));
+      expect(runBrowserWorkflow).not.toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: "sess-expired",
+      }));
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
   it("opens a circuit breaker after repeated rate limit failures", async () => {
     const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-breaker-"));
     try {
@@ -401,6 +522,36 @@ describe("interactive automation tools", () => {
           state: "open",
         }),
       ]);
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("shares backpressure limits across controllers that point at the same runtime root", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-backpressure-shared-"));
+    try {
+      const first = new BackpressureController(new GuardrailStore(tmpRuntime), {
+        maxConcurrentPerProvider: 1,
+        maxConcurrentPerService: 1,
+      });
+      const second = new BackpressureController(new GuardrailStore(tmpRuntime), {
+        maxConcurrentPerProvider: 1,
+        maxConcurrentPerService: 1,
+      });
+
+      await expect(first.acquire({
+        providerId: "browser-shared",
+        serviceKey: "app.example.com",
+        runKey: "run-1",
+      })).resolves.toEqual({ ok: true });
+      await expect(second.acquire({
+        providerId: "browser-shared",
+        serviceKey: "app.example.com",
+        runKey: "run-2",
+      })).resolves.toEqual({
+        ok: false,
+        reason: "provider concurrency limit reached (1)",
+      });
     } finally {
       await fs.rm(tmpRuntime, { recursive: true, force: true });
     }

@@ -4,6 +4,7 @@ import { GuardrailStore } from "./guardrail-store.js";
 export interface BackpressureControllerOptions {
   maxConcurrentPerProvider?: number;
   maxConcurrentPerService?: number;
+  leaseTtlMs?: number;
   now?: () => Date;
 }
 
@@ -16,9 +17,8 @@ export interface BackpressureLease {
 export class BackpressureController {
   private readonly maxConcurrentPerProvider: number;
   private readonly maxConcurrentPerService: number;
+  private readonly leaseTtlMs: number;
   private readonly now: () => Date;
-  private readonly active = new Map<string, BackpressureLease>();
-  private readonly throttled: Array<{ providerId: string; serviceKey: string; reason: string; at: string }> = [];
 
   constructor(
     private readonly store: GuardrailStore,
@@ -26,27 +26,50 @@ export class BackpressureController {
   ) {
     this.maxConcurrentPerProvider = options.maxConcurrentPerProvider ?? 2;
     this.maxConcurrentPerService = options.maxConcurrentPerService ?? 1;
+    this.leaseTtlMs = options.leaseTtlMs ?? 10 * 60_000;
     this.now = options.now ?? (() => new Date());
   }
 
   async acquire(lease: BackpressureLease): Promise<{ ok: true } | { ok: false; reason: string }> {
-    const providerActive = [...this.active.values()].filter((entry) => entry.providerId === lease.providerId);
-    if (providerActive.length >= this.maxConcurrentPerProvider) {
-      return this.reject(lease, `provider concurrency limit reached (${this.maxConcurrentPerProvider})`);
-    }
-    const serviceActive = providerActive.filter((entry) => entry.serviceKey === lease.serviceKey);
-    if (serviceActive.length >= this.maxConcurrentPerService) {
-      return this.reject(lease, `service concurrency limit reached (${this.maxConcurrentPerService})`);
-    }
+    return this.store.updateBackpressureSnapshot<{ ok: true } | { ok: false; reason: string }>((snapshot) => {
+      const active = this.pruneExpired(snapshot.active);
+      const providerActive = active.filter((entry) => entry.provider_id === lease.providerId);
+      if (providerActive.length >= this.maxConcurrentPerProvider) {
+        return this.reject(snapshot, lease, `provider concurrency limit reached (${this.maxConcurrentPerProvider})`, active);
+      }
+      const serviceActive = providerActive.filter((entry) => entry.service_key === lease.serviceKey);
+      if (serviceActive.length >= this.maxConcurrentPerService) {
+        return this.reject(snapshot, lease, `service concurrency limit reached (${this.maxConcurrentPerService})`, active);
+      }
 
-    this.active.set(lease.runKey, lease);
-    await this.persistSnapshot();
-    return { ok: true };
+      return {
+        snapshot: {
+          updated_at: this.now().toISOString(),
+          active: [
+            ...active,
+            {
+              provider_id: lease.providerId,
+              service_key: lease.serviceKey,
+              run_key: lease.runKey,
+              acquired_at: this.now().toISOString(),
+            },
+          ],
+          throttled: snapshot.throttled ?? [],
+        },
+        result: { ok: true as const },
+      };
+    });
   }
 
   async release(runKey: string): Promise<void> {
-    this.active.delete(runKey);
-    await this.persistSnapshot();
+    await this.store.updateBackpressureSnapshot(async (snapshot) => ({
+      snapshot: {
+        updated_at: this.now().toISOString(),
+        active: this.pruneExpired(snapshot.active).filter((entry) => entry.run_key !== runKey),
+        throttled: snapshot.throttled ?? [],
+      },
+      result: undefined,
+    }));
   }
 
   async snapshot(): Promise<BackpressureSnapshot> {
@@ -58,38 +81,36 @@ export class BackpressureController {
     };
   }
 
-  private async reject(
+  private reject(
+    snapshot: BackpressureSnapshot,
     lease: BackpressureLease,
     reason: string,
-  ): Promise<{ ok: false; reason: string }> {
-    this.throttled.push({
-      providerId: lease.providerId,
-      serviceKey: lease.serviceKey,
-      reason,
-      at: this.now().toISOString(),
-    });
-    if (this.throttled.length > 20) {
-      this.throttled.splice(0, this.throttled.length - 20);
-    }
-    await this.persistSnapshot();
-    return { ok: false, reason };
+    active = this.pruneExpired(snapshot.active),
+  ): { snapshot: BackpressureSnapshot; result: { ok: false; reason: string } } {
+    const throttled = [
+      ...(snapshot.throttled ?? []),
+      {
+        provider_id: lease.providerId,
+        service_key: lease.serviceKey,
+        reason,
+        at: this.now().toISOString(),
+      },
+    ].slice(-20);
+    return {
+      snapshot: {
+        updated_at: this.now().toISOString(),
+        active,
+        throttled,
+      },
+      result: { ok: false as const, reason },
+    };
   }
 
-  private async persistSnapshot(): Promise<void> {
-    await this.store.saveBackpressureSnapshot({
-      updated_at: this.now().toISOString(),
-      active: [...this.active.values()].map((entry) => ({
-        provider_id: entry.providerId,
-        service_key: entry.serviceKey,
-        run_key: entry.runKey,
-        acquired_at: this.now().toISOString(),
-      })),
-      throttled: this.throttled.map((entry) => ({
-        provider_id: entry.providerId,
-        service_key: entry.serviceKey,
-        reason: entry.reason,
-        at: entry.at,
-      })),
+  private pruneExpired(active: BackpressureSnapshot["active"]): BackpressureSnapshot["active"] {
+    const now = this.now().getTime();
+    return active.filter((entry) => {
+      const acquiredAt = Date.parse(entry.acquired_at);
+      return Number.isFinite(acquiredAt) && now - acquiredAt <= this.leaseTtlMs;
     });
   }
 }

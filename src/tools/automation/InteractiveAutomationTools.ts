@@ -496,18 +496,22 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
         return this.success({ providerId: provider.id, result }, result.summary, startTime);
       }
 
-      if (result.authRequired && result.sessionId && this.runtimeDeps.browserSessionStore) {
+      if (result.authRequired && this.runtimeDeps.browserSessionStore) {
+        const handoffSessionId = result.sessionId ?? syntheticAuthHandoffSessionId(provider.id, scope);
         await this.runtimeDeps.browserSessionStore.recordAuthRequired({
-          sessionId: result.sessionId,
+          sessionId: handoffSessionId,
           providerId: provider.id,
           serviceKey: scope.serviceKey,
           workspace: scope.workspace,
           actorKey: scope.actorKey,
           failureCode: result.failureCode ?? null,
           failureMessage: result.error ?? result.summary,
-          metadata: input.startUrl ? { startUrl: input.startUrl } : undefined,
+          metadata: {
+            ...(input.startUrl ? { startUrl: input.startUrl } : {}),
+            resumable_session: result.sessionId ?? null,
+          },
         });
-        const approved = await requestAuthHandoffApproval(_context, provider.id, scope, input.task, result.sessionId);
+        const approved = await requestAuthHandoffApproval(_context, provider.id, scope, input.task, handoffSessionId);
         if (!approved) {
           return this.fail(`Authentication handoff denied for ${scope.serviceKey}.`, startTime);
         }
@@ -517,10 +521,11 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
             providerId: provider.id,
             status: "auth_handoff_pending",
             serviceKey: scope.serviceKey,
-            sessionId: result.sessionId,
+            sessionId: handoffSessionId,
+            resumableSessionId: result.sessionId,
           },
           summary: `Authentication handoff recorded for ${scope.serviceKey} via ${provider.id}.`,
-          contextModifier: `Authentication handoff is pending for ${scope.serviceKey} via ${provider.id} in session ${result.sessionId}. Do not retry this browser workflow until a human completes login and then resume with that same session.`,
+          contextModifier: buildAuthHandoffContextModifier(provider.id, scope.serviceKey, handoffSessionId, result.sessionId),
           durationMs: Date.now() - startTime,
         };
       }
@@ -577,6 +582,23 @@ function browserServiceKey(startUrl?: string): string {
   } catch {
     return "browser_workflow";
   }
+}
+
+function syntheticAuthHandoffSessionId(providerId: string, scope: BrowserSessionScope): string {
+  return `auth-handoff:${providerId}:${scope.serviceKey}:${scope.actorKey}`;
+}
+
+function buildAuthHandoffContextModifier(
+  providerId: string,
+  serviceKey: string,
+  sessionId: string,
+  resumableSessionId?: string,
+): string {
+  const resumeTarget = resumableSessionId ?? sessionId;
+  const resumeClause = resumableSessionId
+    ? `Resume with browser session ${resumeTarget} after login completes.`
+    : "The provider did not return a resumable browser session yet; rerun only after a human has completed the login handoff.";
+  return `Authentication handoff is pending for ${serviceKey} via ${providerId} in session ${sessionId}. Do not retry this browser workflow until a human completes login. ${resumeClause}`;
 }
 
 async function requestAuthHandoffApproval(
