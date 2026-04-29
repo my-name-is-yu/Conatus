@@ -32,6 +32,12 @@ export {
   RuntimeDaemonHealthSchema,
   RuntimeComponentsHealthSchema,
   RuntimeHealthSnapshotSchema,
+  BrowserAutomationSessionStateSchema,
+  BrowserAutomationSessionRecordSchema,
+  CircuitBreakerStateSchema,
+  CircuitBreakerRecordSchema,
+  BackpressureLeaseSchema,
+  BackpressureSnapshotSchema,
   summarizeRuntimeHealthStatus,
   evolveRuntimeHealthKpi,
   summarizeRuntimeHealthKpi,
@@ -55,6 +61,12 @@ export type {
   RuntimeDaemonHealth,
   RuntimeComponentsHealth,
   RuntimeHealthSnapshot,
+  BrowserAutomationSessionState,
+  BrowserAutomationSessionRecord,
+  CircuitBreakerState,
+  CircuitBreakerRecord,
+  BackpressureLease,
+  BackpressureSnapshot,
 } from "./runtime-schemas.js";
 
 export {

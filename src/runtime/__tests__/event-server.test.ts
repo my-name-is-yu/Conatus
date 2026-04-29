@@ -6,6 +6,7 @@ import { EventServer } from "../event-server.js";
 import type { PulSeedEvent } from "../../base/types/drive.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { OutboxStore } from "../store/outbox-store.js";
+import { BrowserSessionStore } from "../interactive-automation/index.js";
 
 // ─── Helpers ───
 
@@ -714,6 +715,40 @@ describe("snapshot and outbox replay", () => {
         started_at: 123,
         iterations: 0,
       },
+    ]);
+  });
+
+  it("reads auth handoff sessions from an explicitly configured runtime root", async () => {
+    const runtimeRoot = path.join(tmpDir, "custom-runtime");
+    await new BrowserSessionStore(runtimeRoot).recordAuthRequired({
+      sessionId: "sess-custom",
+      providerId: "browser-auth",
+      serviceKey: "mail.google.com",
+      workspace: "/tmp",
+      actorKey: "chat-1",
+      failureCode: "auth_required",
+      failureMessage: "login required",
+    });
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      runtimeRoot,
+    });
+
+    await server.start();
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as { auth_sessions?: unknown[] };
+    expect(snapshot.auth_sessions).toEqual([
+      expect.objectContaining({
+        session_id: "sess-custom",
+        provider_id: "browser-auth",
+        service_key: "mail.google.com",
+        state: "auth_required",
+      }),
     ]);
   });
 

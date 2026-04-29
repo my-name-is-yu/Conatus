@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   BrowserGetStateTool,
   BrowserRunWorkflowTool,
@@ -115,6 +116,7 @@ import { TestRunnerTool } from "../system/TestRunnerTool/TestRunnerTool.js";
 import { UpdatePlanTool } from "../system/UpdatePlanTool/UpdatePlanTool.js";
 import type { ITool } from "../types.js";
 import { loadGlobalConfigSync } from "../../base/config/global-config.js";
+import { getPulseedDirPath } from "../../base/utils/paths.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { IEmbeddingClient } from "../../platform/knowledge/embedding-client.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
@@ -124,6 +126,7 @@ import type { AdapterRegistry } from "../../orchestrator/execution/adapter-layer
 import type { SessionManager } from "../../orchestrator/execution/session-manager.js";
 import type { PluginLoader } from "../../runtime/plugin-loader.js";
 import {
+  BrowserSessionStore as RuntimeBrowserSessionStore,
   createDefaultInteractiveAutomationRegistry,
   type CodexAppComputerUseBridge,
   type InteractiveAutomationRegistry,
@@ -135,6 +138,13 @@ import {
   createDaemonBackedCoreLoopControlToolset,
   type CoreLoopControlToolset,
 } from "../../orchestrator/execution/agent-loop/core-loop-control-tools.js";
+import type { BrowserSessionStore } from "../../runtime/interactive-automation/index.js";
+import {
+  BackpressureController as RuntimeBackpressureController,
+  CircuitBreakerController as RuntimeCircuitBreakerController,
+  GuardrailStore,
+} from "../../runtime/guardrails/index.js";
+import type { BackpressureController, CircuitBreakerController } from "../../runtime/guardrails/index.js";
 
 export interface BuiltinToolDeps {
   stateManager?: StateManager;
@@ -152,6 +162,9 @@ export interface BuiltinToolDeps {
   interactiveAutomationRegistry?: InteractiveAutomationRegistry;
   interactiveAutomationPolicy?: InteractiveAutomationToolPolicy;
   codexAppComputerUseBridge?: CodexAppComputerUseBridge;
+  browserSessionStore?: BrowserSessionStore;
+  browserCircuitBreaker?: CircuitBreakerController;
+  browserBackpressure?: BackpressureController;
   coreLoopControl?: CoreLoopControlToolset;
 }
 
@@ -324,10 +337,23 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     allowedApps: interactiveAutomationConfig.allowed_apps,
     deniedApps: interactiveAutomationConfig.denied_apps,
   };
+  const runtimeRoot = path.join(deps?.stateManager?.getBaseDir?.() ?? getPulseedDirPath(), "runtime");
+  const browserSessionStore = deps?.browserSessionStore ?? new RuntimeBrowserSessionStore(runtimeRoot);
+  const guardrailStore = deps?.browserCircuitBreaker || deps?.browserBackpressure
+    ? undefined
+    : new GuardrailStore(runtimeRoot);
+  const browserCircuitBreaker = deps?.browserCircuitBreaker
+    ?? (guardrailStore ? new RuntimeCircuitBreakerController(guardrailStore) : undefined);
+  const browserBackpressure = deps?.browserBackpressure
+    ?? (guardrailStore ? new RuntimeBackpressureController(guardrailStore) : undefined);
   if (interactiveAutomationRegistry) {
     tools.push(
       new BrowserGetStateTool(interactiveAutomationRegistry, interactiveAutomationPolicy),
-      new BrowserRunWorkflowTool(interactiveAutomationRegistry, interactiveAutomationPolicy),
+      new BrowserRunWorkflowTool(interactiveAutomationRegistry, interactiveAutomationPolicy, {
+        browserSessionStore,
+        circuitBreaker: browserCircuitBreaker,
+        backpressure: browserBackpressure,
+      }),
       new DesktopClickTool(interactiveAutomationRegistry, interactiveAutomationPolicy),
       new DesktopGetAppStateTool(interactiveAutomationRegistry, interactiveAutomationPolicy),
       new DesktopListAppsTool(interactiveAutomationRegistry, interactiveAutomationPolicy),

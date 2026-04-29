@@ -118,6 +118,21 @@ describe("providers", () => {
     );
   });
 
+  it("treats HTTP 403 login responses as auth handoff candidates", async () => {
+    const fetchMock = vi.fn(async () => new Response("Login required to continue", { status: 403 }));
+    const provider = new ManusBrowserProvider({
+      apiKey: "test-key",
+      baseUrl: "https://manus.test",
+      fetch: fetchMock,
+    });
+
+    await expect(provider.runBrowserWorkflow({ task: "Open inbox" })).resolves.toMatchObject({
+      success: false,
+      authRequired: true,
+      failureCode: "auth_required",
+    });
+  });
+
   it("keeps Manus unavailable without an API key", async () => {
     const provider = new ManusBrowserProvider({ apiKey: "" });
 
@@ -160,5 +175,20 @@ describe("providers", () => {
         headers: expect.objectContaining({ authorization: "Bearer test-key" }),
       }),
     );
+  });
+
+  it("classifies Manus authentication failures for browser workflows", async () => {
+    const fetchMock = vi.fn(async () => new Response("login required", { status: 401 }));
+    const provider = new ManusBrowserProvider({
+      apiKey: "test-key",
+      baseUrl: "https://manus.test",
+      fetch: fetchMock,
+    });
+
+    await expect(provider.runBrowserWorkflow({ task: "Open dashboard" })).resolves.toMatchObject({
+      success: false,
+      authRequired: true,
+      failureCode: "auth_required",
+    });
   });
 });

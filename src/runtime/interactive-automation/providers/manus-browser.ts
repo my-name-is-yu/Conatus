@@ -8,6 +8,7 @@ import type {
   ProviderAvailability,
 } from "../types.js";
 import type { AutomationFetch } from "./perplexity-research.js";
+import { classifyAutomationFailure } from "../failure-classifier.js";
 
 export interface ManusBrowserProviderOptions {
   apiKey?: string;
@@ -89,7 +90,18 @@ export class ManusBrowserProvider implements InteractiveAutomationProvider {
     });
 
     if (!response.ok) {
-      throw new Error(`Manus request failed with HTTP ${response.status}`);
+      const rawText = await response.text().catch(() => "");
+      const classified = classifyAutomationFailure({
+        status: response.status,
+        error: rawText,
+      });
+      return {
+        success: false,
+        summary: `Manus request failed with HTTP ${response.status}`,
+        error: rawText || `Manus request failed with HTTP ${response.status}`,
+        failure_code: classified.failureCode,
+        auth_required: classified.authRequired,
+      };
     }
 
     return response.json();
@@ -106,11 +118,15 @@ function normalizeBrowserResult(raw: unknown, fallbackSummary: string): BrowserW
       ? source["sessionId"] as string
       : undefined;
   const error = typeof source["error"] === "string" ? source["error"] as string : undefined;
+  const failureCode = typeof source["failure_code"] === "string" ? source["failure_code"] as BrowserWorkflowResult["failureCode"] : undefined;
+  const authRequired = source["auth_required"] === true;
   return {
     success,
     summary,
     ...(sessionId ? { sessionId } : {}),
     data: raw,
     ...(error ? { error } : {}),
+    ...(failureCode ? { failureCode } : {}),
+    ...(authRequired ? { authRequired } : {}),
   };
 }

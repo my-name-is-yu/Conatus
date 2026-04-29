@@ -17,10 +17,14 @@ export interface RuntimeStorePaths {
   approvalsResolvedDir: string;
   outboxDir: string;
   backgroundRunsDir: string;
+  browserSessionsDir: string;
   leasesDir: string;
   goalLeasesDir: string;
   dlqDir: string;
   healthDir: string;
+  guardrailsDir: string;
+  guardrailBreakersDir: string;
+  backpressureSnapshotPath: string;
   daemonHealthPath: string;
   componentsHealthPath: string;
   inboxBucketDir(dateKey: string): string;
@@ -29,6 +33,8 @@ export interface RuntimeStorePaths {
   approvalResolvedPath(approvalId: string): string;
   outboxRecordPath(seq: number): string;
   backgroundRunPath(runId: string): string;
+  browserSessionPath(sessionId: string): string;
+  guardrailBreakerPath(key: string): string;
   goalLeasePath(goalId: string): string;
   completedByIdempotencyPath(idempotencyKey: string): string;
   completedByMessagePath(messageId: string): string;
@@ -74,10 +80,13 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const approvalsResolvedDir = path.join(approvalsDir, "resolved");
   const outboxDir = path.join(rootDir, "outbox");
   const backgroundRunsDir = path.join(rootDir, "background-runs");
+  const browserSessionsDir = path.join(rootDir, "browser-sessions");
   const leasesDir = path.join(rootDir, "leases");
   const goalLeasesDir = path.join(leasesDir, "goal");
   const dlqDir = path.join(rootDir, "dlq");
   const healthDir = path.join(rootDir, "health");
+  const guardrailsDir = path.join(rootDir, "guardrails");
+  const guardrailBreakersDir = path.join(guardrailsDir, "breakers");
 
   return {
     rootDir,
@@ -93,10 +102,14 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     approvalsResolvedDir,
     outboxDir,
     backgroundRunsDir,
+    browserSessionsDir,
     leasesDir,
     goalLeasesDir,
     dlqDir,
     healthDir,
+    guardrailsDir,
+    guardrailBreakersDir,
+    backpressureSnapshotPath: path.join(guardrailsDir, "backpressure.json"),
     daemonHealthPath: path.join(healthDir, "daemon.json"),
     componentsHealthPath: path.join(healthDir, "components.json"),
     inboxBucketDir(dateKey: string) {
@@ -116,6 +129,12 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     backgroundRunPath(runId: string) {
       return path.join(backgroundRunsDir, recordFileName(encodeRuntimePathSegment(runId)));
+    },
+    browserSessionPath(sessionId: string) {
+      return path.join(browserSessionsDir, recordFileName(encodeRuntimePathSegment(sessionId)));
+    },
+    guardrailBreakerPath(key: string) {
+      return path.join(guardrailBreakersDir, recordFileName(encodeRuntimePathSegment(key)));
     },
     goalLeasePath(goalId: string) {
       return path.join(goalLeasesDir, `${encodeRuntimePathSegment(goalId)}.json`);
@@ -147,10 +166,13 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.approvalsResolvedDir,
       paths.outboxDir,
       paths.backgroundRunsDir,
+      paths.browserSessionsDir,
       paths.leasesDir,
       paths.goalLeasesDir,
       paths.dlqDir,
       paths.healthDir,
+      paths.guardrailsDir,
+      paths.guardrailBreakersDir,
     ].map((dir) => fsp.mkdir(dir, { recursive: true }))
   );
 }
