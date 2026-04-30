@@ -42,6 +42,7 @@ describe("KaggleWorkspacePrepareTool", () => {
       competition: "titanic",
       metric_name: "accuracy",
       metric_direction: "maximize",
+      overwrite_existing: false,
       target_column: "Survived",
       submission_format_hint: "PassengerId,Survived",
       notes: "baseline",
@@ -101,6 +102,7 @@ describe("KaggleWorkspacePrepareTool", () => {
       competition: "titanic",
       metric_name: "rmse",
       metric_direction: "minimize",
+      overwrite_existing: false,
     }, makeContext());
 
     expect(result.success).toBe(false);
@@ -115,6 +117,7 @@ describe("KaggleWorkspacePrepareTool", () => {
       competition: "titanic",
       metric_name: "rmse",
       metric_direction: "minimize",
+      overwrite_existing: false,
     }, makeContext());
 
     expect(result.success).toBe(true);
@@ -129,12 +132,14 @@ describe("KaggleWorkspacePrepareTool", () => {
       competition: "titanic",
       metric_name: "rmse",
       metric_direction: "minimize",
+      overwrite_existing: false,
     }, makeContext());
     const absolute = await tool.call({
       workspace: path.join(pulseedHome, "kaggle-runs"),
       competition: "titanic",
       metric_name: "rmse",
       metric_direction: "minimize",
+      overwrite_existing: false,
     }, makeContext());
 
     expect(stateRelative.success).toBe(true);
@@ -192,6 +197,7 @@ describe("KaggleWorkspacePrepareTool", () => {
       competition: "titanic",
       metric_name: "rmse",
       metric_direction: "minimize",
+      overwrite_existing: false,
     }, makeContext());
 
     expect(result.success).toBe(false);
@@ -210,6 +216,7 @@ describe("KaggleWorkspacePrepareTool", () => {
       competition: "titanic",
       metric_name: "rmse",
       metric_direction: "minimize",
+      overwrite_existing: false,
     }, makeContext());
 
     expect(result.success).toBe(false);
@@ -232,6 +239,7 @@ describe("KaggleWorkspacePrepareTool", () => {
       competition: "titanic",
       metric_name: "rmse",
       metric_direction: "minimize",
+      overwrite_existing: false,
     }, makeContext());
 
     expect(result.success).toBe(false);
