@@ -11,13 +11,56 @@ import type { IDataSourceAdapter } from "../../platform/observation/data-source-
 
 type Aggregation = "max" | "min" | "count" | "file_count";
 
-interface MetricObservation {
+interface MetricExtraction {
+  key: string;
+  keyPath: string;
+  value: number;
+  confidence: number;
+}
+
+interface MetricCandidate {
   path: string;
-  metrics: Map<string, number>;
+  relativePath: string;
+  updatedTime: string;
+  candidateScore: number;
+  reasons: string[];
+  stale: boolean;
+}
+
+interface MetricObservation extends MetricCandidate {
+  parser: "json";
+  metrics: MetricExtraction[];
+  extractionConfidence: number;
+}
+
+interface SelectedMetric {
+  path: string;
+  relativePath: string;
+  key: string;
+  keyPath: string;
+  value: number;
+  parser: "json";
+  updatedTime: string;
+  extractionConfidence: number;
+  candidateScore: number;
+  stale: boolean;
+}
+
+interface MetricConflict {
+  metricKey: string;
+  candidates: Array<{
+    path: string;
+    keyPath: string;
+    value: number;
+    updatedTime: string;
+    extractionConfidence: number;
+    stale: boolean;
+  }>;
 }
 
 const BUILTIN_SOURCE_ID = "ds_builtin_workspace_artifacts";
 const DEFAULT_METRIC_FILE_NAMES = ["metrics.json", "result.json"];
+const DEFAULT_ARTIFACT_ROOTS = ["artifacts", "runs", "reports", "outputs", "results", "logs"];
 const DEFAULT_EXCLUDE_DIRS = new Set([
   ".cache",
   ".git",
@@ -32,6 +75,8 @@ const DEFAULT_EXCLUDE_DIRS = new Set([
 const DEFAULT_EXCLUDE_PATHS = new Set(["data/raw"]);
 const DEFAULT_MAX_METRIC_FILES = 5_000;
 const DEFAULT_MAX_ARTIFACT_FILES = 100_000;
+const DEFAULT_MAX_CANDIDATES = 200;
+const MAX_RAW_CANDIDATES = 25;
 
 export function createWorkspaceArtifactMetricDataSource(workspacePath = process.cwd()): ArtifactMetricDataSourceAdapter {
   return new ArtifactMetricDataSourceAdapter({
@@ -91,31 +136,17 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
     const expression = this.config.dimension_mapping?.[params.dimension_name] ?? params.expression;
     const aggregation = resolveAggregation(params.dimension_name, expression, this.config);
     const timestamp = new Date().toISOString();
+    const options = this.scanOptions();
 
     if (aggregation === "file_count") {
-      const count = await countArtifactFiles(root, this.scanOptions());
-      return {
-        value: count,
-        raw: { root, aggregation, file_count: count },
-        timestamp,
-        source_id: this.sourceId,
-      };
-    }
-
-    const metricFiles = await findMetricFiles(root, this.scanOptions());
-    const observations = await readMetricObservations(metricFiles);
-
-    if (aggregation === "count") {
-      const keys = resolveMetricKeys(params.dimension_name, expression, this.config);
-      const count = observations.filter((observation) => hasAnyMetric(observation, keys)).length;
+      const count = await countArtifactFiles(root, options);
       return {
         value: count,
         raw: {
           root,
           aggregation,
-          inspected_metric_files: metricFiles.length,
-          matched_metric_files: count,
-          metric_keys: keys,
+          file_count: count,
+          discovery: discoveryRaw(options),
         },
         timestamp,
         source_id: this.sourceId,
@@ -123,17 +154,50 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
     }
 
     const keys = resolveMetricKeys(params.dimension_name, expression, this.config);
+    const candidates = await discoverMetricCandidates(root, options, keys);
+    const observations = await readMetricObservations(candidates);
+    const evidenceCandidates = buildEvidenceCandidates(observations, keys, aggregation === "min" ? "min" : "max");
+
+    if (aggregation === "count") {
+      const matched = observations.filter((observation) => hasAnyMetric(observation, keys));
+      return {
+        value: matched.length,
+        raw: {
+          root,
+          aggregation,
+          inspected_metric_files: candidates.length,
+          matched_metric_files: matched.length,
+          metric_keys: keys,
+          discovery: discoveryRaw(options),
+          candidates: rawCandidates(candidates),
+          evidence_candidates: evidenceCandidates,
+          conflicts: detectMetricConflicts(params.dimension_name, observations, keys),
+          stale_candidates: staleRaw(observations),
+          strategic_correctness: "not_evaluated",
+        },
+        timestamp,
+        source_id: this.sourceId,
+      };
+    }
+
     const match = selectMetric(observations, keys, aggregation);
     return {
       value: match?.value ?? 0,
       raw: {
         root,
         aggregation,
-        inspected_metric_files: metricFiles.length,
+        inspected_metric_files: candidates.length,
         metric_keys: keys,
         selected_path: match?.path ?? null,
         selected_key: match?.key ?? null,
         selected_value: match?.value ?? 0,
+        selected: match,
+        discovery: discoveryRaw(options),
+        candidates: rawCandidates(candidates),
+        evidence_candidates: evidenceCandidates,
+        conflicts: detectMetricConflicts(params.dimension_name, observations, keys),
+        stale_candidates: staleRaw(observations),
+        strategic_correctness: "not_evaluated",
       },
       timestamp,
       source_id: this.sourceId,
@@ -148,6 +212,12 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
   private scanOptions(): ScanOptions {
     return {
       metricFileNames: new Set(this.config.connection.metric_file_names ?? DEFAULT_METRIC_FILE_NAMES),
+      artifactRoots: unique([
+        ...(this.config.connection.artifact_roots ?? []),
+        ...(this.config.connection.artifact_roots ? [] : DEFAULT_ARTIFACT_ROOTS),
+      ].map(normalizeRelativePath)),
+      includePaths: unique((this.config.connection.include_paths ?? []).map(normalizeRelativePath)),
+      parserHints: new Set(this.config.connection.parser_hints ?? ["json"]),
       excludeDirs: new Set([...(this.config.connection.exclude_dirs ?? []), ...DEFAULT_EXCLUDE_DIRS]),
       excludePaths: new Set([
         ...Array.from(DEFAULT_EXCLUDE_PATHS),
@@ -155,37 +225,122 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
       ].map(normalizeRelativePath)),
       maxMetricFiles: this.config.connection.max_metric_files ?? DEFAULT_MAX_METRIC_FILES,
       maxArtifactFiles: this.config.connection.max_artifact_files ?? DEFAULT_MAX_ARTIFACT_FILES,
+      maxCandidates: this.config.connection.max_candidates ?? DEFAULT_MAX_CANDIDATES,
+      staleAfterMs: this.config.connection.stale_after_ms,
     };
   }
 }
 
 interface ScanOptions {
   metricFileNames: Set<string>;
+  artifactRoots: string[];
+  includePaths: string[];
+  parserHints: Set<string>;
   excludeDirs: Set<string>;
   excludePaths: Set<string>;
   maxMetricFiles: number;
   maxArtifactFiles: number;
+  maxCandidates: number;
+  staleAfterMs?: number;
 }
 
-async function findMetricFiles(root: string, options: ScanOptions): Promise<string[]> {
-  const files: string[] = [];
-  await walkFiles(root, options, async (filePath) => {
-    if (options.metricFileNames.has(path.basename(filePath)) && files.length < options.maxMetricFiles) {
-      files.push(filePath);
+async function discoverMetricCandidates(root: string, options: ScanOptions, keys: string[]): Promise<MetricCandidate[]> {
+  const discovered = new Map<string, MetricCandidate>();
+
+  for (const includePath of options.includePaths) {
+    if (discovered.size >= options.maxMetricFiles) break;
+    const absolute = path.resolve(root, includePath);
+    if (!isInsideRoot(root, absolute) || !(await isFile(absolute))) continue;
+    if (!options.metricFileNames.has(path.basename(absolute))) continue;
+    const candidate = await buildMetricCandidate(root, absolute, options, keys);
+    discovered.set(candidate.path, candidate);
+  }
+
+  const searchRoots = await resolveSearchRoots(root, options);
+
+  for (const searchRoot of searchRoots) {
+    if (discovered.size >= options.maxMetricFiles) break;
+    await walkFiles(root, searchRoot, options, async (filePath) => {
+      if (discovered.size >= options.maxMetricFiles) return;
+      if (!options.metricFileNames.has(path.basename(filePath))) return;
+      const candidate = await buildMetricCandidate(root, filePath, options, keys);
+      discovered.set(candidate.path, candidate);
+    });
+  }
+
+  return Array.from(discovered.values())
+    .sort(compareCandidates)
+    .slice(0, options.maxCandidates);
+}
+
+async function resolveSearchRoots(root: string, options: ScanOptions): Promise<string[]> {
+  const roots: string[] = [];
+  for (const includePath of [...options.includePaths, ...options.artifactRoots]) {
+    const absolute = path.resolve(root, includePath);
+    if (!isInsideRoot(root, absolute)) continue;
+    if (await isDirectory(absolute)) roots.push(absolute);
+  }
+  if (roots.length === 0) roots.push(root);
+  return unique(roots);
+}
+
+async function buildMetricCandidate(root: string, filePath: string, options: ScanOptions, keys: string[]): Promise<MetricCandidate> {
+  const stats = await fs.stat(filePath);
+  const relativePath = normalizeRelativePath(path.relative(root, filePath));
+  const reasons: string[] = [];
+  let score = 0;
+
+  if (options.metricFileNames.has(path.basename(filePath))) {
+    score += 35;
+    reasons.push("metric filename match");
+  }
+  const matchedRoot = options.artifactRoots.find((rootHint) => relativePath === rootHint || relativePath.startsWith(`${rootHint}/`));
+  if (matchedRoot) {
+    score += 20;
+    reasons.push(`artifact root match: ${matchedRoot}`);
+  }
+  for (const key of keys) {
+    if (relativePath.toLowerCase().includes(key.toLowerCase())) {
+      score += 8;
+      reasons.push(`path metric hint: ${key}`);
+      break;
     }
-  });
-  return files;
+  }
+  const mtime = stats.mtime;
+  if (Date.now() - mtime.getTime() < 24 * 60 * 60 * 1000) {
+    score += 10;
+    reasons.push("recent artifact");
+  }
+  const stale = options.staleAfterMs !== undefined && Date.now() - mtime.getTime() > options.staleAfterMs;
+  if (stale) {
+    score -= 30;
+    reasons.push("stale artifact");
+  }
+
+  return {
+    path: filePath,
+    relativePath,
+    updatedTime: mtime.toISOString(),
+    candidateScore: score,
+    reasons,
+    stale,
+  };
 }
 
 async function countArtifactFiles(root: string, options: ScanOptions): Promise<number> {
   let count = 0;
-  await walkFiles(root, options, async () => {
+  await walkFiles(root, root, options, async () => {
     if (count < options.maxArtifactFiles) count += 1;
   });
   return count;
 }
 
-async function walkFiles(root: string, options: ScanOptions, onFile: (filePath: string) => Promise<void>): Promise<void> {
+async function walkFiles(
+  root: string,
+  startDir: string,
+  options: ScanOptions,
+  onFile: (filePath: string) => Promise<void>,
+): Promise<void> {
   async function visit(dir: string): Promise<void> {
     let entries: Dirent[];
     try {
@@ -206,7 +361,7 @@ async function walkFiles(root: string, options: ScanOptions, onFile: (filePath: 
     }
   }
 
-  await visit(root);
+  await visit(startDir);
 }
 
 function shouldSkipDirectory(name: string, relPath: string, options: ScanOptions): boolean {
@@ -217,14 +372,19 @@ function shouldSkipDirectory(name: string, relPath: string, options: ScanOptions
   return false;
 }
 
-async function readMetricObservations(files: string[]): Promise<MetricObservation[]> {
+async function readMetricObservations(candidates: MetricCandidate[]): Promise<MetricObservation[]> {
   const observations: MetricObservation[] = [];
-  for (const filePath of files) {
+  for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as unknown;
+      const parsed = JSON.parse(await fs.readFile(candidate.path, "utf8")) as unknown;
       const metrics = extractNumericMetrics(parsed);
-      if (metrics.size > 0) {
-        observations.push({ path: filePath, metrics });
+      if (metrics.length > 0) {
+        observations.push({
+          ...candidate,
+          parser: "json",
+          metrics,
+          extractionConfidence: Math.max(...metrics.map((metric) => metric.confidence)),
+        });
       }
     } catch {
       // Ignore incomplete or invalid artifacts while the long-running process is writing.
@@ -233,78 +393,218 @@ async function readMetricObservations(files: string[]): Promise<MetricObservatio
   return observations;
 }
 
-function extractNumericMetrics(value: unknown): Map<string, number> {
-  const metrics = new Map<string, number>();
+function extractNumericMetrics(value: unknown): MetricExtraction[] {
+  const metrics: MetricExtraction[] = [];
   if (!isRecord(value)) return metrics;
 
   for (const [key, field] of Object.entries(value)) {
-    addNumber(metrics, key, field);
+    addNumber(metrics, key, key, field, 0.95);
   }
 
   const nestedMetrics = value["metrics"];
   if (isRecord(nestedMetrics)) {
     for (const [key, field] of Object.entries(nestedMetrics)) {
-      addNumber(metrics, key, field);
+      addNumber(metrics, key, `metrics.${key}`, field, 0.90);
     }
   }
 
   const allMetrics = value["all_metrics"];
   if (isRecord(allMetrics)) {
     for (const [key, field] of Object.entries(allMetrics)) {
-      addNumber(metrics, key, field);
+      addNumber(metrics, key, `all_metrics.${key}`, field, 0.90);
     }
   }
 
   const metricName = typeof value["metric_name"] === "string" ? value["metric_name"] : null;
   if (metricName) {
-    addNumber(metrics, metricName, value["score"]);
-    addNumber(metrics, metricName, value["cv_score"]);
+    addNumber(metrics, metricName, "score", value["score"], 0.85);
+    addNumber(metrics, metricName, "cv_score", value["cv_score"], 0.85);
   }
 
   const evidence = value["evidence"];
   if (Array.isArray(evidence)) {
-    for (const item of evidence) {
+    for (const [index, item] of evidence.entries()) {
       if (!isRecord(item)) continue;
       const label = typeof item["label"] === "string" ? item["label"] : null;
       if (!label) continue;
-      addNumber(metrics, label, item["value"]);
+      addNumber(metrics, label, `evidence.${index}.value`, item["value"], 0.80);
     }
   }
 
   return metrics;
 }
 
-function addNumber(metrics: Map<string, number>, key: string, value: unknown): void {
+function addNumber(metrics: MetricExtraction[], key: string, keyPath: string, value: unknown, confidence: number): void {
   if (typeof value === "number" && Number.isFinite(value)) {
-    metrics.set(key, value);
+    metrics.push({ key, keyPath, value, confidence });
   }
 }
 
 function hasAnyMetric(observation: MetricObservation, keys: string[]): boolean {
-  if (keys.length === 0) return observation.metrics.size > 0;
-  return keys.some((key) => observation.metrics.has(key));
+  if (keys.length === 0) return observation.metrics.length > 0;
+  return keys.some((key) => observation.metrics.some((metric) => metric.key === key));
 }
 
 function selectMetric(
   observations: MetricObservation[],
   keys: string[],
   aggregation: "max" | "min",
-): { path: string; key: string; value: number } | null {
-  let selected: { path: string; key: string; value: number } | null = null;
+): SelectedMetric | null {
+  const matches = matchingMetrics(observations, keys);
+  if (matches.length === 0) return null;
+  const sorted = [...matches].sort((left, right) => compareMetricMatches(left, right, aggregation));
+  const best = sorted[0]!;
+  return {
+    path: best.observation.path,
+    relativePath: best.observation.relativePath,
+    key: best.metric.key,
+    keyPath: best.metric.keyPath,
+    value: best.metric.value,
+    parser: best.observation.parser,
+    updatedTime: best.observation.updatedTime,
+    extractionConfidence: best.metric.confidence,
+    candidateScore: best.observation.candidateScore,
+    stale: best.observation.stale,
+  };
+}
+
+function matchingMetrics(observations: MetricObservation[], keys: string[]): Array<{ observation: MetricObservation; metric: MetricExtraction }> {
+  const wanted = new Set(keys);
+  const matches: Array<{ observation: MetricObservation; metric: MetricExtraction }> = [];
   for (const observation of observations) {
-    for (const key of keys) {
-      const value = observation.metrics.get(key);
-      if (value === undefined) continue;
-      if (
-        selected === null ||
-        (aggregation === "max" && value > selected.value) ||
-        (aggregation === "min" && value < selected.value)
-      ) {
-        selected = { path: observation.path, key, value };
+    for (const metric of observation.metrics) {
+      if (wanted.size === 0 || wanted.has(metric.key)) {
+        matches.push({ observation, metric });
       }
     }
   }
-  return selected;
+  return matches;
+}
+
+function compareMetricMatches(
+  left: { observation: MetricObservation; metric: MetricExtraction },
+  right: { observation: MetricObservation; metric: MetricExtraction },
+  aggregation: "max" | "min",
+): number {
+  const leftQuality = qualityBucket(left.observation, left.metric);
+  const rightQuality = qualityBucket(right.observation, right.metric);
+  if (leftQuality !== rightQuality) return rightQuality - leftQuality;
+
+  if (left.metric.value !== right.metric.value) {
+    return aggregation === "max"
+      ? right.metric.value - left.metric.value
+      : left.metric.value - right.metric.value;
+  }
+  if (left.metric.confidence !== right.metric.confidence) return right.metric.confidence - left.metric.confidence;
+  if (left.observation.candidateScore !== right.observation.candidateScore) return right.observation.candidateScore - left.observation.candidateScore;
+  return Date.parse(right.observation.updatedTime) - Date.parse(left.observation.updatedTime);
+}
+
+function qualityBucket(observation: MetricObservation, metric: MetricExtraction): number {
+  if (observation.stale) return 0;
+  if (metric.confidence < 0.85) return 1;
+  return 2;
+}
+
+function detectMetricConflicts(dimensionName: string, observations: MetricObservation[], keys: string[]): MetricConflict[] {
+  const grouped = new Map<string, Array<{ observation: MetricObservation; metric: MetricExtraction }>>();
+  for (const match of matchingMetrics(observations, keys)) {
+    const group = grouped.get(match.metric.key) ?? [];
+    group.push(match);
+    grouped.set(match.metric.key, group);
+  }
+
+  const conflicts: MetricConflict[] = [];
+  for (const [metricKey, matches] of grouped) {
+    const conflict = buildConflict(metricKey, matches);
+    if (conflict) conflicts.push(conflict);
+  }
+
+  if (keys.length > 1) {
+    const aliasConflict = buildConflict(`dimension:${dimensionName}`, matchingMetrics(observations, keys));
+    if (aliasConflict) conflicts.push(aliasConflict);
+  }
+  return conflicts;
+}
+
+function buildConflict(metricKey: string, matches: Array<{ observation: MetricObservation; metric: MetricExtraction }>): MetricConflict | null {
+  const values = new Set(matches.map((match) => match.metric.value));
+  if (values.size <= 1) return null;
+  return {
+    metricKey,
+    candidates: matches
+      .sort((left, right) => Date.parse(right.observation.updatedTime) - Date.parse(left.observation.updatedTime))
+      .slice(0, MAX_RAW_CANDIDATES)
+      .map(({ observation, metric }) => ({
+        path: observation.relativePath,
+        keyPath: metric.keyPath,
+        value: metric.value,
+        updatedTime: observation.updatedTime,
+        extractionConfidence: metric.confidence,
+        stale: observation.stale,
+      })),
+  };
+}
+
+function buildEvidenceCandidates(
+  observations: MetricObservation[],
+  keys: string[],
+  aggregation: "max" | "min",
+): Array<Record<string, unknown>> {
+  return matchingMetrics(observations, keys)
+    .sort((left, right) => compareMetricMatches(left, right, aggregation))
+    .slice(0, MAX_RAW_CANDIDATES)
+    .map(({ observation, metric }) => ({
+      path: observation.relativePath,
+      metric_key: metric.key,
+      metric_key_path: metric.keyPath,
+      value: metric.value,
+      parser: observation.parser,
+      updated_time: observation.updatedTime,
+      extraction_confidence: metric.confidence,
+      candidate_score: observation.candidateScore,
+      stale: observation.stale,
+      reasons: observation.reasons,
+      strategic_correctness: "not_evaluated",
+    }));
+}
+
+function rawCandidates(candidates: MetricCandidate[]): Array<Record<string, unknown>> {
+  return candidates.slice(0, MAX_RAW_CANDIDATES).map((candidate) => ({
+    path: candidate.relativePath,
+    updated_time: candidate.updatedTime,
+    candidate_score: candidate.candidateScore,
+    stale: candidate.stale,
+    reasons: candidate.reasons,
+  }));
+}
+
+function staleRaw(observations: MetricObservation[]): Array<Record<string, unknown>> {
+  return observations
+    .filter((observation) => observation.stale)
+    .slice(0, MAX_RAW_CANDIDATES)
+    .map((observation) => ({
+      path: observation.relativePath,
+      updated_time: observation.updatedTime,
+      extraction_confidence: observation.extractionConfidence,
+    }));
+}
+
+function discoveryRaw(options: ScanOptions): Record<string, unknown> {
+  return {
+    artifact_roots: options.artifactRoots,
+    include_paths: options.includePaths,
+    metric_file_names: Array.from(options.metricFileNames),
+    max_metric_files: options.maxMetricFiles,
+    max_candidates: options.maxCandidates,
+    parser_hints: Array.from(options.parserHints),
+    stale_after_ms: options.staleAfterMs ?? null,
+  };
+}
+
+function compareCandidates(left: MetricCandidate, right: MetricCandidate): number {
+  if (left.candidateScore !== right.candidateScore) return right.candidateScore - left.candidateScore;
+  return Date.parse(right.updatedTime) - Date.parse(left.updatedTime);
 }
 
 function resolveAggregation(dimensionName: string, expression: string | undefined, config: DataSourceConfig): Aggregation {
@@ -374,6 +674,27 @@ function prefersLowerMetric(dimensionName: string): boolean {
 
 function normalizeRelativePath(value: string): string {
   return value.split(path.sep).join("/").replace(/^\.\//, "");
+}
+
+function isInsideRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function isDirectory(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(filePath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function isFile(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function unique(values: string[]): string[] {
