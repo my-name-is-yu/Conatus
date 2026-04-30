@@ -117,4 +117,75 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.metric_trends[0]?.source_refs[0]?.artifacts?.[0]?.state_relative_path).toBe("experiments/a/metrics.json");
     expect(summary.metric_trends[0]?.source_refs[0]?.metric_source).toBe("local-metrics.json");
   });
+
+  it("stores local and external evaluator observations with candidate provenance", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      kind: "evaluator",
+      scope: { goal_id: "goal-evaluator", run_id: "run:coreloop:evaluator" },
+      artifacts: [{ label: "submission-a", state_relative_path: "runs/a/submission.csv", kind: "other" }],
+      evaluators: [{
+        evaluator_id: "leaderboard",
+        signal: "local",
+        source: "local-validation",
+        candidate_id: "candidate-a",
+        candidate_label: "Candidate A",
+        artifact_labels: ["submission-a"],
+        status: "ready",
+        score: 0.88,
+        direction: "maximize",
+        publish_action: {
+          id: "submit-candidate-a",
+          label: "Submit Candidate A",
+          payload_ref: "runs/a/submission.csv",
+          approval_required: true,
+        },
+      }],
+      summary: "Candidate A is ready for external evaluation.",
+    });
+    await ledger.append({
+      kind: "evaluator",
+      scope: { goal_id: "goal-evaluator", run_id: "run:coreloop:evaluator" },
+      artifacts: [{ label: "submission-a", state_relative_path: "runs/a/submission.csv", kind: "other" }],
+      evaluators: [{
+        evaluator_id: "leaderboard",
+        signal: "external",
+        source: "public-leaderboard",
+        candidate_id: "candidate-a",
+        artifact_labels: ["submission-a"],
+        status: "passed",
+        score: 0.89,
+        expected_score: 0.88,
+        direction: "maximize",
+        provenance: {
+          kind: "external_url",
+          url: "https://example.com/submissions/456",
+          external_id: "submission-456",
+        },
+      }],
+      summary: "External leaderboard confirmed Candidate A.",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-evaluator");
+
+    expect(summary.evaluator_summary.local_best).toMatchObject({
+      signal: "local",
+      candidate_id: "candidate-a",
+      artifacts: [{ state_relative_path: "runs/a/submission.csv" }],
+    });
+    expect(summary.evaluator_summary.external_best).toMatchObject({
+      signal: "external",
+      candidate_id: "candidate-a",
+      provenance: { external_id: "submission-456" },
+    });
+    expect(summary.evaluator_summary.observations[0]?.publish_action).toMatchObject({
+      id: "submit-candidate-a",
+      approval_required: true,
+    });
+    expect(summary.evaluator_summary.approval_required_actions).toEqual([]);
+    expect(summary.evaluator_summary.gap).toMatchObject({
+      kind: "external_success",
+      candidate_id: "candidate-a",
+    });
+  });
 });

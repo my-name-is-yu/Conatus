@@ -314,6 +314,7 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
   } else {
     console.log("  Metric trends:   -");
   }
+  printEvaluatorSummary(summary.evaluator_summary);
   if (summary.recent_failed_attempts.length > 0) {
     console.log("  Recent failures:");
     for (const entry of summary.recent_failed_attempts) {
@@ -327,9 +328,35 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
   }
 }
 
+function printEvaluatorSummary(summary: RuntimeEvidenceSummary["evaluator_summary"]): void {
+  if (summary.observations.length === 0 && summary.approval_required_actions.length === 0) {
+    console.log("  Evaluators:      -");
+    return;
+  }
+  console.log("  Evaluators:");
+  console.log(`    Local best:      ${evaluatorObservationLabel(summary.local_best)}`);
+  console.log(`    External best:   ${evaluatorObservationLabel(summary.external_best)}`);
+  console.log(`    Gap:             ${summary.gap ? `${summary.gap.kind}: ${formatCell(summary.gap.summary, 96)}` : "-"}`);
+  if (summary.approval_required_actions.length > 0) {
+    console.log("    Approval needed:");
+    for (const action of summary.approval_required_actions) {
+      console.log(`      - ${formatCell(action.label, 48)} candidate=${formatCell(action.candidate_id, 32)} source=${formatCell(action.source, 32)}`);
+    }
+  }
+}
+
 function entryLabel(entry: RuntimeEvidenceEntry | null): string {
   if (!entry) return "-";
   const status = entry.outcome ?? entry.result?.status ?? entry.verification?.verdict ?? entry.kind;
   const summary = entry.summary ?? entry.result?.summary ?? entry.decision_reason ?? entry.task?.description ?? "-";
   return `${entry.occurred_at} ${entry.kind}/${status}: ${formatCell(summary, 96)}`;
+}
+
+function evaluatorObservationLabel(
+  observation: RuntimeEvidenceSummary["evaluator_summary"]["local_best"]
+): string {
+  if (!observation) return "-";
+  const candidate = observation.candidate_label ?? observation.candidate_id;
+  const score = observation.score === undefined ? "" : ` score=${String(observation.score)}`;
+  return `${observation.evaluator_id}/${observation.source} ${candidate} status=${observation.status}${score}`;
 }

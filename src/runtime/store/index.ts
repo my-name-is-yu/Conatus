@@ -80,6 +80,12 @@ export {
 
 export {
   RuntimeEvidenceArtifactRefSchema,
+  RuntimeEvidenceEvaluatorObservationSchema,
+  RuntimeEvidenceEvaluatorProvenanceSchema,
+  RuntimeEvidenceEvaluatorPublishActionSchema,
+  RuntimeEvidenceEvaluatorSignalSchema,
+  RuntimeEvidenceEvaluatorStatusSchema,
+  RuntimeEvidenceEvaluatorValidationSchema,
   RuntimeEvidenceEntryKindSchema,
   RuntimeEvidenceEntrySchema,
   RuntimeEvidenceLedger,
@@ -88,6 +94,12 @@ export {
 } from "./evidence-ledger.js";
 export type {
   RuntimeEvidenceArtifactRef,
+  RuntimeEvidenceEvaluatorObservation,
+  RuntimeEvidenceEvaluatorProvenance,
+  RuntimeEvidenceEvaluatorPublishAction,
+  RuntimeEvidenceEvaluatorSignal,
+  RuntimeEvidenceEvaluatorStatus,
+  RuntimeEvidenceEvaluatorValidation,
   RuntimeEvidenceEntry,
   RuntimeEvidenceEntryInput,
   RuntimeEvidenceEntryKind,
@@ -111,6 +123,17 @@ export type {
   MetricTrendClassificationOptions,
   MetricTrendContext,
 } from "./metric-history.js";
+export {
+  extractEvaluatorObservationsFromEvidence,
+  summarizeEvidenceEvaluatorResults,
+} from "./evaluator-results.js";
+export type {
+  RuntimeEvaluatorApprovalRequiredAction,
+  RuntimeEvaluatorGap,
+  RuntimeEvaluatorGapKind,
+  RuntimeEvaluatorObservationContext,
+  RuntimeEvaluatorSummary,
+} from "./evaluator-results.js";
 export type {
   RuntimeControlOperationKind,
   RuntimeControlOperationState,

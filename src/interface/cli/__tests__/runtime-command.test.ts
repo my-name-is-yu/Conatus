@@ -188,6 +188,83 @@ describe("runtime registry CLI commands", () => {
     expect(parsed.best_evidence.kind).toBe("verification");
   });
 
+  it("shows evaluator local best, external best, gap, and approval gate in runtime evidence", async () => {
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      kind: "evaluator",
+      scope: { goal_id: "goal-evaluator-cli" },
+      evaluators: [{
+        evaluator_id: "ci",
+        signal: "local",
+        source: "local-tests",
+        candidate_id: "candidate-a",
+        status: "ready",
+        score: 1,
+        direction: "maximize",
+        publish_action: {
+          id: "publish-ci-artifact",
+          label: "Publish CI artifact",
+          approval_required: true,
+        },
+      }],
+      summary: "Local tests selected candidate A.",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const pendingCode = await runCLI("runtime", "evidence", "goal-evaluator-cli");
+    const pendingOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(pendingCode).toBe(0);
+    expect(pendingOutput).toContain("Approval needed:");
+    expect(pendingOutput).toContain("pending_external");
+
+    logSpy.mockClear();
+    await ledger.append({
+      kind: "evaluator",
+      scope: { goal_id: "goal-evaluator-cli" },
+      evaluators: [{
+        evaluator_id: "ci",
+        signal: "external",
+        source: "github-actions",
+        candidate_id: "candidate-a",
+        status: "passed",
+        score: 1,
+        expected_score: 1,
+        direction: "maximize",
+        provenance: {
+          kind: "ci",
+          url: "https://example.com/actions/runs/123",
+          run_id: "gha-123",
+        },
+      }],
+      summary: "External CI passed.",
+    });
+
+    const textCode = await runCLI("runtime", "evidence", "goal-evaluator-cli");
+    const textOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(textCode).toBe(0);
+    expect(textOutput).toContain("Evaluators:");
+    expect(textOutput).toContain("Local best:");
+    expect(textOutput).toContain("External best:");
+    expect(textOutput).toContain("external_success");
+
+    logSpy.mockClear();
+    const jsonCode = await runCLI("runtime", "evidence", "goal-evaluator-cli", "--json");
+    const jsonOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(jsonOutput) as {
+      evaluator_summary: {
+        local_best: { candidate_id: string };
+        external_best: { provenance: { run_id: string } };
+        gap: { kind: string };
+      };
+    };
+    expect(jsonCode).toBe(0);
+    expect(parsed.evaluator_summary.local_best.candidate_id).toBe("candidate-a");
+    expect(parsed.evaluator_summary.external_best.provenance.run_id).toBe("gha-123");
+    expect(parsed.evaluator_summary.gap.kind).toBe("external_success");
+  });
+
   it("summarizes run-scoped evidence for non-prefixed long-running run IDs", async () => {
     const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
     await ledger.append({
