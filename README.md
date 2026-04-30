@@ -98,17 +98,11 @@ PulSeed will guide provider and adapter setup when needed.
 
 ## Achievements
 
-- Ran a 24-hour Kaggle dogfood workflow on a Mac mini, keeping a long-running
-  PulSeed goal alive while it observed results, generated follow-up tasks, and
-  pivoted training strategy without manual restarts.
-- On Kaggle Playground Series S6E4, PulSeed improved local OOF balanced
-  accuracy from early 0.45-level baselines to `0.970413051791` by exploring
-  CatBoost-focused ensembles, probability adjustment, and post-OOF calibration.
+PulSeed joined Kaggle Playground Series S6E4 (https://www.kaggle.com/competitions/playground-series-s6e4). It has been running straight over 10 hours and made a decent progress.
+- PulSeed improved local OOF balanced accuracy from early 0.45-level baselines to `0.970413051791` by exploring CatBoost-focused ensembles, probability adjustment, and post-OOF calibration.
 - The best local artifact preserved full OOF predictions and per-class recall:
   High `0.957351611214`, Low `0.994598788377`, and Medium `0.959288755783`.
-- The run also surfaced a real reliability gap: `pulseed status` did not yet
-  read nested `artifacts/**/metrics.json` outputs, giving the project a concrete
-  follow-up issue from live dogfooding.
+
 
 ## Docs and Community
 
