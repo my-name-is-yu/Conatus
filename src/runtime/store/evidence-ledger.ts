@@ -8,6 +8,10 @@ import {
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
 import { summarizeEvidenceMetricTrends, type MetricTrendContext } from "./metric-history.js";
+import {
+  summarizeEvidenceEvaluatorResults,
+  type RuntimeEvaluatorSummary,
+} from "./evaluator-results.js";
 
 export const RuntimeEvidenceOutcomeSchema = z.enum([
   "improved",
@@ -27,6 +31,7 @@ export const RuntimeEvidenceEntryKindSchema = z.enum([
   "verification",
   "decision",
   "metric",
+  "evaluator",
   "artifact",
   "failure",
   "other",
@@ -53,6 +58,74 @@ export const RuntimeEvidenceMetricSchema = z.object({
   summary: z.string().min(1).optional(),
 }).strict();
 export type RuntimeEvidenceMetric = z.infer<typeof RuntimeEvidenceMetricSchema>;
+
+export const RuntimeEvidenceEvaluatorSignalSchema = z.enum(["local", "external"]);
+export type RuntimeEvidenceEvaluatorSignal = z.infer<typeof RuntimeEvidenceEvaluatorSignalSchema>;
+
+export const RuntimeEvidenceEvaluatorStatusSchema = z.enum([
+  "pending",
+  "ready",
+  "approval_required",
+  "submitted",
+  "passed",
+  "succeeded",
+  "completed",
+  "failed",
+  "regressed",
+  "blocked",
+  "unknown",
+]);
+export type RuntimeEvidenceEvaluatorStatus = z.infer<typeof RuntimeEvidenceEvaluatorStatusSchema>;
+
+export const RuntimeEvidenceEvaluatorPublishActionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  tool_name: z.string().min(1).optional(),
+  payload_ref: z.string().min(1).optional(),
+  approval_required: z.literal(true).default(true),
+  status: z.enum(["approval_required", "approved", "submitted", "completed", "blocked"]).optional(),
+}).strict();
+export type RuntimeEvidenceEvaluatorPublishAction = z.infer<typeof RuntimeEvidenceEvaluatorPublishActionSchema>;
+
+export const RuntimeEvidenceEvaluatorValidationSchema = z.object({
+  status: z.enum(["pending", "passed", "failed", "blocked", "unknown"]).default("unknown"),
+  command: z.string().min(1).optional(),
+  summary: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceEvaluatorValidation = z.infer<typeof RuntimeEvidenceEvaluatorValidationSchema>;
+
+export const RuntimeEvidenceEvaluatorProvenanceSchema = z.object({
+  kind: z.enum(["local_command", "external_url", "ci", "benchmark", "human_review", "other"]).default("other"),
+  command: z.string().min(1).optional(),
+  url: z.string().url().optional(),
+  run_id: z.string().min(1).optional(),
+  external_id: z.string().min(1).optional(),
+  raw_ref: z.string().min(1).optional(),
+  retrieved_at: z.string().datetime().optional(),
+}).strict();
+export type RuntimeEvidenceEvaluatorProvenance = z.infer<typeof RuntimeEvidenceEvaluatorProvenanceSchema>;
+
+export const RuntimeEvidenceEvaluatorObservationSchema = z.object({
+  evaluator_id: z.string().min(1),
+  signal: RuntimeEvidenceEvaluatorSignalSchema,
+  source: z.string().min(1),
+  candidate_id: z.string().min(1),
+  candidate_label: z.string().min(1).optional(),
+  artifact_labels: z.array(z.string().min(1)).optional(),
+  status: RuntimeEvidenceEvaluatorStatusSchema.default("unknown"),
+  score: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  score_label: z.string().min(1).optional(),
+  direction: z.enum(["maximize", "minimize", "neutral"]).optional(),
+  observed_at: z.string().datetime().optional(),
+  expected_score: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  expected_status: RuntimeEvidenceEvaluatorStatusSchema.optional(),
+  expectation_source: z.string().min(1).optional(),
+  validation: RuntimeEvidenceEvaluatorValidationSchema.optional(),
+  publish_action: RuntimeEvidenceEvaluatorPublishActionSchema.optional(),
+  provenance: RuntimeEvidenceEvaluatorProvenanceSchema.optional(),
+  summary: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceEvaluatorObservation = z.infer<typeof RuntimeEvidenceEvaluatorObservationSchema>;
 
 export const RuntimeEvidenceEntrySchema = z.object({
   schema_version: z.literal("runtime-evidence-entry-v1"),
@@ -81,6 +154,7 @@ export const RuntimeEvidenceEntrySchema = z.object({
     summary: z.string().min(1).optional(),
   }).strict().optional(),
   metrics: z.array(RuntimeEvidenceMetricSchema).default([]),
+  evaluators: z.array(RuntimeEvidenceEvaluatorObservationSchema).optional(),
   artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
   result: z.object({
     status: z.string().min(1).optional(),
@@ -104,8 +178,8 @@ export const RuntimeEvidenceEntrySchema = z.object({
 export type RuntimeEvidenceEntry = z.infer<typeof RuntimeEvidenceEntrySchema>;
 export type RuntimeEvidenceEntryInput = Omit<
   RuntimeEvidenceEntry,
-  "schema_version" | "id" | "occurred_at" | "metrics" | "artifacts" | "raw_refs"
-> & Partial<Pick<RuntimeEvidenceEntry, "id" | "occurred_at" | "metrics" | "artifacts" | "raw_refs">>;
+  "schema_version" | "id" | "occurred_at" | "metrics" | "evaluators" | "artifacts" | "raw_refs"
+> & Partial<Pick<RuntimeEvidenceEntry, "id" | "occurred_at" | "metrics" | "evaluators" | "artifacts" | "raw_refs">>;
 
 export interface RuntimeEvidenceReadWarning {
   file: string;
@@ -129,6 +203,7 @@ export interface RuntimeEvidenceSummary {
   latest_strategy: RuntimeEvidenceEntry | null;
   best_evidence: RuntimeEvidenceEntry | null;
   metric_trends: MetricTrendContext[];
+  evaluator_summary: RuntimeEvaluatorSummary;
   recent_failed_attempts: RuntimeEvidenceEntry[];
   recent_entries: RuntimeEvidenceEntry[];
   warnings: RuntimeEvidenceReadWarning[];
@@ -170,6 +245,7 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
       id: input.id ?? randomUUID(),
       occurred_at: input.occurred_at ?? new Date().toISOString(),
       metrics: input.metrics ?? [],
+      evaluators: input.evaluators ?? [],
       artifacts: input.artifacts ?? [],
       raw_refs: input.raw_refs ?? [],
       ...input,
@@ -261,6 +337,7 @@ function summarizeEvidence(
     ) ?? null,
     best_evidence: chooseBestEvidence(newestFirst),
     metric_trends: summarizeEvidenceMetricTrends(entries),
+    evaluator_summary: summarizeEvidenceEvaluatorResults(entries),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"
