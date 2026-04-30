@@ -86,6 +86,10 @@ export {
   RuntimeEvidenceEvaluatorSignalSchema,
   RuntimeEvidenceEvaluatorStatusSchema,
   RuntimeEvidenceEvaluatorValidationSchema,
+  RuntimeEvidenceDreamCheckpointMemoryRefSchema,
+  RuntimeEvidenceDreamCheckpointSchema,
+  RuntimeEvidenceDreamCheckpointStrategyCandidateSchema,
+  RuntimeEvidenceDreamCheckpointTriggerSchema,
   RuntimeEvidenceResearchExternalActionSchema,
   RuntimeEvidenceResearchFindingSchema,
   RuntimeEvidenceResearchMemoSchema,
@@ -104,6 +108,10 @@ export type {
   RuntimeEvidenceEvaluatorSignal,
   RuntimeEvidenceEvaluatorStatus,
   RuntimeEvidenceEvaluatorValidation,
+  RuntimeEvidenceDreamCheckpoint,
+  RuntimeEvidenceDreamCheckpointMemoryRef,
+  RuntimeEvidenceDreamCheckpointStrategyCandidate,
+  RuntimeEvidenceDreamCheckpointTrigger,
   RuntimeEvidenceResearchExternalAction,
   RuntimeEvidenceResearchFinding,
   RuntimeEvidenceResearchMemo,
@@ -135,6 +143,12 @@ export {
   extractEvaluatorObservationsFromEvidence,
   summarizeEvidenceEvaluatorResults,
 } from "./evaluator-results.js";
+export {
+  summarizeEvidenceDreamCheckpoints,
+} from "./dream-checkpoints.js";
+export type {
+  RuntimeDreamCheckpointContext,
+} from "./dream-checkpoints.js";
 export {
   summarizeEvidenceResearchMemos,
 } from "./research-evidence.js";

@@ -320,6 +320,64 @@ describe("runtime registry CLI commands", () => {
     expect(parsed.research_memos[0]?.findings[0]?.applicability).toBe("Applies when metric trend has plateaued.");
   });
 
+  it("shows Dream review checkpoint guidance in runtime evidence", async () => {
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      kind: "dream_checkpoint",
+      scope: { goal_id: "goal-dream-cli", loop_index: 3, phase: "dream_review_checkpoint" },
+      dream_checkpoints: [{
+        trigger: "breakthrough",
+        summary: "Dream checkpoint recommends exploiting the latest metric breakthrough.",
+        current_goal: "Improve benchmark score",
+        active_dimensions: ["accuracy", "stability"],
+        best_evidence_so_far: "Accuracy jumped from 0.72 to 0.91.",
+        recent_strategy_families: ["exploit"],
+        exhausted: [],
+        promising: ["lock current approach"],
+        relevant_memories: [{
+          source_type: "playbook",
+          ref: "playbook://breakthrough-finalization",
+          summary: "Checkpoint before finalization.",
+          authority: "advisory_only",
+        }],
+        next_strategy_candidates: [{
+          title: "Lock current approach",
+          rationale: "Avoid losing a high-signal breakthrough.",
+          target_dimensions: ["accuracy"],
+          expected_evidence_gain: "Confirms the improvement is stable.",
+        }],
+        guidance: "Generate the next task around preserving the breakthrough.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.88,
+      }],
+      raw_refs: [{ kind: "dream_playbook_memory", id: "playbook://breakthrough-finalization" }],
+      summary: "Dream checkpoint saved.",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const textCode = await runCLI("runtime", "evidence", "goal-dream-cli");
+    const textOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(textCode).toBe(0);
+    expect(textOutput).toContain("Dream checkpoints:");
+    expect(textOutput).toContain("breakthrough:");
+    expect(textOutput).toContain("accuracy, stability");
+
+    logSpy.mockClear();
+    const jsonCode = await runCLI("runtime", "evidence", "goal-dream-cli", "--json");
+    const jsonOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(jsonOutput) as {
+      dream_checkpoints: Array<{ trigger: string; context_authority: string; relevant_memories: Array<{ authority: string }> }>;
+    };
+    expect(jsonCode).toBe(0);
+    expect(parsed.dream_checkpoints[0]).toMatchObject({
+      trigger: "breakthrough",
+      context_authority: "advisory_only",
+      relevant_memories: [{ authority: "advisory_only" }],
+    });
+  });
+
   it("summarizes run-scoped evidence for non-prefixed long-running run IDs", async () => {
     const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
     await ledger.append({

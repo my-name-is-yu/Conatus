@@ -16,6 +16,10 @@ import {
   summarizeEvidenceResearchMemos,
   type RuntimeResearchMemoContext,
 } from "./research-evidence.js";
+import {
+  summarizeEvidenceDreamCheckpoints,
+  type RuntimeDreamCheckpointContext,
+} from "./dream-checkpoints.js";
 
 export const RuntimeEvidenceOutcomeSchema = z.enum([
   "improved",
@@ -37,6 +41,7 @@ export const RuntimeEvidenceEntryKindSchema = z.enum([
   "metric",
   "evaluator",
   "research",
+  "dream_checkpoint",
   "artifact",
   "failure",
   "other",
@@ -179,6 +184,48 @@ export const RuntimeEvidenceResearchMemoSchema = z.object({
 }).strict();
 export type RuntimeEvidenceResearchMemo = z.infer<typeof RuntimeEvidenceResearchMemoSchema>;
 
+export const RuntimeEvidenceDreamCheckpointTriggerSchema = z.enum([
+  "iteration",
+  "plateau",
+  "breakthrough",
+  "pre_finalization",
+]);
+export type RuntimeEvidenceDreamCheckpointTrigger = z.infer<typeof RuntimeEvidenceDreamCheckpointTriggerSchema>;
+
+export const RuntimeEvidenceDreamCheckpointMemoryRefSchema = z.object({
+  source_type: z.enum(["soil", "playbook", "runtime_evidence", "other"]),
+  ref: z.string().min(1).optional(),
+  summary: z.string().min(1),
+  authority: z.literal("advisory_only").default("advisory_only"),
+}).strict();
+export type RuntimeEvidenceDreamCheckpointMemoryRef = z.infer<typeof RuntimeEvidenceDreamCheckpointMemoryRefSchema>;
+
+export const RuntimeEvidenceDreamCheckpointStrategyCandidateSchema = z.object({
+  title: z.string().min(1),
+  rationale: z.string().min(1),
+  target_dimensions: z.array(z.string().min(1)).default([]),
+  expected_evidence_gain: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceDreamCheckpointStrategyCandidate = z.infer<typeof RuntimeEvidenceDreamCheckpointStrategyCandidateSchema>;
+
+export const RuntimeEvidenceDreamCheckpointSchema = z.object({
+  trigger: RuntimeEvidenceDreamCheckpointTriggerSchema,
+  summary: z.string().min(1),
+  current_goal: z.string().min(1),
+  active_dimensions: z.array(z.string().min(1)).default([]),
+  best_evidence_so_far: z.string().min(1).optional(),
+  recent_strategy_families: z.array(z.string().min(1)).default([]),
+  exhausted: z.array(z.string().min(1)).default([]),
+  promising: z.array(z.string().min(1)).default([]),
+  relevant_memories: z.array(RuntimeEvidenceDreamCheckpointMemoryRefSchema).default([]),
+  next_strategy_candidates: z.array(RuntimeEvidenceDreamCheckpointStrategyCandidateSchema).default([]),
+  guidance: z.string().min(1),
+  uncertainty: z.array(z.string().min(1)).default([]),
+  context_authority: z.literal("advisory_only").default("advisory_only"),
+  confidence: z.number().min(0).max(1).default(0.5),
+}).strict();
+export type RuntimeEvidenceDreamCheckpoint = z.infer<typeof RuntimeEvidenceDreamCheckpointSchema>;
+
 export const RuntimeEvidenceEntrySchema = z.object({
   schema_version: z.literal("runtime-evidence-entry-v1"),
   id: z.string().min(1),
@@ -208,6 +255,7 @@ export const RuntimeEvidenceEntrySchema = z.object({
   metrics: z.array(RuntimeEvidenceMetricSchema).default([]),
   evaluators: z.array(RuntimeEvidenceEvaluatorObservationSchema).optional(),
   research: z.array(RuntimeEvidenceResearchMemoSchema).optional(),
+  dream_checkpoints: z.array(RuntimeEvidenceDreamCheckpointSchema).optional(),
   artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
   result: z.object({
     status: z.string().min(1).optional(),
@@ -231,8 +279,8 @@ export const RuntimeEvidenceEntrySchema = z.object({
 export type RuntimeEvidenceEntry = z.infer<typeof RuntimeEvidenceEntrySchema>;
 export type RuntimeEvidenceEntryInput = Omit<
   RuntimeEvidenceEntry,
-  "schema_version" | "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "artifacts" | "raw_refs"
-> & Partial<Pick<RuntimeEvidenceEntry, "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "artifacts" | "raw_refs">>;
+  "schema_version" | "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "dream_checkpoints" | "artifacts" | "raw_refs"
+> & Partial<Pick<RuntimeEvidenceEntry, "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "dream_checkpoints" | "artifacts" | "raw_refs">>;
 
 export interface RuntimeEvidenceReadWarning {
   file: string;
@@ -258,6 +306,7 @@ export interface RuntimeEvidenceSummary {
   metric_trends: MetricTrendContext[];
   evaluator_summary: RuntimeEvaluatorSummary;
   research_memos: RuntimeResearchMemoContext[];
+  dream_checkpoints: RuntimeDreamCheckpointContext[];
   recent_failed_attempts: RuntimeEvidenceEntry[];
   recent_entries: RuntimeEvidenceEntry[];
   warnings: RuntimeEvidenceReadWarning[];
@@ -301,6 +350,7 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
       metrics: input.metrics ?? [],
       evaluators: input.evaluators ?? [],
       research: input.research ?? [],
+      dream_checkpoints: input.dream_checkpoints ?? [],
       artifacts: input.artifacts ?? [],
       raw_refs: input.raw_refs ?? [],
       ...input,
@@ -394,6 +444,7 @@ function summarizeEvidence(
     metric_trends: summarizeEvidenceMetricTrends(entries),
     evaluator_summary: summarizeEvidenceEvaluatorResults(entries),
     research_memos: summarizeEvidenceResearchMemos(entries),
+    dream_checkpoints: summarizeEvidenceDreamCheckpoints(entries),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"
