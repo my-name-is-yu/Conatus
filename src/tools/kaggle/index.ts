@@ -48,6 +48,8 @@ export {
   metricThresholdHintForDirection,
   normalizedMetricScore,
   parseKaggleMetrics,
+  parseKaggleMetricsCompatible,
+  type KaggleMetricsCompatibilityFallback,
   type KaggleMetricDirection,
   type KaggleMetricParseResult,
   type KaggleMetrics,

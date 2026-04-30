@@ -11,9 +11,10 @@ import type {
 } from "../types.js";
 import {
   KaggleMetricDirectionSchema,
+  type KaggleMetricParseResult,
   type KaggleMetrics,
   normalizedMetricScore,
-  parseKaggleMetrics,
+  parseKaggleMetricsCompatible,
 } from "./metrics.js";
 import {
   ensureDirectoryWithinStateRoot,
@@ -130,6 +131,8 @@ interface ExperimentMetadata {
     command: ArtifactRef;
     process: ArtifactRef;
     child_process: ArtifactRef;
+    report: ArtifactRef;
+    next_action: ArtifactRef;
     extra: ArtifactRef[];
   };
 }
@@ -144,6 +147,8 @@ interface ResolvedExperiment {
   childProcessPath: string;
   logPath: string;
   metricsPath: string;
+  reportPath: string;
+  nextActionPath: string;
 }
 
 type CompareRow = {
@@ -154,6 +159,8 @@ type CompareRow = {
   score: number;
   normalized_score: number;
   metrics: KaggleMetrics;
+  metrics_source_schema: "strict" | "loose";
+  metrics_warnings: string[];
   artifact: ArtifactRef;
 } | {
   experiment_id: string;
@@ -221,12 +228,23 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
         created_at: new Date().toISOString(),
         log_path: resolved.logPath,
         metrics_path: metricsPath,
+        report_path: resolved.reportPath,
+        next_action_path: resolved.nextActionPath,
       };
       await fs.writeFile(resolved.commandPath, `${JSON.stringify(commandMetadata, null, 2)}\n`, "utf-8");
 
       const session = this.manager.start({
         command: process.execPath,
-        args: teeWrapperArgs(input.command, commandArgs, resolved.logPath),
+        args: teeWrapperArgs(
+          input.command,
+          commandArgs,
+          resolved.logPath,
+          metricsPath,
+          resolved.reportPath,
+          resolved.nextActionPath,
+          experimentId,
+          input.competition,
+        ),
         cwd: resolved.workspaceRoot,
         env: input.env,
         label: `kaggle:${input.competition}:${experimentId}`,
@@ -239,6 +257,8 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
           resolved.commandPath,
           resolved.processPath,
           resolved.childProcessPath,
+          resolved.reportPath,
+          resolved.nextActionPath,
           ...extraRefs,
         ],
       }, resolved.workspaceRoot, context);
@@ -258,6 +278,8 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
           command: artifactRef(resolved.workspaceRoot, resolved.commandPath),
           process: artifactRef(resolved.workspaceRoot, resolved.processPath),
           child_process: artifactRef(resolved.workspaceRoot, resolved.childProcessPath),
+          report: artifactRef(resolved.workspaceRoot, resolved.reportPath),
+          next_action: artifactRef(resolved.workspaceRoot, resolved.nextActionPath),
           extra: extraRefs.map((ref) => artifactRef(resolved.workspaceRoot, ref)),
         },
         wait_condition_hints: {
@@ -269,6 +291,16 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
             type: "file_exists",
             path: stateRelativePath(metricsPath),
             absolute_path: metricsPath,
+          },
+          report_file_exists: {
+            type: "file_exists",
+            path: stateRelativePath(resolved.reportPath),
+            absolute_path: resolved.reportPath,
+          },
+          next_action_file_exists: {
+            type: "file_exists",
+            path: stateRelativePath(resolved.nextActionPath),
+            absolute_path: resolved.nextActionPath,
           },
         },
         metric_threshold_guidance: {
@@ -292,6 +324,8 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
           resolved.processPath,
           resolved.logPath,
           metricsPath,
+          resolved.reportPath,
+          resolved.nextActionPath,
           ...(session.metadataPath ? [session.metadataPath] : []),
           ...extraRefs,
         ],
@@ -349,8 +383,8 @@ export class KaggleExperimentReadTool extends KaggleToolBase<KaggleExperimentRea
         : null;
       const processSnapshot = liveRead ?? await readProcessSnapshotFromMetadata(located.processPath);
       const log = await readTail(located.logPath, input.maxChars);
-      const metrics = await readMetrics(located.metricsPath);
-      const missingArtifacts = await missingPaths([located.logPath, located.metricsPath]);
+      const metrics = await readMetrics(located.metricsPath, metricsFallback(located.workspaceRoot, input.competition, located.experimentId, located.metricsPath));
+      const missingArtifacts = await missingPaths([located.logPath, located.metricsPath, located.reportPath, located.nextActionPath]);
 
       const output = {
         experiment_id: located.experimentId,
@@ -362,12 +396,16 @@ export class KaggleExperimentReadTool extends KaggleToolBase<KaggleExperimentRea
         metrics: metrics.ok ? metrics.metrics : null,
         metrics_status: metrics.ok ? "ok" : metrics.reason,
         metrics_error: metrics.ok ? null : metrics.message,
+        metrics_source_schema: metrics.ok ? metrics.source_schema : null,
+        metrics_warnings: metrics.ok ? metrics.warnings : [],
         missing_artifacts: missingArtifacts.map((artifactPath) => artifactRef(located.workspaceRoot, artifactPath)),
         artifacts: {
           log: artifactRef(located.workspaceRoot, located.logPath),
           metrics: artifactRef(located.workspaceRoot, located.metricsPath),
           metadata: artifactRef(located.workspaceRoot, located.metadataPath),
           process: artifactRef(located.workspaceRoot, located.processPath),
+          report: artifactRef(located.workspaceRoot, located.reportPath),
+          next_action: artifactRef(located.workspaceRoot, located.nextActionPath),
         },
       };
 
@@ -376,7 +414,7 @@ export class KaggleExperimentReadTool extends KaggleToolBase<KaggleExperimentRea
         data: output,
         summary: `Read Kaggle experiment ${located.experimentId}: ${output.status}`,
         durationMs: Date.now() - startTime,
-        artifacts: [located.metadataPath, located.processPath, located.logPath, located.metricsPath],
+        artifacts: [located.metadataPath, located.processPath, located.logPath, located.metricsPath, located.reportPath, located.nextActionPath],
       };
     } catch (err) {
       return failureResult(`Failed to read Kaggle experiment: ${(err as Error).message}`, startTime);
@@ -420,7 +458,7 @@ export class KaggleExperimentListTool extends KaggleToolBase<KaggleExperimentLis
         const located = resolveLocatedExperiment(workspaceRoot, input.competition, experimentId);
         const metadata = await readJsonObject(located.metadataPath);
         const processSnapshot = await readProcessSnapshotFromMetadata(located.processPath);
-        const metrics = await readMetrics(located.metricsPath);
+        const metrics = await readMetrics(located.metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, located.metricsPath));
         experiments.set(experimentId, {
           experiment_id: experimentId,
           session_id: typeof metadata?.process === "object" && metadata.process !== null
@@ -430,10 +468,14 @@ export class KaggleExperimentListTool extends KaggleToolBase<KaggleExperimentLis
           source: "filesystem",
           metrics: metrics.ok ? metrics.metrics : null,
           metrics_status: metrics.ok ? "ok" : metrics.reason,
+          metrics_source_schema: metrics.ok ? metrics.source_schema : null,
+          metrics_warnings: metrics.ok ? metrics.warnings : [],
           artifacts: {
             log: artifactRef(workspaceRoot, located.logPath),
             metrics: artifactRef(workspaceRoot, located.metricsPath),
             metadata: artifactRef(workspaceRoot, located.metadataPath),
+            report: artifactRef(workspaceRoot, located.reportPath),
+            next_action: artifactRef(workspaceRoot, located.nextActionPath),
           },
         });
       }
@@ -443,7 +485,7 @@ export class KaggleExperimentListTool extends KaggleToolBase<KaggleExperimentLis
         if (!experimentId) continue;
         const located = resolveLocatedExperiment(workspaceRoot, input.competition, experimentId);
         const existing = experiments.get(experimentId) ?? {};
-        const metrics = await readMetrics(located.metricsPath);
+        const metrics = await readMetrics(located.metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, located.metricsPath));
         experiments.set(experimentId, {
           ...existing,
           experiment_id: experimentId,
@@ -453,10 +495,14 @@ export class KaggleExperimentListTool extends KaggleToolBase<KaggleExperimentLis
           process: session,
           metrics: metrics.ok ? metrics.metrics : null,
           metrics_status: metrics.ok ? "ok" : metrics.reason,
+          metrics_source_schema: metrics.ok ? metrics.source_schema : null,
+          metrics_warnings: metrics.ok ? metrics.warnings : [],
           artifacts: {
             log: artifactRef(workspaceRoot, located.logPath),
             metrics: artifactRef(workspaceRoot, located.metricsPath),
             metadata: artifactRef(workspaceRoot, located.metadataPath),
+            report: artifactRef(workspaceRoot, located.reportPath),
+            next_action: artifactRef(workspaceRoot, located.nextActionPath),
           },
         });
       }
@@ -581,7 +627,8 @@ export class KaggleMetricReportTool extends KaggleToolBase<KaggleMetricReportInp
       const metricsPath = input.metrics_path
         ? resolveWorkspaceRelativePath(workspaceRoot, input.metrics_path, "metrics_path")
         : path.join(getKaggleExperimentDir(workspaceRoot, input.experiment_id!), "metrics.json");
-      const metrics = await readMetrics(metricsPath);
+      const fallbackExperimentId = input.experiment_id ?? experimentIdFromMetricsPath(workspaceRoot, metricsPath);
+      const metrics = await readMetrics(metricsPath, metricsFallback(workspaceRoot, input.competition, fallbackExperimentId, metricsPath));
       if (!metrics.ok) {
         return {
           success: false,
@@ -606,6 +653,7 @@ export class KaggleMetricReportTool extends KaggleToolBase<KaggleMetricReportInp
           ? metrics.metrics.cv_score - input.baseline_score
           : input.baseline_score - metrics.metrics.cv_score;
       const warnings = [
+        ...metrics.warnings,
         ...(metrics.metrics.cv_std === null ? ["cv_std is null"] : []),
         ...(metrics.metrics.holdout_score === null ? ["holdout_score is null"] : []),
         ...(!metrics.metrics.artifacts.submission ? ["submission artifact is missing"] : []),
@@ -621,6 +669,7 @@ export class KaggleMetricReportTool extends KaggleToolBase<KaggleMetricReportInp
         baseline_delta: baselineDelta,
         confidence: confidenceForMetrics(metrics.metrics),
         metrics: metrics.metrics,
+        metrics_source_schema: metrics.source_schema,
         warnings,
         artifact: artifactRef(workspaceRoot, metricsPath),
         wait_metadata: {
@@ -687,7 +736,7 @@ export class KaggleCompareExperimentsTool extends KaggleToolBase<KaggleCompareEx
       const rows: CompareRow[] = [];
       for (const experimentId of experimentIds) {
         const metricsPath = path.join(getKaggleExperimentDir(workspaceRoot, experimentId), "metrics.json");
-        const metrics = await readMetrics(metricsPath);
+        const metrics = await readMetrics(metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, metricsPath));
         if (!metrics.ok) {
           rows.push({
             experiment_id: experimentId,
@@ -708,6 +757,8 @@ export class KaggleCompareExperimentsTool extends KaggleToolBase<KaggleCompareEx
           score: metrics.metrics.cv_score,
           normalized_score: normalizedScore,
           metrics: metrics.metrics,
+          metrics_source_schema: metrics.source_schema,
+          metrics_warnings: metrics.warnings,
           artifact: artifactRef(workspaceRoot, metricsPath),
         });
       }
@@ -798,6 +849,8 @@ function resolveExperiment(workspace: string, competition: string, experimentId:
     childProcessPath: path.join(experimentDir, "child-process.json"),
     logPath: path.join(experimentDir, "train.log"),
     metricsPath: path.join(experimentDir, "metrics.json"),
+    reportPath: path.join(experimentDir, "summary.md"),
+    nextActionPath: path.join(experimentDir, "next-action.json"),
   };
 }
 
@@ -871,6 +924,8 @@ function experimentMetadata(
       command: artifactRef(resolved.workspaceRoot, resolved.commandPath),
       process: artifactRef(resolved.workspaceRoot, resolved.processPath),
       child_process: artifactRef(resolved.workspaceRoot, resolved.childProcessPath),
+      report: artifactRef(resolved.workspaceRoot, resolved.reportPath),
+      next_action: artifactRef(resolved.workspaceRoot, resolved.nextActionPath),
       extra: extraRefs.map((ref) => artifactRef(resolved.workspaceRoot, ref)),
     },
   };
@@ -884,7 +939,35 @@ function artifactRef(workspaceRoot: string, artifactPath: string): ArtifactRef {
   };
 }
 
-async function readMetrics(metricsPath: string): Promise<ReturnType<typeof parseKaggleMetrics>> {
+function metricsFallback(
+  workspaceRoot: string,
+  competition: string,
+  experimentId: string | undefined,
+  metricsPath: string,
+): Parameters<typeof parseKaggleMetricsCompatible>[1] {
+  const metricsDir = path.dirname(metricsPath);
+  return {
+    experiment_id: experimentId,
+    competition,
+    log_path: workspaceRelativePath(workspaceRoot, path.join(metricsDir, "train.log")),
+  };
+}
+
+function experimentIdFromMetricsPath(workspaceRoot: string, metricsPath: string): string | undefined {
+  const parts = workspaceRelativePath(workspaceRoot, metricsPath).split("/");
+  const experimentsIndex = parts.indexOf("experiments");
+  if (experimentsIndex >= 0) {
+    const candidate = parts[experimentsIndex + 1];
+    if (candidate && candidate !== "metrics.json") return candidate;
+  }
+  const parent = path.basename(path.dirname(metricsPath));
+  return parent === "experiments" ? undefined : parent;
+}
+
+async function readMetrics(
+  metricsPath: string,
+  fallback: Parameters<typeof parseKaggleMetricsCompatible>[1] = {},
+): Promise<KaggleMetricParseResult> {
   let raw: string;
   try {
     raw = await fs.readFile(metricsPath, "utf-8");
@@ -895,7 +978,7 @@ async function readMetrics(metricsPath: string): Promise<ReturnType<typeof parse
     throw err;
   }
   try {
-    return parseKaggleMetrics(JSON.parse(raw));
+    return parseKaggleMetricsCompatible(JSON.parse(raw), fallback);
   } catch (err) {
     return {
       ok: false,
@@ -1017,7 +1100,16 @@ function generateExperimentId(): string {
   return `exp-${timestamp}`;
 }
 
-function teeWrapperArgs(command: string, args: string[], logPath: string): string[] {
+function teeWrapperArgs(
+  command: string,
+  args: string[],
+  logPath: string,
+  metricsPath: string,
+  reportPath: string,
+  nextActionPath: string,
+  experimentId: string,
+  competition: string,
+): string[] {
   const script = `
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -1026,6 +1118,12 @@ const command = process.argv[1];
 const args = JSON.parse(process.argv[2]);
 const logPath = process.argv[3];
 const childProcessPath = process.argv[4];
+const metricsPath = process.argv[5];
+const reportPath = process.argv[6];
+const nextActionPath = process.argv[7];
+const experimentId = process.argv[8];
+const competition = process.argv[9];
+const workspaceRoot = path.dirname(path.dirname(path.dirname(logPath)));
 fs.mkdirSync(path.dirname(logPath), { recursive: true });
 const log = fs.createWriteStream(logPath, { flags: "a" });
 const child = spawn(command, args, { cwd: process.cwd(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
@@ -1053,12 +1151,181 @@ child.on("error", (err) => {
   log.write(msg);
 });
 child.on("exit", (code, signal) => {
+  writeCompletionArtifacts(code, signal);
   const msg = "[kaggle experiment exited code=" + (code ?? "null") + " signal=" + (signal ?? "null") + "]\\n";
   log.write(msg, () => process.exit(code ?? 1));
 });
+
+function writeCompletionArtifacts(code, signal) {
+  const observedAt = new Date().toISOString();
+  const metrics = readMetricsArtifact();
+  const metric = extractMetric(metrics.value);
+  const exitOk = code === 0 && !signal;
+  const status = metrics.value && typeof metrics.value.status === "string"
+    ? metrics.value.status
+    : exitOk ? "completed" : "failed";
+  const report = renderReport({
+    observedAt,
+    code,
+    signal,
+    status,
+    metrics,
+    metric,
+  });
+  const nextAction = buildNextAction({
+    observedAt,
+    code,
+    signal,
+    status,
+    metrics,
+    metric,
+  });
+  try {
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(reportPath, report, "utf-8");
+    fs.writeFileSync(nextActionPath, JSON.stringify(nextAction, null, 2) + "\\n", "utf-8");
+  } catch (err) {
+    const msg = "[kaggle experiment artifact error] " + err.message + "\\n";
+    process.stderr.write(msg);
+    log.write(msg);
+  }
+}
+
+function readMetricsArtifact() {
+  try {
+    const raw = fs.readFileSync(metricsPath, "utf-8");
+    return { available: true, value: JSON.parse(raw), error: null };
+  } catch (err) {
+    return { available: false, value: null, error: err.message };
+  }
+}
+
+function extractMetric(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const metricName = firstString(value.metric_name)
+    || firstNumericMetricName(value.all_metrics)
+    || (isFiniteNumber(value.balanced_accuracy) ? "balanced_accuracy" : null)
+    || (isFiniteNumber(value.accuracy) ? "accuracy" : null);
+  if (!metricName) return null;
+  const score = firstNumber(value.cv_score, value.metric_value, value.score, value[metricName], value.all_metrics && value.all_metrics[metricName]);
+  if (score === null) return null;
+  const direction = normalizeDirection(firstString(value.direction) || firstString(value.metric_direction), metricName);
+  return { metric_name: metricName, score, direction };
+}
+
+function renderReport(info) {
+  const lines = [
+    "# Kaggle Experiment " + experimentId,
+    "",
+    "- Competition: " + competition,
+    "- Status: " + info.status,
+    "- Exit: code=" + (info.code ?? "null") + " signal=" + (info.signal ?? "null"),
+    "- Observed at: " + info.observedAt,
+    "- Log: " + relativePath(logPath),
+    "- Metrics: " + relativePath(metricsPath),
+  ];
+  if (info.metric) {
+    lines.push("- Metric: " + info.metric.metric_name + "=" + info.metric.score + " (" + info.metric.direction + ")");
+  } else if (info.metrics.error) {
+    lines.push("- Metric: unavailable (" + info.metrics.error + ")");
+  } else {
+    lines.push("- Metric: unavailable");
+  }
+  lines.push("");
+  lines.push("## Next Action");
+  lines.push(nextActionSummary(info));
+  lines.push("");
+  lines.push("## Artifacts");
+  lines.push("- train.log");
+  lines.push("- metrics.json" + (info.metrics.available ? "" : " (missing or invalid)"));
+  lines.push("- next-action.json");
+  return lines.join("\\n") + "\\n";
+}
+
+function buildNextAction(info) {
+  const actionType = info.metric && info.status === "completed" ? "compare_experiment" : "investigate_run";
+  return {
+    schema_version: "long-running-next-action-v1",
+    created_at: info.observedAt,
+    source: {
+      kind: "kaggle_experiment",
+      experiment_id: experimentId,
+      competition,
+    },
+    observation: {
+      status: info.status,
+      exit_code: info.code,
+      signal: info.signal,
+      metric: info.metric,
+      artifacts: {
+        log: relativePath(logPath),
+        metrics: relativePath(metricsPath),
+        report: relativePath(reportPath),
+      },
+      metrics_error: info.metrics.error,
+    },
+    action: {
+      type: actionType,
+      summary: nextActionSummary(info),
+      candidate_tools: actionType === "compare_experiment"
+        ? ["kaggle_metric_report", "kaggle_compare_experiments"]
+        : ["kaggle_experiment_read"],
+    },
+  };
+}
+
+function nextActionSummary(info) {
+  if (info.metric && info.status === "completed") {
+    return "Compare " + experimentId + " using " + info.metric.metric_name + " before deciding on another run or submission preparation.";
+  }
+  if (info.metrics.error) {
+    return "Inspect train.log and restore a readable metrics.json before comparing experiments.";
+  }
+  return "Inspect train.log and metrics.json before planning the next run.";
+}
+
+function relativePath(target) {
+  return path.relative(workspaceRoot, target).split(path.sep).join("/");
+}
+
+function firstString(value) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    if (isFiniteNumber(value)) return value;
+  }
+  return null;
+}
+
+function firstNumericMetricName(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  for (const key of ["balanced_accuracy", "accuracy", "macro_f1", "weighted_f1", "log_loss", "rmse"]) {
+    if (isFiniteNumber(value[key])) return key;
+  }
+  for (const [key, field] of Object.entries(value)) {
+    if (isFiniteNumber(field)) return key;
+  }
+  return null;
+}
+
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function inferDirection(metricName) {
+  return metricName === "rmse" || metricName === "log_loss" ? "minimize" : "maximize";
+}
+
+function normalizeDirection(value, metricName) {
+  if (value === "maximize" || value === "higher" || value === "higher_is_better" || value === "greater_is_better") return "maximize";
+  if (value === "minimize" || value === "lower" || value === "lower_is_better" || value === "less_is_better") return "minimize";
+  return inferDirection(metricName);
+}
 `;
   const childProcessPath = path.join(path.dirname(logPath), "child-process.json");
-  return ["-e", script, command, JSON.stringify(args), logPath, childProcessPath];
+  return ["-e", script, command, JSON.stringify(args), logPath, childProcessPath, metricsPath, reportPath, nextActionPath, experimentId, competition];
 }
 
 function failureResult(message: string, startTime: number): ToolResult {

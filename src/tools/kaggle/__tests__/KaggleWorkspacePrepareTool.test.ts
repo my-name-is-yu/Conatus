@@ -143,6 +143,46 @@ describe("KaggleWorkspacePrepareTool", () => {
     expect((absolute.data as { workspace: { state_relative_path: string } }).workspace.state_relative_path).toBe("kaggle-runs/titanic");
   });
 
+  it("imports an existing real Kaggle workspace into the canonical PulSeed state root", async () => {
+    const tool = new KaggleWorkspacePrepareTool();
+    const source = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-existing-kaggle-"));
+    tmpDirs.push(source);
+    await fs.mkdir(path.join(source, "data", "raw"), { recursive: true });
+    await fs.mkdir(path.join(source, "scripts"), { recursive: true });
+    await fs.writeFile(path.join(source, "data", "raw", "train.csv"), "target,x\n1,0\n");
+    await fs.writeFile(path.join(source, "scripts", "train.py"), "print('train')\n");
+
+    const result = await tool.call({
+      workspace: source,
+      competition: "playground-series-s6e4",
+      metric_name: "balanced_accuracy",
+      metric_direction: "maximize",
+      overwrite_existing: true,
+    }, makeContext());
+
+    expect(result.success).toBe(true);
+    const data = result.data as {
+      workspace: { path: string; state_relative_path: string };
+      imported_workspace: { source_path: string; copied: boolean; overwritten: boolean; entry_count: number };
+    };
+    expect(data.workspace.path).toBe(path.join(pulseedHome, "kaggle-runs", "playground-series-s6e4"));
+    expect(data.workspace.state_relative_path).toBe("kaggle-runs/playground-series-s6e4");
+    expect(data.imported_workspace).toMatchObject({
+      source_path: source,
+      copied: true,
+      overwritten: false,
+    });
+    expect(data.imported_workspace.entry_count).toBeGreaterThan(0);
+    await expect(fs.readFile(
+      path.join(pulseedHome, "kaggle-runs", "playground-series-s6e4", "data", "raw", "train.csv"),
+      "utf-8",
+    )).resolves.toContain("target,x");
+    await expect(fs.readFile(
+      path.join(pulseedHome, "kaggle-runs", "playground-series-s6e4", "scripts", "train.py"),
+      "utf-8",
+    )).resolves.toContain("print('train')");
+  });
+
   it("rejects absolute workspace paths outside the fixed competition root", async () => {
     const tool = new KaggleWorkspacePrepareTool();
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-outside-"));

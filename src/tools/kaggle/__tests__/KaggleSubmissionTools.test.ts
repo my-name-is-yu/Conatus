@@ -140,6 +140,43 @@ describe("Kaggle submission tools", () => {
     });
   });
 
+  it("prepares a submission when metrics.json uses the loose real-run schema", async () => {
+    await fs.writeFile(path.join(workspaceRoot, "experiments", "exp-a", "metrics.json"), `${JSON.stringify({
+      metric_name: "balanced_accuracy",
+      metric_value: 0.83,
+      metric_direction: "higher_is_better",
+    })}\n`);
+
+    const tool = new KaggleSubmissionPrepareTool();
+    const result = await tool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      source_file: "experiments/exp-a/submission.csv",
+      selected_experiment_id: "exp-a",
+      submission_id: "exp-a-loose",
+      output_filename: "exp-a-loose.csv",
+      message: "loose metrics submit",
+    }, makeContext(pulseedHome));
+
+    expect(result.success).toBe(true);
+    const metadataPath = path.join(workspaceRoot, "submissions", "exp-a-loose.json");
+    const metadata = JSON.parse(await fs.readFile(metadataPath, "utf-8")) as Record<string, unknown>;
+    expect(metadata).toMatchObject({
+      provenance: {
+        selected_experiment_id: "exp-a",
+        local_metrics: {
+          metrics: {
+            experiment_id: "exp-a",
+            competition: "titanic",
+            metric_name: "balanced_accuracy",
+            direction: "maximize",
+            cv_score: 0.83,
+          },
+        },
+      },
+    });
+  });
+
   it("rejects source file traversal and symlink escapes", async () => {
     const tool = new KaggleSubmissionPrepareTool();
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-outside-"));

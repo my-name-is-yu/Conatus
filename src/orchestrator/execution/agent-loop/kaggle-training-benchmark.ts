@@ -2,6 +2,8 @@ export interface KaggleTrainingBenchmarkSignals {
   experimentStarted: boolean;
   logArtifactWritten: boolean;
   metricsParsed: boolean;
+  reportArtifactWritten: boolean;
+  nextActionWritten: boolean;
   bestSelectedByDirection: boolean;
   waitResumedAfterProcessExit: boolean;
   restartReadsArtifacts: boolean;
@@ -45,6 +47,8 @@ export function scoreKaggleTrainingSignals(
   if (!signals.experimentStarted) reasons.push("experiment metadata and process metadata were not created");
   if (!signals.logArtifactWritten) reasons.push("train.log was not written as a durable artifact");
   if (!signals.metricsParsed) reasons.push("metrics.json was not parsed and schema-validated");
+  if (!signals.reportArtifactWritten) reasons.push("summary.md was not written as a durable artifact");
+  if (!signals.nextActionWritten) reasons.push("next-action.json was not written as a durable artifact");
   if (!signals.bestSelectedByDirection) reasons.push("best experiment was not selected using metric direction");
   if (!signals.waitResumedAfterProcessExit) reasons.push("wait did not resume after process exit");
   if (!signals.restartReadsArtifacts) reasons.push("restart-time read did not recover from artifacts");
@@ -81,4 +85,3 @@ export async function runKaggleTrainingBenchmark(
     results,
   };
 }
-

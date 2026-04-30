@@ -112,6 +112,26 @@ console.log("training done");
       const raw = await fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "train.log"), "utf-8");
       return raw.includes("training done");
     });
+    await waitFor(async () => {
+      try {
+        const report = await fs.readFile(
+          path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "summary.md"),
+          "utf-8",
+        );
+        return report.includes("Metric: accuracy=0.8 (maximize)");
+      } catch {
+        return false;
+      }
+    });
+    const nextAction = JSON.parse(await fs.readFile(
+      path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "next-action.json"),
+      "utf-8",
+    )) as Record<string, unknown>;
+    expect(nextAction).toMatchObject({
+      schema_version: "long-running-next-action-v1",
+      source: { kind: "kaggle_experiment", experiment_id: "exp-start", competition: "titanic" },
+      action: { type: "compare_experiment" },
+    });
 
     const read = await readTool.call({
       workspace: "titanic",
@@ -125,9 +145,16 @@ console.log("training done");
     expect(read.data).toMatchObject({
       experiment_id: "exp-start",
       metrics_status: "ok",
+      metrics_source_schema: "strict",
       metrics: { cv_score: 0.8 },
     });
     expect((read.data as { log: { text: string } }).log.text).toContain("training done");
+    expect(read.data).toMatchObject({
+      artifacts: {
+        report: { state_relative_path: "kaggle-runs/titanic/experiments/exp-start/summary.md" },
+        next_action: { state_relative_path: "kaggle-runs/titanic/experiments/exp-start/next-action.json" },
+      },
+    });
     await expect(fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "config.json"), "utf-8"))
       .resolves.toContain(data.process.session_id);
   });
@@ -301,6 +328,35 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
       status: "failure",
       reason: "malformed",
       artifact: { state_relative_path: "kaggle-runs/titanic/experiments/malformed/metrics.json" },
+    });
+  });
+
+  it("reports loose real-run metrics with caller fallback context", async () => {
+    const dir = path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-loose");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "metrics.json"), `${JSON.stringify({
+      metric_name: "balanced_accuracy",
+      metric_value: 0.81,
+      metric_direction: "higher_is_better",
+      all_metrics: { balanced_accuracy: 0.81 },
+    })}\n`);
+
+    const tool = new KaggleMetricReportTool(manager);
+    const reported = await tool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      experiment_id: "exp-loose",
+    }, makeContext(pulseedHome));
+
+    expect(reported.success).toBe(true);
+    expect(reported.data).toMatchObject({
+      status: "ok",
+      experiment_id: "exp-loose",
+      metric_name: "balanced_accuracy",
+      direction: "maximize",
+      score: 0.81,
+      metrics_source_schema: "loose",
+      metric_threshold_guidance: { operator: "gte" },
     });
   });
 

@@ -11,7 +11,9 @@ import type {
 } from "../types.js";
 import { KaggleMetricDirectionSchema, metricThresholdHintForDirection } from "./metrics.js";
 import {
+  ensureDirectoryWithinStateRoot,
   ensureKaggleWorkspaceDirectories,
+  getKaggleWorkspaceRoot,
   resolveKaggleWorkspaceInput,
   stateRelativePath,
 } from "./paths.js";
@@ -21,6 +23,8 @@ export const KaggleWorkspacePrepareInputSchema = z.object({
   competition: z.string().min(1, "competition is required"),
   metric_name: z.string().min(1, "metric_name is required"),
   metric_direction: KaggleMetricDirectionSchema,
+  source_workspace: z.string().min(1).optional(),
+  overwrite_existing: z.boolean().default(false),
   target_column: z.string().min(1).optional(),
   submission_format_hint: z.string().min(1).optional(),
   notes: z.string().min(1).optional(),
@@ -37,6 +41,13 @@ export interface KaggleWorkspacePrepareOutput {
     path: string;
     state_relative_path: string;
   };
+  imported_workspace: {
+    source_path: string;
+    destination_path: string;
+    copied: boolean;
+    overwritten: boolean;
+    entry_count: number;
+  } | null;
   directories: Array<{
     name: string;
     path: string;
@@ -92,14 +103,19 @@ export class KaggleWorkspacePrepareTool implements ITool<KaggleWorkspacePrepareI
     return [
       "Prepare a local Kaggle training workspace under PulSeed state.",
       "Creates data, notebooks, src, experiments, and submissions directories, writes workspace metadata, and returns artifact and wait-condition path hints.",
+      "Can copy an existing Kaggle workspace into the canonical ~/.pulseed/kaggle-runs/<competition> path using source_workspace.",
       "This tool does not call Kaggle APIs or read credentials.",
     ].join(" ");
   }
 
-  async call(input: KaggleWorkspacePrepareInput, _context: ToolCallContext): Promise<ToolResult> {
+  async call(input: KaggleWorkspacePrepareInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      const workspaceRoot = resolveKaggleWorkspaceInput(input.workspace, input.competition);
+      const resolved = await resolvePrepareTargets(input, context.cwd);
+      const workspaceRoot = resolved.workspaceRoot;
+      const importedWorkspace = resolved.sourceWorkspace
+        ? await importSourceWorkspace(resolved.sourceWorkspace, workspaceRoot, input.overwrite_existing)
+        : null;
       const directories = await ensureKaggleWorkspaceDirectories(workspaceRoot);
       const metadataPath = path.join(workspaceRoot, "workspace.json");
       const metricsPath = path.join(workspaceRoot, "experiments", "metrics.json");
@@ -119,6 +135,7 @@ export class KaggleWorkspacePrepareTool implements ITool<KaggleWorkspacePrepareI
         target_column: input.target_column ?? null,
         submission_format_hint: input.submission_format_hint ?? null,
         notes: input.notes ?? null,
+        imported_workspace: importedWorkspace,
         directories: Object.fromEntries(
           Object.entries(directories).map(([name, fullPath]) => [name, stateRelativePath(fullPath)]),
         ),
@@ -137,6 +154,7 @@ export class KaggleWorkspacePrepareTool implements ITool<KaggleWorkspacePrepareI
           path: metadataPath,
           state_relative_path: stateRelativePath(metadataPath),
         },
+        imported_workspace: importedWorkspace,
         directories: Object.entries(directories).map(([name, fullPath]) => ({
           name,
           path: fullPath,
@@ -194,11 +212,190 @@ export class KaggleWorkspacePrepareTool implements ITool<KaggleWorkspacePrepareI
   async checkPermissions(input: KaggleWorkspacePrepareInput, _context: ToolCallContext): Promise<PermissionCheckResult> {
     return {
       status: "needs_approval",
-      reason: `Create Kaggle workspace directories and metadata for ${input.competition}`,
+      reason: input.source_workspace
+        ? `Copy Kaggle workspace into PulSeed state and write metadata for ${input.competition}`
+        : `Create Kaggle workspace directories and metadata for ${input.competition}`,
     };
   }
 
   isConcurrencySafe(_input: KaggleWorkspacePrepareInput): boolean {
     return false;
   }
+}
+
+async function resolvePrepareTargets(
+  input: KaggleWorkspacePrepareInput,
+  cwd: string,
+): Promise<{ workspaceRoot: string; sourceWorkspace: string | null }> {
+  if (input.source_workspace) {
+    return {
+      workspaceRoot: resolveKaggleWorkspaceInput(input.workspace, input.competition),
+      sourceWorkspace: await resolveSourceWorkspace(input.source_workspace, cwd),
+    };
+  }
+
+  try {
+    return {
+      workspaceRoot: resolveKaggleWorkspaceInput(input.workspace, input.competition),
+      sourceWorkspace: null,
+    };
+  } catch (err) {
+    const candidateSource = resolveUserPath(input.workspace, cwd);
+    if (await looksImportableWorkspace(candidateSource)) {
+      return {
+        workspaceRoot: getKaggleWorkspaceRoot(input.competition),
+        sourceWorkspace: candidateSource,
+      };
+    }
+    throw err;
+  }
+}
+
+async function resolveSourceWorkspace(sourceWorkspace: string, cwd: string): Promise<string> {
+  const resolved = resolveUserPath(sourceWorkspace, cwd);
+  const stat = await fs.lstat(resolved);
+  if (stat.isSymbolicLink()) {
+    throw new Error("source_workspace must not be a symlink");
+  }
+  if (!stat.isDirectory()) {
+    throw new Error("source_workspace must be a directory");
+  }
+  return resolved;
+}
+
+async function looksImportableWorkspace(candidate: string): Promise<boolean> {
+  try {
+    const stat = await fs.lstat(candidate);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    const entries = await fs.readdir(candidate);
+    if (entries.length === 0) return false;
+    return entries.some((entry) => ["data", "scripts", "src", "notebooks", "experiments", "submission.csv", "train.py"].includes(entry));
+  } catch {
+    return false;
+  }
+}
+
+async function importSourceWorkspace(
+  sourceWorkspace: string,
+  destinationWorkspace: string,
+  overwriteExisting: boolean,
+): Promise<NonNullable<KaggleWorkspacePrepareOutput["imported_workspace"]>> {
+  const [realSource, realDestination] = await Promise.all([
+    fs.realpath(sourceWorkspace),
+    realpathOrNull(destinationWorkspace),
+  ]);
+  if (realDestination && realSource === realDestination) {
+    return {
+      source_path: sourceWorkspace,
+      destination_path: destinationWorkspace,
+      copied: false,
+      overwritten: false,
+      entry_count: await countEntries(sourceWorkspace),
+    };
+  }
+  assertNotNestedImport(realSource, destinationWorkspace);
+  await assertTreeHasNoSymlinks(sourceWorkspace);
+  await ensureDirectoryWithinStateRoot(path.dirname(destinationWorkspace));
+
+  await assertDestinationLeafIsSafe(destinationWorkspace);
+  const destinationHasEntries = await directoryHasEntries(destinationWorkspace);
+  if (destinationHasEntries && !overwriteExisting) {
+    throw new Error("destination workspace already exists; set overwrite_existing=true to replace it");
+  }
+  await fs.rm(destinationWorkspace, { recursive: true, force: true });
+  await copyDirectoryWithoutSymlinks(sourceWorkspace, destinationWorkspace);
+  return {
+    source_path: sourceWorkspace,
+    destination_path: destinationWorkspace,
+    copied: true,
+    overwritten: destinationHasEntries,
+    entry_count: await countEntries(destinationWorkspace),
+  };
+}
+
+async function assertDestinationLeafIsSafe(destinationWorkspace: string): Promise<void> {
+  try {
+    const stat = await fs.lstat(destinationWorkspace);
+    if (stat.isSymbolicLink()) {
+      throw new Error("destination workspace must not be a symlink");
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+}
+
+function assertNotNestedImport(realSource: string, destinationWorkspace: string): void {
+  const destination = path.resolve(destinationWorkspace);
+  const relativeDestination = path.relative(realSource, destination);
+  if (relativeDestination === "" || (!relativeDestination.startsWith("..") && !path.isAbsolute(relativeDestination))) {
+    throw new Error("destination workspace must not be inside source_workspace");
+  }
+}
+
+async function assertTreeHasNoSymlinks(root: string): Promise<void> {
+  const stat = await fs.lstat(root);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`source_workspace contains symlink: ${root}`);
+  }
+  if (!stat.isDirectory()) return;
+  for (const entry of await fs.readdir(root)) {
+    await assertTreeHasNoSymlinks(path.join(root, entry));
+  }
+}
+
+async function copyDirectoryWithoutSymlinks(source: string, destination: string): Promise<void> {
+  const stat = await fs.lstat(source);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`source_workspace contains symlink: ${source}`);
+  }
+  if (stat.isDirectory()) {
+    await fs.mkdir(destination, { recursive: true });
+    for (const entry of await fs.readdir(source)) {
+      await copyDirectoryWithoutSymlinks(path.join(source, entry), path.join(destination, entry));
+    }
+    return;
+  }
+  if (stat.isFile()) {
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(source, destination);
+  }
+}
+
+async function directoryHasEntries(candidate: string): Promise<boolean> {
+  try {
+    const entries = await fs.readdir(candidate);
+    return entries.length > 0;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+async function countEntries(root: string): Promise<number> {
+  let count = 0;
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    count += 1;
+    if (entry.isDirectory()) {
+      count += await countEntries(path.join(root, entry.name));
+    }
+  }
+  return count;
+}
+
+async function realpathOrNull(candidate: string): Promise<string | null> {
+  try {
+    return await fs.realpath(candidate);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function resolveUserPath(candidate: string, cwd: string): string {
+  const requested = candidate.trim();
+  if (requested === "~" || requested.startsWith("~/")) {
+    return path.resolve(process.env["HOME"] ?? cwd, requested.slice(requested === "~" ? 1 : 2));
+  }
+  return path.isAbsolute(requested) ? path.resolve(requested) : path.resolve(cwd, requested);
 }

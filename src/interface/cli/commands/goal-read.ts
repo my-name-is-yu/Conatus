@@ -149,9 +149,7 @@ export async function cmdStatus(
     if (prog === null) {
       progress = "not yet measured";
     } else {
-      const rawDisplay = typeof dim.current_value === "number"
-        ? dim.current_value.toFixed(1)
-        : String(dim.current_value);
+      const rawDisplay = formatCurrentValue(dim.current_value);
       progress = `${prog.toFixed(3)} (raw: ${rawDisplay})`;
     }
     const confidence = `${(dim.confidence * 100).toFixed(1)}%`;
@@ -174,6 +172,13 @@ export async function cmdStatus(
   }
 
   return 0;
+}
+
+function formatCurrentValue(value: unknown): string {
+  if (typeof value !== "number") return String(value);
+  if (!Number.isFinite(value)) return String(value);
+  if (Number.isInteger(value)) return String(value);
+  return Number(value.toPrecision(6)).toString();
 }
 
 export async function cmdGoalShow(stateManager: StateManager, goalId: string): Promise<number> {

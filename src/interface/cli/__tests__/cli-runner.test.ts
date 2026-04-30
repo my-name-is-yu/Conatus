@@ -175,7 +175,7 @@ import { DaemonClient } from "../../../runtime/daemon/client.js";
 import type { LoopResult } from "../../../orchestrator/loop/core-loop.js";
 import type { Goal } from "../../../base/types/goal.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   const now = new Date().toISOString();
@@ -1130,6 +1130,28 @@ describe("status subcommand", async () => {
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(output).toContain("active");
+    consoleSpy.mockRestore();
+  });
+
+  it("prints metric-like raw values without rounding them to one decimal", async () => {
+    await stateManager.saveGoal(makeGoal({
+      id: "goal-metric-precision",
+      dimensions: [
+        makeDimension({
+          name: "best_oof_balanced_accuracy",
+          label: "best OOF balanced accuracy",
+          current_value: 0.9581262885420526,
+          threshold: { type: "min", value: 0.99 },
+        }),
+      ],
+    }));
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runCLI("status", "--goal", "goal-metric-precision");
+
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("raw: 0.958126");
+    expect(output).not.toContain("raw: 1.0");
     consoleSpy.mockRestore();
   });
 

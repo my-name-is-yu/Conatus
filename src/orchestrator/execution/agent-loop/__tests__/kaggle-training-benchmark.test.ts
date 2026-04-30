@@ -56,12 +56,22 @@ async function waitFor(expectation: () => Promise<boolean>): Promise<void> {
   expect(await expectation()).toBe(true);
 }
 
+async function fileContains(filePath: string, text: string): Promise<boolean> {
+  try {
+    return (await fs.readFile(filePath, "utf-8")).includes(text);
+  } catch {
+    return false;
+  }
+}
+
 describe("kaggle training benchmark", () => {
   it("scores a completed training loop", () => {
     const score = scoreKaggleTrainingSignals({
       experimentStarted: true,
       logArtifactWritten: true,
       metricsParsed: true,
+      reportArtifactWritten: true,
+      nextActionWritten: true,
       bestSelectedByDirection: true,
       waitResumedAfterProcessExit: true,
       restartReadsArtifacts: true,
@@ -76,6 +86,8 @@ describe("kaggle training benchmark", () => {
       experimentStarted: true,
       logArtifactWritten: false,
       metricsParsed: true,
+      reportArtifactWritten: false,
+      nextActionWritten: false,
       bestSelectedByDirection: false,
       waitResumedAfterProcessExit: true,
       restartReadsArtifacts: false,
@@ -85,6 +97,8 @@ describe("kaggle training benchmark", () => {
     expect(score.passed).toBe(false);
     expect(score.reasons).toEqual([
       "train.log was not written as a durable artifact",
+      "summary.md was not written as a durable artifact",
+      "next-action.json was not written as a durable artifact",
       "best experiment was not selected using metric direction",
       "restart-time read did not recover from artifacts",
     ]);
@@ -98,6 +112,8 @@ describe("kaggle training benchmark", () => {
           experimentStarted: true,
           logArtifactWritten: true,
           metricsParsed: true,
+          reportArtifactWritten: true,
+          nextActionWritten: true,
           bestSelectedByDirection: true,
           waitResumedAfterProcessExit: true,
           restartReadsArtifacts: true,
@@ -155,6 +171,21 @@ console.log("benchmark training completed");
           "utf-8",
         );
         return log.includes("benchmark training completed");
+      });
+      await waitFor(async () => {
+        try {
+          const report = await fs.readFile(
+            path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "summary.md"),
+            "utf-8",
+          );
+          const nextAction = await fs.readFile(
+            path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "next-action.json"),
+            "utf-8",
+          );
+          return report.includes("Metric: accuracy=0.82 (maximize)") && nextAction.includes("compare_experiment");
+        } catch {
+          return false;
+        }
       });
 
       const restartedRead = await new KaggleExperimentReadTool(new ProcessSessionManager()).call({
@@ -246,6 +277,14 @@ console.log("benchmark training completed");
             experimentStarted: Boolean((started.data as { process?: { metadataPath?: string } }).process?.metadataPath),
             logArtifactWritten: ((restartedRead.data as { log?: { text?: string } }).log?.text ?? "").includes("benchmark training completed"),
             metricsParsed: report.success,
+            reportArtifactWritten: await fileContains(
+              path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "summary.md"),
+              "Metric: accuracy=0.82 (maximize)",
+            ),
+            nextActionWritten: await fileContains(
+              path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "next-action.json"),
+              "compare_experiment",
+            ),
             bestSelectedByDirection: (compared.data as { best_experiment_id?: string }).best_experiment_id === "exp-benchmark-a",
             waitResumedAfterProcessExit: waitOutcome.status === "improved"
               && (writtenWaitMetadata?.latest_observation as { status?: string } | undefined)?.status === "satisfied",

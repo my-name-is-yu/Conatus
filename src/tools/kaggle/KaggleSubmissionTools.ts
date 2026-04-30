@@ -17,7 +17,7 @@ import {
   stateRelativePath,
   workspaceRelativePath,
 } from "./paths.js";
-import { KaggleMetricsSchema, parseKaggleMetrics, type KaggleMetrics } from "./metrics.js";
+import { KaggleMetricsSchema, parseKaggleMetricsCompatible, type KaggleMetrics } from "./metrics.js";
 
 const DEFAULT_MAX_OUTPUT_CHARS = 20_000;
 const SUBMISSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -188,7 +188,12 @@ export class KaggleSubmissionPrepareTool implements ITool<KaggleSubmissionPrepar
           path.join("experiments", input.selected_experiment_id, "metrics.json"),
           "metrics_path",
         );
-      const metrics = await readKaggleMetrics(metricsPath);
+      const metrics = await readKaggleMetrics(metricsPath, {
+        experiment_id: input.selected_experiment_id,
+        competition: input.competition,
+        log_path: path.join("experiments", input.selected_experiment_id, "train.log"),
+        submission_path: input.source_file,
+      });
       if (metrics.experiment_id !== input.selected_experiment_id) {
         throw new Error("metrics_path experiment_id must match selected_experiment_id");
       }
@@ -490,9 +495,12 @@ function optionalSubmitArgs(input: KaggleSubmitInput): string[] {
   return args;
 }
 
-async function readKaggleMetrics(metricsPath: string): Promise<KaggleMetrics> {
+async function readKaggleMetrics(
+  metricsPath: string,
+  fallback: Parameters<typeof parseKaggleMetricsCompatible>[1] = {},
+): Promise<KaggleMetrics> {
   const raw = await readJsonObject(metricsPath, "metrics_path");
-  const parsed = parseKaggleMetrics(raw);
+  const parsed = parseKaggleMetricsCompatible(raw, fallback);
   if (!parsed.ok) {
     throw new Error(`${parsed.message}: ${parsed.issues?.join("; ") ?? parsed.reason}`);
   }

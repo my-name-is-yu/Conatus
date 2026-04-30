@@ -131,6 +131,7 @@ export {
   metricThresholdHintForDirection,
   normalizedMetricScore,
   parseKaggleMetrics,
+  parseKaggleMetricsCompatible,
   type KaggleCompareExperimentsInput,
   type KaggleExperimentListInput,
   type KaggleExperimentReadInput,
@@ -147,6 +148,7 @@ export {
   type KaggleCommandRunner,
   type KaggleMetricDirection,
   type KaggleMetricParseResult,
+  type KaggleMetricsCompatibilityFallback,
   type KaggleMetrics,
   type MetricThresholdHint,
 } from "../kaggle/index.js";
