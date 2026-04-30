@@ -7,6 +7,8 @@ import { getDatasourcesDir } from "../../../base/utils/paths.js";
 import { cmdDatasourceAdd } from "../commands/config.js";
 import { createCliDataSourceAdapter } from "../setup.js";
 import { PostgresDataSourceAdapter } from "../../../platform/observation/data-source-adapter.js";
+import { ArtifactMetricDataSourceAdapter } from "../../../adapters/datasources/artifact-metric-datasource.js";
+import { buildCliDataSourceRegistry } from "../data-source-bootstrap.js";
 
 describe("cmdDatasourceAdd(database)", () => {
   let tmpDir: string;
@@ -93,5 +95,35 @@ describe("createCliDataSourceAdapter", () => {
     });
 
     expect(adapter).toBeInstanceOf(PostgresDataSourceAdapter);
+  });
+
+  it("maps artifact_metric datasources to ArtifactMetricDataSourceAdapter", () => {
+    const adapter = createCliDataSourceAdapter({
+      id: "artifact-source",
+      name: "Workspace Artifacts",
+      type: "artifact_metric",
+      connection: { path: process.cwd() },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    });
+
+    expect(adapter).toBeInstanceOf(ArtifactMetricDataSourceAdapter);
+  });
+
+  it("adds the builtin workspace artifact datasource even without saved configs", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-datasource-bootstrap-"));
+    const originalHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    try {
+      const registry = await buildCliDataSourceRegistry(tmpDir);
+      expect(registry.listSources()).toContain("ds_builtin_workspace_artifacts");
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env["PULSEED_HOME"];
+      } else {
+        process.env["PULSEED_HOME"] = originalHome;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
   });
 });

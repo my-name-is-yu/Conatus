@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // --- DataSourceType ---
 
-export const DataSourceTypeEnum = z.enum(["file", "http_api", "database", "custom", "github_issue", "file_existence", "shell", "websocket", "sse", "mcp"]);
+export const DataSourceTypeEnum = z.enum(["file", "http_api", "database", "custom", "github_issue", "file_existence", "shell", "artifact_metric", "websocket", "sse", "mcp"]);
 export type DataSourceType = z.infer<typeof DataSourceTypeEnum>;
 
 // --- PollingConfig ---
@@ -27,6 +27,13 @@ export const DataSourceConfigSchema = z.object({
     headers: z.record(z.string(), z.string()).optional(),
     body_template: z.string().optional(),
     commands: z.record(z.string(), z.unknown()).optional(),
+    metric_file_names: z.array(z.string()).optional(),
+    exclude_dirs: z.array(z.string()).optional(),
+    exclude_paths: z.array(z.string()).optional(),
+    max_metric_files: z.number().int().positive().optional(),
+    max_artifact_files: z.number().int().positive().optional(),
+    dimension_metrics: z.record(z.string(), z.array(z.string())).optional(),
+    dimension_aggregations: z.record(z.string(), z.enum(["max", "min", "count", "file_count"])).optional(),
   }),
   polling: PollingConfigSchema.optional(),
   auth: z

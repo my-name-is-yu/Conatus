@@ -39,6 +39,7 @@ export interface IDataSourceAdapter {
   disconnect(): Promise<void>;
   healthCheck(): Promise<boolean>;
   getSupportedDimensions?(): string[];
+  supportsDimension?(dimensionName: string, goalId?: string): boolean;
 }
 
 // ─── FileDataSourceAdapter ───
