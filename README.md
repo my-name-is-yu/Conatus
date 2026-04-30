@@ -58,7 +58,6 @@ PulSeed will guide provider and adapter setup when needed.
 
 - [Get Started](docs/getting-started.md)
 - [Docs Index](docs/index.md)
-- [Use Cases](docs/usecase.md)
 - [Runtime](docs/runtime.md)
 - [Configuration](docs/configuration.md)
 - [Status](docs/status.md)
@@ -97,17 +96,19 @@ PulSeed will guide provider and adapter setup when needed.
 - `pulseed schedule ...` for schedule management
 - Lower-level commands for scripting, diagnostics, and compatibility
 
-## Use Cases
+## Achievements
 
-PulSeed is a fit when the work is bigger than one prompt and needs follow-through:
-
-- keep a codebase moving toward a maintenance goal
-- track a business KPI and adjust strategy as results change
-- coordinate recurring reports, reminders, and external actions
-- observe external data sources and ask for confirmation when a human decision
-  is required
-
-More detailed examples live in [Use Cases](docs/usecase.md).
+- Ran a 24-hour Kaggle dogfood workflow on a Mac mini, keeping a long-running
+  PulSeed goal alive while it observed results, generated follow-up tasks, and
+  pivoted training strategy without manual restarts.
+- On Kaggle Playground Series S6E4, PulSeed improved local OOF balanced
+  accuracy from early 0.45-level baselines to `0.970413051791` by exploring
+  CatBoost-focused ensembles, probability adjustment, and post-OOF calibration.
+- The best local artifact preserved full OOF predictions and per-class recall:
+  High `0.957351611214`, Low `0.994598788377`, and Medium `0.959288755783`.
+- The run also surfaced a real reliability gap: `pulseed status` did not yet
+  read nested `artifacts/**/metrics.json` outputs, giving the project a concrete
+  follow-up issue from live dogfooding.
 
 ## Docs and Community
 
