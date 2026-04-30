@@ -1,4 +1,5 @@
 import type { VerificationFileDiff } from "../base/types/task.js";
+import type { DeadlineFinalizationStatus } from "../platform/time/deadline-finalization.js";
 
 export type ExecutionSummaryWaitStatus = {
   strategyId?: string;
@@ -26,6 +27,7 @@ export type ExecutionSummaryParams = {
   pivotOccurred: boolean;
   elapsedMs: number;
   waitStatus?: ExecutionSummaryWaitStatus;
+  finalizationStatus?: DeadlineFinalizationStatus;
 };
 
 export type NotificationType =

@@ -125,6 +125,29 @@ export const ObservationOptimizationSchema = z.object({
 });
 export type ObservationOptimization = z.infer<typeof ObservationOptimizationSchema>;
 
+// --- Deadline finalization policy ---
+
+export const GoalFinalizationExternalActionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  tool_name: z.string().min(1).optional(),
+  payload_ref: z.string().min(1).optional(),
+  approval_required: z.literal(true).default(true),
+}).strict();
+export type GoalFinalizationExternalAction = z.infer<typeof GoalFinalizationExternalActionSchema>;
+
+export const GoalFinalizationPolicySchema = z.object({
+  /** Minimum time that must be reserved before a deadline for final packaging/checks. */
+  minimum_buffer_ms: z.number().int().nonnegative(),
+  /** Earlier warning window for switching from open exploration to consolidation. */
+  consolidation_buffer_ms: z.number().int().nonnegative().default(0),
+  deliverable_contract: z.string().min(1).optional(),
+  best_artifact_selection: z.enum(["best_evidence", "latest_artifact", "latest_verified"]).default("best_evidence"),
+  verification_steps: z.array(z.string().min(1)).default([]),
+  external_actions: z.array(GoalFinalizationExternalActionSchema).default([]),
+}).strict();
+export type GoalFinalizationPolicy = z.infer<typeof GoalFinalizationPolicySchema>;
+
 // --- Goal (a node in the goal tree) ---
 
 export const GoalSchema = z.object({
@@ -154,6 +177,7 @@ export const GoalSchema = z.object({
 
   // Deadline & scheduling
   deadline: z.string().datetime().nullable().default(null),
+  finalization_policy: GoalFinalizationPolicySchema.nullable().optional(),
 
   // Negotiation metadata
   confidence_flag: z.enum(["high", "medium", "low"]).nullable().default(null),

@@ -11,7 +11,7 @@ export type WorkerStatus = 'idle' | 'running' | 'crashed';
 
 export interface WorkerResult {
   goalId: string;
-  status: 'completed' | 'stalled' | 'max_iterations' | 'error' | 'stopped';
+  status: 'completed' | 'stalled' | 'max_iterations' | 'error' | 'stopped' | 'finalization';
   totalIterations: number;
   durationMs: number;
   error?: string;

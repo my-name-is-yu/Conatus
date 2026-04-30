@@ -2,6 +2,7 @@ import type { DriveScore } from "../../base/types/drive.js";
 import type { CompletionJudgment } from "../../base/types/satisficing.js";
 import type { StallAnalysis, StallReport } from "../../base/types/stall.js";
 import type { MetricTrendContext } from "../../platform/drive/metric-history.js";
+import type { DeadlineFinalizationStatus } from "../../platform/time/deadline-finalization.js";
 import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
 import type { WaitExpiryOutcome } from "../../base/types/strategy.js";
 import type { TaskCycleResult } from "../execution/task/task-execution-types.js";
@@ -40,6 +41,8 @@ export interface LoopIterationResult {
   stallAnalysis?: StallAnalysis;
   /** Outcome metric trend that informed stall/recovery decisions. */
   metricTrendContext?: MetricTrendContext;
+  /** Deadline-aware finalization planning state for this iteration. */
+  finalizationStatus?: DeadlineFinalizationStatus;
   pivotOccurred: boolean;
   completionJudgment: CompletionJudgment;
   elapsedMs: number;
@@ -114,7 +117,7 @@ export function makeEmptyIterationResult(
 export interface LoopResult {
   goalId: string;
   totalIterations: number;
-  finalStatus: "completed" | "stalled" | "max_iterations" | "error" | "stopped";
+  finalStatus: "completed" | "stalled" | "max_iterations" | "error" | "stopped" | "finalization";
   iterations: LoopIterationResult[];
   startedAt: string;
   completedAt: string;

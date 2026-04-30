@@ -406,6 +406,209 @@ describe("CoreLoop", async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
+  describe("deadline finalization", () => {
+    it("skips exploratory task generation at the finalization buffer and exposes the handoff plan", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      const deadline = new Date(Date.now() + 10 * 60_000).toISOString();
+      await mocks.stateManager.saveGoal(makeGoal({
+        deadline,
+        finalization_policy: {
+          minimum_buffer_ms: 30 * 60_000,
+          consolidation_buffer_ms: 0,
+          deliverable_contract: "Package the latest benchmark report",
+          best_artifact_selection: "best_evidence",
+          verification_steps: ["Run final smoke test"],
+          external_actions: [
+            {
+              id: "publish-report",
+              label: "Publish report",
+              tool_name: "publish_report",
+              payload_ref: "artifact:best",
+              approval_required: true,
+            },
+          ],
+        },
+      }));
+      const evidenceLedger = {
+        append: vi.fn().mockResolvedValue([]),
+        summarizeGoal: vi.fn().mockResolvedValue({
+          best_evidence: {
+            id: "evidence-1",
+            occurred_at: new Date().toISOString(),
+            kind: "artifact",
+            scope: { goal_id: "goal-1" },
+            metrics: [],
+            artifacts: [
+              {
+                label: "reports/final.md",
+                path: "reports/final.md",
+                kind: "report",
+              },
+            ],
+            raw_refs: [],
+            summary: "Best benchmark report",
+          },
+        }),
+      };
+
+      const loop = new CoreLoop(
+        { ...deps, evidenceLedger: evidenceLedger as any },
+        { delayBetweenLoopsMs: 0, autoDecompose: false }
+      );
+      const result = await loop.run("goal-1", { maxIterations: 3 });
+      const iteration = result.iterations[0]!;
+
+      expect(result.finalStatus).toBe("finalization");
+      expect(result.totalIterations).toBe(1);
+      expect(iteration.skipped).toBe(true);
+      expect(iteration.skipReason).toBe("deadline_finalization");
+      expect(iteration.finalizationStatus).toMatchObject({
+        mode: "finalization",
+        finalization_plan: {
+          deliverable_contract: "Package the latest benchmark report",
+          best_artifact: { label: "reports/final.md" },
+          verification_steps: ["Run final smoke test"],
+          approval_required_actions: [
+            {
+              id: "publish-report",
+              label: "Publish report",
+              tool_name: "publish_report",
+              payload_ref: "artifact:best",
+              approval_required: true,
+            },
+          ],
+        },
+      });
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+      expect(evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "decision",
+        scope: expect.objectContaining({ phase: "deadline_finalization" }),
+        result: expect.objectContaining({ status: "finalization" }),
+      }));
+      expect(mocks.reportingEngine.generateExecutionSummary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          finalizationStatus: expect.objectContaining({ mode: "finalization" }),
+        })
+      );
+    });
+
+    it("uses the goal artifact selection rule instead of always using best_evidence", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      const deadline = new Date(Date.now() + 10 * 60_000).toISOString();
+      await mocks.stateManager.saveGoal(makeGoal({
+        deadline,
+        finalization_policy: {
+          minimum_buffer_ms: 30 * 60_000,
+          consolidation_buffer_ms: 0,
+          best_artifact_selection: "latest_artifact",
+          verification_steps: [],
+          external_actions: [],
+        },
+      }));
+      const oldBestEvidence = {
+        id: "best-evidence",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: "goal-1" },
+        metrics: [],
+        artifacts: [{ label: "reports/best.md", path: "reports/best.md", kind: "report" }],
+        raw_refs: [],
+        summary: "Best evidence",
+      };
+      const latestArtifact = {
+        id: "latest-artifact",
+        occurred_at: "2026-04-30T00:10:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: "goal-1" },
+        metrics: [],
+        artifacts: [{ label: "reports/latest.md", path: "reports/latest.md", kind: "report" }],
+        raw_refs: [],
+        summary: "Latest artifact",
+      };
+      const evidenceLedger = {
+        append: vi.fn().mockResolvedValue([]),
+        summarizeGoal: vi.fn().mockResolvedValue({ best_evidence: oldBestEvidence, recent_entries: [latestArtifact, oldBestEvidence] }),
+        readByGoal: vi.fn().mockResolvedValue({ entries: [oldBestEvidence, latestArtifact], warnings: [] }),
+      };
+
+      const loop = new CoreLoop(
+        { ...deps, evidenceLedger: evidenceLedger as any },
+        { delayBetweenLoopsMs: 0, autoDecompose: false }
+      );
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.finalizationStatus?.finalization_plan?.best_artifact).toMatchObject({
+        label: "reports/latest.md",
+      });
+      expect(evidenceLedger.readByGoal).toHaveBeenCalledWith("goal-1");
+    });
+
+    it("can select the latest verified artifact for finalization", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      const deadline = new Date(Date.now() + 10 * 60_000).toISOString();
+      await mocks.stateManager.saveGoal(makeGoal({
+        deadline,
+        finalization_policy: {
+          minimum_buffer_ms: 30 * 60_000,
+          consolidation_buffer_ms: 0,
+          best_artifact_selection: "latest_verified",
+          verification_steps: [],
+          external_actions: [],
+        },
+      }));
+      const latestArtifact = {
+        id: "latest-artifact",
+        occurred_at: "2026-04-30T00:10:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: "goal-1" },
+        metrics: [],
+        artifacts: [{ label: "reports/latest-unverified.md", path: "reports/latest-unverified.md", kind: "report" }],
+        raw_refs: [],
+        summary: "Latest artifact without verification",
+      };
+      const latestVerified = {
+        id: "latest-verified",
+        occurred_at: "2026-04-30T00:05:00.000Z",
+        kind: "verification",
+        scope: { goal_id: "goal-1", task_id: "task-verified" },
+        verification: { verdict: "pass", confidence: 0.9, summary: "smoke passed" },
+        metrics: [],
+        artifacts: [],
+        raw_refs: [],
+        outcome: "improved",
+        summary: "Verification pass for task-verified",
+      };
+      const verifiedExecution = {
+        id: "verified-execution",
+        occurred_at: "2026-04-30T00:04:00.000Z",
+        kind: "execution",
+        scope: { goal_id: "goal-1", task_id: "task-verified" },
+        metrics: [],
+        artifacts: [{ label: "reports/verified.md", path: "reports/verified.md", kind: "report" }],
+        raw_refs: [],
+        outcome: "improved",
+        summary: "Verified artifact execution",
+      };
+      const evidenceLedger = {
+        append: vi.fn().mockResolvedValue([]),
+        readByGoal: vi.fn().mockResolvedValue({
+          entries: [latestArtifact, verifiedExecution, latestVerified],
+          warnings: [],
+        }),
+      };
+
+      const loop = new CoreLoop(
+        { ...deps, evidenceLedger: evidenceLedger as any },
+        { delayBetweenLoopsMs: 0, autoDecompose: false }
+      );
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.finalizationStatus?.finalization_plan?.best_artifact).toMatchObject({
+        label: "reports/verified.md",
+      });
+    });
+  });
+
   // ─── KnowledgeManager integration ───
 
   describe("KnowledgeManager integration", async () => {

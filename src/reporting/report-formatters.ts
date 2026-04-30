@@ -118,13 +118,18 @@ export function buildExecutionSummaryContent(
     pivotOccurred,
     elapsedMs,
     waitStatus,
+    finalizationStatus,
   } = params;
 
   const now = new Date().toISOString();
   const elapsedSec = (elapsedMs / 1000).toFixed(1);
 
   const isStructuralEvent =
-    stallDetected || pivotOccurred || taskResult === null || waitStatus !== undefined;
+    stallDetected
+    || pivotOccurred
+    || taskResult === null
+    || waitStatus !== undefined
+    || finalizationStatus !== undefined;
   const useBrief = verbosity === "brief" && !isStructuralEvent;
 
   if (useBrief) {
@@ -161,6 +166,7 @@ export function buildExecutionSummaryContent(
   const stallStatus = stallDetected ? "Yes" : "No";
   const pivotStatus = pivotOccurred ? "Yes" : "No";
   const waitSection = waitStatus ? formatWaitStatusSection(waitStatus) : "";
+  const finalizationSection = finalizationStatus ? formatFinalizationStatusSection(finalizationStatus) : "";
 
   return (
     `## Execution Summary — Loop ${loopIndex}\n\n` +
@@ -173,6 +179,7 @@ export function buildExecutionSummaryContent(
     `- **Stall detected**: ${stallStatus}\n` +
     `- **Strategy pivot**: ${pivotStatus}\n\n` +
     waitSection +
+    finalizationSection +
     `### Elapsed Time\n\n${elapsedSec}s`
   );
 }
@@ -207,6 +214,48 @@ function formatWaitStatusSection(waitStatus: NonNullable<ExecutionSummaryParams[
   }
 
   return `${lines.join("\n")}\n\n`;
+}
+
+function formatFinalizationStatusSection(
+  status: NonNullable<ExecutionSummaryParams["finalizationStatus"]>
+): string {
+  const lines = [
+    "### Deadline Finalization",
+    "",
+    `- **Mode**: ${status.mode}`,
+    `- **Deadline**: ${status.deadline ?? "-"}`,
+    `- **Remaining exploration**: ${formatDurationMs(status.remaining_exploration_ms)}`,
+    `- **Reserved finalization**: ${formatDurationMs(status.reserved_finalization_ms)}`,
+    `- **Reason**: ${status.reason}`,
+  ];
+
+  const plan = status.finalization_plan;
+  if (plan) {
+    lines.push(`- **Deliverable**: ${plan.deliverable_contract ?? "-"}`);
+    lines.push(`- **Best artifact**: ${plan.best_artifact?.label ?? "-"}`);
+    if (plan.verification_steps.length > 0) {
+      lines.push(`- **Verification steps**: ${plan.verification_steps.join("; ")}`);
+    }
+    if (plan.approval_required_actions.length > 0) {
+      lines.push(
+        `- **Approval-required actions**: ${plan.approval_required_actions
+          .map((action) => action.label)
+          .join("; ")}`
+      );
+    }
+  }
+
+  return `${lines.join("\n")}\n\n`;
+}
+
+function formatDurationMs(value: number | null): string {
+  if (value === null) return "-";
+  if (value <= 0) return "0m";
+  const minutes = Math.ceil(value / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
 }
 
 // ─── buildNotificationContent ───

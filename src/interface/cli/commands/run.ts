@@ -117,6 +117,21 @@ export async function cmdRun(
   console.log(`Total iterations: ${result.totalIterations}`);
   console.log(`Started at:       ${result.startedAt}`);
   console.log(`Completed at:     ${result.completedAt}`);
+  const finalizationStatus = result.iterations.at(-1)?.finalizationStatus;
+  if (finalizationStatus && finalizationStatus.mode !== "no_deadline") {
+    console.log(`Finalization:     ${finalizationStatus.mode}`);
+    console.log(`Exploration left: ${formatDurationMs(finalizationStatus.remaining_exploration_ms)}`);
+    console.log(`Reserved buffer:  ${formatDurationMs(finalizationStatus.reserved_finalization_ms)}`);
+    const plan = finalizationStatus.finalization_plan;
+    if (plan?.best_artifact) {
+      console.log(`Best artifact:    ${plan.best_artifact.label}`);
+    }
+    if (plan && plan.approval_required_actions.length > 0) {
+      console.log(
+        `Approval needed:  ${plan.approval_required_actions.map((action) => action.label).join(", ")}`
+      );
+    }
+  }
 
   switch (result.finalStatus) {
     case "completed":
@@ -130,4 +145,14 @@ export async function cmdRun(
     default:
       return 0;
   }
+}
+
+function formatDurationMs(value: number | null): string {
+  if (value === null) return "-";
+  if (value <= 0) return "0m";
+  const minutes = Math.ceil(value / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
 }

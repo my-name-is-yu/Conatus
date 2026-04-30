@@ -39,6 +39,12 @@ import {
 import type { CorePhasePolicyRegistry } from "./phase-policy.js";
 import type { CoreDecisionEngine } from "./decision-engine.js";
 import type { ITimeHorizonEngine } from "../../../platform/time/time-horizon-engine.js";
+import {
+  buildDeadlineFinalizationStatus,
+  normalizeFinalizationPolicy,
+  shouldStopExplorationForFinalization,
+  type DeadlineFinalizationArtifact,
+} from "../../../platform/time/deadline-finalization.js";
 import type { DriveScore } from "../../../base/types/drive.js";
 import type { CorePhaseKind } from "../../execution/agent-loop/core-phase-runner.js";
 import { findActiveWaitObservationInput } from "./iteration-kernel-wait.js";
@@ -48,6 +54,7 @@ import {
 } from "./iteration-kernel-knowledge.js";
 import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 import type {
+  RuntimeEvidenceEntry,
   RuntimeEvidenceEntryInput,
   RuntimeEvidenceEntryKind,
   RuntimeEvidenceOutcome,
@@ -247,6 +254,39 @@ export class CoreIterationKernel {
         .map((g: any) => `${g.dimension_name}=${g.normalized_weighted_gap.toFixed(2)}`)
         .join(", ")}`
     );
+
+    const finalizationStatus = await runPhase("deadline-finalization", async () =>
+      buildDeadlineFinalizationStatus({
+        goal,
+        bestArtifact: await loadBestFinalizationArtifact(
+          this.deps.deps.evidenceLedger,
+          goalId,
+          normalizeFinalizationPolicy(goal.finalization_policy).best_artifact_selection
+        ),
+      })
+    );
+    result.finalizationStatus = finalizationStatus;
+    if (shouldStopExplorationForFinalization(finalizationStatus)) {
+      result.skipped = true;
+      result.skipReason =
+        finalizationStatus.mode === "missed_deadline"
+          ? "deadline_missed_finalization"
+          : "deadline_finalization";
+      await appendRuntimeEvidence({
+        kind: "decision",
+        summary: finalizationStatus.reason,
+        outcome: "blocked",
+        decision_reason: finalizationStatus.reason,
+        scope: { phase: "deadline_finalization" },
+        result: {
+          status: finalizationStatus.mode,
+          summary: finalizationStatus.finalization_plan?.deliverable_contract ?? finalizationStatus.reason,
+        },
+      });
+      await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
+      result.elapsedMs = Date.now() - startTime;
+      return result;
+    }
 
     const activeWait = await findActiveWaitObservationInput(
       this.deps.deps,
@@ -613,6 +653,69 @@ export class CoreIterationKernel {
     result.elapsedMs = Date.now() - startTime;
     return result;
   }
+}
+
+async function loadBestFinalizationArtifact(
+  evidenceLedger: CoreLoopDeps["evidenceLedger"],
+  goalId: string,
+  selection: "best_evidence" | "latest_artifact" | "latest_verified"
+): Promise<DeadlineFinalizationArtifact | null> {
+  if (!evidenceLedger) return null;
+  try {
+    if (selection === "best_evidence") {
+      const summary = await evidenceLedger.summarizeGoal?.(goalId);
+      return summary?.best_evidence ? bestArtifactFromEvidence(summary.best_evidence) : null;
+    }
+
+    const entries = evidenceLedger.readByGoal
+      ? (await evidenceLedger.readByGoal(goalId)).entries
+      : (await evidenceLedger.summarizeGoal?.(goalId))?.recent_entries ?? [];
+    const newestFirst = [...entries].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
+    const selected =
+      selection === "latest_artifact"
+        ? newestFirst.find((entry) => entry.artifacts.length > 0 || entry.kind === "artifact")
+        : selectLatestVerifiedArtifact(newestFirst);
+    return selected ? bestArtifactFromEvidence(selected) : null;
+  } catch {
+    return null;
+  }
+}
+
+function selectLatestVerifiedArtifact(
+  entriesNewestFirst: RuntimeEvidenceEntry[]
+): RuntimeEvidenceEntry | undefined {
+  for (const verification of entriesNewestFirst) {
+    const verified =
+      verification.verification?.verdict === "pass"
+      || (verification.kind === "verification" && verification.outcome === "improved");
+    if (!verified) continue;
+    if (verification.artifacts.length > 0) return verification;
+
+    const taskId = verification.scope.task_id;
+    if (!taskId) continue;
+    const matchedArtifact = entriesNewestFirst.find((entry) =>
+      entry.scope.task_id === taskId
+      && entry.occurred_at <= verification.occurred_at
+      && entry.artifacts.length > 0
+    );
+    if (matchedArtifact) return matchedArtifact;
+  }
+  return undefined;
+}
+
+function bestArtifactFromEvidence(entry: RuntimeEvidenceEntry): DeadlineFinalizationArtifact {
+  const primaryArtifact = entry.artifacts[0];
+  return {
+    id: primaryArtifact?.label ?? entry.id,
+    label: primaryArtifact?.label ?? entry.summary ?? entry.result?.summary ?? entry.id,
+    kind: primaryArtifact?.kind ?? entry.kind,
+    summary: entry.summary ?? entry.result?.summary ?? entry.verification?.summary,
+    path: primaryArtifact?.path,
+    state_relative_path: primaryArtifact?.state_relative_path,
+    url: primaryArtifact?.url,
+    occurred_at: entry.occurred_at,
+    source: "runtime_evidence_ledger",
+  };
 }
 
 async function appendPhaseEvidence(
