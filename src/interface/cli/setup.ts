@@ -28,6 +28,7 @@ import { TaskLifecycle } from "../../orchestrator/execution/task/task-lifecycle.
 import { ReportingEngine } from "../../reporting/reporting-engine.js";
 import { CoreLoop } from "../../orchestrator/loop/core-loop.js";
 import { ScheduleEngine } from "../../runtime/schedule/engine.js";
+import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import { TreeLoopOrchestrator } from "../../orchestrator/goal/tree-loop-orchestrator.js";
 import { GoalTreeManager } from "../../orchestrator/goal/goal-tree-manager.js";
 import { StateAggregator } from "../../orchestrator/goal/state-aggregator.js";
@@ -79,6 +80,7 @@ export async function buildDeps(
   const driveSystem = new DriveSystem(stateManager);
   const adapterRegistry = await buildAdapterRegistry(llmClient);
   const toolRegistry = new ToolRegistry();
+  const evidenceLedger = new RuntimeEvidenceLedger(path.join(stateManager.getBaseDir(), "runtime"));
   const registerBuiltinTools = (deps?: Parameters<typeof createBuiltinTools>[0]) => {
     for (const tool of createBuiltinTools(deps)) {
       const existing = toolRegistry.get(tool.metadata.name);
@@ -402,6 +404,7 @@ export async function buildDeps(
     toolExecutor,
     toolRegistry,
     corePhaseRunner,
+    evidenceLedger,
   }, config);
 
   coreLoop.setTimeHorizonEngine(new TimeHorizonEngine());

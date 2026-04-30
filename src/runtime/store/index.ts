@@ -77,6 +77,27 @@ export {
   RuntimeControlOperationSchema,
   isTerminalRuntimeControlState,
 } from "./runtime-operation-schemas.js";
+
+export {
+  RuntimeEvidenceArtifactRefSchema,
+  RuntimeEvidenceEntryKindSchema,
+  RuntimeEvidenceEntrySchema,
+  RuntimeEvidenceLedger,
+  RuntimeEvidenceMetricSchema,
+  RuntimeEvidenceOutcomeSchema,
+} from "./evidence-ledger.js";
+export type {
+  RuntimeEvidenceArtifactRef,
+  RuntimeEvidenceEntry,
+  RuntimeEvidenceEntryInput,
+  RuntimeEvidenceEntryKind,
+  RuntimeEvidenceLedgerPort,
+  RuntimeEvidenceMetric,
+  RuntimeEvidenceOutcome,
+  RuntimeEvidenceReadResult,
+  RuntimeEvidenceReadWarning,
+  RuntimeEvidenceSummary,
+} from "./evidence-ledger.js";
 export type {
   RuntimeControlOperationKind,
   RuntimeControlOperationState,

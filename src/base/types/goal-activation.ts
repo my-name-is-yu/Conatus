@@ -10,6 +10,14 @@ export const WaitResumeActivationSchema = z.object({
 
 export type WaitResumeActivation = z.infer<typeof WaitResumeActivationSchema>;
 
+export const BackgroundRunActivationSchema = z.object({
+  backgroundRunId: z.string(),
+  parentSessionId: z.string().nullable().optional(),
+});
+
+export type BackgroundRunActivation = z.infer<typeof BackgroundRunActivationSchema>;
+
 export interface GoalRunActivationContext {
   waitResume?: WaitResumeActivation;
+  backgroundRun?: BackgroundRunActivation;
 }

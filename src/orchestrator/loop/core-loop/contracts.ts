@@ -34,6 +34,7 @@ import type { CorePhaseRunner } from "../../execution/agent-loop/core-phase-runn
 import type { CorePhasePolicyRegistry } from "./phase-policy.js";
 import type { CoreDecisionEngine } from "./decision-engine.js";
 import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
+import type { RuntimeEvidenceLedgerPort } from "../../../runtime/store/evidence-ledger.js";
 export type {
   LoopIterationResult,
   LoopResult,
@@ -278,6 +279,8 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
   toolExecutor?: ToolExecutor;
   /** Optional ToolRegistry for context-aware tool assembly. */
   toolRegistry?: ToolRegistry;
+  /** Optional durable evidence ledger for long-running autonomous work review/resume. */
+  evidenceLedger?: RuntimeEvidenceLedgerPort;
   /** Optional bounded agentloop runner for core phases. */
   corePhaseRunner?: CorePhaseRunner;
   /** Optional live approval broker for wait/resume approvals. */
