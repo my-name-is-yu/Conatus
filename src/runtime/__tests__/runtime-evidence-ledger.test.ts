@@ -64,6 +64,57 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.total_entries).toBe(2);
     expect(summary.warnings).toHaveLength(1);
     expect(summary.best_evidence?.summary).toBe("Accuracy improved to 0.82.");
+    expect(summary.metric_trends[0]).toMatchObject({
+      metric_key: "accuracy",
+      trend: "noisy",
+      latest_value: 0.82,
+    });
     expect(summary.recent_failed_attempts[0]?.summary).toBe("Verification failed.");
+  });
+
+  it("stores metric provenance fields and summarizes trend history", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      kind: "metric",
+      scope: { goal_id: "goal-c" },
+      metrics: [{
+        label: "accuracy",
+        value: 0.72,
+        direction: "maximize",
+        confidence: 0.8,
+        observed_at: "2026-04-30T00:00:00.000Z",
+        source: "local-metrics.json",
+      }],
+      artifacts: [{ label: "metrics", state_relative_path: "experiments/a/metrics.json", kind: "metrics" }],
+      summary: "Initial local metric.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      kind: "metric",
+      scope: { goal_id: "goal-c" },
+      metrics: [{
+        label: "accuracy",
+        value: 0.91,
+        direction: "maximize",
+        confidence: 0.9,
+        observed_at: "2026-04-30T00:10:00.000Z",
+        source: "local-metrics.json",
+      }],
+      artifacts: [{ label: "metrics", state_relative_path: "experiments/b/metrics.json", kind: "metrics" }],
+      summary: "New best local metric.",
+      outcome: "improved",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-c");
+
+    expect(summary.metric_trends).toHaveLength(1);
+    expect(summary.metric_trends[0]).toMatchObject({
+      metric_key: "accuracy",
+      trend: "breakthrough",
+      best_value: 0.91,
+      latest_value: 0.91,
+    });
+    expect(summary.metric_trends[0]?.source_refs[0]?.artifacts?.[0]?.state_relative_path).toBe("experiments/a/metrics.json");
+    expect(summary.metric_trends[0]?.source_refs[0]?.metric_source).toBe("local-metrics.json");
   });
 });

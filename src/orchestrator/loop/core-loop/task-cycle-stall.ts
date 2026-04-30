@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { Goal } from "../../../base/types/goal.js";
 import type { GapHistoryEntry } from "../../../base/types/gap.js";
 import type { StallReport } from "../../../base/types/stall.js";
+import type { MetricTrendContext } from "../../../platform/drive/metric-history.js";
 import type { GapObservation } from "../../../base/types/time-horizon.js";
+import {
+  selectMetricTrendForDimension,
+  summarizeEvidenceMetricTrends,
+} from "../../../runtime/store/metric-history.js";
 import { gatherStallEvidence } from "../stall-evidence.js";
 import type { LoopIterationResult } from "./contracts.js";
 import type { PhaseCtx } from "./preparation.js";
@@ -13,6 +18,14 @@ type DimensionGapSample = {
   normalized_gap: number;
   timestamp: string;
 };
+
+type StrategyStallArgs = [
+  goalId: string,
+  stallCount: number,
+  goalType?: string,
+  activationContext?: WaitStrategyActivationContext,
+  metricTrendContext?: MetricTrendContext,
+];
 
 function resolveGoalWorkspacePath(goal: Goal): string | undefined {
   const constraint = goal.constraints.find((entry) => entry.startsWith("workspace_path:"));
@@ -128,6 +141,17 @@ async function applyStallAction(
 
   const activeStrategyForRecord = await Promise.resolve(ctx.deps.strategyManager.getActiveStrategy(goalId)).catch(() => null);
   const strategyIdForRecord = activeStrategyForRecord?.id ?? "unknown";
+  const metricTrendContext = stallReport.metric_trend_context;
+  if (metricTrendContext) {
+    result.metricTrendContext = metricTrendContext;
+    ctx.logger?.info(`CoreLoop: ${logPrefix}metric trend evidence — ${metricTrendContext.summary}`, {
+      goalId,
+      metricTrend: metricTrendContext.trend,
+      metricKey: metricTrendContext.metric_key,
+      latestValue: metricTrendContext.latest_value,
+      bestValue: metricTrendContext.best_value,
+    });
+  }
   const analysis = ctx.deps.stallDetector.analyzeStallCause?.(dimHistory);
   result.stallAnalysis = analysis;
   const selectedAction = analysis?.recommended_action === "escalate"
@@ -159,12 +183,13 @@ async function applyStallAction(
       goalId,
       evidence: analysis?.evidence,
     });
-    await ctx.deps.strategyManager.onStallDetected(
+    await callStrategyOnStall(ctx, [
       goalId,
       3,
       goal.origin ?? "general",
-      waitActivationContext
-    );
+      waitActivationContext,
+      metricTrendContext,
+    ]);
     result.pivotOccurred = true;
   } else {
     const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
@@ -178,20 +203,22 @@ async function applyStallAction(
         pivotCount,
         maxPivotCount,
       });
-      await ctx.deps.strategyManager.onStallDetected(
+      await callStrategyOnStall(ctx, [
         goalId,
         3,
         goal.origin ?? "general",
-        waitActivationContext
-      );
+        waitActivationContext,
+        metricTrendContext,
+      ]);
       result.pivotOccurred = true;
     } else {
-      const newStrategy = await ctx.deps.strategyManager.onStallDetected(
+      const newStrategy = await callStrategyOnStall(ctx, [
         goalId,
         escalationLevel + 1,
         goal.origin ?? "general",
-        waitActivationContext
-      );
+        waitActivationContext,
+        metricTrendContext,
+      ]);
       if (newStrategy) {
         result.pivotOccurred = true;
         if (activeStrategy?.id) {
@@ -235,6 +262,38 @@ async function applyStallAction(
 
   if (incrementDimName) {
     await ctx.deps.stallDetector.incrementEscalation(goalId, incrementDimName);
+  }
+}
+
+async function callStrategyOnStall(
+  ctx: PhaseCtx,
+  args: StrategyStallArgs
+) {
+  const [goalId, stallCount, goalType, activationContext, metricTrendContext] = args;
+  if (metricTrendContext) {
+    return ctx.deps.strategyManager.onStallDetected(
+      goalId,
+      stallCount,
+      goalType,
+      activationContext,
+      metricTrendContext
+    );
+  }
+  return ctx.deps.strategyManager.onStallDetected(goalId, stallCount, goalType, activationContext);
+}
+
+async function loadMetricTrendContexts(ctx: PhaseCtx, goalId: string): Promise<MetricTrendContext[]> {
+  const readByGoal = ctx.deps.evidenceLedger?.readByGoal;
+  if (!readByGoal) return [];
+  try {
+    const read = await readByGoal.call(ctx.deps.evidenceLedger, goalId);
+    return summarizeEvidenceMetricTrends(read.entries);
+  } catch (err) {
+    ctx.logger?.warn("CoreLoop: metric trend history unavailable (non-fatal)", {
+      goalId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
   }
 }
 
@@ -322,6 +381,7 @@ export async function detectStallsAndRebalance(
   try {
     const gapHistory = await ctx.deps.stateManager.loadGapHistory(goalId);
     const gapHistoryByDimension = indexGapHistoryByDimension(goal, gapHistory);
+    const metricTrends = await loadMetricTrendContexts(ctx, goalId);
     const waitActivationContext = buildWaitStrategyActivationContext(
       ctx,
       goalId,
@@ -379,7 +439,17 @@ export async function detectStallsAndRebalance(
     for (const dim of goal.dimensions) {
       if (suppressedDimensions.has(dim.name)) continue;
       const dimGapHistory = gapHistoryByDimension.get(dim.name) ?? [];
-      const stallReport = ctx.deps.stallDetector.checkDimensionStall(goalId, dim.name, dimGapHistory);
+      const metricTrendContext = selectMetricTrendForDimension(metricTrends, dim.name);
+      if (metricTrendContext) {
+        result.metricTrendContext = metricTrendContext;
+      }
+      const stallReport = ctx.deps.stallDetector.checkDimensionStall(
+        goalId,
+        dim.name,
+        dimGapHistory,
+        undefined,
+        metricTrendContext
+      );
 
       if (stallReport) {
         result.stallDetected = true;
@@ -391,7 +461,10 @@ export async function detectStallsAndRebalance(
         ) {
           ctx.logger?.info(
             `CoreLoop: early warning ${stallReport.stall_type} — monitoring, no pivot`,
-            { goalId },
+            {
+              goalId,
+              metricTrend: stallReport.metric_trend_context?.summary,
+            },
           );
           continue;
         }

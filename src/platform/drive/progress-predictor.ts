@@ -1,3 +1,5 @@
+import type { MetricTrendContext } from "./metric-history.js";
+
 export interface PredictionResult {
   predictedGapScore: number;              // predicted next gap score (clamped 0-1)
   confidence: number;                     // R² of linear fit (0-1)
@@ -107,6 +109,31 @@ export class ProgressPredictor {
       trend,
       predictedIterationsToGoal,
       slopePerIteration: slope,
+    };
+  }
+
+  /**
+   * Convert outcome-metric trend context into the existing gap-oriented
+   * prediction shape. Metric trend slope is outcome-oriented, so improving
+   * metrics map to decreasing gap.
+   */
+  predictMetricTrend(context: MetricTrendContext): PredictionResult {
+    const trend =
+      context.trend === "regressing" ? "worsening"
+        : context.trend === "stalled" || context.trend === "noisy" ? "stable"
+          : "improving";
+    const slopePerIteration = -Math.abs(context.recent_slope_per_observation);
+    const gapSlope = trend === "worsening"
+      ? Math.abs(context.recent_slope_per_observation)
+      : trend === "stable"
+        ? 0
+        : slopePerIteration;
+    return {
+      predictedGapScore: trend === "worsening" ? 1 : trend === "stable" ? 0.5 : 0,
+      confidence: context.confidence,
+      trend,
+      predictedIterationsToGoal: null,
+      slopePerIteration: gapSlope,
     };
   }
 }

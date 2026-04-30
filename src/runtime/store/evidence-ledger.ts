@@ -7,6 +7,7 @@ import {
   ensureRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
+import { summarizeEvidenceMetricTrends, type MetricTrendContext } from "./metric-history.js";
 
 export const RuntimeEvidenceOutcomeSchema = z.enum([
   "improved",
@@ -46,6 +47,9 @@ export const RuntimeEvidenceMetricSchema = z.object({
   value: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
   unit: z.string().min(1).optional(),
   direction: z.enum(["maximize", "minimize", "neutral"]).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  observed_at: z.string().datetime().optional(),
+  source: z.string().min(1).optional(),
   summary: z.string().min(1).optional(),
 }).strict();
 export type RuntimeEvidenceMetric = z.infer<typeof RuntimeEvidenceMetricSchema>;
@@ -124,6 +128,7 @@ export interface RuntimeEvidenceSummary {
   total_entries: number;
   latest_strategy: RuntimeEvidenceEntry | null;
   best_evidence: RuntimeEvidenceEntry | null;
+  metric_trends: MetricTrendContext[];
   recent_failed_attempts: RuntimeEvidenceEntry[];
   recent_entries: RuntimeEvidenceEntry[];
   warnings: RuntimeEvidenceReadWarning[];
@@ -131,6 +136,8 @@ export interface RuntimeEvidenceSummary {
 
 export interface RuntimeEvidenceLedgerPort {
   append(input: RuntimeEvidenceEntryInput): Promise<RuntimeEvidenceEntry[]>;
+  readByGoal?(goalId: string): Promise<RuntimeEvidenceReadResult>;
+  readByRun?(runId: string): Promise<RuntimeEvidenceReadResult>;
 }
 
 export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
@@ -251,6 +258,7 @@ function summarizeEvidence(
       entry.kind === "strategy" || Boolean(entry.strategy) || Boolean(entry.decision_reason)
     ) ?? null,
     best_evidence: chooseBestEvidence(newestFirst),
+    metric_trends: summarizeEvidenceMetricTrends(entries),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"

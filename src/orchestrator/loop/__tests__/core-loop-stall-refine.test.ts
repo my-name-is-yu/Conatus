@@ -34,6 +34,7 @@ import type { GoalRefiner } from "../../goal/goal-refiner.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { ITimeHorizonEngine } from "../../../platform/time/time-horizon-engine.js";
+import type { RuntimeEvidenceEntry } from "../../../runtime/store/evidence-ledger.js";
 import type { LoopIterationResult } from "../core-loop/contracts.js";
 import type { PhaseCtx } from "../core-loop/preparation.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -374,6 +375,71 @@ describe("detectStallsAndRebalance — reRefineLeaf on observation-failure stall
 
     expect(result.stallDetected).toBe(true);
     expect(mockRefiner.reRefineLeaf).not.toHaveBeenCalled();
+  });
+
+  it("feeds runtime metric trend context into stall recovery", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({ id: "goal-1" });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory("goal-1", makeGapHistoryWithStall("dim1", 5));
+
+    const metricEntries: RuntimeEvidenceEntry[] = [
+      {
+        schema_version: "runtime-evidence-entry-v1",
+        id: "entry-a",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+        kind: "metric",
+        scope: { goal_id: "goal-1" },
+        metrics: [{ label: "dim1", value: 0.5, direction: "maximize", confidence: 0.9 }],
+        artifacts: [{ label: "metrics-a", state_relative_path: "runs/a/metrics.json", kind: "metrics" }],
+        raw_refs: [],
+        outcome: "continued",
+        summary: "Initial metric.",
+      },
+      {
+        schema_version: "runtime-evidence-entry-v1",
+        id: "entry-b",
+        occurred_at: "2026-04-30T00:05:00.000Z",
+        kind: "metric",
+        scope: { goal_id: "goal-1" },
+        metrics: [{ label: "dim1", value: 0.7, direction: "maximize", confidence: 0.95 }],
+        artifacts: [{ label: "metrics-b", state_relative_path: "runs/b/metrics.json", kind: "metrics" }],
+        raw_refs: [],
+        outcome: "improved",
+        summary: "Breakthrough metric.",
+      },
+    ];
+    deps.evidenceLedger = {
+      append: vi.fn().mockResolvedValue([]),
+      readByGoal: vi.fn().mockResolvedValue({ entries: metricEntries, warnings: [] }),
+    };
+
+    (deps.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockImplementation(
+      (_goalId, _dimensionName, _history, _feedbackCategory, metricTrendContext) =>
+        makeStallReport({ metric_trend_context: metricTrendContext })
+    );
+    (deps.strategyManager.onStallDetected as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "strategy-next", state: "active" });
+
+    const ctx = buildPhaseCtx(deps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(deps.stallDetector.checkDimensionStall).toHaveBeenCalledWith(
+      "goal-1",
+      "dim1",
+      expect.any(Array),
+      undefined,
+      expect.objectContaining({ metric_key: "dim1", trend: "breakthrough", latest_value: 0.7 })
+    );
+    expect(deps.strategyManager.onStallDetected).toHaveBeenCalledWith(
+      "goal-1",
+      1,
+      goal.origin ?? "general",
+      undefined,
+      expect.objectContaining({ metric_key: "dim1", trend: "breakthrough" })
+    );
+    expect(result.metricTrendContext).toMatchObject({ metric_key: "dim1", trend: "breakthrough" });
   });
 
   it("does NOT call reRefineLeaf() when goalRefiner is absent (backward compat)", async () => {
@@ -829,7 +895,9 @@ describe("detectStallsAndRebalance — gap history indexing reuse", () => {
     expect(depsWithPortfolio.stallDetector.checkDimensionStall).toHaveBeenCalledWith(
       "goal-1",
       "dim2",
-      [expect.objectContaining({ normalized_gap: 0.4 })]
+      [expect.objectContaining({ normalized_gap: 0.4 })],
+      undefined,
+      undefined
     );
     const globalHistory = globalCheck.mock.calls[0]?.[1] as Map<string, Array<{ normalized_gap: number; timestamp?: string }>>;
     expect(globalHistory.has("dim1")).toBe(false);
@@ -934,7 +1002,9 @@ describe("detectStallsAndRebalance — gap history indexing reuse", () => {
     expect(depsWithPortfolio.stallDetector.checkDimensionStall).toHaveBeenCalledWith(
       "goal-1",
       "dim2",
-      [expect.objectContaining({ normalized_gap: 0.4 })]
+      [expect.objectContaining({ normalized_gap: 0.4 })],
+      undefined,
+      undefined
     );
     const globalHistory = globalCheck.mock.calls[0]?.[1] as Map<string, Array<{ normalized_gap: number; timestamp?: string }>>;
     expect(globalHistory.has("dim1")).toBe(false);

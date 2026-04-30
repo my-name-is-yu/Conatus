@@ -11,6 +11,7 @@ import {
   getAdjustedN,
   isZeroProgress,
 } from "./stall-detector/thresholds.js";
+import type { MetricTrendContext } from "./metric-history.js";
 
 // ─── Minimum score-improvement delta to reset stall detection ───
 // Improvements smaller than this are treated as noise (no reset).
@@ -92,8 +93,14 @@ export class StallDetector {
     goalId: string,
     dimensionName: string,
     gapHistory: Array<{ normalized_gap: number }>,
-    feedbackCategory?: string
+    feedbackCategory?: string,
+    metricTrendContext?: MetricTrendContext
   ): StallReport | null {
+    const metricTrendReport = this.checkMetricTrendStall(goalId, dimensionName, metricTrendContext);
+    if (metricTrendReport || metricTrendContext?.trend === "improving" || metricTrendContext?.trend === "breakthrough") {
+      return metricTrendReport;
+    }
+
     const n = this.getAdjustedN(feedbackCategory);
 
     if (gapHistory.length < n + 1) {
@@ -113,6 +120,7 @@ export class StallDetector {
         escalation_level: 0,
         suggested_cause: "approach_failure",
         decay_factor: DECAY_FACTOR_STALLED,
+        ...(metricTrendContext ? { metric_trend_context: metricTrendContext } : {}),
       });
     }
 
@@ -141,6 +149,7 @@ export class StallDetector {
       escalation_level: 0,
       suggested_cause: "approach_failure",
       decay_factor: DECAY_FACTOR_STALLED,
+      ...(metricTrendContext ? { metric_trend_context: metricTrendContext } : {}),
     });
   }
 
@@ -472,6 +481,44 @@ export class StallDetector {
     }
 
     return null;
+  }
+
+  private checkMetricTrendStall(
+    goalId: string,
+    dimensionName: string,
+    metricTrendContext?: MetricTrendContext
+  ): StallReport | null {
+    if (!metricTrendContext) return null;
+    if (metricTrendContext.trend === "improving" || metricTrendContext.trend === "breakthrough") {
+      if (this.predictor) {
+        this.predictor.predictMetricTrend(metricTrendContext);
+      }
+      return null;
+    }
+    if (metricTrendContext.trend === "noisy") {
+      if (this.predictor) {
+        this.predictor.predictMetricTrend(metricTrendContext);
+      }
+      return null;
+    }
+
+    const prediction = this.predictor?.predictMetricTrend(metricTrendContext);
+    const decayFactor = metricTrendContext.trend === "regressing"
+      ? 0.5
+      : prediction?.trend === "stable"
+        ? 0.3
+        : DECAY_FACTOR_STALLED;
+    return StallReportSchema.parse({
+      stall_type: "dimension_stall",
+      goal_id: goalId,
+      dimension_name: dimensionName,
+      task_id: null,
+      detected_at: new Date().toISOString(),
+      escalation_level: 0,
+      suggested_cause: "approach_failure",
+      decay_factor: decayFactor,
+      metric_trend_context: metricTrendContext,
+    });
   }
 
   /**

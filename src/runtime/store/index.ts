@@ -98,6 +98,19 @@ export type {
   RuntimeEvidenceReadWarning,
   RuntimeEvidenceSummary,
 } from "./evidence-ledger.js";
+export {
+  classifyMetricTrend,
+  extractMetricObservationsFromEvidence,
+  selectMetricTrendForDimension,
+  summarizeEvidenceMetricTrends,
+  summarizeMetricTrends,
+} from "./metric-history.js";
+export type {
+  MetricDirection,
+  MetricObservation,
+  MetricTrendClassificationOptions,
+  MetricTrendContext,
+} from "./metric-history.js";
 export type {
   RuntimeControlOperationKind,
   RuntimeControlOperationState,

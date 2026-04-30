@@ -306,6 +306,14 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
   console.log(`  Entries:         ${summary.total_entries}`);
   console.log(`  Latest strategy: ${entryLabel(summary.latest_strategy)}`);
   console.log(`  Best evidence:   ${entryLabel(summary.best_evidence)}`);
+  if (summary.metric_trends.length > 0) {
+    console.log("  Metric trends:");
+    for (const trend of summary.metric_trends) {
+      console.log(`    - ${trend.metric_key} ${trend.trend}: latest=${trend.latest_value}, best=${trend.best_value}, confidence=${trend.confidence.toFixed(2)}`);
+    }
+  } else {
+    console.log("  Metric trends:   -");
+  }
   if (summary.recent_failed_attempts.length > 0) {
     console.log("  Recent failures:");
     for (const entry of summary.recent_failed_attempts) {

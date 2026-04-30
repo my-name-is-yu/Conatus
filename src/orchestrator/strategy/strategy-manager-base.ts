@@ -13,6 +13,7 @@ import type { Logger } from "../../runtime/logger.js";
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
 import type { ToolRegistry } from "../../tools/registry.js";
+import type { MetricTrendContext } from "../../platform/drive/metric-history.js";
 import { WorkspaceContextCache, formatWorkspaceContext } from "./strategy-workspace.js";
 import type { WorkspaceContext } from "./strategy-workspace.js";
 import {
@@ -152,6 +153,7 @@ export class StrategyManagerBase {
     context: {
       currentGap: number;
       pastStrategies: Strategy[];
+      metricTrendContext?: MetricTrendContext;
     },
     enrichment?: { templatesBlock?: string; lessonsBlock?: string },
     toolContext?: { toolCallContext: ToolCallContext; iteration: number }
@@ -494,7 +496,8 @@ export class StrategyManagerBase {
     goalId: string,
     stallCount: number,
     goalType?: string,
-    activationContext?: WaitStrategyActivationContext
+    activationContext?: WaitStrategyActivationContext,
+    metricTrendContext?: MetricTrendContext
   ): Promise<Strategy | null> {
     if (stallCount < 2) {
       return null;
@@ -546,6 +549,7 @@ export class StrategyManagerBase {
         {
           currentGap: active?.gap_snapshot_at_start ?? 1.0,
           pastStrategies,
+          ...(metricTrendContext ? { metricTrendContext } : {}),
         },
         undefined,
         toolContext

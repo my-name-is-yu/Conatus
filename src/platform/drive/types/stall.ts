@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { StallTypeEnum, StallCauseEnum } from "../../../base/types/core.js";
+import type { MetricTrendContext } from "../metric-history.js";
 
 // --- StallAnalysis (M14-S2: cause analysis for PIVOT/REFINE/ESCALATE) ---
 
@@ -22,6 +23,7 @@ export const StallReportSchema = z.object({
   escalation_level: z.number().min(0).max(3).default(0),
   suggested_cause: StallCauseEnum,
   decay_factor: z.number().min(0).max(1),
+  metric_trend_context: z.custom<MetricTrendContext>().optional(),
 });
 export type StallReport = z.infer<typeof StallReportSchema>;
 
