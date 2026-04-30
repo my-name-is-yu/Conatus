@@ -26,7 +26,7 @@ export class CoreLoopEvidenceLedger {
 
   augmentKnowledgeContext(input?: string): string | undefined {
     const extraBlocks: string[] = [];
-    for (const phase of ["knowledge_refresh", "public_research", "replanning_options", "verification_evidence"] as const) {
+    for (const phase of ["knowledge_refresh", "dream_review_checkpoint", "public_research", "replanning_options", "verification_evidence"] as const) {
       const record = this.phases.get(phase);
       if (!record?.summary) continue;
       extraBlocks.push(`[${phase}]\n${record.summary}`);

@@ -29,6 +29,7 @@ import { handleCapabilityAcquisition } from "./capability.js";
 import { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
 import { CorePhaseRuntime } from "./phase-runtime.js";
 import {
+  buildDreamReviewCheckpointSpec,
   buildKnowledgeRefreshSpec,
   buildObserveEvidenceSpec,
   buildPublicResearchSpec,
@@ -45,14 +46,22 @@ import {
   normalizeFinalizationPolicy,
   shouldStopExplorationForFinalization,
   type DeadlineFinalizationArtifact,
+  type DeadlineFinalizationStatus,
 } from "../../../platform/time/deadline-finalization.js";
 import type { DriveScore } from "../../../base/types/drive.js";
+import type { Goal } from "../../../base/types/goal.js";
 import type { CorePhaseKind } from "../../execution/agent-loop/core-phase-runner.js";
 import { findActiveWaitObservationInput } from "./iteration-kernel-wait.js";
 import {
   autoAcquireKnowledgeForDreamStall,
   autoAcquireKnowledgeForRefresh,
 } from "./iteration-kernel-knowledge.js";
+import {
+  buildDreamReviewCheckpointRequest,
+  dreamCheckpointRawRefs,
+  normalizeDreamReviewCheckpoint,
+  type DreamReviewCheckpointRequest,
+} from "./dream-review-checkpoint.js";
 import {
   buildPublicResearchRequest,
   normalizePublicResearchMemo,
@@ -66,6 +75,7 @@ import type {
   RuntimeEvidenceEntryInput,
   RuntimeEvidenceEntryKind,
   RuntimeEvidenceOutcome,
+  RuntimeEvidenceSummary,
 } from "../../../runtime/store/evidence-ledger.js";
 import type { TaskCycleResult } from "../../execution/task/task-execution-types.js";
 
@@ -162,6 +172,7 @@ export class CoreIterationKernel {
       phaseRunner: this.deps.deps.corePhaseRunner,
       policyRegistry: this.deps.corePhasePolicyRegistry,
     });
+    let dreamReviewCheckpointRan = false;
     const rememberPhase = (execution: {
       phase: CorePhaseKind;
       status: "skipped" | "completed" | "low_confidence" | "failed";
@@ -176,6 +187,59 @@ export class CoreIterationKernel {
       if (execution.status === "skipped") return;
       evidenceLedger.record(execution);
       result.corePhaseResults = evidenceLedger.toIterationPhaseResults();
+    };
+    const maybeRunDreamReviewCheckpoint = async (input: {
+      goal: Goal;
+      gapAggregate: number;
+      driveScores: DriveScore[];
+      finalizationStatus?: DeadlineFinalizationStatus;
+      requestedTrigger?: "iteration" | "plateau" | "breakthrough" | "pre_finalization";
+    }): Promise<void> => {
+      if (dreamReviewCheckpointRan) return;
+      const evidenceSummary = await loadDreamReviewEvidenceSummary(this.deps.deps.evidenceLedger, goalId);
+      const request = buildDreamReviewCheckpointRequest({
+        goal: input.goal,
+        loopIndex,
+        result,
+        driveScores: input.driveScores,
+        finalizationStatus: input.finalizationStatus,
+        evidenceSummary,
+        recentCheckpoints: evidenceSummary?.dream_checkpoints,
+        ...(input.requestedTrigger ? { requestedTrigger: input.requestedTrigger } : {}),
+      });
+      if (!request) return;
+
+      const dreamReview = await runPhase("dream-review-checkpoint", () =>
+        corePhaseRuntime.run(
+          {
+            ...buildDreamReviewCheckpointSpec(),
+            requiredTools: ["soil_query"],
+            allowedTools: ["soil_query", "knowledge_query", "memory_recall"],
+            budget: {
+              maxModelTurns: 3,
+              maxToolCalls: 5,
+              maxWallClockMs: 45_000,
+              maxRepeatedToolCalls: 1,
+            },
+          },
+          {
+            goalTitle: input.goal.title,
+            trigger: request.trigger,
+            reason: request.reason,
+            activeDimensions: request.activeDimensions,
+            ...(request.bestEvidenceSummary ? { bestEvidenceSummary: request.bestEvidenceSummary } : {}),
+            recentStrategyFamilies: request.recentStrategyFamilies,
+            ...(request.metricTrendSummary ? { metricTrendSummary: request.metricTrendSummary } : {}),
+            ...(request.finalizationReason ? { finalizationReason: request.finalizationReason } : {}),
+            memoryAuthorityPolicy: request.memoryAuthorityPolicy,
+            maxGuidanceItems: request.maxGuidanceItems,
+          },
+          { goalId, stallDetected: result.stallDetected, gapAggregate: input.gapAggregate },
+        )
+      );
+      rememberPhase(dreamReview);
+      await appendDreamReviewCheckpointEvidence(appendRuntimeEvidence, dreamReview, request, input.goal);
+      dreamReviewCheckpointRan = dreamReview.status !== "skipped";
     };
 
     this.deps.logger?.info(`[CoreLoop] iteration ${loopIndex + 1} starting`, { goalId, loopIndex });
@@ -275,6 +339,13 @@ export class CoreIterationKernel {
     );
     result.finalizationStatus = finalizationStatus;
     if (shouldStopExplorationForFinalization(finalizationStatus)) {
+      await maybeRunDreamReviewCheckpoint({
+        goal,
+        gapAggregate,
+        driveScores: [],
+        finalizationStatus,
+        requestedTrigger: "pre_finalization",
+      });
       result.skipped = true;
       result.skipReason =
         finalizationStatus.mode === "missed_deadline"
@@ -471,6 +542,13 @@ export class CoreIterationKernel {
         },
       });
     }
+
+    await maybeRunDreamReviewCheckpoint({
+      goal,
+      gapAggregate,
+      driveScores,
+      finalizationStatus,
+    });
 
     const publicResearchRequest = buildPublicResearchRequest({
       goal,
@@ -753,6 +831,71 @@ async function appendPublicResearchEvidence(
       ...(execution.turnId ? [{ kind: "agentloop_turn", id: execution.turnId }] : []),
     ],
   });
+}
+
+async function appendDreamReviewCheckpointEvidence(
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  execution: {
+    phase: CorePhaseKind;
+    status: "skipped" | "completed" | "low_confidence" | "failed";
+    output?: unknown;
+    summary?: string;
+    traceId?: string;
+    sessionId?: string;
+    turnId?: string;
+    error?: string;
+  },
+  request: DreamReviewCheckpointRequest,
+  goal: Goal,
+): Promise<void> {
+  if (execution.status === "skipped") return;
+  const output = buildDreamReviewCheckpointSpec().outputSchema.safeParse(execution.output);
+  if (!output.success) {
+    await appendRuntimeEvidence({
+      kind: "dream_checkpoint",
+      scope: { phase: execution.phase },
+      summary: execution.summary ?? request.reason,
+      outcome: "inconclusive",
+      result: {
+        status: execution.status,
+        summary: request.reason,
+        error: output.error.issues.map((issue) => issue.message).join("; "),
+      },
+    });
+    return;
+  }
+
+  const checkpoint = normalizeDreamReviewCheckpoint(output.data, request, goal);
+  await appendRuntimeEvidence({
+    kind: "dream_checkpoint",
+    scope: { phase: execution.phase },
+    summary: checkpoint.summary,
+    outcome: phaseStatusToOutcome(execution.status),
+    dream_checkpoints: [checkpoint],
+    result: {
+      status: execution.status,
+      summary: checkpoint.guidance,
+      ...(execution.error ? { error: execution.error } : {}),
+    },
+    raw_refs: [
+      ...dreamCheckpointRawRefs(checkpoint),
+      ...(execution.traceId ? [{ kind: "agentloop_trace", id: execution.traceId }] : []),
+      ...(execution.sessionId ? [{ kind: "agentloop_state", id: execution.sessionId }] : []),
+      ...(execution.turnId ? [{ kind: "agentloop_turn", id: execution.turnId }] : []),
+    ],
+  });
+}
+
+async function loadDreamReviewEvidenceSummary(
+  evidenceLedger: CoreLoopDeps["evidenceLedger"],
+  goalId: string
+): Promise<RuntimeEvidenceSummary | null> {
+  if (!evidenceLedger?.summarizeGoal) return null;
+  try {
+    return await evidenceLedger.summarizeGoal(goalId);
+  } catch {
+    return null;
+  }
 }
 
 async function loadBestFinalizationArtifact(

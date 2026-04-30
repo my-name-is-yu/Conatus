@@ -316,6 +316,7 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
   }
   printEvaluatorSummary(summary.evaluator_summary);
   printResearchMemos(summary);
+  printDreamCheckpoints(summary);
   if (summary.recent_failed_attempts.length > 0) {
     console.log("  Recent failures:");
     for (const entry of summary.recent_failed_attempts) {
@@ -326,6 +327,19 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
   }
   if (summary.warnings.length > 0) {
     console.log(`  Warnings:        ${summary.warnings.length}`);
+  }
+}
+
+function printDreamCheckpoints(summary: RuntimeEvidenceSummary): void {
+  if (summary.dream_checkpoints.length === 0) {
+    console.log("  Dream checkpoints: -");
+    return;
+  }
+  console.log("  Dream checkpoints:");
+  for (const checkpoint of summary.dream_checkpoints.slice(0, 3)) {
+    const dimensions = checkpoint.active_dimensions.slice(0, 3).join(", ") || "-";
+    console.log(`    - ${checkpoint.trigger}: ${formatCell(checkpoint.summary, 96)}`);
+    console.log(`      Dimensions: ${formatCell(dimensions, 96)}`);
   }
 }
 

@@ -131,6 +131,24 @@ export const defaultCorePhasePolicies: Record<CorePhaseKind, CorePhasePolicy> = 
     requiredTools: ["research_answer_with_sources"],
     failPolicy: "return_low_confidence",
   },
+  dream_review_checkpoint: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    budget: {
+      ...DEFAULT_POLICY.budget,
+      maxModelTurns: 3,
+      maxToolCalls: 5,
+      maxWallClockMs: 45_000,
+      maxRepeatedToolCalls: 1,
+    },
+    allowedTools: [
+      "soil_query",
+      "knowledge_query",
+      "memory_recall",
+    ],
+    requiredTools: ["soil_query"],
+    failPolicy: "return_low_confidence",
+  },
   verification_evidence: {
     ...DEFAULT_POLICY,
     enabled: true,

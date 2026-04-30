@@ -108,7 +108,7 @@ function makeAdapter(): IAdapter {
   };
 }
 
-function createDeps(tmpDir: string, options?: { stall?: boolean; publicResearch?: boolean }) {
+function createDeps(tmpDir: string, options?: { stall?: boolean; publicResearch?: boolean; dreamCheckpoint?: boolean }) {
   const stateManager = new StateManager(tmpDir);
   const adapter = makeAdapter();
   const observationEngine = {
@@ -186,6 +186,32 @@ function createDeps(tmpDir: string, options?: { stall?: boolean; publicResearch?
             dependencies: [],
           }],
           confidence: 0.8,
+        },
+        dream_review_checkpoint: {
+          summary: "dream-summary",
+          trigger: "plateau",
+          current_goal: "Improve benchmark score",
+          active_dimensions: ["dim1"],
+          best_evidence_so_far: "Focused test passed.",
+          recent_strategy_families: ["continue"],
+          exhausted: ["repeating the same implementation"],
+          promising: ["bounded variant"],
+          relevant_memories: [{
+            source_type: "soil",
+            ref: "soil://goal-1/checkpoint",
+            summary: "A prior run succeeded after pivoting to a bounded variant.",
+            authority: "advisory_only",
+          }],
+          next_strategy_candidates: [{
+            title: "Bounded variant",
+            rationale: "Changes one factor and preserves the current proof lane.",
+            target_dimensions: ["dim1"],
+            expected_evidence_gain: "Shows whether the plateau is strategy-driven.",
+          }],
+          guidance: "Use the bounded variant before generating the next task.",
+          uncertainty: ["Need one more metric sample."],
+          context_authority: "advisory_only",
+          confidence: 0.84,
         },
         public_research: {
           summary: "research-summary",
@@ -301,6 +327,19 @@ function createDeps(tmpDir: string, options?: { stall?: boolean; publicResearch?
         budget: {},
         allowedTools: ["research_web", "research_answer_with_sources"],
         requiredTools: ["research_answer_with_sources"],
+        failPolicy: "return_low_confidence",
+      },
+      dream_review_checkpoint: {
+        enabled: options?.dreamCheckpoint === true,
+        maxInvocationsPerIteration: 1,
+        budget: {
+          maxModelTurns: 3,
+          maxToolCalls: 5,
+          maxWallClockMs: 45_000,
+          maxRepeatedToolCalls: 1,
+        },
+        allowedTools: ["soil_query", "knowledge_query", "memory_recall"],
+        requiredTools: ["soil_query"],
         failPolicy: "return_low_confidence",
       },
       verification_evidence: {
@@ -447,6 +486,68 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(taskCycleArgs[4]).toContain("research-summary");
   });
 
+  it("runs Dream review checkpoint on plateau and saves advisory guidance for task handoff", async () => {
+    const { deps, mocks } = createDeps(tmpDir, { stall: true, dreamCheckpoint: true });
+    const evidenceLedger = {
+      append: vi.fn().mockResolvedValue([]),
+      summarizeGoal: vi.fn().mockResolvedValue({
+        schema_version: "runtime-evidence-summary-v1",
+        generated_at: "2026-04-30T00:00:00.000Z",
+        scope: { goal_id: "goal-1" },
+        total_entries: 1,
+        latest_strategy: null,
+        best_evidence: null,
+        metric_trends: [],
+        evaluator_summary: {
+          observations: [],
+          local_best: null,
+          external_best: null,
+          approval_required_actions: [],
+          gap: null,
+        },
+        research_memos: [],
+        dream_checkpoints: [],
+        recent_failed_attempts: [],
+        recent_entries: [],
+        warnings: [],
+      }),
+    };
+    deps.evidenceLedger = evidenceLedger as never;
+    await mocks.stateManager.saveGoal(makeGoal({ title: "Improve benchmark score" }));
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(result.corePhaseResults?.some((phase) => phase.phase === "dream_review_checkpoint")).toBe(true);
+    expect(mocks.corePhaseRunner.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "dream_review_checkpoint",
+        allowedTools: ["soil_query", "knowledge_query", "memory_recall"],
+        requiredTools: ["soil_query"],
+      }),
+      expect.objectContaining({
+        trigger: "plateau",
+        memoryAuthorityPolicy: "soil_and_playbooks_are_advisory_only",
+      }),
+      expect.anything(),
+    );
+    expect(evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "dream_checkpoint",
+      dream_checkpoints: [expect.objectContaining({
+        summary: "dream-summary",
+        context_authority: "advisory_only",
+        relevant_memories: [expect.objectContaining({ authority: "advisory_only" })],
+      })],
+      raw_refs: expect.arrayContaining([
+        expect.objectContaining({ kind: "dream_soil_memory", id: "soil://goal-1/checkpoint" }),
+      ]),
+    }));
+    const taskCycleArgs = (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(taskCycleArgs[4]).toContain("dream-summary");
+    expect(taskCycleArgs[4]).toContain("Use the bounded variant before generating the next task.");
+    expect(taskCycleArgs[4]).toContain("Bounded variant: Changes one factor and preserves the current proof lane.");
+  });
+
   it("keeps wait observation on a short read-only budget separate from normal AgentLoop execution", async () => {
     const policy = new StaticCorePhasePolicyRegistry().get("wait_observation");
 
@@ -502,6 +603,7 @@ describe("CoreLoop agentic phase hooks", () => {
 	      "knowledge_refresh",
 	      "stall_investigation",
 	      "replanning_options",
+	      "dream_review_checkpoint",
 	      "public_research",
 	      "verification_evidence",
 	    ] as const;

@@ -178,7 +178,7 @@ describe("RuntimeEvidenceLedger", () => {
       candidate_id: "candidate-a",
       provenance: { external_id: "submission-456" },
     });
-    expect(summary.evaluator_summary.observations[0]?.publish_action).toMatchObject({
+    expect(summary.evaluator_summary.observations.find((observation) => observation.publish_action)?.publish_action).toMatchObject({
       id: "submit-candidate-a",
       approval_required: true,
     });
@@ -238,6 +238,58 @@ describe("RuntimeEvidenceLedger", () => {
       findings: [{ applicability: "Applies to API client migration work." }],
       external_actions: [{ approval_required: true }],
       untrusted_content_policy: "webpage_instructions_are_untrusted",
+    });
+  });
+
+  it("stores Dream review checkpoints with advisory-only memory provenance", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      kind: "dream_checkpoint",
+      scope: { goal_id: "goal-dream", run_id: "run:coreloop:dream", loop_index: 3, phase: "dream_review_checkpoint" },
+      dream_checkpoints: [{
+        trigger: "plateau",
+        summary: "Dream review found a bounded variant worth trying.",
+        current_goal: "Improve benchmark score",
+        active_dimensions: ["accuracy"],
+        best_evidence_so_far: "Accuracy stalled at 0.82.",
+        recent_strategy_families: ["continue"],
+        exhausted: ["repeat baseline"],
+        promising: ["bounded ablation"],
+        relevant_memories: [{
+          source_type: "soil",
+          ref: "soil://goal-dream/checkpoint",
+          summary: "Earlier run improved after an ablation.",
+          authority: "advisory_only",
+        }],
+        next_strategy_candidates: [{
+          title: "Bounded ablation",
+          rationale: "Changes one factor before broadening exploration.",
+          target_dimensions: ["accuracy"],
+          expected_evidence_gain: "Separates model saturation from search saturation.",
+        }],
+        guidance: "Generate the next task around one bounded ablation.",
+        uncertainty: ["Need one more local metric sample."],
+        context_authority: "advisory_only",
+        confidence: 0.86,
+      }],
+      raw_refs: [{ kind: "dream_soil_memory", id: "soil://goal-dream/checkpoint" }],
+      summary: "Dream review checkpoint saved.",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-dream");
+
+    expect(summary.dream_checkpoints).toHaveLength(1);
+    expect(summary.dream_checkpoints[0]).toMatchObject({
+      trigger: "plateau",
+      loop_index: 3,
+      phase: "dream_review_checkpoint",
+      context_authority: "advisory_only",
+      relevant_memories: [{
+        source_type: "soil",
+        ref: "soil://goal-dream/checkpoint",
+        authority: "advisory_only",
+      }],
+      next_strategy_candidates: [{ title: "Bounded ablation" }],
     });
   });
 });

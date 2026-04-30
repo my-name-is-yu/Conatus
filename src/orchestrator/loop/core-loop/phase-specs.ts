@@ -108,6 +108,48 @@ export const PublicResearchEvidenceSchema = z.object({
 });
 export type PublicResearchEvidence = z.infer<typeof PublicResearchEvidenceSchema>;
 
+export const DreamReviewCheckpointTriggerSchema = z.enum([
+  "iteration",
+  "plateau",
+  "breakthrough",
+  "pre_finalization",
+]);
+export type DreamReviewCheckpointTrigger = z.infer<typeof DreamReviewCheckpointTriggerSchema>;
+
+export const DreamReviewMemoryRefSchema = z.object({
+  source_type: z.enum(["soil", "playbook", "runtime_evidence", "other"]),
+  ref: z.string().min(1).optional(),
+  summary: z.string().min(1),
+  authority: z.literal("advisory_only").default("advisory_only"),
+}).strict();
+export type DreamReviewMemoryRef = z.infer<typeof DreamReviewMemoryRefSchema>;
+
+export const DreamReviewStrategyCandidateSchema = z.object({
+  title: z.string().min(1),
+  rationale: z.string().min(1),
+  target_dimensions: z.array(z.string().min(1)).default([]),
+  expected_evidence_gain: z.string().min(1).optional(),
+}).strict();
+export type DreamReviewStrategyCandidate = z.infer<typeof DreamReviewStrategyCandidateSchema>;
+
+export const DreamReviewCheckpointEvidenceSchema = z.object({
+  summary: z.string().min(1),
+  trigger: DreamReviewCheckpointTriggerSchema,
+  current_goal: z.string().min(1),
+  active_dimensions: z.array(z.string().min(1)).default([]),
+  best_evidence_so_far: z.string().min(1).optional(),
+  recent_strategy_families: z.array(z.string().min(1)).default([]),
+  exhausted: z.array(z.string().min(1)).default([]),
+  promising: z.array(z.string().min(1)).default([]),
+  relevant_memories: z.array(DreamReviewMemoryRefSchema).default([]),
+  next_strategy_candidates: z.array(DreamReviewStrategyCandidateSchema).default([]),
+  guidance: z.string().min(1),
+  uncertainty: z.array(z.string().min(1)).default([]),
+  context_authority: z.literal("advisory_only").default("advisory_only"),
+  confidence: z.number().min(0).max(1).default(0.5),
+});
+export type DreamReviewCheckpointEvidence = z.infer<typeof DreamReviewCheckpointEvidenceSchema>;
+
 export const VerificationEvidenceSchema = z.object({
   summary: z.string(),
   supported_claims: z.array(z.string()).default([]),
@@ -232,6 +274,38 @@ export function buildReplanningOptionsSpec(): ReturnType<typeof baseSpec<{
     outputSchema: ReplanningOptionsSchema,
     failPolicy: "fallback_deterministic",
     runWhen: (ctx) => (ctx.gapAggregate ?? 0) > 0,
+  });
+}
+
+export function buildDreamReviewCheckpointSpec(): ReturnType<typeof baseSpec<{
+  goalTitle: string;
+  trigger: DreamReviewCheckpointTrigger;
+  reason: string;
+  activeDimensions: string[];
+  bestEvidenceSummary?: string;
+  recentStrategyFamilies: string[];
+  metricTrendSummary?: string;
+  finalizationReason?: string;
+  memoryAuthorityPolicy: "soil_and_playbooks_are_advisory_only";
+  maxGuidanceItems: number;
+}, DreamReviewCheckpointEvidence>> {
+  return baseSpec({
+    phase: "dream_review_checkpoint",
+    inputSchema: z.object({
+      goalTitle: z.string(),
+      trigger: DreamReviewCheckpointTriggerSchema,
+      reason: z.string(),
+      activeDimensions: z.array(z.string()).default([]),
+      bestEvidenceSummary: z.string().optional(),
+      recentStrategyFamilies: z.array(z.string()).default([]),
+      metricTrendSummary: z.string().optional(),
+      finalizationReason: z.string().optional(),
+      memoryAuthorityPolicy: z.literal("soil_and_playbooks_are_advisory_only"),
+      maxGuidanceItems: z.number().int().positive().max(5).default(3),
+    }),
+    outputSchema: DreamReviewCheckpointEvidenceSchema,
+    failPolicy: "return_low_confidence",
+    runWhen: (ctx) => (ctx.gapAggregate ?? 0) >= 0 || ctx.stallDetected === true,
   });
 }
 

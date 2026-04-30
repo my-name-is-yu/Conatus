@@ -120,6 +120,13 @@ const DEFAULT_CORE_PHASE_BUDGET: Partial<Record<CorePhaseKind, Partial<AgentLoop
     maxRepeatedToolCalls: 1,
     compactionMaxMessages: 4,
   },
+  dream_review_checkpoint: {
+    maxModelTurns: 3,
+    maxToolCalls: 5,
+    maxWallClockMs: 45_000,
+    maxRepeatedToolCalls: 1,
+    compactionMaxMessages: 4,
+  },
   verification_evidence: {
     maxModelTurns: 6,
     maxToolCalls: 8,
@@ -281,6 +288,20 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
         "research_answer_with_sources",
       ],
       requiredTools: ["research_answer_with_sources"],
+    },
+    failPolicy: "return_low_confidence",
+  },
+  dream_review_checkpoint: {
+    enabled: true,
+    maxInvocationsPerIteration: 1,
+    budget: DEFAULT_CORE_PHASE_BUDGET.dream_review_checkpoint ?? {},
+    toolPolicy: {
+      allowedTools: [
+        "soil_query",
+        "knowledge_query",
+        "memory_recall",
+      ],
+      requiredTools: ["soil_query"],
     },
     failPolicy: "return_low_confidence",
   },
