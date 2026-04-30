@@ -507,6 +507,7 @@ describe("CoreLoop agentic phase hooks", () => {
         },
         research_memos: [],
         dream_checkpoints: [],
+        divergent_exploration: [],
         recent_failed_attempts: [],
         recent_entries: [],
         warnings: [],

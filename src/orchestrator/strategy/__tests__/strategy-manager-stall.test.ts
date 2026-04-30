@@ -59,6 +59,52 @@ const EMPTY_CANDIDATES_RESPONSE = `\`\`\`json
 []
 \`\`\``;
 
+const KAGGLE_LOCAL_SEARCH_RESPONSE = `\`\`\`json
+[
+  {
+    "hypothesis": "Tune CatBoost class weights and threshold calibration for the irrigation benchmark",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "medium" }
+    ],
+    "resource_estimate": {
+      "sessions": 2,
+      "duration": { "value": 4, "unit": "hours" },
+      "llm_calls": 1
+    },
+    "allocation": 0.8
+  }
+]
+\`\`\``;
+
+const NEAR_STALL_RECOVERY_RESPONSE = `\`\`\`json
+[
+  {
+    "hypothesis": "Tune CatBoost class weights around the current threshold calibration",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
+    ],
+    "resource_estimate": {
+      "sessions": 2,
+      "duration": { "value": 3, "unit": "hours" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3
+  },
+  {
+    "hypothesis": "Search finer threshold and calibration bias around the current CatBoost model",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
+    ],
+    "resource_estimate": {
+      "sessions": 2,
+      "duration": { "value": 3, "unit": "hours" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3
+  }
+]
+\`\`\``;
+
 // ─── Test Setup ───
 
 let tempDir: string;
@@ -216,6 +262,103 @@ describe("onStallDetected", () => {
     // No active strategy to terminate, new candidates are generated and activated
     expect(result).not.toBeNull();
     expect(result!.state).toBe("active");
+  });
+
+  it("adds a high-novelty divergent portfolio when sustained stall recovery stays near failed lineage", async () => {
+    const mock = createMockLLMClient([KAGGLE_LOCAL_SEARCH_RESPONSE, NEAR_STALL_RECOVERY_RESPONSE]);
+    const manager = new StrategyManager(stateManager, mock);
+
+    await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
+      currentGap: 0.2,
+      pastStrategies: [],
+    });
+    const original = await manager.activateBestCandidate("goal-1");
+
+    const next = await manager.onStallDetected("goal-1", 2, "kaggle", undefined, {
+      metric_key: "balanced_accuracy",
+      direction: "maximize",
+      trend: "stalled",
+      latest_value: 0.9708,
+      latest_observed_at: "2026-04-30T00:00:00.000Z",
+      best_value: 0.9708,
+      best_observed_at: "2026-04-30T00:00:00.000Z",
+      observation_count: 6,
+      recent_slope_per_observation: 0,
+      best_delta: 0.0001,
+      last_meaningful_improvement_delta: null,
+      last_breakthrough_delta: null,
+      time_since_last_meaningful_improvement_ms: 86_400_000,
+      improvement_threshold: 0.01,
+      breakthrough_threshold: 0.05,
+      noise_band: 0.005,
+      confidence: 0.9,
+      source_refs: [],
+      summary: "balanced_accuracy stalled near the current best.",
+    });
+
+    expect(next).not.toBeNull();
+    expect(next?.id).not.toBe(original.id);
+    const portfolio = await manager.getPortfolio("goal-1");
+    const recoveryCandidates = portfolio?.strategies.filter(
+      (strategy) => strategy.exploration?.phase === "divergent_stall_recovery"
+    ) ?? [];
+    expect(recoveryCandidates.length).toBeGreaterThanOrEqual(3);
+    expect(recoveryCandidates).toContainEqual(expect.objectContaining({
+      exploration: expect.objectContaining({
+        role: "divergent_exploration",
+        strategy_family: "framing-audit-smoke",
+        novelty_score: expect.any(Number),
+        expected_cost: "low",
+        relationship_to_lineage: "different_assumption",
+        evidence_authority: "speculative_hypothesis",
+      }),
+    }));
+    expect(recoveryCandidates.some((strategy) =>
+      strategy.exploration?.downrank_reason === "similar_to_recent_failed_lineage_without_new_evidence"
+    )).toBe(true);
+  });
+
+  it("records smoke promote defer and retire decisions without treating speculative candidates as proven", async () => {
+    const mock = createMockLLMClient([KAGGLE_LOCAL_SEARCH_RESPONSE, NEAR_STALL_RECOVERY_RESPONSE]);
+    const manager = new StrategyManager(stateManager, mock);
+
+    await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
+      currentGap: 0.2,
+      pastStrategies: [],
+    });
+    await manager.activateBestCandidate("goal-1");
+
+    const candidates = await manager.prepareDivergentExplorationOnStall("goal-1", {
+      primaryDimension: "balanced_accuracy",
+      targetDimensions: ["balanced_accuracy"],
+      currentGap: 0.2,
+      stallCount: 2,
+      trigger: "sustained_stall",
+    });
+
+    expect(candidates.length).toBeGreaterThanOrEqual(3);
+    const [promoted, deferred, retired] = candidates;
+    await manager.recordDivergentSmokeResult("goal-1", promoted!.id, {
+      status: "promote",
+      reason: "Smoke probe improved validation score.",
+      evidenceRef: "evidence://smoke/promote",
+    });
+    await manager.recordDivergentSmokeResult("goal-1", deferred!.id, {
+      status: "defer",
+      reason: "Smoke probe needs more data before full execution.",
+    });
+    await manager.recordDivergentSmokeResult("goal-1", retired!.id, {
+      status: "retire",
+      reason: "Smoke probe reproduced a dead end.",
+    });
+
+    const portfolio = await manager.getPortfolio("goal-1");
+    expect(portfolio?.strategies.find((strategy) => strategy.id === promoted!.id)?.exploration).toMatchObject({
+      smoke: { status: "promote", evidence_ref: "evidence://smoke/promote" },
+      evidence_authority: "speculative_hypothesis",
+    });
+    expect(portfolio?.strategies.find((strategy) => strategy.id === deferred!.id)?.exploration?.smoke.status).toBe("defer");
+    expect(portfolio?.strategies.find((strategy) => strategy.id === retired!.id)?.exploration?.smoke.status).toBe("retire");
   });
 });
 

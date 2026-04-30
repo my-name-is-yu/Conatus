@@ -292,4 +292,40 @@ describe("RuntimeEvidenceLedger", () => {
       next_strategy_candidates: [{ title: "Bounded ablation" }],
     });
   });
+
+  it("stores divergent exploration hypotheses as speculative evidence", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      kind: "strategy",
+      scope: { goal_id: "goal-divergent", run_id: "run:coreloop:divergent", loop_index: 4, phase: "divergent_stall_recovery" },
+      divergent_exploration: [{
+        strategy_id: "strategy-divergent",
+        hypothesis: "Run a smoke-scale distribution audit before more threshold tuning.",
+        strategy_family: "data-audit",
+        role: "divergent_exploration",
+        novelty_score: 0.86,
+        similarity_to_recent_failures: 0.1,
+        expected_cost: "low",
+        relationship_to_lineage: "different_assumption",
+        prior_evidence: "Metric trend stalled after a breakthrough.",
+        smoke_status: "not_run",
+        smoke_reason: "Promote only if the audit finds actionable distribution evidence.",
+        evidence_authority: "speculative_hypothesis",
+      }],
+      summary: "Divergent recovery candidate saved.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-divergent");
+
+    expect(summary.divergent_exploration).toHaveLength(1);
+    expect(summary.divergent_exploration[0]).toMatchObject({
+      strategy_family: "data-audit",
+      role: "divergent_exploration",
+      expected_cost: "low",
+      relationship_to_lineage: "different_assumption",
+      smoke_status: "not_run",
+      evidence_authority: "speculative_hypothesis",
+    });
+  });
 });
