@@ -310,6 +310,8 @@ describe("CoreLoop agentic phase hooks", () => {
 
   it("feeds observe and replanning summaries into task cycle context and records phase results", async () => {
     const { deps, mocks } = createDeps(tmpDir);
+    const evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    deps.evidenceLedger = evidenceLedger;
     await mocks.stateManager.saveGoal(makeGoal());
 
     const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
@@ -327,6 +329,20 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(taskCycleArgs[6]).toContain("observe-summary");
     expect(taskCycleArgs[7]).toEqual(expect.objectContaining({ targetDimensionOverride: "dim1" }));
     expect(taskCycleArgs[7]?.knowledgeContextPrefix).toContain("Replanning directive:");
+    expect(evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "task_generation",
+      scope: expect.objectContaining({ goal_id: "goal-1", task_id: "task-1", loop_index: 0 }),
+    }));
+    expect(evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "execution",
+      outcome: "improved",
+      scope: expect.objectContaining({ goal_id: "goal-1", task_id: "task-1", loop_index: 0 }),
+    }));
+    expect(evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "verification",
+      outcome: "improved",
+      scope: expect.objectContaining({ goal_id: "goal-1", task_id: "task-1", loop_index: 0 }),
+    }));
   });
 
   it("runs stall investigation when stall is detected", async () => {

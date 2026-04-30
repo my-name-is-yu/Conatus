@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { BackgroundRunLedger } from "../../runtime/store/background-run-store.js";
+import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import type { BackgroundRun, RuntimeArtifactRef, RuntimeSessionRef } from "../../runtime/session-registry/types.js";
 import type {
   ITool,
@@ -210,6 +211,13 @@ export class RuntimeReportWriteTool implements ITool<RuntimeReportWriteInput, Ru
         const warning = await linkBackgroundRunArtifacts(runId, result, output);
         if (warning) warnings.push(warning);
       }
+
+      const evidenceWarning = await appendLongRunningEvidence(result, output, {
+        runId: input.run_id,
+        backgroundRunId: input.background_run_id ?? result.source.background_run_id,
+        processSessionId: input.process_session_id ?? result.source.process_session_id,
+      });
+      if (evidenceWarning) warnings.push(evidenceWarning);
 
       const data: RuntimeReportWriteOutput = {
         result,
@@ -688,6 +696,58 @@ async function linkBackgroundRunArtifacts(
   } catch (err) {
     return `Could not link artifacts to background run ${runId}: ${messageFromError(err)}`;
   }
+}
+
+async function appendLongRunningEvidence(
+  result: LongRunningResult,
+  output: { files: RuntimeReportWriteOutput["files"] },
+  ids: { runId?: string; backgroundRunId?: string; processSessionId?: string },
+): Promise<string | null> {
+  const runId = ids.backgroundRunId ?? ids.runId ?? result.source.background_run_id ?? result.source.process_session_id;
+  if (!runId) return null;
+  try {
+    const ledger = new RuntimeEvidenceLedger();
+    await ledger.append({
+      kind: result.status === "failed" || result.status === "blocked" ? "failure" : "artifact",
+      scope: { run_id: runId },
+      summary: result.next_action.summary,
+      outcome: longRunningStatusToOutcome(result.status),
+      metrics: result.evidence.map((item) => ({
+        label: item.label,
+        value: item.value,
+        unit: item.unit,
+        summary: item.summary,
+      })),
+      artifacts: [
+        { label: "summary.md", path: output.files.summary, state_relative_path: output.files.state_relative_directory + "/summary.md", kind: "report" },
+        { label: "result.json", path: output.files.result, state_relative_path: output.files.state_relative_directory + "/result.json", kind: "metrics" },
+        { label: "next-action.json", path: output.files.next_action, state_relative_path: output.files.state_relative_directory + "/next-action.json", kind: "other" },
+        ...result.artifacts,
+      ],
+      result: {
+        status: result.status,
+        summary: result.next_action.summary,
+        ...(result.failures[0] ? { error: result.failures[0] } : {}),
+      },
+      decision_reason: result.next_action.reason ?? result.next_action.summary,
+      raw_refs: [
+        ...(ids.processSessionId ? [{ kind: "process_session", id: ids.processSessionId }] : []),
+        ...(ids.backgroundRunId ? [{ kind: "background_run", id: ids.backgroundRunId }] : []),
+        ...(result.source.path ? [{ kind: result.source.kind, path: result.source.path }] : []),
+      ],
+    });
+    return null;
+  } catch (err) {
+    return `Could not append long-running evidence for ${runId}: ${messageFromError(err)}`;
+  }
+}
+
+function longRunningStatusToOutcome(status: LongRunningStatus) {
+  if (status === "succeeded") return "improved";
+  if (status === "failed") return "failed";
+  if (status === "blocked") return "blocked";
+  if (status === "running") return "continued";
+  return "inconclusive";
 }
 
 function mapResultStatusToBackgroundStatus(existing: BackgroundRun, status: LongRunningStatus): BackgroundRun["status"] {

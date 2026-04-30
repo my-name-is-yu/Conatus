@@ -173,6 +173,26 @@ export type {
 } from "./runtime/control/index.js";
 export { RuntimeOperationStore } from "./runtime/store/runtime-operation-store.js";
 export {
+  RuntimeEvidenceArtifactRefSchema,
+  RuntimeEvidenceEntryKindSchema,
+  RuntimeEvidenceEntrySchema,
+  RuntimeEvidenceLedger,
+  RuntimeEvidenceMetricSchema,
+  RuntimeEvidenceOutcomeSchema,
+} from "./runtime/store/evidence-ledger.js";
+export type {
+  RuntimeEvidenceArtifactRef,
+  RuntimeEvidenceEntry,
+  RuntimeEvidenceEntryInput,
+  RuntimeEvidenceEntryKind,
+  RuntimeEvidenceLedgerPort,
+  RuntimeEvidenceMetric,
+  RuntimeEvidenceOutcome,
+  RuntimeEvidenceReadResult,
+  RuntimeEvidenceReadWarning,
+  RuntimeEvidenceSummary,
+} from "./runtime/store/evidence-ledger.js";
+export {
   RuntimeControlActorSchema,
   RuntimeControlOperationKindSchema,
   RuntimeControlOperationSchema,

@@ -18,6 +18,9 @@ export interface RuntimeStorePaths {
   outboxDir: string;
   backgroundRunsDir: string;
   browserSessionsDir: string;
+  evidenceLedgerDir: string;
+  evidenceLedgerGoalsDir: string;
+  evidenceLedgerRunsDir: string;
   leasesDir: string;
   goalLeasesDir: string;
   dlqDir: string;
@@ -34,6 +37,8 @@ export interface RuntimeStorePaths {
   outboxRecordPath(seq: number): string;
   backgroundRunPath(runId: string): string;
   browserSessionPath(sessionId: string): string;
+  evidenceGoalPath(goalId: string): string;
+  evidenceRunPath(runId: string): string;
   guardrailBreakerPath(key: string): string;
   goalLeasePath(goalId: string): string;
   completedByIdempotencyPath(idempotencyKey: string): string;
@@ -81,6 +86,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const outboxDir = path.join(rootDir, "outbox");
   const backgroundRunsDir = path.join(rootDir, "background-runs");
   const browserSessionsDir = path.join(rootDir, "browser-sessions");
+  const evidenceLedgerDir = path.join(rootDir, "evidence-ledger");
+  const evidenceLedgerGoalsDir = path.join(evidenceLedgerDir, "goals");
+  const evidenceLedgerRunsDir = path.join(evidenceLedgerDir, "runs");
   const leasesDir = path.join(rootDir, "leases");
   const goalLeasesDir = path.join(leasesDir, "goal");
   const dlqDir = path.join(rootDir, "dlq");
@@ -103,6 +111,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     outboxDir,
     backgroundRunsDir,
     browserSessionsDir,
+    evidenceLedgerDir,
+    evidenceLedgerGoalsDir,
+    evidenceLedgerRunsDir,
     leasesDir,
     goalLeasesDir,
     dlqDir,
@@ -132,6 +143,12 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     browserSessionPath(sessionId: string) {
       return path.join(browserSessionsDir, recordFileName(encodeRuntimePathSegment(sessionId)));
+    },
+    evidenceGoalPath(goalId: string) {
+      return path.join(evidenceLedgerGoalsDir, `${encodeRuntimePathSegment(goalId)}.jsonl`);
+    },
+    evidenceRunPath(runId: string) {
+      return path.join(evidenceLedgerRunsDir, `${encodeRuntimePathSegment(runId)}.jsonl`);
     },
     guardrailBreakerPath(key: string) {
       return path.join(guardrailBreakersDir, recordFileName(encodeRuntimePathSegment(key)));
@@ -167,6 +184,9 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.outboxDir,
       paths.backgroundRunsDir,
       paths.browserSessionsDir,
+      paths.evidenceLedgerDir,
+      paths.evidenceLedgerGoalsDir,
+      paths.evidenceLedgerRunsDir,
       paths.leasesDir,
       paths.goalLeasesDir,
       paths.dlqDir,

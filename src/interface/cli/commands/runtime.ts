@@ -1,9 +1,11 @@
 // ─── pulseed runtime commands (read-only) ───
 
 import { parseArgs } from "node:util";
+import * as path from "node:path";
 
 import { StateManager } from "../../../base/state/state-manager.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
+import { RuntimeEvidenceLedger, type RuntimeEvidenceEntry, type RuntimeEvidenceSummary } from "../../../runtime/store/evidence-ledger.js";
 import type {
   BackgroundRun,
   RuntimeSession,
@@ -197,7 +199,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>");
+    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime evidence <goal-id|run-id>");
     return 1;
   }
 
@@ -267,7 +269,59 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     return 0;
   }
 
+  if (runtimeSubcommand === "evidence") {
+    const values = parseDetailArgs(args.slice(1), "evidence");
+    if (!values.id) {
+      logger.error("Error: goal ID or run ID is required. Usage: pulseed runtime evidence <goal-id|run-id> [--json]");
+      return 1;
+    }
+    const ledger = new RuntimeEvidenceLedger(path.join(stateManager.getBaseDir(), "runtime"));
+    const summary = await summarizeEvidenceTarget(ledger, values.id);
+    values.json ? printJson(summary) : printEvidenceSummary(summary);
+    return 0;
+  }
+
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime evidence <goal-id|run-id>");
   return 1;
+}
+
+async function summarizeEvidenceTarget(ledger: RuntimeEvidenceLedger, id: string): Promise<RuntimeEvidenceSummary> {
+  if (id.startsWith("run:")) {
+    return ledger.summarizeRun(id);
+  }
+  const goalSummary = await ledger.summarizeGoal(id);
+  if (goalSummary.total_entries > 0) {
+    return goalSummary;
+  }
+  const runSummary = await ledger.summarizeRun(id);
+  return runSummary.total_entries > 0 ? runSummary : goalSummary;
+}
+
+function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
+  const target = summary.scope.run_id
+    ? `run ${summary.scope.run_id}`
+    : `goal ${summary.scope.goal_id ?? "-"}`;
+  console.log(`Runtime evidence: ${target}`);
+  console.log(`  Entries:         ${summary.total_entries}`);
+  console.log(`  Latest strategy: ${entryLabel(summary.latest_strategy)}`);
+  console.log(`  Best evidence:   ${entryLabel(summary.best_evidence)}`);
+  if (summary.recent_failed_attempts.length > 0) {
+    console.log("  Recent failures:");
+    for (const entry of summary.recent_failed_attempts) {
+      console.log(`    - ${entryLabel(entry)}`);
+    }
+  } else {
+    console.log("  Recent failures: -");
+  }
+  if (summary.warnings.length > 0) {
+    console.log(`  Warnings:        ${summary.warnings.length}`);
+  }
+}
+
+function entryLabel(entry: RuntimeEvidenceEntry | null): string {
+  if (!entry) return "-";
+  const status = entry.outcome ?? entry.result?.status ?? entry.verification?.verdict ?? entry.kind;
+  const summary = entry.summary ?? entry.result?.summary ?? entry.decision_reason ?? entry.task?.description ?? "-";
+  return `${entry.occurred_at} ${entry.kind}/${status}: ${formatCell(summary, 96)}`;
 }

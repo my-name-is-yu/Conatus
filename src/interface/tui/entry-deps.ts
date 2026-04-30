@@ -31,6 +31,7 @@ export async function buildStandaloneTuiDeps() {
   const { GoalDependencyGraph } = await import("../../orchestrator/goal/goal-dependency-graph.js");
   const { TreeLoopOrchestrator } = await import("../../orchestrator/goal/tree-loop-orchestrator.js");
   const { ScheduleEngine } = await import("../../runtime/schedule/engine.js");
+  const { RuntimeEvidenceLedger } = await import("../../runtime/store/evidence-ledger.js");
   const { MemoryLifecycleManager, DriveScoreAdapter } = await import("../../platform/knowledge/memory/memory-lifecycle.js");
   const { KnowledgeManager } = await import("../../platform/knowledge/knowledge-manager.js");
   const { CharacterConfigManager } = await import("../../platform/traits/character-config.js");
@@ -58,6 +59,7 @@ export async function buildStandaloneTuiDeps() {
   const driveSystem = new DriveSystem(stateManager);
   const dataSourceRegistry = await buildCliDataSourceRegistry(process.cwd(), getCliLogger());
   const toolRegistry = new ToolRegistry();
+  const evidenceLedger = new RuntimeEvidenceLedger(path.join(stateManager.getBaseDir(), "runtime"));
   const registerToolIfMissing = (tool: ReturnType<typeof createBuiltinTools>[number]) => {
     if (!toolRegistry.get(tool.metadata.name)) {
       toolRegistry.register(tool);
@@ -249,6 +251,7 @@ export async function buildStandaloneTuiDeps() {
     driveScoreAdapter,
     contextProvider,
     corePhaseRunner,
+    evidenceLedger,
   });
 
   const scheduleEngine = new ScheduleEngine({

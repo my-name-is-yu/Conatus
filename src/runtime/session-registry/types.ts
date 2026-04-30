@@ -31,6 +31,7 @@ export const RuntimeSessionRefKindSchema = z.enum([
   "daemon_snapshot",
   "supervisor_state",
   "task_ledger",
+  "evidence_ledger",
   "process_session",
   "runtime_health",
   "artifact",

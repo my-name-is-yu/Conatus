@@ -440,6 +440,7 @@ export class LoopSupervisor {
 
     try {
       const result: WorkerResult = await worker.execute(goalId, {
+        ...(activation.backgroundRun ? { backgroundRun: activation.backgroundRun } : {}),
         ...(activation.waitResume ? { waitResume: activation.waitResume } : {}),
       });
 
@@ -522,6 +523,17 @@ export class LoopSupervisor {
     };
   }
 
+  private evidenceLedgerRef(activation: GoalActivation): RuntimeSessionRef {
+    const runId = activation.backgroundRun?.backgroundRunId ?? null;
+    return {
+      kind: 'evidence_ledger',
+      id: runId,
+      path: null,
+      relative_path: runId ? `runtime/evidence-ledger/runs/${encodeURIComponent(runId)}.jsonl` : null,
+      updated_at: null,
+    };
+  }
+
   private async mergeBackgroundRunSourceRefs(
     runId: string,
     refs: RuntimeSessionRef[],
@@ -544,7 +556,10 @@ export class LoopSupervisor {
   private async markBackgroundRunStarted(activation: GoalActivation, worker: GoalWorker): Promise<void> {
     const runId = activation.backgroundRun?.backgroundRunId;
     if (!runId || !this.deps.backgroundRunLedger) return;
-    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [this.supervisorStateRef()]);
+    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [
+      this.supervisorStateRef(),
+      this.evidenceLedgerRef(activation),
+    ]);
     try {
       if (activation.backgroundRun?.parentSessionId !== undefined) {
         await this.deps.backgroundRunLedger.link(runId, {
@@ -569,7 +584,10 @@ export class LoopSupervisor {
   private async markBackgroundRunTerminal(activation: GoalActivation, result: WorkerResult): Promise<void> {
     const runId = activation.backgroundRun?.backgroundRunId;
     if (!runId || !this.deps.backgroundRunLedger) return;
-    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [this.supervisorStateRef()]);
+    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [
+      this.supervisorStateRef(),
+      this.evidenceLedgerRef(activation),
+    ]);
     try {
       const run = await this.deps.backgroundRunLedger.terminal(runId, {
         status: workerStatusToBackgroundRunStatus(result.status),
@@ -592,7 +610,10 @@ export class LoopSupervisor {
   private async markCoalescedBackgroundRun(activation: GoalActivation, activeWorker: GoalWorker): Promise<void> {
     const runId = activation.backgroundRun?.backgroundRunId;
     if (!runId || !this.deps.backgroundRunLedger) return;
-    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [this.supervisorStateRef()]);
+    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [
+      this.supervisorStateRef(),
+      this.evidenceLedgerRef(activation),
+    ]);
     const childSessionId = this.coreLoopSessionId(activeWorker);
     try {
       await this.deps.backgroundRunLedger.link(runId, {

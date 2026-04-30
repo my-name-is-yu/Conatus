@@ -47,6 +47,12 @@ import {
   autoAcquireKnowledgeForRefresh,
 } from "./iteration-kernel-knowledge.js";
 import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
+import type {
+  RuntimeEvidenceEntryInput,
+  RuntimeEvidenceEntryKind,
+  RuntimeEvidenceOutcome,
+} from "../../../runtime/store/evidence-ledger.js";
+import type { TaskCycleResult } from "../../execution/task/task-execution-types.js";
 
 export interface CoreIterationKernelDeps {
   deps: CoreLoopDeps;
@@ -111,6 +117,32 @@ export class CoreIterationKernel {
     const result: LoopIterationResult = makeEmptyIterationResult(goalId, loopIndex);
     const activationContext = this.deps.getActivationContext();
     const evidenceLedger = new CoreLoopEvidenceLedger();
+    const runtimeEvidenceScope = {
+      goal_id: goalId,
+      ...(activationContext?.backgroundRun?.backgroundRunId
+        ? { run_id: activationContext.backgroundRun.backgroundRunId }
+        : {}),
+      loop_index: loopIndex,
+    };
+    const appendRuntimeEvidence = async (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => {
+      if (config.dryRun || !this.deps.deps.evidenceLedger) return;
+      try {
+        await this.deps.deps.evidenceLedger.append({
+          ...entry,
+          scope: {
+            ...runtimeEvidenceScope,
+            ...entry.scope,
+          },
+        });
+      } catch (err) {
+        this.deps.logger?.warn("CoreLoop: failed to append runtime evidence ledger entry", {
+          goalId,
+          loopIndex,
+          kind: entry.kind,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
     const corePhaseRuntime = new CorePhaseRuntime({
       phaseRunner: this.deps.deps.corePhaseRunner,
       policyRegistry: this.deps.corePhasePolicyRegistry,
@@ -184,6 +216,7 @@ export class CoreIterationKernel {
       )
     );
     rememberPhase(observeEvidence);
+    await appendPhaseEvidence(appendRuntimeEvidence, observeEvidence, "observation");
 
     goal = await runPhase("observe", () => observeAndReload(ctx, goalId, goal, loopIndex));
 
@@ -235,6 +268,7 @@ export class CoreIterationKernel {
         )
       );
       rememberPhase(waitObservationPhase);
+      await appendPhaseEvidence(appendRuntimeEvidence, waitObservationPhase, "observation");
     }
 
     const waitObservationDecision = await runPhase("wait-observation", () =>
@@ -304,6 +338,7 @@ export class CoreIterationKernel {
         )
       : null;
     if (knowledgeRefresh) rememberPhase(knowledgeRefresh);
+    if (knowledgeRefresh) await appendPhaseEvidence(appendRuntimeEvidence, knowledgeRefresh, "strategy");
 
     const replanningOptions = this.deps.coreDecisionEngine.shouldRunReplanningOptions({
       skipTaskGeneration: Boolean(skipTaskGeneration),
@@ -328,6 +363,7 @@ export class CoreIterationKernel {
         )
       : null;
     if (replanningOptions) rememberPhase(replanningOptions);
+    if (replanningOptions) await appendPhaseEvidence(appendRuntimeEvidence, replanningOptions, "strategy");
 
     await runPhase("completion-check", () =>
       checkCompletionAndMilestones(ctx, goalId, goal, result, startTime)
@@ -370,6 +406,7 @@ export class CoreIterationKernel {
         )
       : null;
     if (stallInvestigation) rememberPhase(stallInvestigation);
+    if (stallInvestigation) await appendPhaseEvidence(appendRuntimeEvidence, stallInvestigation, "failure");
 
     if (result.stallDetected && result.stallReport) {
       this.deps.logger?.warn(`[iter ${loopIndex}] stall detected: ${result.stallReport.stall_type}`, {
@@ -412,6 +449,7 @@ export class CoreIterationKernel {
             goalDimensions: goal.dimensions.map((dimension) => dimension.name),
             fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
           });
+          await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "knowledge_refresh_auto_acquire");
           this.deps.logger?.info("CoreLoop: knowledge_refresh auto-acquired knowledge and skipped execution", {
             goalId,
             acquiredCount,
@@ -465,6 +503,7 @@ export class CoreIterationKernel {
         goalDimensions: goal.dimensions.map((dimension) => dimension.name),
         fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
       });
+      await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "skip_task_generation");
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
       result.elapsedMs = Date.now() - startTime;
       return result;
@@ -532,6 +571,9 @@ export class CoreIterationKernel {
     if (!taskCycleOk) return result;
 
     const completedTaskResult = result.taskResult;
+    if (completedTaskResult) {
+      await appendTaskCycleEvidence(appendRuntimeEvidence, completedTaskResult);
+    }
     if (this.deps.coreDecisionEngine.shouldRunVerificationEvidence(result) && completedTaskResult) {
       const verificationPhase = await runPhase("verification-evidence", () =>
         corePhaseRuntime.run(
@@ -553,6 +595,9 @@ export class CoreIterationKernel {
         )
       );
       rememberPhase(verificationPhase);
+      await appendPhaseEvidence(appendRuntimeEvidence, verificationPhase, "verification", {
+        task_id: completedTaskResult.task.id,
+      });
     }
 
     result.nextIterationDirective = this.deps.coreDecisionEngine.buildNextIterationDirective({
@@ -561,10 +606,152 @@ export class CoreIterationKernel {
       goalDimensions: goal.dimensions.map((dimension) => dimension.name),
       fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
     });
+    await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "next_iteration_directive");
 
     await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
 
     result.elapsedMs = Date.now() - startTime;
     return result;
   }
+}
+
+async function appendPhaseEvidence(
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  execution: {
+    phase: CorePhaseKind;
+    status: "skipped" | "completed" | "low_confidence" | "failed";
+    summary?: string;
+    traceId?: string;
+    sessionId?: string;
+    turnId?: string;
+    error?: string;
+  },
+  kind: RuntimeEvidenceEntryKind,
+  scope?: RuntimeEvidenceEntryInput["scope"],
+): Promise<void> {
+  if (execution.status === "skipped") return;
+  await appendRuntimeEvidence({
+    kind,
+    scope: { ...scope, phase: execution.phase },
+    summary: execution.summary ?? `${execution.phase} ${execution.status}`,
+    outcome: phaseStatusToOutcome(execution.status),
+    result: {
+      status: execution.status,
+      ...(execution.error ? { error: execution.error } : {}),
+      ...(execution.summary ? { summary: execution.summary } : {}),
+    },
+    raw_refs: [
+      ...(execution.traceId ? [{ kind: "agentloop_trace", id: execution.traceId }] : []),
+      ...(execution.sessionId ? [{ kind: "agentloop_state", id: execution.sessionId }] : []),
+      ...(execution.turnId ? [{ kind: "agentloop_turn", id: execution.turnId }] : []),
+    ],
+  });
+}
+
+async function appendDecisionEvidence(
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  directive: LoopIterationResult["nextIterationDirective"],
+  fallbackReason: string,
+): Promise<void> {
+  if (!directive) return;
+  await appendRuntimeEvidence({
+    kind: "decision",
+    summary: directive.reason,
+    strategy: directive.preferredAction,
+    outcome: "continued",
+    decision_reason: directive.reason,
+    scope: { phase: directive.sourcePhase },
+    result: {
+      status: fallbackReason,
+      summary: directive.reason,
+    },
+  });
+}
+
+async function appendTaskCycleEvidence(
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  taskResult: TaskCycleResult,
+): Promise<void> {
+  const task = taskResult.task;
+  await appendRuntimeEvidence({
+    kind: "task_generation",
+    scope: { task_id: task.id },
+    hypothesis: task.rationale,
+    strategy: task.approach,
+    task: {
+      id: task.id,
+      description: task.work_description,
+      primary_dimension: task.primary_dimension,
+    },
+    summary: task.work_description,
+    outcome: "continued",
+    decision_reason: task.rationale,
+  });
+
+  await appendRuntimeEvidence({
+    kind: taskResult.action === "completed" ? "execution" : "failure",
+    scope: { task_id: task.id },
+    task: {
+      id: task.id,
+      description: task.work_description,
+      action: taskResult.action,
+      primary_dimension: task.primary_dimension,
+    },
+    artifacts: taskResult.verificationResult.file_diffs?.map((diff) => ({
+      label: diff.path,
+      path: diff.path,
+      kind: "diff" as const,
+    })) ?? [],
+    result: {
+      status: taskResult.action,
+      ...(task.execution_output ? { summary: truncateOneLine(task.execution_output, 500) } : {}),
+    },
+    outcome: taskActionToOutcome(taskResult.action),
+    summary: `Task ${task.id} ${taskResult.action}`,
+  });
+
+  await appendRuntimeEvidence({
+    kind: taskResult.verificationResult.verdict === "pass" ? "verification" : "failure",
+    scope: { task_id: task.id },
+    verification: {
+      verdict: taskResult.verificationResult.verdict,
+      confidence: taskResult.verificationResult.confidence,
+      summary: summarizeVerificationEvidence(taskResult.verificationResult.evidence),
+    },
+    result: {
+      status: taskResult.verificationResult.verdict,
+      summary: summarizeVerificationEvidence(taskResult.verificationResult.evidence),
+    },
+    outcome: verificationToOutcome(taskResult.verificationResult.verdict),
+    summary: `Verification ${taskResult.verificationResult.verdict} for ${task.id}`,
+  });
+}
+
+function phaseStatusToOutcome(status: "skipped" | "completed" | "low_confidence" | "failed"): RuntimeEvidenceOutcome {
+  if (status === "completed") return "continued";
+  if (status === "failed") return "failed";
+  return "inconclusive";
+}
+
+function taskActionToOutcome(action: TaskCycleResult["action"]): RuntimeEvidenceOutcome {
+  if (action === "completed") return "improved";
+  if (action === "approval_denied" || action === "capability_acquiring") return "blocked";
+  if (action === "discard" || action === "escalate") return "failed";
+  return "inconclusive";
+}
+
+function verificationToOutcome(verdict: TaskCycleResult["verificationResult"]["verdict"]): RuntimeEvidenceOutcome {
+  if (verdict === "pass") return "improved";
+  if (verdict === "fail") return "failed";
+  return "inconclusive";
+}
+
+function summarizeVerificationEvidence(evidence: TaskCycleResult["verificationResult"]["evidence"]): string | undefined {
+  const summary = evidence.map((item) => item.description).filter(Boolean).join("; ");
+  return summary ? truncateOneLine(summary, 500) : undefined;
+}
+
+function truncateOneLine(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
 }

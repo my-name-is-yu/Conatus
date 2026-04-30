@@ -9,6 +9,7 @@ import { dispatchCommand } from "../cli-command-registry.js";
 import { CLIRunner } from "../cli-runner.js";
 import type { CoreLoop } from "../../../orchestrator/loop/core-loop.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
+import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 
 describe("runtime registry CLI commands", () => {
   let tmpDir: string;
@@ -153,6 +154,58 @@ describe("runtime registry CLI commands", () => {
 
     expect(code).toBe(1);
     expect(errors).toContain("Runtime run not found: run:process:missing");
+  });
+
+  it("summarizes runtime evidence for a goal as text and JSON", async () => {
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      kind: "strategy",
+      scope: { goal_id: "goal-evidence", loop_index: 0 },
+      summary: "Continue with the narrowed implementation path.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      kind: "verification",
+      scope: { goal_id: "goal-evidence", task_id: "task-evidence", loop_index: 0 },
+      verification: { verdict: "pass", confidence: 0.95, summary: "focused test passed" },
+      summary: "Focused test passed.",
+      outcome: "improved",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const textCode = await runCLI("runtime", "evidence", "goal-evidence");
+    const textOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(textCode).toBe(0);
+    expect(textOutput).toContain("Runtime evidence: goal goal-evidence");
+    expect(textOutput).toContain("Best evidence:");
+
+    logSpy.mockClear();
+    const jsonCode = await runCLI("runtime", "evidence", "goal-evidence", "--json");
+    const jsonOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(jsonOutput) as { total_entries: number; best_evidence: { kind: string } };
+    expect(jsonCode).toBe(0);
+    expect(parsed.total_entries).toBe(2);
+    expect(parsed.best_evidence.kind).toBe("verification");
+  });
+
+  it("summarizes run-scoped evidence for non-prefixed long-running run IDs", async () => {
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      kind: "artifact",
+      scope: { run_id: "dummy-runtime-run" },
+      summary: "Long-running report written.",
+      artifacts: [{ label: "summary.md", path: "/tmp/summary.md", kind: "report" }],
+      outcome: "improved",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await runCLI("runtime", "evidence", "dummy-runtime-run", "--json");
+    const output = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(output) as { scope: { run_id?: string }; total_entries: number };
+
+    expect(code).toBe(0);
+    expect(parsed.scope.run_id).toBe("dummy-runtime-run");
+    expect(parsed.total_entries).toBe(1);
   });
 
   async function writeConversationWithRunningAgent(): Promise<void> {
