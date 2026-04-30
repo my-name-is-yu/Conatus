@@ -31,6 +31,7 @@ import { CorePhaseRuntime } from "./phase-runtime.js";
 import {
   buildKnowledgeRefreshSpec,
   buildObserveEvidenceSpec,
+  buildPublicResearchSpec,
   buildReplanningOptionsSpec,
   buildStallInvestigationSpec,
   buildWaitObservationSpec,
@@ -52,6 +53,13 @@ import {
   autoAcquireKnowledgeForDreamStall,
   autoAcquireKnowledgeForRefresh,
 } from "./iteration-kernel-knowledge.js";
+import {
+  buildPublicResearchRequest,
+  normalizePublicResearchMemo,
+  publicResearchSummary,
+  researchRawRefs,
+  type PublicResearchRequest,
+} from "./public-research.js";
 import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 import type {
   RuntimeEvidenceEntry,
@@ -464,6 +472,46 @@ export class CoreIterationKernel {
       });
     }
 
+    const publicResearchRequest = buildPublicResearchRequest({
+      goal,
+      result,
+      gapAggregate,
+      driveScores,
+      knowledgeRefresh,
+    });
+    const publicResearch = publicResearchRequest
+      ? await runPhase("public-research", () =>
+          corePhaseRuntime.run(
+            {
+              ...buildPublicResearchSpec(),
+              requiredTools: ["research_answer_with_sources"],
+              allowedTools: ["research_web", "research_answer_with_sources"],
+              budget: {
+                maxModelTurns: 4,
+                maxToolCalls: 4,
+                maxWallClockMs: 60_000,
+                maxRepeatedToolCalls: 1,
+              },
+            },
+            {
+              goalTitle: goal.title,
+              trigger: publicResearchRequest.trigger,
+              question: publicResearchRequest.question,
+              targetDimensions: publicResearchRequest.targetDimensions,
+              sourcePreference: publicResearchRequest.sourcePreference,
+              maxSources: publicResearchRequest.maxSources,
+              sensitiveContextPolicy: publicResearchRequest.sensitiveContextPolicy,
+              untrustedContentPolicy: publicResearchRequest.untrustedContentPolicy,
+            },
+            { goalId, stallDetected: result.stallDetected, gapAggregate },
+          )
+        )
+      : null;
+    if (publicResearch) rememberPhase(publicResearch);
+    if (publicResearch && publicResearchRequest) {
+      await appendPublicResearchEvidence(appendRuntimeEvidence, publicResearch, publicResearchRequest);
+    }
+
     const knowledgeAcquisitionDecision = this.deps.coreDecisionEngine.evaluateKnowledgeAcquisition({
       phase: knowledgeRefresh,
       hasKnowledgeManager: !!this.deps.deps.knowledgeManager,
@@ -653,6 +701,58 @@ export class CoreIterationKernel {
     result.elapsedMs = Date.now() - startTime;
     return result;
   }
+}
+
+async function appendPublicResearchEvidence(
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  execution: {
+    phase: CorePhaseKind;
+    status: "skipped" | "completed" | "low_confidence" | "failed";
+    output?: unknown;
+    summary?: string;
+    traceId?: string;
+    sessionId?: string;
+    turnId?: string;
+    error?: string;
+  },
+  request: PublicResearchRequest,
+): Promise<void> {
+  if (execution.status === "skipped") return;
+  const output = buildPublicResearchSpec().outputSchema.safeParse(execution.output);
+  if (!output.success) {
+    await appendRuntimeEvidence({
+      kind: "research",
+      scope: { phase: execution.phase },
+      summary: execution.summary ?? request.reason,
+      outcome: "inconclusive",
+      result: {
+        status: execution.status,
+        summary: request.reason,
+        error: output.error.issues.map((issue) => issue.message).join("; "),
+      },
+    });
+    return;
+  }
+
+  const memo = normalizePublicResearchMemo(output.data, request);
+  await appendRuntimeEvidence({
+    kind: "research",
+    scope: { phase: execution.phase },
+    summary: publicResearchSummary(memo),
+    outcome: phaseStatusToOutcome(execution.status),
+    research: [memo],
+    result: {
+      status: execution.status,
+      summary: memo.summary,
+      ...(execution.error ? { error: execution.error } : {}),
+    },
+    raw_refs: [
+      ...researchRawRefs(memo),
+      ...(execution.traceId ? [{ kind: "agentloop_trace", id: execution.traceId }] : []),
+      ...(execution.sessionId ? [{ kind: "agentloop_state", id: execution.sessionId }] : []),
+      ...(execution.turnId ? [{ kind: "agentloop_turn", id: execution.turnId }] : []),
+    ],
+  });
 }
 
 async function loadBestFinalizationArtifact(

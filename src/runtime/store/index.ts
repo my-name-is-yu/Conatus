@@ -86,6 +86,10 @@ export {
   RuntimeEvidenceEvaluatorSignalSchema,
   RuntimeEvidenceEvaluatorStatusSchema,
   RuntimeEvidenceEvaluatorValidationSchema,
+  RuntimeEvidenceResearchExternalActionSchema,
+  RuntimeEvidenceResearchFindingSchema,
+  RuntimeEvidenceResearchMemoSchema,
+  RuntimeEvidenceResearchSourceSchema,
   RuntimeEvidenceEntryKindSchema,
   RuntimeEvidenceEntrySchema,
   RuntimeEvidenceLedger,
@@ -100,6 +104,10 @@ export type {
   RuntimeEvidenceEvaluatorSignal,
   RuntimeEvidenceEvaluatorStatus,
   RuntimeEvidenceEvaluatorValidation,
+  RuntimeEvidenceResearchExternalAction,
+  RuntimeEvidenceResearchFinding,
+  RuntimeEvidenceResearchMemo,
+  RuntimeEvidenceResearchSource,
   RuntimeEvidenceEntry,
   RuntimeEvidenceEntryInput,
   RuntimeEvidenceEntryKind,
@@ -127,6 +135,12 @@ export {
   extractEvaluatorObservationsFromEvidence,
   summarizeEvidenceEvaluatorResults,
 } from "./evaluator-results.js";
+export {
+  summarizeEvidenceResearchMemos,
+} from "./research-evidence.js";
+export type {
+  RuntimeResearchMemoContext,
+} from "./research-evidence.js";
 export type {
   RuntimeEvaluatorApprovalRequiredAction,
   RuntimeEvaluatorGap,

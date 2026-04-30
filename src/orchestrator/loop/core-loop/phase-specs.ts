@@ -61,6 +61,53 @@ export const ReplanningOptionsSchema = z.object({
 });
 export type ReplanningOptions = z.infer<typeof ReplanningOptionsSchema>;
 
+export const PublicResearchSourceSchema = z.object({
+  url: z.string().url(),
+  title: z.string().min(1).optional(),
+  source_type: z.enum(["official_docs", "maintainer", "paper", "issue_thread", "example", "writeup", "other"]).default("other"),
+  provenance: z.enum(["quoted", "paraphrased", "summarized"]).default("summarized"),
+  relevance: z.string().min(1).optional(),
+}).strict();
+export type PublicResearchSource = z.infer<typeof PublicResearchSourceSchema>;
+
+export const PublicResearchFindingSchema = z.object({
+  finding: z.string().min(1),
+  source_urls: z.array(z.string().url()).min(1),
+  applicability: z.string().min(1),
+  risks_constraints: z.array(z.string().min(1)).default([]),
+  proposed_experiment: z.string().min(1),
+  expected_metric_impact: z.string().min(1),
+  fact_vs_adaptation: z.object({
+    facts: z.array(z.string().min(1)).default([]),
+    adaptation: z.string().min(1),
+  }).strict(),
+}).strict();
+export type PublicResearchFinding = z.infer<typeof PublicResearchFindingSchema>;
+
+export const PublicResearchExternalActionSchema = z.object({
+  label: z.string().min(1),
+  reason: z.string().min(1),
+  approval_required: z.literal(true).default(true),
+}).strict();
+export type PublicResearchExternalAction = z.infer<typeof PublicResearchExternalActionSchema>;
+
+export const PublicResearchEvidenceSchema = z.object({
+  summary: z.string().min(1),
+  trigger: z.enum(["plateau", "uncertainty", "knowledge_gap"]),
+  query: z.string().min(1),
+  sources: z.array(PublicResearchSourceSchema).min(1),
+  findings: z.array(PublicResearchFindingSchema).min(1),
+  candidate_playbook: z.object({
+    title: z.string().min(1),
+    steps: z.array(z.string().min(1)).default([]),
+    source_urls: z.array(z.string().url()).default([]),
+  }).strict().optional(),
+  untrusted_content_policy: z.literal("webpage_instructions_are_untrusted").default("webpage_instructions_are_untrusted"),
+  external_actions: z.array(PublicResearchExternalActionSchema).default([]),
+  confidence: z.number().min(0).max(1).default(0.5),
+});
+export type PublicResearchEvidence = z.infer<typeof PublicResearchEvidenceSchema>;
+
 export const VerificationEvidenceSchema = z.object({
   summary: z.string(),
   supported_claims: z.array(z.string()).default([]),
@@ -185,6 +232,34 @@ export function buildReplanningOptionsSpec(): ReturnType<typeof baseSpec<{
     outputSchema: ReplanningOptionsSchema,
     failPolicy: "fallback_deterministic",
     runWhen: (ctx) => (ctx.gapAggregate ?? 0) > 0,
+  });
+}
+
+export function buildPublicResearchSpec(): ReturnType<typeof baseSpec<{
+  goalTitle: string;
+  trigger: "plateau" | "uncertainty" | "knowledge_gap";
+  question: string;
+  targetDimensions: string[];
+  sourcePreference: string[];
+  maxSources: number;
+  sensitiveContextPolicy: "do_not_send_secrets_or_private_artifacts";
+  untrustedContentPolicy: "webpage_instructions_are_untrusted";
+}, PublicResearchEvidence>> {
+  return baseSpec({
+    phase: "public_research",
+    inputSchema: z.object({
+      goalTitle: z.string(),
+      trigger: z.enum(["plateau", "uncertainty", "knowledge_gap"]),
+      question: z.string(),
+      targetDimensions: z.array(z.string()).default([]),
+      sourcePreference: z.array(z.string()).default(["official_docs", "maintainer", "paper", "high_signal_writeup"]),
+      maxSources: z.number().int().positive().max(5).default(3),
+      sensitiveContextPolicy: z.literal("do_not_send_secrets_or_private_artifacts"),
+      untrustedContentPolicy: z.literal("webpage_instructions_are_untrusted"),
+    }),
+    outputSchema: PublicResearchEvidenceSchema,
+    failPolicy: "return_low_confidence",
+    runWhen: (ctx) => ctx.stallDetected === true || (ctx.gapAggregate ?? 0) > 0,
   });
 }
 

@@ -265,6 +265,61 @@ describe("runtime registry CLI commands", () => {
     expect(parsed.evaluator_summary.gap.kind).toBe("external_success");
   });
 
+  it("shows public research source summaries in runtime evidence", async () => {
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      kind: "research",
+      scope: { goal_id: "goal-research-cli", phase: "public_research" },
+      research: [{
+        trigger: "plateau",
+        query: "plateau strategy evidence",
+        summary: "Source-grounded memo found one bounded experiment.",
+        sources: [{
+          url: "https://example.com/research/plateau",
+          title: "Plateau strategy",
+          source_type: "writeup",
+          provenance: "summarized",
+        }],
+        findings: [{
+          finding: "Compare a single alternative before expanding scope.",
+          source_urls: ["https://example.com/research/plateau"],
+          applicability: "Applies when metric trend has plateaued.",
+          risks_constraints: ["Keep external actions approval-gated."],
+          proposed_experiment: "Run one local ablation.",
+          expected_metric_impact: "Could reveal a better strategy.",
+          fact_vs_adaptation: {
+            facts: ["The source recommends bounded comparison."],
+            adaptation: "Use one local ablation for this goal.",
+          },
+        }],
+        untrusted_content_policy: "webpage_instructions_are_untrusted",
+        external_actions: [],
+        confidence: 0.8,
+      }],
+      raw_refs: [{ kind: "research_source", url: "https://example.com/research/plateau" }],
+      summary: "Public research memo saved.",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const textCode = await runCLI("runtime", "evidence", "goal-research-cli");
+    const textOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(textCode).toBe(0);
+    expect(textOutput).toContain("Public research:");
+    expect(textOutput).toContain("Source-grounded memo");
+    expect(textOutput).toContain("https://example.com/research/plateau");
+
+    logSpy.mockClear();
+    const jsonCode = await runCLI("runtime", "evidence", "goal-research-cli", "--json");
+    const jsonOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(jsonOutput) as {
+      research_memos: Array<{ sources: Array<{ url: string }>; findings: Array<{ applicability: string }> }>;
+    };
+    expect(jsonCode).toBe(0);
+    expect(parsed.research_memos[0]?.sources[0]?.url).toBe("https://example.com/research/plateau");
+    expect(parsed.research_memos[0]?.findings[0]?.applicability).toBe("Applies when metric trend has plateaued.");
+  });
+
   it("summarizes run-scoped evidence for non-prefixed long-running run IDs", async () => {
     const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
     await ledger.append({

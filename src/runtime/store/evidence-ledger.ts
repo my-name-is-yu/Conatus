@@ -12,6 +12,10 @@ import {
   summarizeEvidenceEvaluatorResults,
   type RuntimeEvaluatorSummary,
 } from "./evaluator-results.js";
+import {
+  summarizeEvidenceResearchMemos,
+  type RuntimeResearchMemoContext,
+} from "./research-evidence.js";
 
 export const RuntimeEvidenceOutcomeSchema = z.enum([
   "improved",
@@ -32,6 +36,7 @@ export const RuntimeEvidenceEntryKindSchema = z.enum([
   "decision",
   "metric",
   "evaluator",
+  "research",
   "artifact",
   "failure",
   "other",
@@ -127,6 +132,53 @@ export const RuntimeEvidenceEvaluatorObservationSchema = z.object({
 }).strict();
 export type RuntimeEvidenceEvaluatorObservation = z.infer<typeof RuntimeEvidenceEvaluatorObservationSchema>;
 
+export const RuntimeEvidenceResearchSourceSchema = z.object({
+  url: z.string().url(),
+  title: z.string().min(1).optional(),
+  source_type: z.enum(["official_docs", "maintainer", "paper", "issue_thread", "example", "writeup", "other"]).default("other"),
+  provenance: z.enum(["quoted", "paraphrased", "summarized"]).default("summarized"),
+  relevance: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceResearchSource = z.infer<typeof RuntimeEvidenceResearchSourceSchema>;
+
+export const RuntimeEvidenceResearchFindingSchema = z.object({
+  finding: z.string().min(1),
+  source_urls: z.array(z.string().url()).min(1),
+  applicability: z.string().min(1),
+  risks_constraints: z.array(z.string().min(1)).default([]),
+  proposed_experiment: z.string().min(1),
+  expected_metric_impact: z.string().min(1),
+  fact_vs_adaptation: z.object({
+    facts: z.array(z.string().min(1)).default([]),
+    adaptation: z.string().min(1),
+  }).strict(),
+}).strict();
+export type RuntimeEvidenceResearchFinding = z.infer<typeof RuntimeEvidenceResearchFindingSchema>;
+
+export const RuntimeEvidenceResearchExternalActionSchema = z.object({
+  label: z.string().min(1),
+  reason: z.string().min(1),
+  approval_required: z.literal(true).default(true),
+}).strict();
+export type RuntimeEvidenceResearchExternalAction = z.infer<typeof RuntimeEvidenceResearchExternalActionSchema>;
+
+export const RuntimeEvidenceResearchMemoSchema = z.object({
+  trigger: z.enum(["plateau", "uncertainty", "knowledge_gap"]),
+  query: z.string().min(1),
+  summary: z.string().min(1),
+  sources: z.array(RuntimeEvidenceResearchSourceSchema).min(1),
+  findings: z.array(RuntimeEvidenceResearchFindingSchema).min(1),
+  candidate_playbook: z.object({
+    title: z.string().min(1),
+    steps: z.array(z.string().min(1)).default([]),
+    source_urls: z.array(z.string().url()).default([]),
+  }).strict().optional(),
+  untrusted_content_policy: z.literal("webpage_instructions_are_untrusted").default("webpage_instructions_are_untrusted"),
+  external_actions: z.array(RuntimeEvidenceResearchExternalActionSchema).default([]),
+  confidence: z.number().min(0).max(1).default(0.5),
+}).strict();
+export type RuntimeEvidenceResearchMemo = z.infer<typeof RuntimeEvidenceResearchMemoSchema>;
+
 export const RuntimeEvidenceEntrySchema = z.object({
   schema_version: z.literal("runtime-evidence-entry-v1"),
   id: z.string().min(1),
@@ -155,6 +207,7 @@ export const RuntimeEvidenceEntrySchema = z.object({
   }).strict().optional(),
   metrics: z.array(RuntimeEvidenceMetricSchema).default([]),
   evaluators: z.array(RuntimeEvidenceEvaluatorObservationSchema).optional(),
+  research: z.array(RuntimeEvidenceResearchMemoSchema).optional(),
   artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
   result: z.object({
     status: z.string().min(1).optional(),
@@ -178,8 +231,8 @@ export const RuntimeEvidenceEntrySchema = z.object({
 export type RuntimeEvidenceEntry = z.infer<typeof RuntimeEvidenceEntrySchema>;
 export type RuntimeEvidenceEntryInput = Omit<
   RuntimeEvidenceEntry,
-  "schema_version" | "id" | "occurred_at" | "metrics" | "evaluators" | "artifacts" | "raw_refs"
-> & Partial<Pick<RuntimeEvidenceEntry, "id" | "occurred_at" | "metrics" | "evaluators" | "artifacts" | "raw_refs">>;
+  "schema_version" | "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "artifacts" | "raw_refs"
+> & Partial<Pick<RuntimeEvidenceEntry, "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "artifacts" | "raw_refs">>;
 
 export interface RuntimeEvidenceReadWarning {
   file: string;
@@ -204,6 +257,7 @@ export interface RuntimeEvidenceSummary {
   best_evidence: RuntimeEvidenceEntry | null;
   metric_trends: MetricTrendContext[];
   evaluator_summary: RuntimeEvaluatorSummary;
+  research_memos: RuntimeResearchMemoContext[];
   recent_failed_attempts: RuntimeEvidenceEntry[];
   recent_entries: RuntimeEvidenceEntry[];
   warnings: RuntimeEvidenceReadWarning[];
@@ -246,6 +300,7 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
       occurred_at: input.occurred_at ?? new Date().toISOString(),
       metrics: input.metrics ?? [],
       evaluators: input.evaluators ?? [],
+      research: input.research ?? [],
       artifacts: input.artifacts ?? [],
       raw_refs: input.raw_refs ?? [],
       ...input,
@@ -338,6 +393,7 @@ function summarizeEvidence(
     best_evidence: chooseBestEvidence(newestFirst),
     metric_trends: summarizeEvidenceMetricTrends(entries),
     evaluator_summary: summarizeEvidenceEvaluatorResults(entries),
+    research_memos: summarizeEvidenceResearchMemos(entries),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"

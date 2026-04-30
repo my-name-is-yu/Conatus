@@ -114,6 +114,23 @@ export const defaultCorePhasePolicies: Record<CorePhaseKind, CorePhasePolicy> = 
     ],
     failPolicy: "fallback_deterministic",
   },
+  public_research: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    budget: {
+      ...DEFAULT_POLICY.budget,
+      maxModelTurns: 4,
+      maxToolCalls: 4,
+      maxWallClockMs: 60_000,
+      maxRepeatedToolCalls: 1,
+    },
+    allowedTools: [
+      "research_web",
+      "research_answer_with_sources",
+    ],
+    requiredTools: ["research_answer_with_sources"],
+    failPolicy: "return_low_confidence",
+  },
   verification_evidence: {
     ...DEFAULT_POLICY,
     enabled: true,
