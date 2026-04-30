@@ -4,6 +4,7 @@ import * as fsp from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { StateManager } from "../../../base/state/state-manager.js";
+import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { OutboxStore } from "../../../runtime/store/outbox-store.js";
 import type { ITool, ToolCallContext } from "../../types.js";
 import { createRuntimeSessionTools } from "../runtime-session-tools.js";
@@ -386,6 +387,50 @@ describe("runtime session tools", () => {
       sessionStatus: "failed",
       sessionSummary: "User canceled this delegated branch",
       parentNotificationStatus: "sent",
+    });
+  });
+
+  it("exposes read-only Dream sidecar reviews for active background runs", async () => {
+    const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
+    await ledger.create({
+      id: "run:coreloop:tool-sidecar",
+      kind: "coreloop_run",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      status: "running",
+      title: "Tool sidecar target",
+      workspace: "/repo",
+      started_at: "2026-04-30T00:00:00.000Z",
+      updated_at: "2026-04-30T00:10:00.000Z",
+      summary: "Running tool sidecar target.",
+    });
+
+    const review = tools.get("runtime_dream_review")!;
+    expect(review.metadata.isReadOnly).toBe(true);
+    expect(review.metadata.permissionLevel).toBe("read_only");
+    await expect(review.checkPermissions({
+      run_id: "run:coreloop:tool-sidecar",
+      request_guidance_injection: false,
+    }, makeContext())).resolves.toMatchObject({ status: "allowed" });
+
+    const result = await review.call({
+      run_id: "run:coreloop:tool-sidecar",
+      request_guidance_injection: true,
+    }, makeContext());
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      attach_status: "active",
+      read_only_enforced: true,
+      guidance_injection: {
+        status: "approval_required",
+        approval_required: true,
+        target_run_id: "run:coreloop:tool-sidecar",
+      },
+    });
+    expect(await ledger.load("run:coreloop:tool-sidecar")).toMatchObject({
+      status: "running",
+      summary: "Running tool sidecar target.",
     });
   });
 });

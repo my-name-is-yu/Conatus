@@ -6,6 +6,7 @@ import { ChatSessionCatalog, type LoadedChatSession } from "../../interface/chat
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
 import type { BackgroundRun, RuntimeReplyTarget, RuntimeSession } from "../../runtime/session-registry/types.js";
 import { OutboxStore } from "../../runtime/store/outbox-store.js";
+import { RuntimeDreamReviewTool } from "./runtime-dream-review-tool.js";
 import type {
   ITool,
   PermissionCheckResult,
@@ -1184,5 +1185,6 @@ export function createRuntimeSessionTools(stateManager: StateManager): ITool[] {
     new RuntimeSessionsClaimTool(service),
     new RuntimeSessionsCancelTool(service),
     new RuntimeSessionsRetryTool(service),
+    new RuntimeDreamReviewTool(stateManager),
   ];
 }
