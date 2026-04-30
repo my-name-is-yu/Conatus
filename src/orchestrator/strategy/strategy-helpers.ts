@@ -5,6 +5,7 @@ import { KnowledgeGapSignalSchema } from "../../base/types/knowledge.js";
 import type { StrategyState } from "../../base/types/core.js";
 import type { Strategy } from "../../base/types/strategy.js";
 import type { KnowledgeGapSignal } from "../../base/types/knowledge.js";
+import { formatMetricTrendContext, type MetricTrendContext } from "../../platform/drive/metric-history.js";
 
 // ─── Valid state transitions ───
 
@@ -69,7 +70,7 @@ export function buildGenerationPrompt(
   goalId: string,
   primaryDimension: string,
   targetDimensions: string[],
-  context: { currentGap: number; pastStrategies: Strategy[] },
+  context: { currentGap: number; pastStrategies: Strategy[]; metricTrendContext?: MetricTrendContext },
   enrichment?: { templatesBlock?: string; lessonsBlock?: string; workspaceBlock?: string }
 ): string {
   // Sort all past strategies most recent first
@@ -138,6 +139,7 @@ export function buildGenerationPrompt(
 Primary dimension to improve: ${primaryDimension}
 All target dimensions: ${targetDimensions.join(", ")}
 Current gap score: ${context.currentGap} (0=closed, 1=fully open)
+${context.metricTrendContext ? `Metric trend evidence: ${formatMetricTrendContext(context.metricTrendContext)}\nUse this outcome curve when deciding whether to exploit, pivot, or broaden exploration.` : ""}
 
 Past strategies tried:
 ${pastSummary}

@@ -5,10 +5,36 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { StallDetector } from "../stall-detector.js";
 import { ProgressPredictor } from "../progress-predictor.js";
 import type { StallState } from "../../../base/types/stall.js";
+import type { MetricTrendContext } from "../metric-history.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 function makeGapHistory(values: number[]): Array<{ normalized_gap: number }> {
   return values.map((v) => ({ normalized_gap: v }));
+}
+
+function makeMetricTrendContext(overrides: Partial<MetricTrendContext> = {}): MetricTrendContext {
+  return {
+    metric_key: "dim-a",
+    direction: "maximize",
+    trend: "stalled",
+    latest_value: 0.7,
+    latest_observed_at: "2026-04-30T00:05:00.000Z",
+    best_value: 0.7,
+    best_observed_at: "2026-04-30T00:00:00.000Z",
+    observation_count: 6,
+    recent_slope_per_observation: 0,
+    best_delta: 0,
+    last_meaningful_improvement_delta: null,
+    last_breakthrough_delta: null,
+    time_since_last_meaningful_improvement_ms: null,
+    improvement_threshold: 0.01,
+    breakthrough_threshold: 0.05,
+    noise_band: 0.005,
+    confidence: 0.9,
+    source_refs: [{ entry_id: "entry-1", kind: "metric" }],
+    summary: "dim-a trend is stalled",
+    ...overrides,
+  };
 }
 
 // ─── Test Setup ───
@@ -140,6 +166,38 @@ describe("checkDimensionStall", () => {
     // Improvement of 0.10 (from 0.5 to 0.40) — at or above MIN_IMPROVEMENT_DELTA → no stall
     const history = makeGapHistory([0.5, 0.5, 0.5, 0.5, 0.5, 0.40]);
     const result = detector.checkDimensionStall("goal-1", "dim-a", history);
+    expect(result).toBeNull();
+  });
+
+  it("uses stalled metric history as stronger stall evidence even when gap history is short", () => {
+    const result = detector.checkDimensionStall(
+      "goal-1",
+      "dim-a",
+      makeGapHistory([0.5, 0.5]),
+      undefined,
+      makeMetricTrendContext({ trend: "stalled" })
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.stall_type).toBe("dimension_stall");
+    expect(result?.metric_trend_context?.trend).toBe("stalled");
+  });
+
+  it("suppresses gap-only stall when metric history shows a breakthrough", () => {
+    const result = detector.checkDimensionStall(
+      "goal-1",
+      "dim-a",
+      makeGapHistory([0.5, 0.5, 0.5, 0.5, 0.5, 0.5]),
+      undefined,
+      makeMetricTrendContext({
+        trend: "breakthrough",
+        latest_value: 0.9,
+        best_value: 0.9,
+        best_delta: 0.2,
+        last_breakthrough_delta: 0.2,
+      })
+    );
+
     expect(result).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import type { DriveScore } from "../../base/types/drive.js";
 import type { CompletionJudgment } from "../../base/types/satisficing.js";
 import type { StallAnalysis, StallReport } from "../../base/types/stall.js";
+import type { MetricTrendContext } from "../../platform/drive/metric-history.js";
 import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
 import type { WaitExpiryOutcome } from "../../base/types/strategy.js";
 import type { TaskCycleResult } from "../execution/task/task-execution-types.js";
@@ -37,6 +38,8 @@ export interface LoopIterationResult {
   stallReport: StallReport | null;
   /** M14-S2: cause analysis result when a stall is detected */
   stallAnalysis?: StallAnalysis;
+  /** Outcome metric trend that informed stall/recovery decisions. */
+  metricTrendContext?: MetricTrendContext;
   pivotOccurred: boolean;
   completionJudgment: CompletionJudgment;
   elapsedMs: number;
