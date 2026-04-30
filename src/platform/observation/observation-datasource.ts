@@ -15,6 +15,7 @@ export function findDataSourceForDimension(
   goalId?: string
 ): IDataSourceAdapter | null {
   const matches = (ds: IDataSourceAdapter): boolean => {
+    if (ds.supportsDimension?.(dimensionName, goalId)) return true;
     const dims = ds.getSupportedDimensions?.() ?? [];
     if (dims.includes(dimensionName)) return true;
     if (ds.config?.dimension_mapping && dimensionName in ds.config.dimension_mapping) return true;

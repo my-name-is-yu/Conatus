@@ -3,6 +3,11 @@ import * as path from "node:path";
 import { GitHubIssueDataSourceAdapter } from "../../adapters/datasources/github-issue-datasource.js";
 import { FileExistenceDataSourceAdapter } from "../../adapters/datasources/file-existence-datasource.js";
 import { ShellDataSourceAdapter } from "../../adapters/datasources/shell-datasource.js";
+import {
+  ArtifactMetricDataSourceAdapter,
+  createWorkspaceArtifactMetricDataSource,
+} from "../../adapters/datasources/artifact-metric-datasource.js";
+import type { ShellCommandSpec } from "../../adapters/datasources/shell-datasource.js";
 import type { DataSourceConfig } from "../../base/types/data-source.js";
 import { readJsonFile } from "../../base/utils/json-io.js";
 import { getDatasourcesDir } from "../../base/utils/paths.js";
@@ -46,13 +51,22 @@ export function createCliDataSourceAdapter(
   if (cfg.type === "shell") {
     const adapter = new ShellDataSourceAdapter(
       cfg.id,
-      (cfg.connection.commands ?? {}) as Record<string, import("../../adapters/datasources/shell-datasource.js").ShellCommandSpec>,
+      (cfg.connection.commands ?? {}) as Record<string, ShellCommandSpec>,
       cfg.connection?.path ?? workspacePath
     );
     if (cfg.scope_goal_id) {
       (adapter.config as Record<string, unknown>).scope_goal_id = cfg.scope_goal_id;
     }
     return adapter;
+  }
+  if (cfg.type === "artifact_metric") {
+    return new ArtifactMetricDataSourceAdapter({
+      ...cfg,
+      connection: {
+        ...cfg.connection,
+        path: cfg.connection.path ?? workspacePath,
+      },
+    });
   }
 
   return null;
@@ -68,22 +82,25 @@ export async function buildCliDataSourceRegistry(
   try {
     let dsExists = false;
     try { await fsp.access(dsDir); dsExists = true; } catch { /* not found */ }
-    if (!dsExists) {
-      return registry;
-    }
-
-    const files = (await fsp.readdir(dsDir)).filter(f => f.endsWith(".json"));
-    for (const file of files) {
-      const cfg = await readJsonFile<DataSourceConfig>(path.join(dsDir, file));
-      const adapter = createCliDataSourceAdapter(cfg, workspacePath);
-      if (adapter) {
-        registry.register(adapter);
-      } else {
-        logger.warn(`[pulseed] Unsupported built-in datasource type "${cfg.type}" in ${file}; skipping`);
+    if (dsExists) {
+      const files = (await fsp.readdir(dsDir)).filter(f => f.endsWith(".json"));
+      for (const file of files) {
+        const cfg = await readJsonFile<DataSourceConfig>(path.join(dsDir, file));
+        const adapter = createCliDataSourceAdapter(cfg, workspacePath);
+        if (adapter) {
+          registry.register(adapter);
+        } else {
+          logger.warn(`[pulseed] Unsupported built-in datasource type "${cfg.type}" in ${file}; skipping`);
+        }
       }
     }
   } catch (err) {
     logger.error(`[pulseed] Failed to load datasource configurations from "${dsDir}": ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const workspaceArtifacts = createWorkspaceArtifactMetricDataSource(workspacePath);
+  if (!registry.has(workspaceArtifacts.sourceId)) {
+    registry.register(workspaceArtifacts);
   }
 
   return registry;

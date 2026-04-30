@@ -51,6 +51,10 @@ export { NativeAgentLoopAdapter } from "./adapters/agents/native-agent-loop.js";
 export { GitHubIssueAdapter } from "./adapters/github-issue.js";
 export type { GitHubIssueAdapterConfig } from "./adapters/github-issue.js";
 export { GitHubIssueDataSourceAdapter } from "./adapters/datasources/github-issue-datasource.js";
+export {
+  ArtifactMetricDataSourceAdapter,
+  createWorkspaceArtifactMetricDataSource,
+} from "./adapters/datasources/artifact-metric-datasource.js";
 export { buildLLMClient, buildAdapterRegistry } from "./base/llm/provider-factory.js";
 export { CodexLLMClient } from "./base/llm/codex-llm-client.js";
 export type { CodexLLMClientConfig } from "./base/llm/codex-llm-client.js";
