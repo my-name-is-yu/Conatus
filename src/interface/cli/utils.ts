@@ -47,6 +47,8 @@ Usage:
   pulseed runtime runs [--json] [--active] [--attention]  List background runs
   pulseed runtime session <id> [--json]  Show one runtime session
   pulseed runtime run <id> [--json]   Show one background run
+  pulseed runtime evidence <goal-id|run-id> [--json]  Summarize runtime evidence ledger
+  pulseed runtime dream-review <run-id> [--json]  Read-only Dream sidecar review for active run
   pulseed log --goal <id>              View observation and gap history log
   pulseed tui                          Launch the interactive TUI
   pulseed start --goal <id>            Start daemon mode for one or more goals

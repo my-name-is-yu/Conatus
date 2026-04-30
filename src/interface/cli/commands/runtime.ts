@@ -6,6 +6,11 @@ import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceEntry, type RuntimeEvidenceSummary } from "../../../runtime/store/evidence-ledger.js";
+import {
+  createRuntimeDreamSidecarReview,
+  RuntimeDreamSidecarReviewError,
+  type RuntimeDreamSidecarReview,
+} from "../../../runtime/dream-sidecar-review.js";
 import type {
   BackgroundRun,
   RuntimeSession,
@@ -26,6 +31,12 @@ type RuntimeListValues = {
   json?: boolean;
   active?: boolean;
   attention?: boolean;
+};
+
+type RuntimeDreamReviewValues = {
+  id?: string;
+  json?: boolean;
+  requestGuidanceInjection?: boolean;
 };
 
 function formatCell(value: string | null | undefined, maxLen: number): string {
@@ -194,12 +205,43 @@ function parseDetailArgs(args: string[], command: string): { id?: string; json?:
   }
 }
 
+function parseDreamReviewArgs(args: string[]): RuntimeDreamReviewValues {
+  const logger = getCliLogger();
+  try {
+    const { values, positionals } = parseArgs({
+      args,
+      options: {
+        json: { type: "boolean" },
+        "request-guidance-injection": { type: "boolean" },
+        "inject-guidance": { type: "boolean" },
+      },
+      allowPositionals: true,
+      strict: false,
+    }) as {
+      values: {
+        json?: boolean;
+        "request-guidance-injection"?: boolean;
+        "inject-guidance"?: boolean;
+      };
+      positionals: string[];
+    };
+    return {
+      id: positionals[0],
+      json: values.json,
+      requestGuidanceInjection: values["request-guidance-injection"] === true || values["inject-guidance"] === true,
+    };
+  } catch (err) {
+    logger.error(formatOperationError("parse runtime dream-review arguments", err));
+    return {};
+  }
+}
+
 export async function cmdRuntime(stateManager: StateManager, args: string[]): Promise<number> {
   const logger = getCliLogger();
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime evidence <goal-id|run-id>");
+    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
     return 1;
   }
 
@@ -281,8 +323,32 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     return 0;
   }
 
+  if (runtimeSubcommand === "dream-review") {
+    const values = parseDreamReviewArgs(args.slice(1));
+    if (!values.id) {
+      logger.error("Error: run ID is required. Usage: pulseed runtime dream-review <run-id> [--json] [--request-guidance-injection]");
+      return 1;
+    }
+    try {
+      const review = await createRuntimeDreamSidecarReview({
+        stateManager,
+        runId: values.id,
+        requestGuidanceInjection: values.requestGuidanceInjection === true,
+      });
+      values.json ? printJson(review) : printDreamSidecarReview(review);
+      return 0;
+    } catch (err) {
+      if (err instanceof RuntimeDreamSidecarReviewError) {
+        console.error(`${err.code}: ${err.message}`);
+        return 1;
+      }
+      console.error(formatOperationError("runtime dream-review", err));
+      return 1;
+    }
+  }
+
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime evidence <goal-id|run-id>");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
   return 1;
 }
 
@@ -327,6 +393,44 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
   }
   if (summary.warnings.length > 0) {
     console.log(`  Warnings:        ${summary.warnings.length}`);
+  }
+}
+
+function printDreamSidecarReview(review: RuntimeDreamSidecarReview): void {
+  console.log(`Runtime Dream review: ${review.run.id}`);
+  console.log(`  Mode:            ${review.sidecar_session.mode}`);
+  console.log(`  Run status:      ${review.run.kind}/${review.run.status}`);
+  console.log(`  Runtime session: ${review.runtime_session?.id ?? "-"}`);
+  console.log(`  Summary:         ${formatCell(review.status_summary, 120)}`);
+  console.log(`  Trend:           ${review.trend_state.state}${review.trend_state.metric_key ? ` (${review.trend_state.metric_key})` : ""}`);
+  console.log(`  Best evidence:   ${review.best_evidence ? `${review.best_evidence.kind}: ${formatCell(review.best_evidence.summary ?? review.best_evidence.id, 96)}` : "-"}`);
+  console.log(`  Strategies:      ${review.strategy_families.join(", ") || "-"}`);
+  if (review.known_gaps.length > 0) {
+    console.log("  Known gaps:");
+    for (const gap of review.known_gaps.slice(0, 4)) {
+      console.log(`    - ${formatCell(gap, 100)}`);
+    }
+  } else {
+    console.log("  Known gaps:      -");
+  }
+  console.log("  Suggested next moves:");
+  for (const move of review.suggested_next_moves.slice(0, 5)) {
+    console.log(`    - ${formatCell(move.title, 80)} (${move.source})`);
+    console.log(`      ${formatCell(move.rationale, 100)}`);
+  }
+  if (review.operator_decisions.length > 0) {
+    console.log("  Operator decisions:");
+    for (const decision of review.operator_decisions.slice(0, 5)) {
+      console.log(`    - ${formatCell(decision.label, 80)} approval_required=${decision.approval_required}`);
+    }
+  } else {
+    console.log("  Operator decisions: -");
+  }
+  console.log(`  Guidance injection: ${review.guidance_injection.status}`);
+  console.log(`  Evidence refs:    ${review.evidence_refs.length}`);
+  console.log(`  Artifacts:        ${review.artifact_refs.map((artifact) => artifact.label).join(", ") || "-"}`);
+  if (review.warnings.length > 0) {
+    console.log(`  Warnings:         ${review.warnings.length}`);
   }
 }
 

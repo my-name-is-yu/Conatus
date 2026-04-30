@@ -9,6 +9,7 @@ import { dispatchCommand } from "../cli-command-registry.js";
 import { CLIRunner } from "../cli-runner.js";
 import type { CoreLoop } from "../../../orchestrator/loop/core-loop.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
+import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 
 describe("runtime registry CLI commands", () => {
@@ -376,6 +377,52 @@ describe("runtime registry CLI commands", () => {
       context_authority: "advisory_only",
       relevant_memories: [{ authority: "advisory_only" }],
     });
+  });
+
+  it("prints read-only sidecar Dream review for an active runtime run", async () => {
+    const runLedger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
+    await runLedger.create({
+      id: "run:coreloop:review-cli",
+      kind: "coreloop_run",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      status: "running",
+      title: "Review CLI target",
+      workspace: "/repo",
+      started_at: "2026-04-30T00:00:00.000Z",
+      updated_at: "2026-04-30T00:10:00.000Z",
+      summary: "Running review target.",
+    });
+    const evidenceLedger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await evidenceLedger.append({
+      kind: "strategy",
+      scope: { run_id: "run:coreloop:review-cli", loop_index: 0 },
+      strategy: "bounded ablation",
+      summary: "Try a bounded ablation first.",
+      outcome: "continued",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const textCode = await runCLI("runtime", "dream-review", "run:coreloop:review-cli", "--inject-guidance");
+    const textOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(textCode).toBe(0);
+    expect(textOutput).toContain("Runtime Dream review: run:coreloop:review-cli");
+    expect(textOutput).toContain("Mode:            read_only");
+    expect(textOutput).toContain("Guidance injection: approval_required");
+
+    logSpy.mockClear();
+    const jsonCode = await runCLI("runtime", "dream-review", "run:coreloop:review-cli", "--json");
+    const jsonOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(jsonOutput) as {
+      attach_status: string;
+      read_only_enforced: boolean;
+      strategy_families: string[];
+    };
+    expect(jsonCode).toBe(0);
+    expect(parsed.attach_status).toBe("active");
+    expect(parsed.read_only_enforced).toBe(true);
+    expect(parsed.strategy_families).toContain("bounded ablation");
   });
 
   it("summarizes run-scoped evidence for non-prefixed long-running run IDs", async () => {
