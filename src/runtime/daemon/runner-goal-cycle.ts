@@ -24,6 +24,18 @@ function buildLoopCompletePayload(goalId: string, result: LoopResult): Record<st
           observeOnly: lastIteration.waitObserveOnly ?? false,
         }
       : undefined,
+    finalization: lastIteration?.finalizationStatus && lastIteration.finalizationStatus.mode !== "no_deadline"
+      ? {
+          mode: lastIteration.finalizationStatus.mode,
+          deadline: lastIteration.finalizationStatus.deadline,
+          remainingMs: lastIteration.finalizationStatus.remaining_ms,
+          remainingExplorationMs: lastIteration.finalizationStatus.remaining_exploration_ms,
+          reservedFinalizationMs: lastIteration.finalizationStatus.reserved_finalization_ms,
+          bestArtifact: lastIteration.finalizationStatus.finalization_plan?.best_artifact?.label ?? null,
+          approvalRequiredActions:
+            lastIteration.finalizationStatus.finalization_plan?.approval_required_actions.map((action) => action.label) ?? [],
+        }
+      : undefined,
   };
 }
 

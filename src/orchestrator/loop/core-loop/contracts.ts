@@ -35,6 +35,7 @@ import type { CorePhasePolicyRegistry } from "./phase-policy.js";
 import type { CoreDecisionEngine } from "./decision-engine.js";
 import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 import type { RuntimeEvidenceLedgerPort } from "../../../runtime/store/evidence-ledger.js";
+import type { DeadlineFinalizationStatus } from "../../../platform/time/deadline-finalization.js";
 export type {
   LoopIterationResult,
   LoopResult,
@@ -94,6 +95,7 @@ export interface ExecutionSummaryParams {
     expired?: boolean;
     skipReason?: string;
   };
+  finalizationStatus?: DeadlineFinalizationStatus;
 }
 
 export interface ReportingEngine {

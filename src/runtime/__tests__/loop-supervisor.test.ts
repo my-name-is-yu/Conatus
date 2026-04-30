@@ -511,6 +511,46 @@ describe("LoopSupervisor", () => {
     }
   });
 
+  it("marks deadline finalization background runs as successful handoff terminals", async () => {
+    const runId = "run:coreloop:bg-finalization";
+    const { supervisor, deps, runtimeRoot } = makeSupervisor(async (goalId: string) =>
+      makeLoopResult({ goalId, totalIterations: 1, finalStatus: "finalization" })
+    );
+    const ledger = new BackgroundRunLedger(runtimeRoot);
+    await ledger.ensureReady();
+    await ledger.create({
+      id: runId,
+      kind: "coreloop_run",
+      parent_session_id: "session:conversation:chat-bg",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      title: "Deadline handoff CoreLoop",
+    });
+    (deps as { backgroundRunLedger?: BackgroundRunLedger }).backgroundRunLedger = ledger;
+
+    try {
+      await supervisor.start([]);
+      supervisor.activateGoal("g-finalization", {
+        backgroundRun: {
+          backgroundRunId: runId,
+          parentSessionId: "session:conversation:chat-bg",
+        },
+      });
+
+      const runFile = path.join(runtimeRoot, "background-runs", `${encodeURIComponent(runId)}.json`);
+      const terminal = await pollForJsonMatch<any>(runFile, (value) =>
+        value.status === "succeeded" &&
+        value.summary === "CoreLoop finalization after 1 iteration(s)."
+      );
+      await supervisor.shutdown();
+
+      expect(terminal.error).toBeNull();
+    } finally {
+      await supervisor.shutdown();
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("settles coalesced CoreLoop background runs instead of leaving them queued", async () => {
     const initialRunId = "run:coreloop:bg-initial";
     const coalescedRunId = "run:coreloop:bg-coalesced";

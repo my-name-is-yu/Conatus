@@ -89,7 +89,7 @@ const DEFAULT_CONFIG: SupervisorConfig = {
 function workerStatusToBackgroundRunStatus(
   status: WorkerResult['status'],
 ): 'succeeded' | 'failed' | 'cancelled' {
-  if (status === 'completed') return 'succeeded';
+  if (status === 'completed' || status === 'finalization') return 'succeeded';
   if (status === 'stopped') return 'cancelled';
   return 'failed';
 }

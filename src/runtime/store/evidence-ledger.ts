@@ -138,6 +138,8 @@ export interface RuntimeEvidenceLedgerPort {
   append(input: RuntimeEvidenceEntryInput): Promise<RuntimeEvidenceEntry[]>;
   readByGoal?(goalId: string): Promise<RuntimeEvidenceReadResult>;
   readByRun?(runId: string): Promise<RuntimeEvidenceReadResult>;
+  summarizeGoal?(goalId: string): Promise<RuntimeEvidenceSummary>;
+  summarizeRun?(runId: string): Promise<RuntimeEvidenceSummary>;
 }
 
 export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {

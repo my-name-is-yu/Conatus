@@ -60,6 +60,9 @@ export async function generateLoopReport(
       pivotOccurred: iterationResult.pivotOccurred,
       elapsedMs: iterationResult.elapsedMs,
       ...(waitStatus ? { waitStatus } : {}),
+      ...(iterationResult.finalizationStatus && iterationResult.finalizationStatus.mode !== "no_deadline"
+        ? { finalizationStatus: iterationResult.finalizationStatus }
+        : {}),
     });
     await reportingEngine.saveReport(report);
   } catch (err) {

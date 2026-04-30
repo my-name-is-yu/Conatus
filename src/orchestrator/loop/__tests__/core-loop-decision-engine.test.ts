@@ -82,6 +82,45 @@ describe("CoreDecisionEngine", () => {
     expect(decision.finalStatus).toBe("stalled");
   });
 
+  it("stops as finalization when the deadline buffer requires handoff", () => {
+    const engine = new CoreDecisionEngine();
+    const decision = engine.evaluateRunDecision({
+      iterationResult: makeIterationResult({
+        finalizationStatus: {
+          mode: "finalization",
+          deadline: "2026-04-30T01:00:00.000Z",
+          evaluated_at: "2026-04-30T00:45:00.000Z",
+          remaining_ms: 15 * 60_000,
+          reserved_finalization_ms: 30 * 60_000,
+          remaining_exploration_ms: 0,
+          consolidation_buffer_ms: 0,
+          reason: "Inside finalization buffer.",
+          finalization_plan: {
+            deliverable_contract: "Prepare final report",
+            best_artifact_selection: "best_evidence",
+            best_artifact: null,
+            verification_steps: [],
+            approval_required_actions: [],
+            handoff_required: false,
+          },
+        },
+        skipped: true,
+        skipReason: "deadline_finalization",
+      }),
+      loopIndex: 0,
+      minIterations: 1,
+      maxConsecutiveErrors: 3,
+      counters: {
+        consecutiveErrors: 0,
+        consecutiveDenied: 0,
+        consecutiveEscalations: 0,
+      },
+    });
+
+    expect(decision.shouldStop).toBe(true);
+    expect(decision.finalStatus).toBe("finalization");
+  });
+
   it("requests knowledge acquisition only for worthwhile high-confidence refresh evidence", () => {
     const engine = new CoreDecisionEngine();
     const decision = engine.evaluateKnowledgeAcquisition({

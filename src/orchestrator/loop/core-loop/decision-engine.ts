@@ -188,6 +188,13 @@ export class CoreDecisionEngine {
     const next: CoreLoopRunCounters = { ...input.counters };
     const taskAction = input.iterationResult.taskResult?.action ?? null;
 
+    if (
+      input.iterationResult.finalizationStatus?.mode === "finalization" ||
+      input.iterationResult.finalizationStatus?.mode === "missed_deadline"
+    ) {
+      return { counters: next, shouldStop: true, finalStatus: "finalization" };
+    }
+
     if (input.iterationResult.completionJudgment.is_complete && input.loopIndex >= input.minIterations - 1) {
       return { counters: next, shouldStop: true, finalStatus: "completed" };
     }
