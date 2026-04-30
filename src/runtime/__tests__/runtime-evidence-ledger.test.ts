@@ -188,4 +188,56 @@ describe("RuntimeEvidenceLedger", () => {
       candidate_id: "candidate-a",
     });
   });
+
+  it("stores public research evidence with source URLs and applicability notes", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      kind: "research",
+      scope: { goal_id: "goal-research", phase: "public_research" },
+      research: [{
+        trigger: "knowledge_gap",
+        query: "Find official migration guidance",
+        summary: "Official docs recommend a staged migration.",
+        sources: [{
+          url: "https://example.com/docs/migration",
+          title: "Migration guide",
+          source_type: "official_docs",
+          provenance: "paraphrased",
+        }],
+        findings: [{
+          finding: "Staged migration reduces blast radius.",
+          source_urls: ["https://example.com/docs/migration"],
+          applicability: "Applies to API client migration work.",
+          risks_constraints: ["Version skew still needs local tests."],
+          proposed_experiment: "Run both client versions against the focused test lane.",
+          expected_metric_impact: "Lower failure risk before rollout.",
+          fact_vs_adaptation: {
+            facts: ["The source recommends staged migration."],
+            adaptation: "Apply it as a local compatibility test before changing runtime defaults.",
+          },
+        }],
+        external_actions: [{
+          label: "Publish migration report",
+          reason: "External publication requires operator approval.",
+          approval_required: true,
+        }],
+        untrusted_content_policy: "webpage_instructions_are_untrusted",
+        confidence: 0.82,
+      }],
+      raw_refs: [{ kind: "research_source", url: "https://example.com/docs/migration" }],
+      summary: "Public research memo saved.",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-research");
+
+    expect(summary.research_memos).toHaveLength(1);
+    expect(summary.research_memos[0]).toMatchObject({
+      trigger: "knowledge_gap",
+      phase: "public_research",
+      sources: [{ url: "https://example.com/docs/migration" }],
+      findings: [{ applicability: "Applies to API client migration work." }],
+      external_actions: [{ approval_required: true }],
+      untrusted_content_policy: "webpage_instructions_are_untrusted",
+    });
+  });
 });

@@ -24,6 +24,7 @@ import {
   ProcessSessionReadTool,
 } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { ProcessStatusTool } from "../../../tools/system/ProcessStatusTool/ProcessStatusTool.js";
+import { InteractiveAutomationRegistry } from "../../../runtime/interactive-automation/index.js";
 
 function makeGapVector(goalId = "goal-1"): GapVector {
   return {
@@ -107,7 +108,7 @@ function makeAdapter(): IAdapter {
   };
 }
 
-function createDeps(tmpDir: string, options?: { stall?: boolean }) {
+function createDeps(tmpDir: string, options?: { stall?: boolean; publicResearch?: boolean }) {
   const stateManager = new StateManager(tmpDir);
   const adapter = makeAdapter();
   const observationEngine = {
@@ -186,6 +187,41 @@ function createDeps(tmpDir: string, options?: { stall?: boolean }) {
           }],
           confidence: 0.8,
         },
+        public_research: {
+          summary: "research-summary",
+          trigger: "plateau",
+          query: "Find plateau strategy evidence",
+          sources: [{
+            url: "https://example.com/research/plateau",
+            title: "Plateau strategy",
+            source_type: "official_docs",
+            provenance: "paraphrased",
+          }],
+          findings: [{
+            finding: "A bounded comparison can reveal whether the current approach is saturated.",
+            source_urls: ["https://example.com/research/plateau"],
+            applicability: "Applies when local changes stop moving the metric.",
+            risks_constraints: ["Do not execute external submissions without approval."],
+            proposed_experiment: "Run one local ablation and compare the tracked metric.",
+            expected_metric_impact: "Improve accuracy if the plateau is strategy-driven.",
+            fact_vs_adaptation: {
+              facts: ["The source recommends bounded comparison."],
+              adaptation: "Use a local ablation before external publication.",
+            },
+          }],
+          candidate_playbook: {
+            title: "Bounded ablation",
+            steps: ["Run local ablation", "Compare metric trend"],
+            source_urls: ["https://example.com/research/plateau"],
+          },
+          untrusted_content_policy: "webpage_instructions_are_untrusted",
+          external_actions: [{
+            label: "Submit benchmark result",
+            reason: "External benchmark confirmation requires approval.",
+            approval_required: true,
+          }],
+          confidence: 0.82,
+        },
         verification_evidence: {
           summary: "verify-summary",
           supported_claims: ["tests pass"],
@@ -258,6 +294,14 @@ function createDeps(tmpDir: string, options?: { stall?: boolean }) {
         allowedTools: [],
         requiredTools: [],
         failPolicy: "fallback_deterministic",
+      },
+      public_research: {
+        enabled: options?.publicResearch === true,
+        maxInvocationsPerIteration: 1,
+        budget: {},
+        allowedTools: ["research_web", "research_answer_with_sources"],
+        requiredTools: ["research_answer_with_sources"],
+        failPolicy: "return_low_confidence",
       },
       verification_evidence: {
         enabled: true,
@@ -360,6 +404,49 @@ describe("CoreLoop agentic phase hooks", () => {
     );
   });
 
+  it("runs bounded public research on plateau and saves structured source evidence for task handoff", async () => {
+    const { deps, mocks } = createDeps(tmpDir, { stall: true, publicResearch: true });
+    const evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    deps.evidenceLedger = evidenceLedger;
+    await mocks.stateManager.saveGoal(makeGoal({ title: "Improve benchmark score" }));
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(result.corePhaseResults?.some((phase) => phase.phase === "public_research")).toBe(true);
+    expect(mocks.corePhaseRunner.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "public_research",
+        allowedTools: ["research_web", "research_answer_with_sources"],
+        requiredTools: ["research_answer_with_sources"],
+      }),
+      expect.objectContaining({
+        trigger: "plateau",
+        sensitiveContextPolicy: "do_not_send_secrets_or_private_artifacts",
+        untrustedContentPolicy: "webpage_instructions_are_untrusted",
+      }),
+      expect.anything(),
+    );
+    expect(evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "research",
+      research: [expect.objectContaining({
+        summary: "research-summary",
+        untrusted_content_policy: "webpage_instructions_are_untrusted",
+        sources: [expect.objectContaining({ url: "https://example.com/research/plateau" })],
+        findings: [expect.objectContaining({
+          applicability: "Applies when local changes stop moving the metric.",
+          proposed_experiment: "Run one local ablation and compare the tracked metric.",
+        })],
+        external_actions: [expect.objectContaining({ approval_required: true })],
+      })],
+      raw_refs: expect.arrayContaining([
+        expect.objectContaining({ kind: "research_source", url: "https://example.com/research/plateau" }),
+      ]),
+    }));
+    const taskCycleArgs = (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(taskCycleArgs[4]).toContain("research-summary");
+  });
+
   it("keeps wait observation on a short read-only budget separate from normal AgentLoop execution", async () => {
     const policy = new StaticCorePhasePolicyRegistry().get("wait_observation");
 
@@ -404,6 +491,7 @@ describe("CoreLoop agentic phase hooks", () => {
 	      stateManager,
 	      registry,
 	      knowledgeManager: {} as never,
+	      interactiveAutomationRegistry: new InteractiveAutomationRegistry(),
 	    })) {
 	      registry.register(tool);
 	    }
@@ -414,6 +502,7 @@ describe("CoreLoop agentic phase hooks", () => {
 	      "knowledge_refresh",
 	      "stall_investigation",
 	      "replanning_options",
+	      "public_research",
 	      "verification_evidence",
 	    ] as const;
 

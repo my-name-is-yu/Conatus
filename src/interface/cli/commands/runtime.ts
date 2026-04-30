@@ -315,6 +315,7 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
     console.log("  Metric trends:   -");
   }
   printEvaluatorSummary(summary.evaluator_summary);
+  printResearchMemos(summary);
   if (summary.recent_failed_attempts.length > 0) {
     console.log("  Recent failures:");
     for (const entry of summary.recent_failed_attempts) {
@@ -325,6 +326,19 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
   }
   if (summary.warnings.length > 0) {
     console.log(`  Warnings:        ${summary.warnings.length}`);
+  }
+}
+
+function printResearchMemos(summary: RuntimeEvidenceSummary): void {
+  if (summary.research_memos.length === 0) {
+    console.log("  Public research: -");
+    return;
+  }
+  console.log("  Public research:");
+  for (const memo of summary.research_memos.slice(0, 3)) {
+    const sources = memo.sources.map((source) => source.url).slice(0, 2).join(", ");
+    console.log(`    - ${memo.trigger}: ${formatCell(memo.summary, 96)}`);
+    console.log(`      Sources: ${formatCell(sources, 96)}`);
   }
 }
 

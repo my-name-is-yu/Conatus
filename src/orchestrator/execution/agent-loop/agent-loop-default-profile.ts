@@ -113,6 +113,13 @@ const DEFAULT_CORE_PHASE_BUDGET: Partial<Record<CorePhaseKind, Partial<AgentLoop
     maxWallClockMs: 60_000,
     compactionMaxMessages: 6,
   },
+  public_research: {
+    maxModelTurns: 4,
+    maxToolCalls: 4,
+    maxWallClockMs: 60_000,
+    maxRepeatedToolCalls: 1,
+    compactionMaxMessages: 4,
+  },
   verification_evidence: {
     maxModelTurns: 6,
     maxToolCalls: 8,
@@ -263,6 +270,19 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
       ],
     },
     failPolicy: "fallback_deterministic",
+  },
+  public_research: {
+    enabled: true,
+    maxInvocationsPerIteration: 1,
+    budget: DEFAULT_CORE_PHASE_BUDGET.public_research ?? {},
+    toolPolicy: {
+      allowedTools: [
+        "research_web",
+        "research_answer_with_sources",
+      ],
+      requiredTools: ["research_answer_with_sources"],
+    },
+    failPolicy: "return_low_confidence",
   },
   verification_evidence: {
     enabled: true,
