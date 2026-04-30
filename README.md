@@ -98,11 +98,20 @@ PulSeed will guide provider and adapter setup when needed.
 
 ## Achievements
 
-PulSeed joined Kaggle Playground Series S6E4 (https://www.kaggle.com/competitions/playground-series-s6e4). It has been running straight over 10 hours and made a decent progress.
-- PulSeed improved local OOF balanced accuracy from early 0.45-level baselines to `0.970413051791` by exploring CatBoost-focused ensembles, probability adjustment, and post-OOF calibration.
-- The best local artifact preserved full OOF predictions and per-class recall:
-  High `0.957351611214`, Low `0.994598788377`, and Medium `0.959288755783`.
+PulSeed joined [Kaggle Playground Series S6E4](https://www.kaggle.com/competitions/playground-series-s6e4).
 
+| Area | Result |
+| --- | --- |
+| Long-running workflow | It has been running straight over 10 hours and made decent progress. |
+| Local OOF balanced accuracy | Improved from early 0.45-level baselines to `0.970413051791`. |
+| Exploration path | CatBoost-focused ensembles, probability adjustment, and post-OOF calibration. |
+| Current best local artifact | Preserved full OOF predictions and per-class recall. |
+
+Current best per-class recall:
+
+- High: `0.957351611214`
+- Low: `0.994598788377`
+- Medium: `0.959288755783`
 
 ## Docs and Community
 
