@@ -226,6 +226,31 @@ export const RuntimeEvidenceDreamCheckpointSchema = z.object({
 }).strict();
 export type RuntimeEvidenceDreamCheckpoint = z.infer<typeof RuntimeEvidenceDreamCheckpointSchema>;
 
+export const RuntimeEvidenceDivergentHypothesisSchema = z.object({
+  strategy_id: z.string().min(1).optional(),
+  hypothesis: z.string().min(1),
+  strategy_family: z.string().min(1),
+  role: z.enum(["exploitation", "adjacent_exploration", "divergent_exploration"]),
+  novelty_score: z.number().min(0).max(1),
+  similarity_to_recent_failures: z.number().min(0).max(1).default(0),
+  expected_cost: z.enum(["low", "medium", "high"]),
+  relationship_to_lineage: z.enum([
+    "current_best",
+    "neighbor",
+    "failed_lineage",
+    "different_mechanism",
+    "different_assumption",
+    "unknown",
+  ]),
+  prior_evidence: z.string().min(1).optional(),
+  downrank_reason: z.string().min(1).optional(),
+  smoke_status: z.enum(["not_run", "promote", "defer", "retire"]).default("not_run"),
+  smoke_reason: z.string().min(1).optional(),
+  smoke_evidence_ref: z.string().min(1).optional(),
+  evidence_authority: z.literal("speculative_hypothesis").default("speculative_hypothesis"),
+}).strict();
+export type RuntimeEvidenceDivergentHypothesis = z.infer<typeof RuntimeEvidenceDivergentHypothesisSchema>;
+
 export const RuntimeEvidenceEntrySchema = z.object({
   schema_version: z.literal("runtime-evidence-entry-v1"),
   id: z.string().min(1),
@@ -256,6 +281,7 @@ export const RuntimeEvidenceEntrySchema = z.object({
   evaluators: z.array(RuntimeEvidenceEvaluatorObservationSchema).optional(),
   research: z.array(RuntimeEvidenceResearchMemoSchema).optional(),
   dream_checkpoints: z.array(RuntimeEvidenceDreamCheckpointSchema).optional(),
+  divergent_exploration: z.array(RuntimeEvidenceDivergentHypothesisSchema).optional(),
   artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
   result: z.object({
     status: z.string().min(1).optional(),
@@ -279,8 +305,8 @@ export const RuntimeEvidenceEntrySchema = z.object({
 export type RuntimeEvidenceEntry = z.infer<typeof RuntimeEvidenceEntrySchema>;
 export type RuntimeEvidenceEntryInput = Omit<
   RuntimeEvidenceEntry,
-  "schema_version" | "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "dream_checkpoints" | "artifacts" | "raw_refs"
-> & Partial<Pick<RuntimeEvidenceEntry, "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "dream_checkpoints" | "artifacts" | "raw_refs">>;
+  "schema_version" | "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "dream_checkpoints" | "divergent_exploration" | "artifacts" | "raw_refs"
+> & Partial<Pick<RuntimeEvidenceEntry, "id" | "occurred_at" | "metrics" | "evaluators" | "research" | "dream_checkpoints" | "divergent_exploration" | "artifacts" | "raw_refs">>;
 
 export interface RuntimeEvidenceReadWarning {
   file: string;
@@ -307,6 +333,7 @@ export interface RuntimeEvidenceSummary {
   evaluator_summary: RuntimeEvaluatorSummary;
   research_memos: RuntimeResearchMemoContext[];
   dream_checkpoints: RuntimeDreamCheckpointContext[];
+  divergent_exploration: RuntimeEvidenceDivergentHypothesis[];
   recent_failed_attempts: RuntimeEvidenceEntry[];
   recent_entries: RuntimeEvidenceEntry[];
   warnings: RuntimeEvidenceReadWarning[];
@@ -351,6 +378,7 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
       evaluators: input.evaluators ?? [],
       research: input.research ?? [],
       dream_checkpoints: input.dream_checkpoints ?? [],
+      divergent_exploration: input.divergent_exploration ?? [],
       artifacts: input.artifacts ?? [],
       raw_refs: input.raw_refs ?? [],
       ...input,
@@ -445,6 +473,10 @@ function summarizeEvidence(
     evaluator_summary: summarizeEvidenceEvaluatorResults(entries),
     research_memos: summarizeEvidenceResearchMemos(entries),
     dream_checkpoints: summarizeEvidenceDreamCheckpoints(entries),
+    divergent_exploration: entries
+      .flatMap((entry) => entry.divergent_exploration ?? [])
+      .slice(-10)
+      .reverse(),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"

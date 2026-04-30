@@ -14,6 +14,13 @@ import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
 import type { ToolRegistry } from "../../tools/registry.js";
 import type { MetricTrendContext } from "../../platform/drive/metric-history.js";
+import {
+  applySmokeResult,
+  buildDivergentRecoveryPortfolio,
+  rankDivergentCandidates,
+  shouldRequestDivergentExploration,
+  type DivergentSmokeResultInput,
+} from "./divergent-exploration.js";
 import { WorkspaceContextCache, formatWorkspaceContext } from "./strategy-workspace.js";
 import type { WorkspaceContext } from "./strategy-workspace.js";
 import {
@@ -154,6 +161,13 @@ export class StrategyManagerBase {
       currentGap: number;
       pastStrategies: Strategy[];
       metricTrendContext?: MetricTrendContext;
+      divergentExploration?: {
+        trigger: "sustained_stall" | "predicted_plateau" | "predicted_regression";
+        minDivergentCandidates: number;
+        minNoveltyScore: number;
+        activeStrategy?: Strategy | null;
+        stallCount: number;
+      };
     },
     enrichment?: { templatesBlock?: string; lessonsBlock?: string },
     toolContext?: { toolCallContext: ToolCallContext; iteration: number }
@@ -235,8 +249,26 @@ export class StrategyManagerBase {
         tasks_generated: [],
         effectiveness_score: null,
         consecutive_stall_count: 0,
+        exploration: raw.exploration ?? null,
       })
     );
+
+    if (context.divergentExploration) {
+      const recovery = buildDivergentRecoveryPortfolio(candidates, {
+        goalId,
+        primaryDimension,
+        targetDimensions,
+        currentGap: context.currentGap,
+        pastStrategies: context.pastStrategies,
+        activeStrategy: context.divergentExploration.activeStrategy,
+        stallCount: context.divergentExploration.stallCount,
+        trigger: context.divergentExploration.trigger,
+        metricTrendContext: context.metricTrendContext,
+        minDivergentCandidates: context.divergentExploration.minDivergentCandidates,
+        minNoveltyScore: context.divergentExploration.minNoveltyScore,
+      });
+      candidates = recovery.candidates;
+    }
 
     try {
       const activation = await loadDreamActivationState(this.stateManager.getBaseDir());
@@ -312,9 +344,12 @@ export class StrategyManagerBase {
     activationContext?: WaitStrategyActivationContext
   ): Promise<Strategy> {
     const portfolio = await this.loadOrCreatePortfolio(goalId);
-    const candidates = portfolio.strategies.filter(
-      (s) => s.state === "candidate"
+    const candidatePool = portfolio.strategies.filter(
+      (s) => s.state === "candidate" && s.exploration?.smoke.status !== "retire"
     );
+    const candidates = candidatePool.some((candidate) => candidate.exploration?.phase === "divergent_stall_recovery")
+      ? rankDivergentCandidates(candidatePool)
+      : candidatePool;
 
     if (candidates.length === 0) {
       throw new Error(
@@ -337,8 +372,8 @@ export class StrategyManagerBase {
         });
       }
     }
-    const getHistoryPenalty = (strategyId: string): number => {
-      const stats = executionStats.get(strategyId);
+    const getHistoryPenalty = (strategy: Strategy): number => {
+      const stats = executionStats.get(strategy.id) ?? executionStats.get(strategy.hypothesis);
       if (!stats || stats.total < 3) {
         return 0;
       }
@@ -351,7 +386,7 @@ export class StrategyManagerBase {
       const availableNames = new Set(this.toolRegistry.listAll().map((t) => t.metadata.name));
       const scored = candidates.map((c) => {
         const missing = c.required_tools.filter((name) => !availableNames.has(name)).length;
-        return { candidate: c, score: -missing + getHistoryPenalty(c.hypothesis) };
+        return { candidate: c, score: -missing + getHistoryPenalty(c) };
       });
       // Stable sort: higher score (fewer missing tools) first
       scored.sort((a, b) => b.score - a.score);
@@ -361,7 +396,7 @@ export class StrategyManagerBase {
       if (executionStats.size > 0) {
         const scored2 = candidates.map((c) => ({
           candidate: c,
-          score: getHistoryPenalty(c.hypothesis),
+          score: getHistoryPenalty(c),
         }));
         scored2.sort((a, b) => b.score - a.score);
         best = scored2[0]!.candidate;
@@ -396,6 +431,57 @@ export class StrategyManagerBase {
     await this.savePortfolio(goalId, portfolio);
     this.strategyIndex.set(activated.id, goalId);
     return activated;
+  }
+
+  async prepareDivergentExplorationOnStall(
+    goalId: string,
+    input: {
+      primaryDimension: string;
+      targetDimensions: string[];
+      currentGap: number;
+      stallCount: number;
+      trigger: "sustained_stall" | "predicted_plateau" | "predicted_regression";
+      metricTrendContext?: MetricTrendContext;
+    }
+  ): Promise<Strategy[]> {
+    if (!shouldRequestDivergentExploration(input)) {
+      return [];
+    }
+    const active = await this.getActiveStrategy(goalId);
+    const history = await this.getStrategyHistory(goalId);
+    return this.generateCandidates(
+      goalId,
+      input.primaryDimension,
+      input.targetDimensions,
+      {
+        currentGap: input.currentGap,
+        pastStrategies: active ? [active, ...history] : history,
+        ...(input.metricTrendContext ? { metricTrendContext: input.metricTrendContext } : {}),
+        divergentExploration: {
+          trigger: input.trigger,
+          minDivergentCandidates: 1,
+          minNoveltyScore: 0.72,
+          activeStrategy: active,
+          stallCount: input.stallCount,
+        },
+      }
+    );
+  }
+
+  async recordDivergentSmokeResult(
+    goalId: string,
+    strategyId: string,
+    input: DivergentSmokeResultInput
+  ): Promise<Strategy | null> {
+    const portfolio = await this.loadOrCreatePortfolio(goalId);
+    const strategy = portfolio.strategies.find((candidate) => candidate.id === strategyId);
+    if (!strategy) return null;
+    const updated = applySmokeResult(strategy, input);
+    portfolio.strategies = portfolio.strategies.map((candidate) =>
+      candidate.id === strategyId ? updated : candidate
+    );
+    await this.savePortfolio(goalId, portfolio);
+    return updated;
   }
 
   /**
@@ -541,6 +627,19 @@ export class StrategyManagerBase {
       : undefined;
 
     let candidates: Strategy[];
+    const divergentExploration = shouldRequestDivergentExploration({
+      stallCount,
+      trigger: "sustained_stall",
+      metricTrendContext,
+    })
+      ? {
+          trigger: "sustained_stall" as const,
+          minDivergentCandidates: 1,
+          minNoveltyScore: 0.72,
+          activeStrategy: active,
+          stallCount,
+        }
+      : undefined;
     try {
       candidates = await this.generateCandidates(
         goalId,
@@ -550,6 +649,7 @@ export class StrategyManagerBase {
           currentGap: active?.gap_snapshot_at_start ?? 1.0,
           pastStrategies,
           ...(metricTrendContext ? { metricTrendContext } : {}),
+          ...(divergentExploration ? { divergentExploration } : {}),
         },
         undefined,
         toolContext

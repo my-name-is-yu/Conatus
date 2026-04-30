@@ -5,6 +5,7 @@ import type { MetricTrendContext } from "../../platform/drive/metric-history.js"
 import type { DeadlineFinalizationStatus } from "../../platform/time/deadline-finalization.js";
 import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
 import type { WaitExpiryOutcome } from "../../base/types/strategy.js";
+import type { RuntimeEvidenceDivergentHypothesis } from "../../runtime/store/evidence-ledger.js";
 import type { TaskCycleResult } from "../execution/task/task-execution-types.js";
 import type { VerificationLayer1Result } from "./verification-layer1.js";
 import type { CorePhaseKind } from "../execution/agent-loop/core-phase-runner.js";
@@ -41,6 +42,12 @@ export interface LoopIterationResult {
   stallAnalysis?: StallAnalysis;
   /** Outcome metric trend that informed stall/recovery decisions. */
   metricTrendContext?: MetricTrendContext;
+  /** Curiosity-driven divergent exploration portfolio requested by existing stall recovery. */
+  divergentExploration?: {
+    trigger: "dimension_stall" | "global_stall" | "predicted_plateau" | "predicted_regression";
+    candidates: RuntimeEvidenceDivergentHypothesis[];
+    evidenceEntryId?: string;
+  };
   /** Deadline-aware finalization planning state for this iteration. */
   finalizationStatus?: DeadlineFinalizationStatus;
   pivotOccurred: boolean;

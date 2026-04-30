@@ -13,6 +13,7 @@ import type { LoopIterationResult } from "./contracts.js";
 import type { PhaseCtx } from "./preparation.js";
 import type { StallActionHints } from "./task-cycle.js";
 import type { WaitStrategyActivationContext } from "../../strategy/strategy-manager-base.js";
+import { collectDivergentHypotheses } from "../../strategy/divergent-exploration.js";
 
 type DimensionGapSample = {
   normalized_gap: number;
@@ -26,6 +27,20 @@ type StrategyStallArgs = [
   activationContext?: WaitStrategyActivationContext,
   metricTrendContext?: MetricTrendContext,
 ];
+
+type DivergentExplorationPlanner = {
+  prepareDivergentExplorationOnStall?: (
+    goalId: string,
+    input: {
+      primaryDimension: string;
+      targetDimensions: string[];
+      currentGap: number;
+      stallCount: number;
+      trigger: "sustained_stall" | "predicted_plateau" | "predicted_regression";
+      metricTrendContext?: MetricTrendContext;
+    }
+  ) => Promise<unknown>;
+};
 
 function resolveGoalWorkspacePath(goal: Goal): string | undefined {
   const constraint = goal.constraints.find((entry) => entry.startsWith("workspace_path:"));
@@ -190,6 +205,7 @@ async function applyStallAction(
       waitActivationContext,
       metricTrendContext,
     ]);
+    await appendDivergentRecoveryEvidence(ctx, goalId, result, stallReport);
     result.pivotOccurred = true;
   } else {
     const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
@@ -210,6 +226,7 @@ async function applyStallAction(
         waitActivationContext,
         metricTrendContext,
       ]);
+      await appendDivergentRecoveryEvidence(ctx, goalId, result, stallReport);
       result.pivotOccurred = true;
     } else {
       const newStrategy = await callStrategyOnStall(ctx, [
@@ -220,6 +237,7 @@ async function applyStallAction(
         metricTrendContext,
       ]);
       if (newStrategy) {
+        await appendDivergentRecoveryEvidence(ctx, goalId, result, stallReport);
         result.pivotOccurred = true;
         if (activeStrategy?.id) {
           try {
@@ -294,6 +312,89 @@ async function loadMetricTrendContexts(ctx: PhaseCtx, goalId: string): Promise<M
       error: err instanceof Error ? err.message : String(err),
     });
     return [];
+  }
+}
+
+async function appendDivergentRecoveryEvidence(
+  ctx: PhaseCtx,
+  goalId: string,
+  result: LoopIterationResult,
+  stallReport: StallReport
+): Promise<void> {
+  let hypotheses: ReturnType<typeof collectDivergentHypotheses> = [];
+  try {
+    const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
+    hypotheses = collectDivergentHypotheses(portfolio?.strategies ?? []);
+  } catch {
+    return;
+  }
+  if (hypotheses.length === 0) return;
+
+  result.divergentExploration = {
+    trigger: stallReport.stall_type === "predicted_plateau" || stallReport.stall_type === "predicted_regression"
+      ? stallReport.stall_type
+      : stallReport.stall_type === "global_stall"
+        ? "global_stall"
+        : "dimension_stall",
+    candidates: hypotheses,
+  };
+
+  const append = ctx.deps.evidenceLedger?.append;
+  if (!append) return;
+  try {
+    const entries = await append.call(ctx.deps.evidenceLedger, {
+      kind: "strategy",
+      scope: { goal_id: goalId, loop_index: result.loopIndex, phase: "divergent_stall_recovery" },
+      divergent_exploration: hypotheses,
+      outcome: "continued",
+      summary: `Divergent stall recovery proposed ${hypotheses.length} speculative hypothesis candidate(s).`,
+      raw_refs: stallReport.metric_trend_context?.source_refs.flatMap((source) =>
+        source.raw_refs?.map((ref) => ({
+          kind: ref.kind,
+          id: ref.id,
+          path: ref.path,
+          state_relative_path: ref.state_relative_path,
+          url: ref.url,
+        })) ?? []
+      ) ?? [],
+    });
+    result.divergentExploration.evidenceEntryId = entries[0]?.id;
+  } catch (err) {
+    ctx.logger?.warn("CoreLoop: divergent stall recovery evidence write failed (non-fatal)", {
+      goalId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+async function requestPredictedDivergentExploration(
+  ctx: PhaseCtx,
+  goalId: string,
+  goal: Goal,
+  dimHistory: DimensionGapSample[],
+  stallReport: StallReport,
+  result: LoopIterationResult,
+  trigger: "predicted_plateau" | "predicted_regression"
+): Promise<void> {
+  const planner = ctx.deps.strategyManager as unknown as DivergentExplorationPlanner;
+  if (!planner.prepareDivergentExplorationOnStall) return;
+  const dimension = stallReport.dimension_name ?? goal.dimensions[0]?.name ?? "";
+  try {
+    await planner.prepareDivergentExplorationOnStall(goalId, {
+      primaryDimension: dimension,
+      targetDimensions: goal.dimensions.map((entry) => entry.name),
+      currentGap: dimHistory[dimHistory.length - 1]?.normalized_gap ?? 1,
+      stallCount: Math.max(2, stallReport.escalation_level),
+      trigger,
+      ...(stallReport.metric_trend_context ? { metricTrendContext: stallReport.metric_trend_context } : {}),
+    });
+    await appendDivergentRecoveryEvidence(ctx, goalId, result, stallReport);
+  } catch (err) {
+    ctx.logger?.warn("CoreLoop: predicted plateau divergent exploration failed (non-fatal)", {
+      goalId,
+      trigger,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -460,11 +561,20 @@ export async function detectStallsAndRebalance(
           stallReport.stall_type === "predicted_regression"
         ) {
           ctx.logger?.info(
-            `CoreLoop: early warning ${stallReport.stall_type} — monitoring, no pivot`,
+            `CoreLoop: early warning ${stallReport.stall_type} — requesting divergent exploration portfolio without pivot`,
             {
               goalId,
               metricTrend: stallReport.metric_trend_context?.summary,
             },
+          );
+          await requestPredictedDivergentExploration(
+            ctx,
+            goalId,
+            goal,
+            dimGapHistory,
+            stallReport,
+            result,
+            stallReport.stall_type
           );
           continue;
         }

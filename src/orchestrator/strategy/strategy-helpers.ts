@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StrategySchema } from "../../base/types/strategy.js";
+import { StrategyExplorationMetadataSchema } from "../../base/types/strategy.js";
 import { parseStrategy } from "./types/strategy.js";
 import { KnowledgeGapSignalSchema } from "../../base/types/knowledge.js";
 import type { StrategyState } from "../../base/types/core.js";
@@ -41,6 +41,7 @@ export const StrategyArraySchema = z.array(
     }),
     allocation: z.number().min(0).max(1).default(0),
     required_tools: z.array(z.string()).default([]),
+    exploration: StrategyExplorationMetadataSchema.optional(),
   })
 );
 
@@ -70,7 +71,16 @@ export function buildGenerationPrompt(
   goalId: string,
   primaryDimension: string,
   targetDimensions: string[],
-  context: { currentGap: number; pastStrategies: Strategy[]; metricTrendContext?: MetricTrendContext },
+  context: {
+    currentGap: number;
+    pastStrategies: Strategy[];
+    metricTrendContext?: MetricTrendContext;
+    divergentExploration?: {
+      trigger: "sustained_stall" | "predicted_plateau" | "predicted_regression";
+      minDivergentCandidates: number;
+      minNoveltyScore: number;
+    };
+  },
   enrichment?: { templatesBlock?: string; lessonsBlock?: string; workspaceBlock?: string }
 ): string {
   // Sort all past strategies most recent first
@@ -134,7 +144,21 @@ export function buildGenerationPrompt(
     .filter(Boolean)
     .join("\n\n");
 
-  return `Generate 1-2 strategic approaches to close the gap for goal "${goalId}".
+  const divergentSection = context.divergentExploration
+    ? `\nDivergent stall recovery mode:
+- Trigger: ${context.divergentExploration.trigger}
+- Generate 3-4 candidates as a balanced portfolio, not 1-2 near variants.
+- Include at least ${context.divergentExploration.minDivergentCandidates} candidate(s) with exploration.role="divergent_exploration" and exploration.novelty_score >= ${context.divergentExploration.minNoveltyScore}.
+- Keep one exploitation/adjacent candidate only if it is justified by new evidence.
+- Down-rank repeated failed lineages by setting exploration.downrank_reason.
+- Treat all bold hypotheses as speculative until smoke evidence promotes them.`
+    : "";
+
+  const candidateCountInstruction = context.divergentExploration
+    ? "Generate 3-4 strategic approaches"
+    : "Generate 1-2 strategic approaches";
+
+  return `${candidateCountInstruction} to close the gap for goal "${goalId}".
 
 Primary dimension to improve: ${primaryDimension}
 All target dimensions: ${targetDimensions.join(", ")}
@@ -144,6 +168,7 @@ ${context.metricTrendContext ? `Metric trend evidence: ${formatMetricTrendContex
 Past strategies tried:
 ${pastSummary}
 ${enrichmentSection ? `\n${enrichmentSection}\n` : ""}
+${divergentSection}
 Return a JSON array of strategies. Each strategy must follow this schema:
 {
   "hypothesis": "string - the core bet/approach",
@@ -156,9 +181,24 @@ Return a JSON array of strategies. Each strategy must follow this schema:
     "llm_calls": number|null
   },
   "allocation": number (0-1),
-  "required_tools": ["tool-name-1", "tool-name-2"]  // list tool names this strategy needs (empty array if none)
+  "required_tools": ["tool-name-1", "tool-name-2"],  // list tool names this strategy needs (empty array if none)
+  "exploration": {
+    "phase": "normal"|"divergent_stall_recovery",
+    "role": "exploitation"|"adjacent_exploration"|"divergent_exploration",
+    "strategy_family": "short family label",
+    "novelty_score": number between 0 and 1,
+    "similarity_to_recent_failures": number between 0 and 1,
+    "expected_cost": "low"|"medium"|"high",
+    "relationship_to_lineage": "current_best"|"neighbor"|"failed_lineage"|"different_mechanism"|"different_assumption"|"unknown",
+    "prior_evidence": "optional evidence note",
+    "downrank_reason": "optional reason when too similar to failed lineage",
+    "smoke": { "status": "not_run", "reason": "optional smoke plan", "evidence_ref": "optional ref" },
+    "speculative": true,
+    "evidence_authority": "speculative_hypothesis"
+  }
 }
 
+${context.divergentExploration ? "For divergent stall recovery candidates, the exploration object is required." : "For normal candidates, omit exploration unless it adds real signal."}
 Do not repeat strategies that have already been tried. Respond with only the JSON array inside a markdown code block.`;
 }
 

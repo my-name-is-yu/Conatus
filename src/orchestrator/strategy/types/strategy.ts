@@ -20,6 +20,60 @@ export const ResourceEstimateSchema = z.object({
 });
 export type ResourceEstimate = z.infer<typeof ResourceEstimateSchema>;
 
+// --- Exploration Metadata ---
+
+export const StrategyExplorationRoleSchema = z.enum([
+  "exploitation",
+  "adjacent_exploration",
+  "divergent_exploration",
+]);
+export type StrategyExplorationRole = z.infer<typeof StrategyExplorationRoleSchema>;
+
+export const StrategyExplorationExpectedCostSchema = z.enum(["low", "medium", "high"]);
+export type StrategyExplorationExpectedCost = z.infer<typeof StrategyExplorationExpectedCostSchema>;
+
+export const StrategyLineageRelationshipSchema = z.enum([
+  "current_best",
+  "neighbor",
+  "failed_lineage",
+  "different_mechanism",
+  "different_assumption",
+  "unknown",
+]);
+export type StrategyLineageRelationship = z.infer<typeof StrategyLineageRelationshipSchema>;
+
+export const StrategySmokeStatusSchema = z.enum([
+  "not_run",
+  "promote",
+  "defer",
+  "retire",
+]);
+export type StrategySmokeStatus = z.infer<typeof StrategySmokeStatusSchema>;
+
+export const StrategySmokeMetadataSchema = z.object({
+  status: StrategySmokeStatusSchema.default("not_run"),
+  reason: z.string().min(1).optional(),
+  evidence_ref: z.string().min(1).optional(),
+}).strict();
+export type StrategySmokeMetadata = z.infer<typeof StrategySmokeMetadataSchema>;
+
+export const StrategyExplorationMetadataSchema = z.object({
+  schema_version: z.literal("strategy-exploration-v1").default("strategy-exploration-v1"),
+  phase: z.enum(["normal", "divergent_stall_recovery"]).default("normal"),
+  role: StrategyExplorationRoleSchema,
+  strategy_family: z.string().min(1),
+  novelty_score: z.number().min(0).max(1),
+  similarity_to_recent_failures: z.number().min(0).max(1).default(0),
+  expected_cost: StrategyExplorationExpectedCostSchema,
+  relationship_to_lineage: StrategyLineageRelationshipSchema,
+  prior_evidence: z.string().min(1).optional(),
+  downrank_reason: z.string().min(1).optional(),
+  smoke: StrategySmokeMetadataSchema.default({ status: "not_run" }),
+  speculative: z.literal(true).default(true),
+  evidence_authority: z.literal("speculative_hypothesis").default("speculative_hypothesis"),
+}).strict();
+export type StrategyExplorationMetadata = z.infer<typeof StrategyExplorationMetadataSchema>;
+
 // --- Strategy ---
 
 export const StrategySchema = z.object({
@@ -59,6 +113,9 @@ export const StrategySchema = z.object({
 
   // Tool availability scoring: tools required by this strategy candidate
   required_tools: z.array(z.string()).default([]),
+
+  // Curiosity-driven stall recovery metadata. Speculative unless promoted by smoke evidence.
+  exploration: StrategyExplorationMetadataSchema.nullable().optional(),
 });
 export type Strategy = z.infer<typeof StrategySchema>;
 

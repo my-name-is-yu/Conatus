@@ -442,6 +442,96 @@ describe("detectStallsAndRebalance — reRefineLeaf on observation-failure stall
     expect(result.metricTrendContext).toMatchObject({ metric_key: "dim1", trend: "breakthrough" });
   });
 
+  it("requests divergent exploration on predicted plateau without pivoting and writes speculative evidence", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({ id: "goal-1" });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory("goal-1", makeGapHistoryWithStall("dim1", 5));
+
+    const prepareDivergentExplorationOnStall = vi.fn().mockResolvedValue([]);
+    (deps.strategyManager as unknown as {
+      prepareDivergentExplorationOnStall: typeof prepareDivergentExplorationOnStall;
+    }).prepareDivergentExplorationOnStall = prepareDivergentExplorationOnStall;
+    (deps.strategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockResolvedValue({
+      goal_id: "goal-1",
+      strategies: [{
+        id: "strategy-divergent",
+        hypothesis: "Run a smoke-scale data distribution audit",
+        state: "candidate",
+        exploration: {
+          phase: "divergent_stall_recovery",
+          role: "divergent_exploration",
+          strategy_family: "data-audit",
+          novelty_score: 0.86,
+          similarity_to_recent_failures: 0.1,
+          expected_cost: "low",
+          relationship_to_lineage: "different_assumption",
+          smoke: { status: "not_run", reason: "Smoke first." },
+          evidence_authority: "speculative_hypothesis",
+        },
+      }],
+      rebalance_interval: { value: 7, unit: "days" },
+      last_rebalanced_at: new Date().toISOString(),
+    });
+    deps.evidenceLedger = {
+      append: vi.fn().mockResolvedValue([{ id: "evidence-divergent" }]),
+      readByGoal: vi.fn().mockResolvedValue({ entries: [], warnings: [] }),
+    };
+    const stallReport = makeStallReport({
+      stall_type: "predicted_plateau",
+      escalation_level: 1,
+      metric_trend_context: {
+        metric_key: "dim1",
+        direction: "maximize",
+        trend: "stalled",
+        latest_value: 0.97,
+        latest_observed_at: "2026-04-30T00:00:00.000Z",
+        best_value: 0.9708,
+        best_observed_at: "2026-04-30T00:00:00.000Z",
+        observation_count: 6,
+        recent_slope_per_observation: 0,
+        best_delta: 0.0001,
+        last_meaningful_improvement_delta: null,
+        last_breakthrough_delta: null,
+        time_since_last_meaningful_improvement_ms: 86_400_000,
+        improvement_threshold: 0.01,
+        breakthrough_threshold: 0.05,
+        noise_band: 0.005,
+        confidence: 0.9,
+        source_refs: [],
+        summary: "dim1 stalled near the best value.",
+      },
+    });
+    (deps.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockReturnValue(stallReport);
+
+    const ctx = buildPhaseCtx(deps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(prepareDivergentExplorationOnStall).toHaveBeenCalledWith("goal-1", expect.objectContaining({
+      trigger: "predicted_plateau",
+      stallCount: 2,
+      primaryDimension: "dim1",
+    }));
+    expect(deps.strategyManager.onStallDetected).not.toHaveBeenCalled();
+    expect(deps.evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "strategy",
+      scope: expect.objectContaining({ goal_id: "goal-1", phase: "divergent_stall_recovery" }),
+      divergent_exploration: [expect.objectContaining({
+        strategy_family: "data-audit",
+        role: "divergent_exploration",
+        evidence_authority: "speculative_hypothesis",
+      })],
+    }));
+    expect(result.pivotOccurred).toBe(false);
+    expect(result.divergentExploration).toMatchObject({
+      trigger: "predicted_plateau",
+      evidenceEntryId: "evidence-divergent",
+      candidates: [expect.objectContaining({ strategy_family: "data-audit" })],
+    });
+  });
+
   it("does NOT call reRefineLeaf() when goalRefiner is absent (backward compat)", async () => {
     const deps = createBaseDeps(tmpDir);
     // No goalRefiner set
