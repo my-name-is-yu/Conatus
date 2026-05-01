@@ -188,6 +188,122 @@ describe("runtime evaluator result summaries", () => {
     expect(summary.gap?.score_delta).toBeCloseTo(0.003);
   });
 
+  it("summarizes evaluator budget and calibration without allowing direct optimization", () => {
+    const summary = summarizeEvidenceEvaluatorResults([
+      evidenceEntry({
+        id: "entry-external-calibration",
+        occurred_at: "2026-04-30T00:20:00.000Z",
+        evaluators: [{
+          evaluator_id: "leaderboard",
+          signal: "external",
+          source: "public-leaderboard",
+          candidate_id: "candidate-b",
+          status: "passed",
+          score: 0.9692,
+          score_label: "balanced_accuracy",
+          expected_score: 0.9704,
+          direction: "maximize",
+          budget: {
+            policy_id: "daily-public-lb",
+            max_attempts: 5,
+            used_attempts: 3,
+            remaining_attempts: 2,
+            approval_required: true,
+            phase: "consolidation",
+            portfolio_policy: {
+              diversified_portfolio_required: true,
+              reserve_for_finalization: true,
+              min_strategy_families: 2,
+            },
+          },
+          candidate_snapshot: {
+            evidence_entry_id: "candidate-snapshot-b",
+            primary_metric_label: "balanced_accuracy",
+            local_metrics: [
+              { label: "loss", value: 0.24, direction: "minimize" },
+              { label: "balanced_accuracy", value: 0.9704, direction: "maximize" },
+            ],
+            robust_selection: {
+              raw_rank: 3,
+              robust_score: 0.84,
+              portfolio_role: "diverse",
+            },
+          },
+          calibration: {
+            mode: "calibration_only",
+            use_for_selection: true,
+            direct_optimization_allowed: false,
+            minimum_observations: 2,
+            conclusion: "Public leaderboard shows local OOF is slightly optimistic.",
+          },
+          provenance: {
+            kind: "external_url",
+            external_id: "submission-789",
+          },
+        }],
+      }),
+    ]);
+
+    expect(summary.budgets).toContainEqual(expect.objectContaining({
+      evaluator_id: "leaderboard",
+      remaining_attempts: 2,
+      approval_required: true,
+      diversified_portfolio_required: true,
+      reserve_for_finalization: true,
+      min_strategy_families: 2,
+    }));
+    expect(summary.calibration).toContainEqual(expect.objectContaining({
+      candidate_id: "candidate-b",
+      local_evidence_entry_id: "candidate-snapshot-b",
+      local_score: 0.9704,
+      external_score: 0.9692,
+      direct_optimization_allowed: false,
+      use_for_selection: true,
+      selection_adjustment: expect.any(Number),
+      provenance: expect.objectContaining({ external_id: "submission-789" }),
+    }));
+    expect(summary.calibration[0]?.selection_adjustment).toBeLessThan(0);
+  });
+
+  it("does not compute calibration gaps from unlabeled local metrics", () => {
+    const summary = summarizeEvidenceEvaluatorResults([
+      evidenceEntry({
+        id: "entry-unlabeled-calibration",
+        occurred_at: "2026-04-30T00:20:00.000Z",
+        evaluators: [{
+          evaluator_id: "leaderboard",
+          signal: "external",
+          source: "public-leaderboard",
+          candidate_id: "candidate-unlabeled",
+          status: "passed",
+          score: 0.9692,
+          expected_score: 0.9704,
+          direction: "maximize",
+          candidate_snapshot: {
+            local_metrics: [
+              { label: "loss", value: 0.24, direction: "minimize" },
+              { label: "balanced_accuracy", value: 0.9704, direction: "maximize" },
+            ],
+          },
+          calibration: {
+            mode: "calibration_only",
+            use_for_selection: true,
+            direct_optimization_allowed: false,
+            minimum_observations: 1,
+          },
+        }],
+      }),
+    ]);
+
+    expect(summary.calibration[0]).toMatchObject({
+      candidate_id: "candidate-unlabeled",
+      external_score: 0.9692,
+      selection_adjustment: 0,
+    });
+    expect(summary.calibration[0]?.local_score).toBeUndefined();
+    expect(summary.calibration[0]?.score_delta).toBeUndefined();
+  });
+
   it("classifies external regression against local expectations", () => {
     const summary = summarizeEvidenceEvaluatorResults([
       evidenceEntry({

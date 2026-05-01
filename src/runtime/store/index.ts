@@ -104,6 +104,9 @@ export {
 
 export {
   RuntimeEvidenceArtifactRefSchema,
+  RuntimeEvidenceEvaluatorBudgetSchema,
+  RuntimeEvidenceEvaluatorCalibrationSchema,
+  RuntimeEvidenceEvaluatorCandidateSnapshotSchema,
   RuntimeEvidenceEvaluatorObservationSchema,
   RuntimeEvidenceEvaluatorProvenanceSchema,
   RuntimeEvidenceEvaluatorPublishActionSchema,
@@ -127,6 +130,9 @@ export {
 } from "./evidence-ledger.js";
 export type {
   RuntimeEvidenceArtifactRef,
+  RuntimeEvidenceEvaluatorBudget,
+  RuntimeEvidenceEvaluatorCalibration,
+  RuntimeEvidenceEvaluatorCandidateSnapshot,
   RuntimeEvidenceEvaluatorObservation,
   RuntimeEvidenceEvaluatorProvenance,
   RuntimeEvidenceEvaluatorPublishAction,
@@ -183,6 +189,8 @@ export type {
 } from "./research-evidence.js";
 export type {
   RuntimeEvaluatorApprovalRequiredAction,
+  RuntimeEvaluatorBudgetSummary,
+  RuntimeEvaluatorCalibrationContext,
   RuntimeEvaluatorGap,
   RuntimeEvaluatorGapKind,
   RuntimeEvaluatorObservationContext,

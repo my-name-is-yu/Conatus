@@ -1162,6 +1162,334 @@ describe("RuntimeEvidenceLedger", () => {
     });
   });
 
+  it("uses external evaluator gaps as calibration without chasing external scores directly", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "calibrated-candidate-snapshot",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-external-calibration", run_id: "run:coreloop:external-calibration" },
+      candidates: [
+        {
+          candidate_id: "raw-local-best",
+          label: "Raw local best",
+          lineage: {
+            strategy_family: "catboost_manual",
+            feature_lineage: ["focus-base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["manual-class-weight"],
+            seed_lineage: ["seed-42"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: ["manual-threshold"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.980, direction: "maximize", confidence: 0.86 }],
+          artifacts: [{ label: "raw-submission", state_relative_path: "runs/raw/submission.csv", kind: "other" }],
+          similarity: [],
+          robustness: {
+            stability_score: 0.84,
+            diversity_score: 0.4,
+            risk_penalty: 0.04,
+            evidence_confidence: 0.86,
+            weak_dimensions: [],
+            provenance_refs: ["runs/raw/metrics.json"],
+          },
+          disposition: "promoted",
+          disposition_reason: "Highest local validation metric.",
+        },
+        {
+          candidate_id: "calibrated-robust",
+          label: "Calibrated robust",
+          lineage: {
+            strategy_family: "catboost_default",
+            feature_lineage: ["focus-base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["default-class-weight"],
+            seed_lineage: ["seed-314"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.976, direction: "maximize", confidence: 0.9 }],
+          artifacts: [{ label: "robust-submission", state_relative_path: "runs/robust/submission.csv", kind: "other" }],
+          similarity: [{ candidate_id: "raw-local-best", similarity: 0.55, signal: "declared" }],
+          robustness: {
+            stability_score: 0.9,
+            diversity_score: 0.58,
+            risk_penalty: 0.02,
+            evidence_confidence: 0.9,
+            weak_dimensions: [],
+            provenance_refs: ["runs/robust/metrics.json"],
+          },
+          disposition: "retained",
+          disposition_reason: "Stable default candidate selected after calibration.",
+        },
+        {
+          candidate_id: "external-spike",
+          label: "External spike",
+          lineage: {
+            strategy_family: "public_probe",
+            feature_lineage: ["probe"],
+            model_lineage: ["catboost"],
+            config_lineage: ["public-probe"],
+            seed_lineage: ["seed-7"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.930, direction: "maximize", confidence: 0.72 }],
+          artifacts: [{ label: "spike-submission", state_relative_path: "runs/spike/submission.csv", kind: "other" }],
+          similarity: [],
+          robustness: {
+            stability_score: 0.5,
+            diversity_score: 0.75,
+            risk_penalty: 0.12,
+            evidence_confidence: 0.62,
+            weak_dimensions: [],
+            provenance_refs: ["runs/spike/metrics.json"],
+          },
+          disposition: "retained",
+          disposition_reason: "External spike retained as evidence, not a direct optimization target.",
+        },
+      ],
+      summary: "Local candidate snapshot before external feedback.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      id: "external-calibration-feedback",
+      occurred_at: "2026-04-30T00:30:00.000Z",
+      kind: "evaluator",
+      scope: { goal_id: "goal-external-calibration", run_id: "run:coreloop:external-calibration" },
+      evaluators: [
+        {
+          evaluator_id: "leaderboard",
+          signal: "external",
+          source: "public-leaderboard",
+          candidate_id: "raw-local-best",
+          status: "passed",
+          score: 0.900,
+          score_label: "balanced_accuracy",
+          expected_score: 0.980,
+          direction: "maximize",
+          budget: {
+            policy_id: "daily-public-lb",
+            max_attempts: 5,
+            used_attempts: 3,
+            remaining_attempts: 2,
+            approval_required: true,
+            phase: "consolidation",
+            portfolio_policy: {
+              diversified_portfolio_required: true,
+              reserve_for_finalization: true,
+              min_strategy_families: 2,
+            },
+          },
+          candidate_snapshot: {
+            evidence_entry_id: "calibrated-candidate-snapshot",
+            primary_metric_label: "balanced_accuracy",
+            local_metrics: [
+              { label: "logloss", value: 0.15, direction: "minimize" },
+              { label: "balanced_accuracy", value: 0.980, direction: "maximize" },
+            ],
+            robust_selection: {
+              raw_rank: 1,
+              robust_score: 0.83,
+              stability_score: 0.84,
+              diversity_score: 0.4,
+              risk_penalty: 0.04,
+              portfolio_role: "aggressive",
+            },
+          },
+          calibration: {
+            mode: "calibration_only",
+            use_for_selection: true,
+            direct_optimization_allowed: false,
+            minimum_observations: 2,
+            conclusion: "Manual threshold lineage overstates local validation.",
+          },
+          provenance: {
+            kind: "external_url",
+            external_id: "submission-raw",
+          },
+        },
+        {
+          evaluator_id: "leaderboard",
+          signal: "external",
+          source: "public-leaderboard",
+          candidate_id: "calibrated-robust",
+          status: "passed",
+          score: 0.975,
+          score_label: "balanced_accuracy",
+          expected_score: 0.976,
+          direction: "maximize",
+          budget: {
+            policy_id: "daily-public-lb",
+            max_attempts: 5,
+            used_attempts: 3,
+            remaining_attempts: 2,
+            approval_required: true,
+            phase: "consolidation",
+            portfolio_policy: {
+              diversified_portfolio_required: true,
+              reserve_for_finalization: true,
+              min_strategy_families: 2,
+            },
+          },
+          candidate_snapshot: {
+            evidence_entry_id: "calibrated-candidate-snapshot",
+            primary_metric_label: "balanced_accuracy",
+            local_metrics: [
+              { label: "logloss", value: 0.16, direction: "minimize" },
+              { label: "balanced_accuracy", value: 0.976, direction: "maximize" },
+            ],
+            robust_selection: {
+              raw_rank: 2,
+              robust_score: 0.86,
+              stability_score: 0.9,
+              diversity_score: 0.58,
+              risk_penalty: 0.02,
+              portfolio_role: "robust_best",
+            },
+          },
+          calibration: {
+            mode: "calibration_only",
+            use_for_selection: true,
+            direct_optimization_allowed: false,
+            minimum_observations: 2,
+            conclusion: "Default lineage tracks external feedback better than raw best.",
+          },
+          provenance: {
+            kind: "external_url",
+            external_id: "submission-robust",
+          },
+        },
+        {
+          evaluator_id: "leaderboard",
+          signal: "external",
+          source: "public-leaderboard",
+          candidate_id: "raw-local-best",
+          status: "passed",
+          score: 0.902,
+          score_label: "balanced_accuracy",
+          expected_score: 0.980,
+          direction: "maximize",
+          observed_at: "2026-04-30T00:35:00.000Z",
+          candidate_snapshot: {
+            evidence_entry_id: "calibrated-candidate-snapshot",
+            primary_metric_label: "balanced_accuracy",
+            local_metrics: [{ label: "balanced_accuracy", value: 0.980, direction: "maximize" }],
+            robust_selection: {
+              raw_rank: 1,
+              robust_score: 0.83,
+              portfolio_role: "aggressive",
+            },
+          },
+          calibration: {
+            mode: "calibration_only",
+            use_for_selection: true,
+            direct_optimization_allowed: false,
+            minimum_observations: 2,
+            conclusion: "Second external sample confirms manual threshold optimism.",
+          },
+          provenance: {
+            kind: "external_url",
+            external_id: "submission-raw-repeat",
+          },
+        },
+        {
+          evaluator_id: "leaderboard",
+          signal: "external",
+          source: "public-leaderboard",
+          candidate_id: "calibrated-robust",
+          status: "passed",
+          score: 0.974,
+          score_label: "balanced_accuracy",
+          expected_score: 0.976,
+          direction: "maximize",
+          observed_at: "2026-04-30T00:36:00.000Z",
+          candidate_snapshot: {
+            evidence_entry_id: "calibrated-candidate-snapshot",
+            primary_metric_label: "balanced_accuracy",
+            local_metrics: [{ label: "balanced_accuracy", value: 0.976, direction: "maximize" }],
+            robust_selection: {
+              raw_rank: 2,
+              robust_score: 0.86,
+              portfolio_role: "robust_best",
+            },
+          },
+          calibration: {
+            mode: "calibration_only",
+            use_for_selection: true,
+            direct_optimization_allowed: false,
+            minimum_observations: 2,
+            conclusion: "Second external sample keeps default lineage close to local validation.",
+          },
+          provenance: {
+            kind: "external_url",
+            external_id: "submission-robust-repeat",
+          },
+        },
+        {
+          evaluator_id: "leaderboard",
+          signal: "external",
+          source: "public-leaderboard",
+          candidate_id: "external-spike",
+          status: "passed",
+          score: 0.990,
+          score_label: "balanced_accuracy",
+          expected_score: 0.930,
+          direction: "maximize",
+          candidate_snapshot: {
+            evidence_entry_id: "calibrated-candidate-snapshot",
+            primary_metric_label: "balanced_accuracy",
+            local_metrics: [{ label: "balanced_accuracy", value: 0.930, direction: "maximize" }],
+            robust_selection: {
+              raw_rank: 3,
+              robust_score: 0.42,
+              portfolio_role: "other",
+            },
+          },
+          calibration: {
+            mode: "calibration_only",
+            use_for_selection: true,
+            direct_optimization_allowed: false,
+            minimum_observations: 2,
+            conclusion: "Single public spike is not enough to chase directly.",
+          },
+          provenance: {
+            kind: "external_url",
+            external_id: "submission-spike",
+          },
+        },
+      ],
+      summary: "External evaluator feedback is recorded as calibration evidence.",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-external-calibration");
+    const selection = summary.candidate_selection_summary;
+
+    expect(selection.primary_metric).toEqual({ label: "balanced_accuracy", direction: "maximize" });
+    expect(selection.raw_best?.candidate_id).toBe("raw-local-best");
+    expect(selection.robust_best?.candidate_id).toBe("calibrated-robust");
+    expect(selection.ranked.find((candidate) => candidate.candidate_id === "raw-local-best")).toMatchObject({
+      calibration_adjustment: -0.08,
+      reasons: expect.arrayContaining(["external feedback calibrates local validation downward"]),
+    });
+    expect(selection.ranked.find((candidate) => candidate.candidate_id === "external-spike")).toMatchObject({
+      calibration_adjustment: 0,
+    });
+    expect(selection.robust_best?.candidate_id).not.toBe("external-spike");
+    expect(summary.evaluator_summary.budgets).toContainEqual(expect.objectContaining({
+      remaining_attempts: 2,
+      approval_required: true,
+      diversified_portfolio_required: true,
+      reserve_for_finalization: true,
+    }));
+    expect(summary.evaluator_summary.calibration).toContainEqual(expect.objectContaining({
+      candidate_id: "calibrated-robust",
+      direct_optimization_allowed: false,
+      local_evidence_entry_id: "calibrated-candidate-snapshot",
+      provenance: expect.objectContaining({ external_id: "submission-robust" }),
+    }));
+  });
+
   it("stores public research evidence with source URLs and applicability notes", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({

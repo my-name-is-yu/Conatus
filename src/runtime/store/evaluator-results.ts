@@ -1,10 +1,14 @@
 import type {
   RuntimeEvidenceArtifactRef,
   RuntimeEvidenceEntry,
+  RuntimeEvidenceEvaluatorBudget,
+  RuntimeEvidenceEvaluatorCalibration,
+  RuntimeEvidenceEvaluatorCandidateSnapshot,
   RuntimeEvidenceEvaluatorObservation,
   RuntimeEvidenceEvaluatorProvenance,
   RuntimeEvidenceEvaluatorPublishAction,
   RuntimeEvidenceEvaluatorStatus,
+  RuntimeEvidenceMetric,
 } from "./evidence-ledger.js";
 
 type EvaluatorDirection = "maximize" | "minimize" | "neutral";
@@ -31,6 +35,9 @@ export interface RuntimeEvaluatorObservationContext {
   validation?: RuntimeEvidenceEvaluatorObservation["validation"];
   publish_action?: RuntimeEvidenceEvaluatorPublishAction;
   provenance?: RuntimeEvidenceEvaluatorProvenance;
+  budget?: RuntimeEvidenceEvaluatorBudget;
+  candidate_snapshot?: RuntimeEvidenceEvaluatorCandidateSnapshot;
+  calibration?: RuntimeEvidenceEvaluatorCalibration;
   summary?: string;
   raw_refs: RuntimeEvidenceEntry["raw_refs"];
 }
@@ -65,10 +72,48 @@ export interface RuntimeEvaluatorGap {
   direction?: EvaluatorDirection;
 }
 
+export interface RuntimeEvaluatorBudgetSummary {
+  evaluator_id: string;
+  source: string;
+  policy_id?: string;
+  max_attempts?: number;
+  used_attempts?: number;
+  remaining_attempts: number;
+  approval_required: boolean;
+  deadline_at?: string;
+  phase?: "exploration" | "consolidation" | "finalization" | "other";
+  diversified_portfolio_required: boolean;
+  reserve_for_finalization: boolean;
+  min_strategy_families?: number;
+  observed_at: string;
+}
+
+export interface RuntimeEvaluatorCalibrationContext {
+  evaluator_id: string;
+  source: string;
+  candidate_id: string;
+  observed_at: string;
+  local_evidence_entry_id?: string;
+  external_evidence_entry_id: string;
+  local_score?: number;
+  external_score?: number;
+  score_delta?: number;
+  direction?: EvaluatorDirection;
+  use_for_selection: boolean;
+  direct_optimization_allowed: false;
+  minimum_observations: number;
+  selection_adjustment: number;
+  conclusion: string;
+  provenance?: RuntimeEvidenceEvaluatorProvenance;
+  candidate_snapshot?: RuntimeEvidenceEvaluatorCandidateSnapshot;
+}
+
 export interface RuntimeEvaluatorSummary {
   local_best: RuntimeEvaluatorObservationContext | null;
   external_best: RuntimeEvaluatorObservationContext | null;
   gap: RuntimeEvaluatorGap | null;
+  budgets: RuntimeEvaluatorBudgetSummary[];
+  calibration: RuntimeEvaluatorCalibrationContext[];
   approval_required_actions: RuntimeEvaluatorApprovalRequiredAction[];
   observations: RuntimeEvaluatorObservationContext[];
 }
@@ -97,6 +142,8 @@ export function summarizeEvidenceEvaluatorResults(entries: RuntimeEvidenceEntry[
     local_best: localBest,
     external_best: externalBest,
     gap: classifyEvaluatorGap(localBest, externalBest, externalObservations, approvalRequiredActions),
+    budgets: summarizeEvaluatorBudgets(observations),
+    calibration: summarizeEvaluatorCalibration(observations),
     approval_required_actions: approvalRequiredActions,
     observations,
   };
@@ -128,9 +175,121 @@ function toObservationContext(
     ...(evaluator.validation ? { validation: evaluator.validation } : {}),
     ...(evaluator.publish_action ? { publish_action: evaluator.publish_action } : {}),
     ...(evaluator.provenance ? { provenance: evaluator.provenance } : {}),
+    ...(evaluator.budget ? { budget: evaluator.budget } : {}),
+    ...(evaluator.candidate_snapshot ? { candidate_snapshot: evaluator.candidate_snapshot } : {}),
+    ...(evaluator.calibration ? { calibration: evaluator.calibration } : {}),
     ...(evaluator.summary ? { summary: evaluator.summary } : {}),
     raw_refs: entry.raw_refs,
   };
+}
+
+function summarizeEvaluatorBudgets(
+  observations: RuntimeEvaluatorObservationContext[]
+): RuntimeEvaluatorBudgetSummary[] {
+  const latest = new Map<string, RuntimeEvaluatorBudgetSummary>();
+  for (const observation of observations) {
+    if (!observation.budget) continue;
+    const policyId = observation.budget.policy_id ?? "default";
+    const key = `${observation.evaluator_id}:${observation.source}:${policyId}`;
+    const summary: RuntimeEvaluatorBudgetSummary = {
+      evaluator_id: observation.evaluator_id,
+      source: observation.source,
+      ...(observation.budget.policy_id ? { policy_id: observation.budget.policy_id } : {}),
+      ...(observation.budget.max_attempts !== undefined ? { max_attempts: observation.budget.max_attempts } : {}),
+      ...(observation.budget.used_attempts !== undefined ? { used_attempts: observation.budget.used_attempts } : {}),
+      remaining_attempts: observation.budget.remaining_attempts,
+      approval_required: observation.budget.approval_required,
+      ...(observation.budget.deadline_at ? { deadline_at: observation.budget.deadline_at } : {}),
+      ...(observation.budget.phase ? { phase: observation.budget.phase } : {}),
+      diversified_portfolio_required: observation.budget.portfolio_policy?.diversified_portfolio_required ?? false,
+      reserve_for_finalization: observation.budget.portfolio_policy?.reserve_for_finalization ?? false,
+      ...(observation.budget.portfolio_policy?.min_strategy_families
+        ? { min_strategy_families: observation.budget.portfolio_policy.min_strategy_families }
+        : {}),
+      observed_at: observation.observed_at,
+    };
+    const existing = latest.get(key);
+    if (!existing || existing.observed_at <= summary.observed_at) latest.set(key, summary);
+  }
+  return [...latest.values()].sort((a, b) =>
+    a.evaluator_id.localeCompare(b.evaluator_id)
+    || a.source.localeCompare(b.source)
+    || a.observed_at.localeCompare(b.observed_at)
+  );
+}
+
+function summarizeEvaluatorCalibration(
+  observations: RuntimeEvaluatorObservationContext[]
+): RuntimeEvaluatorCalibrationContext[] {
+  return observations
+    .filter((observation) => observation.signal === "external" && observation.calibration?.mode === "calibration_only")
+    .map((observation) => toCalibrationContext(observation))
+    .filter((calibration): calibration is RuntimeEvaluatorCalibrationContext => Boolean(calibration))
+    .sort((a, b) => a.observed_at.localeCompare(b.observed_at));
+}
+
+function toCalibrationContext(
+  observation: RuntimeEvaluatorObservationContext
+): RuntimeEvaluatorCalibrationContext | null {
+  const calibration = observation.calibration;
+  if (!calibration) return null;
+  const externalScore = numericScore(observation.score);
+  const localScore = candidateSnapshotPrimaryScore(observation);
+  const direction = observation.direction;
+  const scoreDelta = externalScore !== null && localScore !== null ? externalScore - localScore : undefined;
+  const directionalGap = scoreDelta === undefined || !direction || direction === "neutral"
+    ? 0
+    : direction === "maximize"
+      ? scoreDelta
+      : -scoreDelta;
+  return {
+    evaluator_id: observation.evaluator_id,
+    source: observation.source,
+    candidate_id: observation.candidate_id,
+    observed_at: observation.observed_at,
+    ...(observation.candidate_snapshot?.evidence_entry_id ? { local_evidence_entry_id: observation.candidate_snapshot.evidence_entry_id } : {}),
+    external_evidence_entry_id: observation.entry_id,
+    ...(localScore !== null ? { local_score: localScore } : {}),
+    ...(externalScore !== null ? { external_score: externalScore } : {}),
+    ...(scoreDelta !== undefined ? { score_delta: scoreDelta } : {}),
+    ...(direction ? { direction } : {}),
+    use_for_selection: calibration.use_for_selection,
+    direct_optimization_allowed: false,
+    minimum_observations: calibration.minimum_observations,
+    selection_adjustment: roundCalibrationAdjustment(directionalGap * 4),
+    conclusion: calibration.conclusion ?? "External evaluator feedback is calibration evidence only; primary optimization remains local validation.",
+    ...(observation.provenance ? { provenance: observation.provenance } : {}),
+    ...(observation.candidate_snapshot ? { candidate_snapshot: observation.candidate_snapshot } : {}),
+  };
+}
+
+function candidateSnapshotPrimaryScore(observation: RuntimeEvaluatorObservationContext): number | null {
+  const metrics = observation.candidate_snapshot?.local_metrics ?? [];
+  const metric = findLocalMetricForExternalScore(metrics, observation.score_label)
+    ?? findLocalMetricForExternalScore(metrics, observation.candidate_snapshot?.primary_metric_label);
+  return typeof metric?.value === "number" ? metric.value : null;
+}
+
+function findLocalMetricForExternalScore(
+  metrics: RuntimeEvidenceMetric[],
+  scoreLabel: string | undefined
+): RuntimeEvidenceMetric | undefined {
+  if (!scoreLabel) return undefined;
+  const normalizedScoreLabel = normalizeMetricLabel(scoreLabel);
+  return metrics.find((metric) =>
+    normalizeMetricLabel(metric.label) === normalizedScoreLabel
+    && typeof metric.value === "number"
+    && Number.isFinite(metric.value)
+  );
+}
+
+function normalizeMetricLabel(label: string): string {
+  return label.normalize("NFKC").toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function roundCalibrationAdjustment(value: number): number {
+  const clamped = Math.min(0.08, Math.max(-0.08, Number.isFinite(value) ? value : 0));
+  return Math.round(clamped * 1_000_000) / 1_000_000;
 }
 
 function selectArtifacts(
