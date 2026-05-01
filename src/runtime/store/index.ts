@@ -176,6 +176,11 @@ export {
   summarizeEvidenceEvaluatorResults,
 } from "./evaluator-results.js";
 export {
+  RuntimeReproducibilityFileRefSchema,
+  RuntimeReproducibilityManifestSchema,
+  RuntimeReproducibilityManifestStore,
+} from "./reproducibility-manifest.js";
+export {
   summarizeEvidenceDreamCheckpoints,
 } from "./dream-checkpoints.js";
 export type {
@@ -196,6 +201,14 @@ export type {
   RuntimeEvaluatorObservationContext,
   RuntimeEvaluatorSummary,
 } from "./evaluator-results.js";
+export type {
+  RuntimeReproducibilityCodeStateInput,
+  RuntimeReproducibilityCommandInput,
+  RuntimeReproducibilityFileRef,
+  RuntimeReproducibilityManifestLookupInput,
+  RuntimeReproducibilityManifest,
+  RuntimeReproducibilityManifestInput,
+} from "./reproducibility-manifest.js";
 export type {
   RuntimeControlOperationKind,
   RuntimeControlOperationState,

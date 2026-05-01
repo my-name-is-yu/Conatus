@@ -35,9 +35,17 @@ export interface DeadlineFinalizationPlan {
   deliverable_contract: string | null;
   best_artifact_selection: GoalFinalizationPolicy["best_artifact_selection"];
   best_artifact: DeadlineFinalizationArtifact | null;
+  reproducibility_manifest: DeadlineReproducibilityManifestPreflight;
   verification_steps: string[];
   approval_required_actions: DeadlineFinalizationAction[];
   handoff_required: boolean;
+}
+
+export interface DeadlineReproducibilityManifestPreflight {
+  required: boolean;
+  status: "not_required" | "required_missing" | "ready";
+  manifest_id?: string;
+  reason: string;
 }
 
 export interface DeadlineFinalizationStatus {
@@ -56,12 +64,14 @@ export interface BuildDeadlineFinalizationStatusInput {
   goal: Goal;
   now?: Date;
   bestArtifact?: DeadlineFinalizationArtifact | null;
+  reproducibilityManifestId?: string | null;
 }
 
 export const DEFAULT_FINALIZATION_POLICY: GoalFinalizationPolicy = {
   minimum_buffer_ms: 30 * 60 * 1000,
   consolidation_buffer_ms: 0,
   best_artifact_selection: "best_evidence",
+  require_reproducibility_manifest: false,
   verification_steps: [],
   external_actions: [],
 };
@@ -126,7 +136,7 @@ export function buildDeadlineFinalizationStatus(
     reserved_finalization_ms: policy.minimum_buffer_ms,
     remaining_exploration_ms: remainingExplorationMs,
     consolidation_buffer_ms: policy.consolidation_buffer_ms,
-    finalization_plan: buildFinalizationPlan(policy, input.bestArtifact ?? null),
+    finalization_plan: buildFinalizationPlan(policy, input.bestArtifact ?? null, input.reproducibilityManifestId ?? null),
     reason: buildReason(mode, remainingMs, policy),
   };
 }
@@ -149,7 +159,8 @@ function classifyFinalizationMode(
 
 function buildFinalizationPlan(
   policy: GoalFinalizationPolicy,
-  bestArtifact: DeadlineFinalizationArtifact | null
+  bestArtifact: DeadlineFinalizationArtifact | null,
+  reproducibilityManifestId: string | null
 ): DeadlineFinalizationPlan {
   const approvalActions = policy.external_actions.map((action) => ({
     id: action.id,
@@ -159,13 +170,41 @@ function buildFinalizationPlan(
     approval_required: true as const,
   }));
 
+  const reproducibilityManifest = buildReproducibilityManifestPreflight(policy, reproducibilityManifestId);
   return {
     deliverable_contract: policy.deliverable_contract ?? null,
     best_artifact_selection: policy.best_artifact_selection,
     best_artifact: bestArtifact,
+    reproducibility_manifest: reproducibilityManifest,
     verification_steps: [...policy.verification_steps],
     approval_required_actions: approvalActions,
-    handoff_required: approvalActions.length > 0,
+    handoff_required: approvalActions.length > 0 || reproducibilityManifest.status === "required_missing",
+  };
+}
+
+function buildReproducibilityManifestPreflight(
+  policy: GoalFinalizationPolicy,
+  manifestId: string | null
+): DeadlineReproducibilityManifestPreflight {
+  if (!policy.require_reproducibility_manifest) {
+    return {
+      required: false,
+      status: "not_required",
+      reason: "Reproducibility manifest is not required by this finalization policy.",
+    };
+  }
+  if (manifestId) {
+    return {
+      required: true,
+      status: "ready",
+      manifest_id: manifestId,
+      reason: "Reproducibility manifest is ready before delivery/submission.",
+    };
+  }
+  return {
+    required: true,
+    status: "required_missing",
+    reason: "Reproducibility manifest is required before delivery/submission.",
   };
 }
 

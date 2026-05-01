@@ -1,4 +1,5 @@
 import type { Logger } from "../../../runtime/logger.js";
+import * as path from "node:path";
 import type { StateDiffCalculator } from "../state-diff.js";
 import { generateLoopReport } from "../loop-report-helper.js";
 import { makeEmptyIterationResult } from "../loop-result-types.js";
@@ -80,6 +81,7 @@ import type {
   RuntimeEvidenceOutcome,
   RuntimeEvidenceSummary,
 } from "../../../runtime/store/evidence-ledger.js";
+import { RuntimeReproducibilityManifestStore } from "../../../runtime/store/reproducibility-manifest.js";
 import type { TaskCycleResult } from "../../execution/task/task-execution-types.js";
 
 export interface CoreIterationKernelDeps {
@@ -341,16 +343,25 @@ export class CoreIterationKernel {
         .join(", ")}`
     );
 
-    const finalizationStatus = await runPhase("deadline-finalization", async () =>
-      buildDeadlineFinalizationStatus({
+    const finalizationStatus = await runPhase("deadline-finalization", async () => {
+      const bestArtifact = await loadBestFinalizationArtifact(
+        this.deps.deps.evidenceLedger,
+        goalId,
+        normalizeFinalizationPolicy(goal.finalization_policy).best_artifact_selection
+      );
+      const reproducibilityManifestId = await loadReadyFinalizationManifestId({
+        stateManager: this.deps.deps.stateManager,
+        goalId,
+        runId: runtimeEvidenceScope.run_id,
+        bestArtifact,
+        requireReproducibilityManifest: normalizeFinalizationPolicy(goal.finalization_policy).require_reproducibility_manifest,
+      });
+      return buildDeadlineFinalizationStatus({
         goal,
-        bestArtifact: await loadBestFinalizationArtifact(
-          this.deps.deps.evidenceLedger,
-          goalId,
-          normalizeFinalizationPolicy(goal.finalization_policy).best_artifact_selection
-        ),
-      })
-    );
+        bestArtifact,
+        reproducibilityManifestId,
+      });
+    });
     result.finalizationStatus = finalizationStatus;
     const executionMode = deriveExecutionModeFromDeadlineStatus(finalizationStatus);
     result.executionMode = executionMode;
@@ -943,6 +954,36 @@ async function loadBestFinalizationArtifact(
         ? newestFirst.find((entry) => entry.artifacts.length > 0 || entry.kind === "artifact")
         : selectLatestVerifiedArtifact(newestFirst);
     return selected ? bestArtifactFromEvidence(selected) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadReadyFinalizationManifestId(input: {
+  stateManager: CoreLoopDeps["stateManager"];
+  goalId: string;
+  runId?: string;
+  bestArtifact: DeadlineFinalizationArtifact | null;
+  requireReproducibilityManifest: boolean;
+}): Promise<string | null> {
+  if (!input.requireReproducibilityManifest) return null;
+  if (!input.bestArtifact) return null;
+  try {
+    const store = new RuntimeReproducibilityManifestStore(path.join(input.stateManager.getBaseDir(), "runtime"));
+    const manifest = await store.findReadyForFinalization({
+      goalId: input.goalId,
+      runId: input.runId,
+      deliverable: input.bestArtifact
+        ? {
+            ...(input.bestArtifact.id ? { id: input.bestArtifact.id } : {}),
+            label: input.bestArtifact.label,
+            ...(input.bestArtifact.path ? { path: input.bestArtifact.path } : {}),
+            ...(input.bestArtifact.state_relative_path ? { state_relative_path: input.bestArtifact.state_relative_path } : {}),
+            ...(input.bestArtifact.url ? { url: input.bestArtifact.url } : {}),
+          }
+        : null,
+    });
+    return manifest?.manifest_id ?? null;
   } catch {
     return null;
   }
