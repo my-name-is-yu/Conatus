@@ -315,6 +315,52 @@ describe("Phase 7: verifyWithTools integration in runTaskCycleWithContext", () =
     expect(result.toolVerification).toBeUndefined();
   });
 
+  it("passes runtime budget context into the production task cycle path", async () => {
+    const taskCycleResult = makeTaskCycleResult([]);
+    const ctx = makeBasePhaseCtx(undefined);
+    const runTaskCycle = ctx.deps.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>;
+    runTaskCycle.mockResolvedValue(taskCycleResult);
+
+    const result = makeEmptyIterationResult(goalId, 0);
+    const gapVector = [] as unknown as import("../../../base/types/gap.js").GapVector;
+    const driveScores = [] as unknown as import("../../../base/types/drive.js").DriveScore[];
+
+    await runTaskCycleWithContext(
+      ctx,
+      goalId,
+      goal,
+      gapVector,
+      driveScores,
+      [],
+      0,
+      result,
+      Date.now(),
+      baseCallbacks,
+      undefined,
+      {
+        budgetContext: {
+          budget_id: "budget-run",
+          mode: "consolidation",
+          remaining: { evaluator_attempts: 1 },
+          approval_required: true,
+        },
+      }
+    );
+
+    expect(runTaskCycle).toHaveBeenCalledWith(
+      goalId,
+      gapVector,
+      expect.anything(),
+      expect.anything(),
+      expect.stringContaining("Runtime budget context:"),
+      expect.anything(),
+      undefined,
+      expect.anything(),
+    );
+    expect(runTaskCycle.mock.calls[0]?.[4]).toContain('"approval_required": true');
+    expect(runTaskCycle.mock.calls[0]?.[4]).toContain('"evaluator_attempts": 1');
+  });
+
   it("Test 4: catches error from verifyWithTools without failing the loop (non-fatal)", async () => {
     const criteria = makeCriteria();
     const taskCycleResult = makeTaskCycleResult(criteria);

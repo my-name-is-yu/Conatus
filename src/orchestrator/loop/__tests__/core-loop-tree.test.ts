@@ -21,6 +21,7 @@ import type { DriveScore } from "../../../base/types/drive.js";
 import type { TreeLoopOrchestrator } from "../../goal/tree-loop-orchestrator.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 
 function makeGapVector(goalId = "goal-1"): GapVector {
   return {
@@ -747,6 +748,44 @@ describe("CoreLoop tree mode (14C)", async () => {
     expect(orchestratorMock.selectPreferredNode).toHaveBeenCalledWith("root-1", ["node-id-2"]);
     expect(orchestratorMock.selectNextNode).toHaveBeenCalledWith("root-1");
     expect(iterResult.goalId).toBe("node-id-1");
+  });
+
+  it("tree-mode task generation receives runtime budget context", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock("node-id-1");
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+    const runtimeBudgetStore = new RuntimeBudgetStore(`${tmpDir}/runtime`);
+    await runtimeBudgetStore.create({
+      budget_id: "budget-tree",
+      scope: { goal_id: "root-1" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [
+        { dimension: "iterations", limit: 3 },
+        { dimension: "evaluator_attempts", limit: 3, approval_at_remaining: 1 },
+      ],
+    });
+    await runtimeBudgetStore.recordEvaluatorCall("budget-tree", { observed_at: "2026-05-01T00:01:00.000Z" });
+
+    const rootGoal = makeGoal({ id: "root-1", children_ids: ["node-id-1"] });
+    const nodeGoal = makeGoal({ id: "node-id-1", parent_id: "root-1" });
+    await mocks.stateManager.saveGoal(rootGoal);
+    await mocks.stateManager.saveGoal(nodeGoal);
+
+    const loop = new CoreLoop({ ...deps, runtimeBudgetStore }, {
+      treeMode: true,
+      maxIterations: 1,
+      delayBetweenLoopsMs: 0,
+      runtimeBudget: {
+        budgetId: "budget-tree",
+        limits: [{ dimension: "iterations", limit: 3 }],
+      },
+    });
+
+    await loop.run("root-1");
+
+    const knowledgeContext = mocks.taskLifecycle.runTaskCycle.mock.calls[0]?.[4];
+    expect(knowledgeContext).toContain("Runtime budget context:");
+    expect(knowledgeContext).toContain('"budget_id": "budget-tree"');
+    expect(knowledgeContext).toContain('"evaluator_attempts": 2');
   });
 
   it("runTreeIteration with null node returns rootId and no task", async () => {

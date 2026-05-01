@@ -26,6 +26,11 @@ import type { CorePhasePolicyRegistry } from "./core-loop/phase-policy.js";
 import { CoreIterationKernel } from "./core-loop/iteration-kernel.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 import { resolveLoopConfig, resolveLoopRunPolicy } from "./run-policy.js";
+import type {
+  RuntimeBudgetLimitInput,
+  RuntimeBudgetRecord,
+  RuntimeBudgetStatus,
+} from "../../runtime/store/budget-store.js";
 
 // Re-export types for backward compatibility
 export type {
@@ -48,7 +53,7 @@ export type {
 export { buildDriveContext } from "./core-loop/contracts.js";
 export { makeEmptyIterationResult } from "./loop-result-types.js";
 
-const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget">> = {
+const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget" | "runtimeBudget">> = {
   maxIterations: 100,
   runPolicy: { mode: "bounded", maxIterations: 100 },
   maxConsecutiveErrors: 3,
@@ -208,6 +213,13 @@ export class CoreLoop {
     const effectiveRunPolicy = this.config.runPolicy ?? resolveLoopRunPolicy({ maxIterations: this.config.maxIterations });
     const effectiveMaxIterations = effectiveRunPolicy.maxIterations;
     const hasIterationCap = effectiveRunPolicy.mode === "bounded" && effectiveMaxIterations !== null;
+    const runtimeBudgetId = await this.ensureRuntimeBudgetForRun({
+      goalId,
+      startedAt,
+      runId: this.currentActivationContext?.backgroundRun?.backgroundRunId,
+      hasIterationCap,
+      effectiveMaxIterations,
+    });
 
     // Use the provided iterationBudget if set; otherwise create a local one.
     const budget: IterationBudget | null = this.config.iterationBudget
@@ -233,14 +245,19 @@ export class CoreLoop {
         }
         break;
       }
+      const budgetGate = await this.evaluateRuntimeBudgetGate(goalId, runtimeBudgetId);
+      if (budgetGate.stop) {
+        finalStatus = budgetGate.finalStatus;
+        break;
+      }
 
       void this.deps.hookManager?.emit("LoopCycleStart", { goal_id: goalId, data: { loopIndex } });
 
       let iterationResult: LoopIterationResult;
       try {
         iterationResult = this.config.treeMode && this.deps.treeLoopOrchestrator
-          ? await this.runTreeIteration(goalId, loopIndex, nodeConsumedMap)
-          : await this.runOneIteration(goalId, loopIndex, loopIndex === startLoopIndex);
+          ? await this.runTreeIteration(goalId, loopIndex, nodeConsumedMap, runtimeBudgetId)
+          : await this.runOneIteration(goalId, loopIndex, loopIndex === startLoopIndex, runtimeBudgetId);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger?.error(`[CoreLoop] unexpected error in iteration ${loopIndex}: ${msg}`);
@@ -269,6 +286,7 @@ export class CoreLoop {
           break;
         }
       }
+      await this.recordRuntimeBudgetUsage(runtimeBudgetId, iterationResult);
       void this.deps.hookManager?.emit("LoopCycleEnd", { goal_id: goalId, data: { loopIndex, status: iterationResult.error ? "error" : "ok" } });
 
       iterations.push(iterationResult);
@@ -405,7 +423,8 @@ export class CoreLoop {
   async runOneIteration(
     goalId: string,
     loopIndex: number,
-    isFirstIteration?: boolean
+    isFirstIteration?: boolean,
+    runtimeBudgetId?: string | null
   ): Promise<LoopIterationResult> {
     const result = await new CoreIterationKernel({
       deps: this.deps,
@@ -424,6 +443,7 @@ export class CoreLoop {
       incrementTransferCounter: () => this.learning.incrementTransferCounter(),
       getPendingDirective: (id) => this.pendingIterationDirectives.get(id),
       getActivationContext: () => this.currentActivationContext,
+      getRuntimeBudgetContext: () => this.loadRuntimeBudgetTaskContext(runtimeBudgetId),
     }).run({ goalId, loopIndex, isFirstIteration });
     if (result.nextIterationDirective) {
       this.pendingIterationDirectives.set(goalId, result.nextIterationDirective);
@@ -437,9 +457,14 @@ export class CoreLoop {
    * Tree-mode iteration: select one node via TreeLoopOrchestrator, run a
    * normal observe→gap→score→task cycle on that node, then aggregate upward.
    */
-  async runTreeIteration(rootId: string, loopIndex: number, nodeConsumedMap: Map<string, number>): Promise<LoopIterationResult> {
+  async runTreeIteration(
+    rootId: string,
+    loopIndex: number,
+    nodeConsumedMap: Map<string, number>,
+    runtimeBudgetId?: string | null
+  ): Promise<LoopIterationResult> {
     return runTreeIterationImpl(rootId, loopIndex, this.deps, this.config, this.logger,
-      (id, idx) => this.runOneIteration(id, idx), nodeConsumedMap, {
+      (id, idx) => this.runOneIteration(id, idx, undefined, runtimeBudgetId), nodeConsumedMap, {
         getPendingDirective: (id) => this.pendingIterationDirectives.get(id),
       });
   }
@@ -479,6 +504,129 @@ export class CoreLoop {
    */
   isStopped(): boolean {
     return this.stopped;
+  }
+
+  private async ensureRuntimeBudgetForRun(input: {
+    goalId: string;
+    startedAt: string;
+    runId?: string;
+    hasIterationCap: boolean;
+    effectiveMaxIterations: number | null;
+  }): Promise<string | null> {
+    if (this.config.dryRun || !this.deps.runtimeBudgetStore) return null;
+    const configuredLimits = this.config.runtimeBudget?.limits;
+    const defaultLimits: RuntimeBudgetLimitInput[] =
+      configuredLimits ?? (
+        input.hasIterationCap && input.effectiveMaxIterations !== null
+          ? [{
+              dimension: "iterations",
+              limit: input.effectiveMaxIterations,
+              approval_at_remaining: 0,
+              finalization_at_remaining: 0,
+              exhaustion_policy: "approval_required",
+            }]
+          : []
+      );
+    if (defaultLimits.length === 0) return null;
+    const budgetId = this.config.runtimeBudget?.budgetId
+      ?? `runtime-budget:${input.runId ?? `goal:${input.goalId}`}`;
+    const existing = await this.deps.runtimeBudgetStore.load(budgetId);
+    if (existing) return budgetId;
+    try {
+      await this.deps.runtimeBudgetStore.create({
+        budget_id: budgetId,
+        scope: {
+          goal_id: input.goalId,
+          ...(input.runId ? { run_id: input.runId } : {}),
+        },
+        title: this.config.runtimeBudget?.title ?? `Runtime budget for ${input.goalId}`,
+        created_at: input.startedAt,
+        limits: defaultLimits,
+      });
+    } catch (err) {
+      const loaded = await this.deps.runtimeBudgetStore.load(budgetId);
+      if (!loaded) throw err;
+    }
+    return budgetId;
+  }
+
+  private async evaluateRuntimeBudgetGate(goalId: string, budgetId: string | null): Promise<{
+    stop: boolean;
+    finalStatus: LoopResult["finalStatus"];
+  }> {
+    const status = await this.loadRuntimeBudgetStatus(budgetId);
+    if (!status) return { stop: false, finalStatus: "stopped" };
+    if (status.finalization_required) return { stop: true, finalStatus: "finalization" };
+    if (status.dimensions.some((dimension) => dimension.exhausted && dimension.exhaustion_policy === "stop")) {
+      return { stop: true, finalStatus: "stopped" };
+    }
+    if (!status.exhausted && !status.approval_required && !status.handoff_required) {
+      return { stop: false, finalStatus: "stopped" };
+    }
+    if (status.approval_required && this.deps.waitApprovalBroker) {
+      const approved = await this.deps.waitApprovalBroker.requestApproval(
+        goalId,
+        {
+          id: `budget:${status.budget_id}`,
+          description: `Runtime budget threshold reached for ${status.budget_id}.`,
+          action: "continue_after_budget_threshold",
+        },
+        undefined,
+        `budget:${status.budget_id}`,
+      );
+      if (approved) return { stop: false, finalStatus: "stopped" };
+    }
+    return { stop: true, finalStatus: "stopped" };
+  }
+
+  private async loadRuntimeBudgetTaskContext(budgetId: string | null | undefined): Promise<Record<string, unknown> | undefined> {
+    if (!budgetId || !this.deps.runtimeBudgetStore) return undefined;
+    const budget = await this.deps.runtimeBudgetStore.load(budgetId);
+    return budget ? this.deps.runtimeBudgetStore.taskGenerationContext(budget) : undefined;
+  }
+
+  private async loadRuntimeBudgetStatus(budgetId: string | null | undefined): Promise<RuntimeBudgetStatus | null> {
+    const budget = await this.loadRuntimeBudgetRecord(budgetId);
+    return budget && this.deps.runtimeBudgetStore ? this.deps.runtimeBudgetStore.status(budget) : null;
+  }
+
+  private async loadRuntimeBudgetRecord(budgetId: string | null | undefined): Promise<RuntimeBudgetRecord | null> {
+    if (!budgetId || !this.deps.runtimeBudgetStore) return null;
+    return this.deps.runtimeBudgetStore.load(budgetId);
+  }
+
+  private async recordRuntimeBudgetUsage(budgetId: string | null, iterationResult: LoopIterationResult): Promise<void> {
+    if (!budgetId || !this.deps.runtimeBudgetStore || this.config.dryRun) return;
+    try {
+      await this.deps.runtimeBudgetStore.recordTaskExecution(budgetId, {
+        iterations: 1,
+        tasks: iterationResult.taskResult ? 1 : 0,
+        process_ms: Math.max(0, iterationResult.elapsedMs),
+        wall_clock_ms: Math.max(0, iterationResult.elapsedMs),
+        reason: `coreloop iteration ${iterationResult.loopIndex}`,
+      });
+      if (iterationResult.tokensUsed && iterationResult.tokensUsed > 0) {
+        await this.deps.runtimeBudgetStore.recordToolUsage(budgetId, {
+          llm_tokens: iterationResult.tokensUsed,
+          reason: `coreloop iteration ${iterationResult.loopIndex}`,
+        });
+      }
+      const artifactCount = iterationResult.taskResult?.verificationResult.file_diffs?.length
+        ?? 0;
+      if (artifactCount > 0) {
+        await this.deps.runtimeBudgetStore.recordArtifactGeneration(budgetId, {
+          artifacts: artifactCount,
+          reason: `coreloop iteration ${iterationResult.loopIndex}`,
+        });
+      }
+    } catch (err) {
+      this.logger?.warn("CoreLoop: failed to record runtime budget usage", {
+        budgetId,
+        goalId: iterationResult.goalId,
+        loopIndex: iterationResult.loopIndex,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
 }

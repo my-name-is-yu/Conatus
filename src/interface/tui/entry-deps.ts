@@ -32,6 +32,7 @@ export async function buildStandaloneTuiDeps() {
   const { TreeLoopOrchestrator } = await import("../../orchestrator/goal/tree-loop-orchestrator.js");
   const { ScheduleEngine } = await import("../../runtime/schedule/engine.js");
   const { RuntimeEvidenceLedger } = await import("../../runtime/store/evidence-ledger.js");
+  const { RuntimeBudgetStore } = await import("../../runtime/store/budget-store.js");
   const { MemoryLifecycleManager, DriveScoreAdapter } = await import("../../platform/knowledge/memory/memory-lifecycle.js");
   const { KnowledgeManager } = await import("../../platform/knowledge/knowledge-manager.js");
   const { CharacterConfigManager } = await import("../../platform/traits/character-config.js");
@@ -231,6 +232,7 @@ export async function buildStandaloneTuiDeps() {
     rankDimensions: DriveScorer.rankDimensions,
   };
 
+  const runtimeBudgetStore = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
   const coreLoop = new CoreLoop({
     stateManager,
     observationEngine,
@@ -252,6 +254,7 @@ export async function buildStandaloneTuiDeps() {
     contextProvider,
     corePhaseRunner,
     evidenceLedger,
+    runtimeBudgetStore,
   });
 
   const scheduleEngine = new ScheduleEngine({

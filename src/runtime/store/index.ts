@@ -138,6 +138,31 @@ export {
   RuntimeExperimentQueueRevisionStatusSchema,
   RuntimeExperimentQueueStore,
 } from "./experiment-queue-store.js";
+export {
+  RuntimeBudgetDimensionSchema,
+  RuntimeBudgetLimitSchema,
+  RuntimeBudgetModeSchema,
+  RuntimeBudgetRecordSchema,
+  RuntimeBudgetScopeSchema,
+  RuntimeBudgetStore,
+  RuntimeBudgetThresholdActionSchema,
+  RuntimeBudgetUsageSchema,
+} from "./budget-store.js";
+export type {
+  RuntimeBudgetCreateInput,
+  RuntimeBudgetDimension,
+  RuntimeBudgetDimensionStatus,
+  RuntimeBudgetLimit,
+  RuntimeBudgetLimitInput,
+  RuntimeBudgetMode,
+  RuntimeBudgetRecord,
+  RuntimeBudgetScope,
+  RuntimeBudgetStatus,
+  RuntimeBudgetThresholdAction,
+  RuntimeBudgetUsage,
+  RuntimeBudgetUsageInput,
+  RuntimeBudgetUsageUpdateInput,
+} from "./budget-store.js";
 export type {
   RuntimeExperimentQueueCreateInput,
   RuntimeExperimentQueueExecutionDirective,

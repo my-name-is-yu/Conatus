@@ -49,6 +49,8 @@ Usage:
   pulseed runtime run <id> [--json]   Show one background run
   pulseed runtime experiment-queues [--json]  List experiment queues
   pulseed runtime experiment-queue <id> [--json]  Show one experiment queue
+  pulseed runtime budgets [--json]    List runtime budgets
+  pulseed runtime budget <id> [--json]  Show one runtime budget
   pulseed runtime evidence <goal-id|run-id> [--json]  Summarize runtime evidence ledger
   pulseed runtime dream-review <run-id> [--json]  Read-only Dream sidecar review for active run
   pulseed log --goal <id>              View observation and gap history log

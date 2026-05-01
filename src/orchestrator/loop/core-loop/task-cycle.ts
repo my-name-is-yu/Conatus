@@ -150,6 +150,7 @@ export interface LoopCallbacks {
 export interface TaskGenerationHints {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
+  budgetContext?: Record<string, unknown>;
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
 }
@@ -388,6 +389,8 @@ export async function runTaskCycleWithContext(
       }
     }
 
+    const budgetContextBlock = formatBudgetContext(taskGenerationHints?.budgetContext);
+    knowledgeContext = [budgetContextBlock, knowledgeContext].filter(Boolean).join("\n\n") || undefined;
     knowledgeContext = evidenceLedger?.augmentKnowledgeContext(knowledgeContext) ?? knowledgeContext;
     workspaceContext = evidenceLedger?.augmentWorkspaceContext(workspaceContext) ?? workspaceContext;
 
@@ -523,4 +526,9 @@ export async function runTaskCycleWithContext(
   }
 
   return true;
+}
+
+function formatBudgetContext(context: Record<string, unknown> | undefined): string | undefined {
+  if (!context) return undefined;
+  return `Runtime budget context:\n${JSON.stringify(context, null, 2)}`;
 }

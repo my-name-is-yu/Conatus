@@ -12,6 +12,7 @@ import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessio
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 import { RuntimeExperimentQueueStore } from "../../../runtime/store/experiment-queue-store.js";
+import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 
 describe("runtime registry CLI commands", () => {
   let tmpDir: string;
@@ -495,6 +496,63 @@ describe("runtime registry CLI commands", () => {
     expect(detailOutput).toContain("Runtime experiment queue: queue-runtime");
     expect(detailOutput).toContain("Phase:       executing_frozen_queue");
     expect(detailOutput).toContain("Next item:   exp-a");
+  });
+
+  it("reports runtime budget remaining usage and task generation context", async () => {
+    const budgetStore = new RuntimeBudgetStore(path.join(tmpDir, "runtime"));
+    await budgetStore.create({
+      budget_id: "budget-runtime",
+      scope: { goal_id: "goal-runtime", run_id: "run:coreloop:goal-runtime" },
+      title: "Runtime budget",
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [
+        {
+          dimension: "evaluator_attempts",
+          limit: 3,
+          approval_at_remaining: 1,
+          mode_transition_at_remaining: { consolidation: 1 },
+        },
+      ],
+    });
+    await budgetStore.recordEvaluatorCall("budget-runtime", {
+      attempts: 2,
+      observed_at: "2026-05-01T00:01:00.000Z",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const listCode = await runCLI("runtime", "budgets", "--json");
+    const listOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const listParsed = JSON.parse(listOutput) as {
+      budgets: Array<{ budget: { budget_id: string }; status: { mode: string; approval_required: boolean } }>;
+    };
+
+    expect(listCode).toBe(0);
+    expect(listParsed.budgets).toContainEqual(expect.objectContaining({
+      budget: expect.objectContaining({ budget_id: "budget-runtime" }),
+      status: expect.objectContaining({
+        mode: "consolidation",
+        approval_required: true,
+      }),
+    }));
+
+    logSpy.mockClear();
+    const detailCode = await runCLI("runtime", "budget", "budget-runtime", "--json");
+    const detailOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const detailParsed = JSON.parse(detailOutput) as {
+      status: { dimensions: Array<{ dimension: string; remaining: number }> };
+      task_generation_context: { mode: string; remaining: Record<string, number>; approval_required: boolean };
+    };
+
+    expect(detailCode).toBe(0);
+    expect(detailParsed.status.dimensions).toContainEqual(expect.objectContaining({
+      dimension: "evaluator_attempts",
+      remaining: 1,
+    }));
+    expect(detailParsed.task_generation_context).toMatchObject({
+      mode: "consolidation",
+      approval_required: true,
+      remaining: { evaluator_attempts: 1 },
+    });
   });
 
   async function writeConversationWithRunningAgent(): Promise<void> {

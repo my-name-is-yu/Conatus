@@ -29,6 +29,7 @@ import { ReportingEngine } from "../../reporting/reporting-engine.js";
 import { CoreLoop } from "../../orchestrator/loop/core-loop.js";
 import { ScheduleEngine } from "../../runtime/schedule/engine.js";
 import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
+import { RuntimeBudgetStore } from "../../runtime/store/budget-store.js";
 import { TreeLoopOrchestrator } from "../../orchestrator/goal/tree-loop-orchestrator.js";
 import { GoalTreeManager } from "../../orchestrator/goal/goal-tree-manager.js";
 import { StateAggregator } from "../../orchestrator/goal/state-aggregator.js";
@@ -374,6 +375,7 @@ export async function buildDeps(
     stateManager, goalTreeManager, stateAggregator, satisficingJudge, goalRefiner
   );
 
+  const runtimeBudgetStore = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
   const coreLoop = new CoreLoop({
     stateManager,
     observationEngine,
@@ -405,6 +407,7 @@ export async function buildDeps(
     toolRegistry,
     corePhaseRunner,
     evidenceLedger,
+    runtimeBudgetStore,
   }, config);
 
   coreLoop.setTimeHorizonEngine(new TimeHorizonEngine());
