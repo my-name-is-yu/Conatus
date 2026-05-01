@@ -11,6 +11,7 @@ import type { CoreLoop } from "../../../orchestrator/loop/core-loop.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
+import { RuntimeExperimentQueueStore } from "../../../runtime/store/experiment-queue-store.js";
 
 describe("runtime registry CLI commands", () => {
   let tmpDir: string;
@@ -449,6 +450,51 @@ describe("runtime registry CLI commands", () => {
     expect(code).toBe(0);
     expect(parsed.scope.run_id).toBe("dummy-runtime-run");
     expect(parsed.total_entries).toBe(1);
+  });
+
+  it("reports experiment queue phase separately from frozen execution status", async () => {
+    const queueStore = new RuntimeExperimentQueueStore(path.join(tmpDir, "runtime"));
+    await queueStore.create({
+      queue_id: "queue-runtime",
+      goal_id: "goal-runtime",
+      run_id: "run:coreloop:goal-runtime",
+      title: "Frozen queue",
+      created_at: "2026-05-01T00:00:00.000Z",
+      provenance: { source: "test-plan", evidence_refs: ["evidence:plan"] },
+      items: [{
+        item_id: "exp-a",
+        title: "Experiment A",
+        config: { model: "catboost" },
+        provenance: { source: "test-plan" },
+      }],
+    });
+    await queueStore.freeze("queue-runtime", "2026-05-01T00:01:00.000Z");
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const listCode = await runCLI("runtime", "experiment-queues", "--json");
+    const listOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const listParsed = JSON.parse(listOutput) as {
+      queues: Array<{ queue_id: string; current_version: number; revisions: Array<{ phase: string; status: string }> }>;
+    };
+
+    expect(listCode).toBe(0);
+    expect(listParsed.queues).toContainEqual(expect.objectContaining({
+      queue_id: "queue-runtime",
+      current_version: 1,
+      revisions: [expect.objectContaining({
+        phase: "executing_frozen_queue",
+        status: "frozen",
+      })],
+    }));
+
+    logSpy.mockClear();
+    const detailCode = await runCLI("runtime", "experiment-queue", "queue-runtime");
+    const detailOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(detailCode).toBe(0);
+    expect(detailOutput).toContain("Runtime experiment queue: queue-runtime");
+    expect(detailOutput).toContain("Phase:       executing_frozen_queue");
+    expect(detailOutput).toContain("Next item:   exp-a");
   });
 
   async function writeConversationWithRunningAgent(): Promise<void> {

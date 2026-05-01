@@ -7,6 +7,11 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceEntry, type RuntimeEvidenceSummary } from "../../../runtime/store/evidence-ledger.js";
 import {
+  RuntimeExperimentQueueStore,
+  type RuntimeExperimentQueueRecord,
+  type RuntimeExperimentQueueRevision,
+} from "../../../runtime/store/experiment-queue-store.js";
+import {
   createRuntimeDreamSidecarReview,
   RuntimeDreamSidecarReviewError,
   type RuntimeDreamSidecarReview,
@@ -164,6 +169,57 @@ function printRunDetail(run: BackgroundRun): void {
   console.log(`  Sources:     ${run.source_refs.map(refLabel).join(", ") || "-"}`);
 }
 
+function currentExperimentQueueRevision(queue: RuntimeExperimentQueueRecord): RuntimeExperimentQueueRevision {
+  const revision = queue.revisions.find((candidate) => candidate.version === queue.current_version);
+  if (!revision) {
+    throw new Error(`Experiment queue ${queue.queue_id} is missing current version ${queue.current_version}`);
+  }
+  return revision;
+}
+
+function printExperimentQueueRows(queues: RuntimeExperimentQueueRecord[]): void {
+  if (queues.length === 0) {
+    console.log("No runtime experiment queues found.");
+    return;
+  }
+
+  console.log("Runtime experiment queues:\n");
+  console.log(
+    `${"ID".padEnd(ID_WIDTH)} ${"VERSION".padEnd(8)} ${"PHASE".padEnd(24)} ${"STATUS".padEnd(10)} ${"UPDATED".padEnd(UPDATED_WIDTH)} TITLE`
+  );
+  console.log("-".repeat(116));
+  for (const queue of queues) {
+    const revision = currentExperimentQueueRevision(queue);
+    console.log(
+      `${formatCell(queue.queue_id, ID_WIDTH).padEnd(ID_WIDTH)} ${String(revision.version).padEnd(8)} ${revision.phase.padEnd(24)} ${revision.status.padEnd(10)} ${dateLabel(revision.updated_at).padEnd(UPDATED_WIDTH)} ${formatCell(queue.title, TITLE_WIDTH)}`
+    );
+  }
+  console.log(`\nTotal: ${queues.length} experiment queue(s)`);
+}
+
+function printExperimentQueueDetail(queue: RuntimeExperimentQueueRecord): void {
+  const revision = currentExperimentQueueRevision(queue);
+  const pending = revision.items.filter((item) => item.status === "pending").length;
+  const running = revision.items.filter((item) => item.status === "running").length;
+  const terminal = revision.items.filter((item) => item.status === "succeeded" || item.status === "failed" || item.status === "skipped" || item.status === "cancelled").length;
+  console.log(`Runtime experiment queue: ${queue.queue_id}`);
+  console.log(`  Title:       ${queue.title ?? "-"}`);
+  console.log(`  Goal:        ${queue.goal_id ?? "-"}`);
+  console.log(`  Run:         ${queue.run_id ?? "-"}`);
+  console.log(`  Version:     ${revision.version}`);
+  console.log(`  Phase:       ${revision.phase}`);
+  console.log(`  Status:      ${revision.status}`);
+  console.log(`  Created:     ${revision.created_at}`);
+  console.log(`  Frozen:      ${revision.frozen_at ?? "-"}`);
+  console.log(`  Updated:     ${revision.updated_at}`);
+  console.log(`  Revision of: ${revision.revision_of ?? "-"}`);
+  console.log(`  Reason:      ${revision.revision_reason ?? "-"}`);
+  console.log(`  Items:       ${revision.items.length} total, ${pending} pending, ${running} running, ${terminal} terminal`);
+  console.log(`  Provenance:  ${revision.provenance.source}`);
+  const next = revision.items.find((item) => item.status === "pending");
+  console.log(`  Next item:   ${next ? `${next.item_id} (${next.idempotency_key})` : "-"}`);
+}
+
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -241,7 +297,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
+    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
     return 1;
   }
 
@@ -323,6 +379,37 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     return 0;
   }
 
+  if (runtimeSubcommand === "experiment-queues") {
+    const values = parseListArgs(args.slice(1), "experiment-queues");
+    const store = new RuntimeExperimentQueueStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const queues = await store.list();
+    if (values.json) {
+      printJson({
+        schema_version: "runtime-experiment-queues-list-v1",
+        queues,
+      });
+    } else {
+      printExperimentQueueRows(queues);
+    }
+    return 0;
+  }
+
+  if (runtimeSubcommand === "experiment-queue") {
+    const values = parseDetailArgs(args.slice(1), "experiment-queue");
+    if (!values.id) {
+      logger.error("Error: queue ID is required. Usage: pulseed runtime experiment-queue <id> [--json]");
+      return 1;
+    }
+    const store = new RuntimeExperimentQueueStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const queue = await store.load(values.id);
+    if (!queue) {
+      console.error(`Runtime experiment queue not found: ${values.id}`);
+      return 1;
+    }
+    values.json ? printJson(queue) : printExperimentQueueDetail(queue);
+    return 0;
+  }
+
   if (runtimeSubcommand === "dream-review") {
     const values = parseDreamReviewArgs(args.slice(1));
     if (!values.id) {
@@ -348,7 +435,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
   return 1;
 }
 
