@@ -9,6 +9,7 @@ import { OutboxStore } from "../store/outbox-store.js";
 import { BrowserSessionStore } from "../interactive-automation/index.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
+import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 
 // ─── Helpers ───
 
@@ -832,6 +833,44 @@ describe("snapshot and outbox replay", () => {
         provider_id: "browser-auth",
         service_key: "mail.google.com",
         state: "auth_required",
+      }),
+    ]);
+  });
+
+  it("includes open operator handoffs in daemon snapshot", async () => {
+    const runtimeRoot = path.join(tmpDir, "custom-runtime");
+    await new RuntimeOperatorHandoffStore(runtimeRoot).create({
+      handoff_id: "handoff-deadline",
+      goal_id: "goal-1",
+      triggers: ["deadline", "finalization"],
+      title: "Deadline handoff",
+      summary: "Deadline finalization requires review.",
+      current_status: "mode=finalization",
+      recommended_action: "Review final artifact.",
+      next_action: {
+        label: "Review final artifact",
+        approval_required: true,
+      },
+    });
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      runtimeRoot,
+    });
+
+    await server.start();
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as { operator_handoffs?: unknown[] };
+    expect(snapshot.operator_handoffs).toEqual([
+      expect.objectContaining({
+        handoff_id: "handoff-deadline",
+        goal_id: "goal-1",
+        status: "open",
+        triggers: ["deadline", "finalization"],
       }),
     ]);
   });

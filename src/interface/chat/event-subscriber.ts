@@ -306,6 +306,22 @@ export class EventSubscriber extends EventEmitter {
       };
     }
 
+    if (eventType === "operator_handoff_required") {
+      const ev = data as {
+        handoff_id?: string;
+        title?: string;
+        recommended_action?: string;
+      };
+      const title = ev.title ?? "Operator handoff required";
+      const action = ev.recommended_action ? ` — ${ev.recommended_action}` : "";
+      return {
+        type: "approval",
+        goalId: this.goalId,
+        requestId: ev.handoff_id,
+        message: `🛂 [tend] ${shortId}: ${title}${action}`,
+      };
+    }
+
     if (eventType === "approval_resolved") {
       const ev = data as { approved?: boolean };
       const decision = ev.approved ? "approved" : "rejected";
@@ -435,6 +451,7 @@ export class EventSubscriber extends EventEmitter {
       }
       const snapshot = await res.json() as {
         approvals?: unknown[];
+        operator_handoffs?: unknown[];
         last_outbox_seq?: number;
       };
       this.snapshotBootstrapped = true;
@@ -442,6 +459,10 @@ export class EventSubscriber extends EventEmitter {
       for (const approval of snapshot.approvals ?? []) {
         if (!this.matchesGoal(approval)) continue;
         this.emitProjectedEvent("approval_required", approval);
+      }
+      for (const handoff of snapshot.operator_handoffs ?? []) {
+        if (!this.matchesGoal(handoff)) continue;
+        this.emitProjectedEvent("operator_handoff_required", handoff);
       }
     } catch {
       // Snapshot bootstrap is best-effort.
@@ -484,6 +505,11 @@ export class EventSubscriber extends EventEmitter {
     const requestId = record?.["requestId"];
     if (typeof requestId === "string" && requestId) {
       return `${eventType}:${requestId}`;
+    }
+
+    const handoffId = record?.["handoff_id"];
+    if (typeof handoffId === "string" && handoffId) {
+      return `${eventType}:${handoffId}`;
     }
 
     const sessionId = record?.["session_id"];

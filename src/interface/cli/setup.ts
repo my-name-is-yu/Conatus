@@ -30,6 +30,7 @@ import { CoreLoop } from "../../orchestrator/loop/core-loop.js";
 import { ScheduleEngine } from "../../runtime/schedule/engine.js";
 import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import { RuntimeBudgetStore } from "../../runtime/store/budget-store.js";
+import { RuntimeOperatorHandoffStore } from "../../runtime/store/operator-handoff-store.js";
 import { TreeLoopOrchestrator } from "../../orchestrator/goal/tree-loop-orchestrator.js";
 import { GoalTreeManager } from "../../orchestrator/goal/goal-tree-manager.js";
 import { StateAggregator } from "../../orchestrator/goal/state-aggregator.js";
@@ -319,6 +320,10 @@ export async function buildDeps(
       })
     : undefined;
 
+  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot);
+  const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+
   const taskLifecycle = new TaskLifecycle({
     stateManager,
     llmClient,
@@ -338,6 +343,7 @@ export async function buildDeps(
       agentLoopRunner,
       revertCwd: resolvedWorkspacePath,
       healthCheckCwd: resolvedWorkspacePath,
+      operatorHandoffStore,
     },
   });
 
@@ -375,7 +381,6 @@ export async function buildDeps(
     stateManager, goalTreeManager, stateAggregator, satisficingJudge, goalRefiner
   );
 
-  const runtimeBudgetStore = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
   const coreLoop = new CoreLoop({
     stateManager,
     observationEngine,
@@ -408,6 +413,7 @@ export async function buildDeps(
     corePhaseRunner,
     evidenceLedger,
     runtimeBudgetStore,
+    operatorHandoffStore,
   }, config);
 
   coreLoop.setTimeHorizonEngine(new TimeHorizonEngine());

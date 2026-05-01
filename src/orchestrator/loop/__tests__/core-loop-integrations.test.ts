@@ -40,6 +40,7 @@ import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 import { WaitDeadlineResolver, getDueWaitGoalIds } from "../../../runtime/daemon/wait-deadline-resolver.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 import { RuntimeReproducibilityManifestStore } from "../../../runtime/store/reproducibility-manifest.js";
+import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -453,9 +454,10 @@ describe("CoreLoop", async () => {
           },
         }),
       };
+      const operatorHandoffStore = new RuntimeOperatorHandoffStore(path.join(tmpDir, "runtime"));
 
       const loop = new CoreLoop(
-        { ...deps, evidenceLedger: evidenceLedger as any },
+        { ...deps, evidenceLedger: evidenceLedger as any, operatorHandoffStore },
         { delayBetweenLoopsMs: 0, autoDecompose: false }
       );
       const result = await loop.run("goal-1", { maxIterations: 3 });
@@ -499,6 +501,22 @@ describe("CoreLoop", async () => {
           executionMode: expect.objectContaining({ mode: "finalization" }),
         })
       );
+      expect(await operatorHandoffStore.listOpen()).toEqual([
+        expect.objectContaining({
+          goal_id: "goal-1",
+          triggers: ["deadline", "finalization", "external_action"],
+          required_approvals: ["Publish report"],
+          next_action: expect.objectContaining({
+            label: "Publish report",
+            tool_name: "publish_report",
+            approval_required: true,
+          }),
+          gate: expect.objectContaining({
+            autonomous_task_generation: "pause",
+            external_action_requires_approval: true,
+          }),
+        }),
+      ]);
     });
 
     it("passes consolidation execution mode into task generation before the finalization cutoff", async () => {

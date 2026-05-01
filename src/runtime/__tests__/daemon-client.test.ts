@@ -10,6 +10,7 @@ import {
 import { EventServer } from "../event-server.js";
 import { DEFAULT_PORT } from "../port-utils.js";
 import { OutboxStore } from "../store/outbox-store.js";
+import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 function createMockDriveSystem() {
@@ -122,6 +123,49 @@ describe("DaemonClient snapshot + replay", () => {
         message: "queued",
         status: "queued",
       });
+    } finally {
+      client.disconnect();
+    }
+  });
+
+  it("emits operator handoffs from snapshot bootstrap", async () => {
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    await new RuntimeOperatorHandoffStore(runtimeRoot).create({
+      handoff_id: "handoff-snapshot",
+      goal_id: "goal-1",
+      triggers: ["deadline"],
+      title: "Deadline handoff",
+      summary: "Deadline finalization requires review.",
+      current_status: "mode=finalization",
+      recommended_action: "Review final artifact.",
+      next_action: {
+        label: "Review final artifact",
+        approval_required: true,
+      },
+    });
+    server = new EventServer(createMockDriveSystem() as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      runtimeRoot,
+      outboxStore: new OutboxStore(tmpDir),
+    });
+    await server.start();
+
+    const client = new DaemonClient({
+      host: "127.0.0.1",
+      port: server.getPort(),
+      reconnectInterval: 50,
+      maxReconnectAttempts: 2,
+      authToken: server.getAuthToken(),
+    });
+
+    try {
+      const handoff = waitForEvent(client, "operator_handoff_required");
+      client.connect();
+      await expect(handoff).resolves.toEqual(expect.objectContaining({
+        handoff_id: "handoff-snapshot",
+        goal_id: "goal-1",
+      }));
     } finally {
       client.disconnect();
     }

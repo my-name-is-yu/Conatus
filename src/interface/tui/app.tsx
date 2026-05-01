@@ -55,6 +55,50 @@ export function formatDaemonConnectionState(state: DaemonConnectionState | undef
   return `  [daemon ${state}]`;
 }
 
+function normalizeApprovalTask(data: Record<string, unknown>): Task {
+  const rawTask = data.task;
+  if (rawTask && typeof rawTask === "object") {
+    return rawTask as Task;
+  }
+  const goalId = String(data.goalId ?? data.goal_id ?? "");
+  const title = String(data.title ?? "Operator handoff required");
+  const summary = String(data.summary ?? data.recommended_action ?? "Review this operator handoff before continuing.");
+  const currentStatus = String(data.current_status ?? "");
+  const triggers = Array.isArray(data.triggers) ? data.triggers.map(String).join(", ") : "operator_handoff";
+  return {
+    id: String(data.handoff_id ?? data.requestId ?? "operator_handoff"),
+    goal_id: goalId,
+    strategy_id: null,
+    target_dimensions: [],
+    primary_dimension: "operator_handoff",
+    work_description: title,
+    rationale: summary,
+    approach: String(data.recommended_action ?? currentStatus ?? "Operator decision required."),
+    success_criteria: [{
+      description: "Operator has approved or rejected the handoff.",
+      verification_method: "daemon approval response",
+      is_blocking: true,
+    }],
+    scope_boundary: {
+      in_scope: [triggers],
+      out_of_scope: [],
+      blast_radius: "operator handoff",
+    },
+    constraints: ["Requires explicit operator approval."],
+    plateau_until: null,
+    estimated_duration: null,
+    consecutive_failure_count: 0,
+    reversibility: "unknown",
+    task_category: "normal",
+    status: "pending",
+    started_at: null,
+    completed_at: null,
+    timeout_at: null,
+    heartbeat_at: null,
+    created_at: String(data.created_at ?? new Date().toISOString()),
+  };
+}
+
 export type FreeformInputRoute = "daemon_goal_chat" | "chat_runner" | "unavailable";
 
 export function resolveFreeformInputRoute({
@@ -260,9 +304,10 @@ export function App({
 
     const onApproval = (data: unknown) => {
       const d = data as Record<string, unknown>;
-      const task = d.task as Task;
-      const requestId = d.requestId as string;
-      const goalId = d.goalId as string;
+      const task = normalizeApprovalTask(d);
+      const requestId = String(d.requestId ?? d.handoff_id ?? "");
+      const goalId = String(d.goalId ?? d.goal_id ?? task.goal_id);
+      if (!requestId || !goalId) return;
 
       approvalRequestRef.current = {
         task,
@@ -278,6 +323,7 @@ export function App({
     daemonClient.on("loop_update", onLoopUpdate);
     daemonClient.on("daemon_status", onDaemonStatus);
     daemonClient.on("approval_required", onApproval);
+    daemonClient.on("operator_handoff_required", onApproval);
 
     return () => {
       daemonClient.off("_connected", onConnected);
@@ -285,6 +331,7 @@ export function App({
       daemonClient.off("loop_update", onLoopUpdate);
       daemonClient.off("daemon_status", onDaemonStatus);
       daemonClient.off("approval_required", onApproval);
+      daemonClient.off("operator_handoff_required", onApproval);
     };
   }, [isDaemonMode, daemonClient]);
 

@@ -31,6 +31,7 @@ export interface RuntimeStorePaths {
   reproducibilityManifestsDir: string;
   experimentQueuesDir: string;
   budgetsDir: string;
+  operatorHandoffsDir: string;
   backpressureSnapshotPath: string;
   daemonHealthPath: string;
   componentsHealthPath: string;
@@ -48,6 +49,7 @@ export interface RuntimeStorePaths {
   reproducibilityManifestPath(manifestId: string): string;
   experimentQueuePath(queueId: string): string;
   budgetPath(budgetId: string): string;
+  operatorHandoffPath(handoffId: string): string;
   goalLeasePath(goalId: string): string;
   completedByIdempotencyPath(idempotencyKey: string): string;
   completedByMessagePath(messageId: string): string;
@@ -107,6 +109,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const reproducibilityManifestsDir = path.join(rootDir, "reproducibility-manifests");
   const experimentQueuesDir = path.join(rootDir, "experiment-queues");
   const budgetsDir = path.join(rootDir, "budgets");
+  const operatorHandoffsDir = path.join(rootDir, "operator-handoffs");
 
   return {
     rootDir,
@@ -136,6 +139,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     reproducibilityManifestsDir,
     experimentQueuesDir,
     budgetsDir,
+    operatorHandoffsDir,
     backpressureSnapshotPath: path.join(guardrailsDir, "backpressure.json"),
     daemonHealthPath: path.join(healthDir, "daemon.json"),
     componentsHealthPath: path.join(healthDir, "components.json"),
@@ -181,6 +185,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     budgetPath(budgetId: string) {
       return path.join(budgetsDir, recordFileName(encodeRuntimePathSegment(budgetId)));
     },
+    operatorHandoffPath(handoffId: string) {
+      return path.join(operatorHandoffsDir, recordFileName(encodeRuntimePathSegment(handoffId)));
+    },
     goalLeasePath(goalId: string) {
       return path.join(goalLeasesDir, `${encodeRuntimePathSegment(goalId)}.json`);
     },
@@ -225,6 +232,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.reproducibilityManifestsDir,
       paths.experimentQueuesDir,
       paths.budgetsDir,
+      paths.operatorHandoffsDir,
     ].map((dir) => fsp.mkdir(dir, { recursive: true }))
   );
 }

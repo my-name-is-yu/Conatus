@@ -1,5 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as http from "node:http";
+import * as path from "node:path";
 import type { DriveSystem } from "../../platform/drive/drive-system.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import { getEventsDir } from "../../base/utils/paths.js";
@@ -7,6 +8,7 @@ import type { Logger } from "../logger.js";
 import { DEFAULT_PORT } from "../port-utils.js";
 import type { ApprovalBroker } from "../approval-broker.js";
 import type { OutboxStore } from "../store/index.js";
+import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import type { Envelope } from "../types/envelope.js";
 import type { SlackChannelAdapter } from "../gateway/slack-channel-adapter.js";
 import { EventServerAuth } from "./server-auth.js";
@@ -20,7 +22,6 @@ import { EventServerTriggerHandler } from "./server-trigger-handler.js";
 import type {
   ActiveWorkersProvider,
   EventServerConfig,
-  EventServerSnapshot,
 } from "./server-types.js";
 
 const DEFAULT_EVENT_FILE_MAX_ATTEMPTS = 3;
@@ -33,6 +34,7 @@ export class EventServer {
   private readonly host: string;
   private port: number;
   private readonly eventsDir: string;
+  private readonly runtimeRoot: string;
   private readonly logger?: Logger;
   private approvalBroker?: ApprovalBroker;
   private outboxStore?: OutboxStore;
@@ -61,6 +63,7 @@ export class EventServer {
     this.host = config?.host ?? "127.0.0.1";
     this.port = config?.port ?? DEFAULT_PORT;
     this.eventsDir = config?.eventsDir ?? getEventsDir();
+    this.runtimeRoot = config?.runtimeRoot ?? path.join(path.dirname(this.eventsDir), "runtime");
     this.logger = logger;
     this.approvalBroker = config?.approvalBroker;
     this.outboxStore = config?.outboxStore;
@@ -83,9 +86,8 @@ export class EventServer {
     this.commandHandler = new EventServerCommandHandler(
       async (eventType, data) => this.broadcast(eventType, data),
       () => this.commandEnvelopeHook,
-      (requestId) => this.approvalQueue.has(requestId),
+      async (requestId) => this.canResolveApproval(requestId),
       async (requestId, approved) => this.resolveApproval(requestId, approved),
-      () => this.approvalBroker,
       () => this.slackChannelAdapter,
     );
     this.router = new EventServerRouter({
@@ -162,11 +164,15 @@ export class EventServer {
     await this.sseManager.broadcast(eventType, data);
   }
 
-  async requestApproval(goalId: string, task: { id: string; description: string; action: string }): Promise<boolean> {
+  async requestApproval(
+    goalId: string,
+    task: { id: string; description: string; action: string },
+    options: { requestId?: string } = {}
+  ): Promise<boolean> {
     if (this.approvalBroker) {
-      return this.approvalBroker.requestApproval(goalId, task);
+      return this.approvalBroker.requestApproval(goalId, task, undefined, options.requestId);
     }
-    const requestId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = options.requestId ?? `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         this.approvalQueue.delete(requestId);
@@ -180,14 +186,46 @@ export class EventServer {
 
   async resolveApproval(requestId: string, approved: boolean): Promise<boolean> {
     if (this.approvalBroker) {
-      return this.approvalBroker.resolveApproval(requestId, approved, "http");
+      const resolved = await this.approvalBroker.resolveApproval(requestId, approved, "http");
+      if (resolved) {
+        await this.resolveOperatorHandoffApproval(requestId, approved, { allowAlreadyResolved: true });
+        return true;
+      }
     }
     const entry = this.approvalQueue.get(requestId);
-    if (!entry) return false;
-    clearTimeout(entry.timer);
-    this.approvalQueue.delete(requestId);
-    entry.resolve(approved);
-    void this.broadcast("approval_resolved", { requestId, approved });
+    if (entry) {
+      clearTimeout(entry.timer);
+      this.approvalQueue.delete(requestId);
+      entry.resolve(approved);
+      void this.broadcast("approval_resolved", { requestId, approved });
+      await this.resolveOperatorHandoffApproval(requestId, approved, { allowAlreadyResolved: true });
+      return true;
+    }
+    return this.resolveOperatorHandoffApproval(requestId, approved);
+  }
+
+  private async canResolveApproval(requestId: string): Promise<boolean> {
+    if (this.approvalBroker || this.approvalQueue.has(requestId)) return true;
+    const handoff = await new RuntimeOperatorHandoffStore(this.runtimeRoot).load(requestId);
+    return handoff?.status === "open";
+  }
+
+  private async resolveOperatorHandoffApproval(
+    requestId: string,
+    approved: boolean,
+    options: { allowAlreadyResolved?: boolean } = {}
+  ): Promise<boolean> {
+    const store = new RuntimeOperatorHandoffStore(this.runtimeRoot);
+    const existing = await store.load(requestId);
+    if (!existing) return false;
+    if (existing.status !== "open") return options.allowAlreadyResolved === true;
+    const resolved = await store.resolve(requestId, approved ? "approved" : "dismissed");
+    void this.broadcast("approval_resolved", {
+      requestId,
+      goalId: resolved.goal_id,
+      approved,
+      kind: "operator_handoff",
+    });
     return true;
   }
 

@@ -8,6 +8,10 @@ import { App, formatDaemonConnectionState } from "../app.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
+  lastApprovalProps: null as null | {
+    task: { work_description: string; rationale: string; goal_id: string };
+    onDecision: (approved: boolean) => void;
+  },
 }));
 
 vi.mock("ink", async () => {
@@ -44,7 +48,15 @@ vi.mock("../dashboard.js", () => ({
 
 vi.mock("../help-overlay.js", () => ({ HelpOverlay: () => null }));
 vi.mock("../settings-overlay.js", () => ({ SettingsOverlay: () => null }));
-vi.mock("../approval-overlay.js", () => ({ ApprovalOverlay: () => null }));
+vi.mock("../approval-overlay.js", () => ({
+  ApprovalOverlay: (props: {
+    task: { work_description: string; rationale: string; goal_id: string };
+    onDecision: (approved: boolean) => void;
+  }) => {
+    testState.lastApprovalProps = props;
+    return null;
+  },
+}));
 vi.mock("../report-view.js", () => ({ ReportView: () => null }));
 
 function createDaemonClientMock() {
@@ -266,6 +278,7 @@ describe("standalone slash command routing", () => {
 describe("daemon-mode chat routing", () => {
   beforeEach(() => {
     testState.lastChatProps = null;
+    testState.lastApprovalProps = null;
   });
 
   afterEach(() => {
@@ -303,6 +316,48 @@ describe("daemon-mode chat routing", () => {
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
     expect(daemonClient.chat).not.toHaveBeenCalled();
 
+    screen.unmount();
+  });
+
+  it("surfaces operator handoffs from daemon events through the approval overlay", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    expect(daemonClient.on).toHaveBeenCalledWith("operator_handoff_required", expect.any(Function));
+    daemonClient.handlers.get("operator_handoff_required")?.({
+      handoff_id: "handoff-1",
+      goal_id: "goal-a",
+      title: "Deadline handoff",
+      summary: "Deadline finalization requires review.",
+      recommended_action: "Review final artifact.",
+      triggers: ["deadline"],
+      created_at: "2026-05-01T00:00:00.000Z",
+    });
+    await flush();
+
+    expect(testState.lastApprovalProps?.task.work_description).toBe("Deadline handoff");
+    expect(testState.lastApprovalProps?.task.rationale).toBe("Deadline finalization requires review.");
+    testState.lastApprovalProps?.onDecision(true);
+
+    expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-1", true);
     screen.unmount();
   });
 

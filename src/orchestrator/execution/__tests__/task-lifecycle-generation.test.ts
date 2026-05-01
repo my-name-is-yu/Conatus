@@ -18,6 +18,7 @@ import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { upsertDreamPlaybook } from "../../../platform/dream/playbook-memory.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
 
 // ─── Spy LLM Client ───
 
@@ -131,6 +132,7 @@ describe("TaskLifecycle", async () => {
       logger?: import("../../../runtime/logger.js").Logger;
       adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
+      operatorHandoffStore?: RuntimeOperatorHandoffStore;
     }
   ): TaskLifecycle {
     strategyManager = new StrategyManager(stateManager, llmClient);
@@ -982,6 +984,68 @@ describe("TaskLifecycle", async () => {
       const result = await lifecycle.checkIrreversibleApproval(task, 0.8);
       // With high trust + high confidence + reversible → should skip approval
       expect(result).toBe(true);
+    });
+
+    it("requires approval and records a handoff for external submission tasks even when otherwise reversible", async () => {
+      let approvalCalled = false;
+      const handoffStore = new RuntimeOperatorHandoffStore(`${tmpDir}/runtime`);
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm, {
+        approvalFn: async () => {
+          approvalCalled = true;
+          return false;
+        },
+        operatorHandoffStore: handoffStore,
+      });
+      await trustManager.setOverride("normal", 50, "test");
+
+      const task = makeTask({
+        work_description: "Submit the final Kaggle submission.csv to the external competition",
+        approach: "Upload submission.csv through the Kaggle submit workflow",
+        reversibility: "reversible",
+      });
+      const result = await lifecycle.checkIrreversibleApproval(task, 0.9);
+
+      expect(result).toBe(false);
+      expect(approvalCalled).toBe(true);
+      expect(await handoffStore.listOpen()).toEqual([]);
+      expect(await handoffStore.load("handoff:goal-1:task:task-1:approval-required")).toMatchObject({
+        goal_id: "goal-1",
+        status: "dismissed",
+        triggers: ["external_action"],
+        required_approvals: [task.work_description],
+        gate: expect.objectContaining({
+          external_action_requires_approval: true,
+        }),
+      });
+    });
+
+    it("resolves external submission handoffs as approved when the operator approves", async () => {
+      const handoffStore = new RuntimeOperatorHandoffStore(`${tmpDir}/runtime`);
+      const llm = createMockLLMClient([]);
+      let receivedApprovalRequestId: string | undefined;
+      const lifecycle = createLifecycle(llm, {
+        approvalFn: async (task) => {
+          receivedApprovalRequestId = (task as unknown as { approval_request_id?: string }).approval_request_id;
+          return true;
+        },
+        operatorHandoffStore: handoffStore,
+      });
+      await trustManager.setOverride("normal", 50, "test");
+
+      const task = makeTask({
+        work_description: "Publish the final report to an external service",
+        reversibility: "reversible",
+      });
+      const result = await lifecycle.checkIrreversibleApproval(task, 0.9);
+
+      expect(result).toBe(true);
+      expect(receivedApprovalRequestId).toBe("handoff:goal-1:task:task-1:approval-required");
+      expect(await handoffStore.listOpen()).toEqual([]);
+      expect(await handoffStore.load("handoff:goal-1:task:task-1:approval-required")).toMatchObject({
+        status: "approved",
+        triggers: ["external_action"],
+      });
     });
 
     it("uses default confidence of 0.5 when not provided", async () => {

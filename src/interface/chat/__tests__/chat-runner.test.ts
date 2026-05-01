@@ -19,6 +19,7 @@ import type { Task } from "../../../base/types/task.js";
 import type { ChatEvent } from "../chat-events.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
+import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -1167,6 +1168,19 @@ describe("ChatRunner", () => {
           exitCode: null,
           signal: null,
         }));
+        await new RuntimeOperatorHandoffStore(path.join(tmpDir, "runtime")).create({
+          handoff_id: "handoff-deadline",
+          goal_id: "goal-a",
+          triggers: ["deadline", "finalization"],
+          title: "Deadline handoff",
+          summary: "Deadline finalization requires review.",
+          current_status: "mode=finalization",
+          recommended_action: "Review final artifact.",
+          next_action: {
+            label: "Review final artifact",
+            approval_required: true,
+          },
+        });
         const adapter = makeMockAdapter();
         const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
 
@@ -1183,6 +1197,8 @@ describe("ChatRunner", () => {
         expect(status.output).toContain("run:agent:agent-runtime");
         expect(status.output).toContain("run:process:proc-failed");
         expect(status.output).toContain("run:process:proc-lost");
+        expect(status.output).toContain("Operator handoffs pending:");
+        expect(status.output).toContain("Deadline handoff");
         expect(focused.success).toBe(true);
         expect(focused.output).toContain("Goal status: Goal goal-a");
         expect(focused.output).toContain("Dimensions:");

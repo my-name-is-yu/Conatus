@@ -46,7 +46,6 @@ export { LLMGeneratedTaskSchema } from "./task-generation.js";
 import { generateTask as _generateTask } from "./task-generation.js";
 import { durationToMs } from "./task-executor.js";
 import { executeTaskWithGuards, verifyExecutionWithGitDiff } from "./task-execution-helpers.js";
-import { checkIrreversibleApproval as _checkIrreversibleApproval } from "./task-approval-check.js";
 import { runPipelineTaskCycle as runPipelineTaskCycleFn } from "./task-pipeline-cycle.js";
 import type { PipelineCycleOptions } from "./task-pipeline-types.js";
 import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/knowledge-transfer.js";
@@ -60,6 +59,10 @@ import type { TaskAgentLoopRunner } from "../agent-loop/task-agent-loop-runner.j
 import { taskAgentLoopResultToAgentResult } from "../agent-loop/task-agent-loop-result.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
+import type {
+  RuntimeOperatorHandoffStore,
+  RuntimeOperatorHandoffTrigger,
+} from "../../../runtime/store/operator-handoff-store.js";
 import {
   formatPlaybookHints,
   formatPatternHints,
@@ -126,6 +129,8 @@ export interface TaskLifecycleOptions {
   revertCwd?: string;
   /** Optional explicit workspace root for post-execution health checks. */
   healthCheckCwd?: string;
+  /** Optional durable operator handoff store for approval-required execution gates. */
+  operatorHandoffStore?: RuntimeOperatorHandoffStore;
 }
 
 export interface TaskCycleRunOptions {
@@ -170,6 +175,7 @@ export class TaskLifecycle {
   private readonly gateway?: IPromptGateway;
   private readonly revertCwd?: string;
   private readonly healthCheckCwd?: string;
+  private readonly operatorHandoffStore?: RuntimeOperatorHandoffStore;
   private onTaskComplete?: (strategyId: string) => void;
 
   constructor(deps: TaskLifecycleDeps);
@@ -228,6 +234,7 @@ export class TaskLifecycle {
     this.gateway = resolvedOptions?.gateway;
     this.revertCwd = resolvedOptions?.revertCwd;
     this.healthCheckCwd = resolvedOptions?.healthCheckCwd;
+    this.operatorHandoffStore = resolvedOptions?.operatorHandoffStore;
   }
 
   /** Register a callback invoked when a task completes successfully (used by PortfolioManager). */
@@ -357,7 +364,97 @@ export class TaskLifecycle {
 
   /** Check whether the task requires human approval and request it if so. */
   async checkIrreversibleApproval(task: Task, confidence: number = 0.5): Promise<boolean> {
-    return _checkIrreversibleApproval(this.trustManager, this.approvalFn, task, confidence);
+    const domain = task.task_category;
+    const trustNeedsApproval = await this.trustManager.requiresApproval(
+      task.reversibility,
+      domain,
+      confidence,
+      task.task_category
+    );
+    const externalAction = isExternalActionTask(task);
+    if (!trustNeedsApproval && !externalAction) {
+      return true;
+    }
+
+    const handoffId = taskApprovalHandoffId(task);
+    const recordedHandoffId = await this.recordApprovalHandoff(task, handoffId, {
+      trustNeedsApproval,
+      externalAction,
+    });
+    const approved = await this.approvalFn({
+      ...task,
+      approval_request_id: handoffId,
+      operator_handoff_id: handoffId,
+    } as Task);
+    if (recordedHandoffId) {
+      await this.resolveApprovalHandoff(recordedHandoffId, approved);
+    }
+    return approved;
+  }
+
+  private async recordApprovalHandoff(
+    task: Task,
+    handoffId: string,
+    input: { trustNeedsApproval: boolean; externalAction: boolean }
+  ): Promise<string | null> {
+    if (!this.operatorHandoffStore) return null;
+    const triggers: RuntimeOperatorHandoffTrigger[] = [];
+    if (input.trustNeedsApproval) triggers.push("irreversible_action");
+    if (input.externalAction) triggers.push("external_action");
+    try {
+      const record = await this.operatorHandoffStore.create({
+        handoff_id: handoffId,
+        goal_id: task.goal_id,
+        triggers,
+        title: `Approval required: ${task.work_description}`,
+        summary: input.externalAction
+          ? "Task appears to perform an external or submission action and cannot proceed without operator approval."
+          : "Task reversibility/trust policy requires operator approval before execution.",
+        current_status: `task=${task.id}, reversibility=${task.reversibility}, category=${task.task_category}`,
+        recommended_action: "Review the task scope and approve only if the external or irreversible action is intended.",
+        risks: [
+          ...(input.externalAction ? ["External submission/publish/send actions can mutate systems outside local runtime state."] : []),
+          ...(input.trustNeedsApproval ? ["Irreversible task execution may be difficult or impossible to roll back."] : []),
+        ],
+        required_approvals: [task.work_description],
+        approval_request_id: handoffId,
+        next_action: {
+          label: task.work_description,
+          approval_required: true,
+        },
+        gate: {
+          autonomous_task_generation: "constrain",
+          external_action_requires_approval: true,
+        },
+        evidence_refs: [{
+          kind: "task",
+          ref: `tasks/${task.goal_id}/${task.id}.json`,
+          observed_at: task.created_at,
+        }],
+        created_at: task.created_at,
+      });
+      return record.handoff_id;
+    } catch (err) {
+      this.logger?.warn("TaskLifecycle: failed to record operator handoff", {
+        goalId: task.goal_id,
+        taskId: task.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  private async resolveApprovalHandoff(handoffId: string, approved: boolean): Promise<void> {
+    if (!this.operatorHandoffStore) return;
+    try {
+      await this.operatorHandoffStore.resolve(handoffId, approved ? "approved" : "dismissed");
+    } catch (err) {
+      this.logger?.warn("TaskLifecycle: failed to resolve operator handoff", {
+        handoffId,
+        approved,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private async buildDimensionSelectionBackoff(goalId: string): Promise<DimensionSelectionOptions> {
@@ -682,4 +779,22 @@ export class TaskLifecycle {
   private static isDepsObject(value: StateManager | TaskLifecycleDeps): value is TaskLifecycleDeps {
     return "stateManager" in value;
   }
+}
+
+function isExternalActionTask(task: Task): boolean {
+  const haystack = [
+    task.work_description,
+    task.approach,
+    task.rationale,
+    ...task.constraints,
+    ...task.success_criteria.map((criterion) => `${criterion.description} ${criterion.verification_method}`),
+    task.scope_boundary.blast_radius,
+    ...task.scope_boundary.in_scope,
+    ...task.scope_boundary.out_of_scope,
+  ].join("\n").toLowerCase();
+  return /\b(submit|submission|publish|deploy|release|upload|send|email|notify|external|production)\b/.test(haystack);
+}
+
+function taskApprovalHandoffId(task: Task): string {
+  return `handoff:${task.goal_id}:task:${task.id}:approval-required`;
 }

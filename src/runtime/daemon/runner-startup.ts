@@ -101,6 +101,11 @@ export async function startDaemonRunner(
         const description = String(task["description"] ?? "");
         const action = String(task["action"] ?? "");
         const taskId = String(task["id"] ?? "");
+        const approvalRequestId = typeof task["approval_request_id"] === "string"
+          ? task["approval_request_id"]
+          : typeof task["operator_handoff_id"] === "string"
+            ? task["operator_handoff_id"]
+            : undefined;
 
         if (context.reportingEngine) {
           try {
@@ -121,7 +126,7 @@ export async function startDaemonRunner(
           id: taskId,
           description,
           action,
-        });
+        }, approvalRequestId ? { requestId: approvalRequestId } : {});
       };
     }
 

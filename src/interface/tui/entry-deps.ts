@@ -33,6 +33,7 @@ export async function buildStandaloneTuiDeps() {
   const { ScheduleEngine } = await import("../../runtime/schedule/engine.js");
   const { RuntimeEvidenceLedger } = await import("../../runtime/store/evidence-ledger.js");
   const { RuntimeBudgetStore } = await import("../../runtime/store/budget-store.js");
+  const { RuntimeOperatorHandoffStore } = await import("../../runtime/store/operator-handoff-store.js");
   const { MemoryLifecycleManager, DriveScoreAdapter } = await import("../../platform/knowledge/memory/memory-lifecycle.js");
   const { KnowledgeManager } = await import("../../platform/knowledge/knowledge-manager.js");
   const { CharacterConfigManager } = await import("../../platform/traits/character-config.js");
@@ -205,6 +206,10 @@ export async function buildStandaloneTuiDeps() {
       })
     : undefined;
 
+  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot);
+  const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+
   const taskLifecycle = new TaskLifecycle({
     stateManager,
     llmClient,
@@ -218,6 +223,7 @@ export async function buildStandaloneTuiDeps() {
       agentLoopRunner,
       revertCwd: process.cwd(),
       healthCheckCwd: process.cwd(),
+      operatorHandoffStore,
     },
   });
 
@@ -232,7 +238,6 @@ export async function buildStandaloneTuiDeps() {
     rankDimensions: DriveScorer.rankDimensions,
   };
 
-  const runtimeBudgetStore = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
   const coreLoop = new CoreLoop({
     stateManager,
     observationEngine,
@@ -255,6 +260,7 @@ export async function buildStandaloneTuiDeps() {
     corePhaseRunner,
     evidenceLedger,
     runtimeBudgetStore,
+    operatorHandoffStore,
   });
 
   const scheduleEngine = new ScheduleEngine({

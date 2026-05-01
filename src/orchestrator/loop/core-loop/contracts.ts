@@ -39,6 +39,7 @@ import type {
   RuntimeBudgetLimitInput,
   RuntimeBudgetStore,
 } from "../../../runtime/store/budget-store.js";
+import type { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
 import type { DeadlineFinalizationStatus } from "../../../platform/time/deadline-finalization.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 export type {
@@ -327,6 +328,8 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
   evidenceLedger?: RuntimeEvidenceLedgerPort;
   /** Optional durable budget store for long-running goal/run budget governance. */
   runtimeBudgetStore?: RuntimeBudgetStore;
+  /** Optional durable operator handoff store for deadline, budget, and approval gates. */
+  operatorHandoffStore?: RuntimeOperatorHandoffStore;
   /** Optional bounded agentloop runner for core phases. */
   corePhaseRunner?: CorePhaseRunner;
   /** Optional live approval broker for wait/resume approvals. */
