@@ -428,12 +428,23 @@ export interface RuntimeEvidenceSummary {
   warnings: RuntimeEvidenceReadWarning[];
 }
 
+export interface RuntimeEvidenceSummaryIndex {
+  schema_version: "runtime-evidence-summary-index-v1";
+  generated_at: string;
+  canonical_log_path: string;
+  canonical_log_size: number;
+  canonical_log_mtime_ms: number;
+  summary: RuntimeEvidenceSummary;
+}
+
 export interface RuntimeEvidenceLedgerPort {
   append(input: RuntimeEvidenceEntryInput): Promise<RuntimeEvidenceEntry[]>;
   readByGoal?(goalId: string): Promise<RuntimeEvidenceReadResult>;
   readByRun?(runId: string): Promise<RuntimeEvidenceReadResult>;
   summarizeGoal?(goalId: string): Promise<RuntimeEvidenceSummary>;
   summarizeRun?(runId: string): Promise<RuntimeEvidenceSummary>;
+  rebuildSummaryIndexForGoal?(goalId: string): Promise<RuntimeEvidenceSummary>;
+  rebuildSummaryIndexForRun?(runId: string): Promise<RuntimeEvidenceSummary>;
 }
 
 export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
@@ -481,6 +492,9 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
       await fsp.mkdir(path.dirname(target), { recursive: true });
       await fsp.appendFile(target, `${JSON.stringify(entry)}\n`, "utf8");
     }));
+    await Promise.all([...targets].map(async (target) => {
+      await rebuildSummaryIndex(target);
+    }));
     return [entry];
   }
 
@@ -493,14 +507,89 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
   }
 
   async summarizeGoal(goalId: string): Promise<RuntimeEvidenceSummary> {
+    const indexed = await readSummaryIndex(this.paths.evidenceGoalPath(goalId), { goal_id: goalId });
+    if (indexed) return indexed.summary;
     const read = await this.readByGoal(goalId);
-    return summarizeEvidence({ goal_id: goalId }, read);
+    const summary = summarizeEvidence({ goal_id: goalId }, read);
+    return summary;
   }
 
   async summarizeRun(runId: string): Promise<RuntimeEvidenceSummary> {
+    const indexed = await readSummaryIndex(this.paths.evidenceRunPath(runId), { run_id: runId });
+    if (indexed) return indexed.summary;
     const read = await this.readByRun(runId);
-    return summarizeEvidence({ run_id: runId }, read);
+    const summary = summarizeEvidence({ run_id: runId }, read);
+    return summary;
   }
+
+  async rebuildSummaryIndexForGoal(goalId: string): Promise<RuntimeEvidenceSummary> {
+    return rebuildSummaryIndex(this.paths.evidenceGoalPath(goalId));
+  }
+
+  async rebuildSummaryIndexForRun(runId: string): Promise<RuntimeEvidenceSummary> {
+    return rebuildSummaryIndex(this.paths.evidenceRunPath(runId));
+  }
+}
+
+async function rebuildSummaryIndex(canonicalPath: string): Promise<RuntimeEvidenceSummary> {
+  const scope = summaryScopeFromPath(canonicalPath);
+  const read = await readEvidenceFile(canonicalPath);
+  const summary = summarizeEvidence(scope, read);
+  await writeSummaryIndex(canonicalPath, summary);
+  return summary;
+}
+
+function summaryIndexPath(canonicalPath: string): string {
+  return `${canonicalPath}.summary.json`;
+}
+
+function summaryScopeFromPath(canonicalPath: string): RuntimeEvidenceSummary["scope"] {
+  const basename = path.basename(canonicalPath, ".jsonl");
+  const decoded = decodeURIComponent(basename);
+  return canonicalPath.includes(`${path.sep}runs${path.sep}`) ? { run_id: decoded } : { goal_id: decoded };
+}
+
+async function readSummaryIndex(
+  canonicalPath: string,
+  expectedScope: RuntimeEvidenceSummary["scope"]
+): Promise<RuntimeEvidenceSummaryIndex | null> {
+  let text: string;
+  try {
+    text = await fsp.readFile(summaryIndexPath(canonicalPath), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+  try {
+    const parsed = JSON.parse(text) as RuntimeEvidenceSummaryIndex;
+    if (parsed.schema_version !== "runtime-evidence-summary-index-v1") return null;
+    if (parsed.summary.schema_version !== "runtime-evidence-summary-v1") return null;
+    const stat = await fsp.stat(canonicalPath);
+    if (parsed.canonical_log_size !== stat.size) return null;
+    if (parsed.canonical_log_mtime_ms !== stat.mtimeMs) return null;
+    if (expectedScope.goal_id && parsed.summary.scope.goal_id !== expectedScope.goal_id) return null;
+    if (expectedScope.run_id && parsed.summary.scope.run_id !== expectedScope.run_id) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function writeSummaryIndex(
+  canonicalPath: string,
+  summary: RuntimeEvidenceSummary
+): Promise<void> {
+  const stat = await fsp.stat(canonicalPath);
+  const index: RuntimeEvidenceSummaryIndex = {
+    schema_version: "runtime-evidence-summary-index-v1",
+    generated_at: new Date().toISOString(),
+    canonical_log_path: canonicalPath,
+    canonical_log_size: stat.size,
+    canonical_log_mtime_ms: stat.mtimeMs,
+    summary,
+  };
+  await fsp.mkdir(path.dirname(canonicalPath), { recursive: true });
+  await fsp.writeFile(summaryIndexPath(canonicalPath), `${JSON.stringify(index)}\n`, "utf8");
 }
 
 async function readEvidenceFile(filePath: string): Promise<RuntimeEvidenceReadResult> {
