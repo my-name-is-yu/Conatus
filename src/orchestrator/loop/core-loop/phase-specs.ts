@@ -121,6 +121,20 @@ export const DreamReviewMemoryRefSchema = z.object({
   ref: z.string().min(1).optional(),
   summary: z.string().min(1),
   authority: z.literal("advisory_only").default("advisory_only"),
+  relevance_score: z.number().min(0).max(1).optional(),
+  source_reliability: z.number().min(0).max(1).optional(),
+  recency_score: z.number().min(0).max(1).optional(),
+  prior_success_contribution: z.number().min(0).max(1).optional(),
+  retrieval: z.object({
+    kind: z.enum(["route_hit", "fallback_hit", "checkpoint", "manual", "unknown"]).default("unknown"),
+    score: z.number().min(0).max(1).optional(),
+    confidence: z.number().min(0).max(1).optional(),
+  }).strict().optional(),
+  ranking_trace: z.object({
+    score: z.number().min(0).max(1),
+    decision: z.enum(["admitted", "rejected"]),
+    reason: z.string().min(1),
+  }).strict().optional(),
 }).strict();
 export type DreamReviewMemoryRef = z.infer<typeof DreamReviewMemoryRefSchema>;
 

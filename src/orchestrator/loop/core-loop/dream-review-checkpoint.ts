@@ -8,6 +8,7 @@ import type {
   DreamReviewActiveHypothesis,
   DreamReviewCheckpointEvidence,
   DreamReviewFailedLineage,
+  DreamReviewMemoryRef,
   DreamReviewCheckpointTrigger,
   DreamReviewRejectedApproach,
   DreamRunControlPolicyDecision,
@@ -95,10 +96,7 @@ export function normalizeDreamReviewCheckpoint(
     trigger: output.trigger ?? request.trigger,
     current_goal: output.current_goal || goal.title,
     active_dimensions: output.active_dimensions.length > 0 ? output.active_dimensions : request.activeDimensions,
-    relevant_memories: output.relevant_memories.map((memory) => ({
-      ...memory,
-      authority: "advisory_only",
-    })),
+    relevant_memories: rankDreamReviewMemories(output.relevant_memories, request.maxGuidanceItems),
     active_hypotheses: output.active_hypotheses,
     rejected_approaches: output.rejected_approaches,
     next_strategy_candidates: downrankRepeatedFailedLineageCandidates(
@@ -149,6 +147,62 @@ function normalizeRunControlRecommendations(
     id: recommendation.id ?? `${request.trigger}-run-control-${index + 1}`,
     policy_decision: decideRunControlPolicy(recommendation, request),
   }));
+}
+
+function rankDreamReviewMemories(
+  memories: DreamReviewMemoryRef[],
+  admitLimit: number
+): DreamReviewMemoryRef[] {
+  return memories
+    .map((memory) => ({
+      ...memory,
+      authority: "advisory_only" as const,
+      ranking_trace: {
+        score: memoryRankScore(memory),
+        decision: "admitted" as const,
+        reason: memoryRankReason(memory),
+      },
+    }))
+    .sort((a, b) =>
+      (b.ranking_trace?.score ?? 0) - (a.ranking_trace?.score ?? 0)
+    )
+    .map((memory, index) => ({
+      ...memory,
+      ranking_trace: {
+        score: memory.ranking_trace?.score ?? 0,
+        decision: index < admitLimit ? "admitted" : "rejected",
+        reason: index < admitLimit
+          ? memory.ranking_trace?.reason ?? "Ranked into Dream memory context."
+          : `Rejected by memory admission cap ${admitLimit}.`,
+      },
+    }));
+}
+
+function memoryRankScore(memory: DreamReviewMemoryRef): number {
+  const retrievalKind = memory.retrieval?.kind ?? (memory.source_type === "soil" ? "route_hit" : "checkpoint");
+  const routeScore =
+    retrievalKind === "route_hit" ? 0.2
+      : retrievalKind === "fallback_hit" ? 0.08
+        : retrievalKind === "checkpoint" ? 0.05
+          : 0;
+  const score =
+    (memory.relevance_score ?? memory.retrieval?.score ?? 0.5) * 0.35
+    + (memory.source_reliability ?? memory.retrieval?.confidence ?? 0.5) * 0.25
+    + (memory.prior_success_contribution ?? 0) * 0.2
+    + (memory.recency_score ?? 0.5) * 0.1
+    + routeScore;
+  return Math.max(0, Math.min(1, Number(score.toFixed(4))));
+}
+
+function memoryRankReason(memory: DreamReviewMemoryRef): string {
+  const retrievalKind = memory.retrieval?.kind ?? (memory.source_type === "soil" ? "route_hit" : "checkpoint");
+  return [
+    `kind=${retrievalKind}`,
+    `relevance=${memory.relevance_score ?? memory.retrieval?.score ?? "default"}`,
+    `reliability=${memory.source_reliability ?? memory.retrieval?.confidence ?? "default"}`,
+    `success=${memory.prior_success_contribution ?? 0}`,
+    `recency=${memory.recency_score ?? "default"}`,
+  ].join("; ");
 }
 
 function decideRunControlPolicy(

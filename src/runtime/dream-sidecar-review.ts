@@ -89,6 +89,11 @@ export interface RuntimeDreamSidecarReview {
     ref?: string;
     summary: string;
     authority: "advisory_only";
+    ranking_trace?: {
+      score: number;
+      decision: "admitted" | "rejected";
+      reason: string;
+    };
   }>;
   suggested_next_moves: Array<{
     title: string;
@@ -345,7 +350,7 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
   const moves: RuntimeDreamSidecarReview["suggested_next_moves"] = [];
   const rejectedApproaches = collectRejectedApproaches(summary);
   const failedLineages = summary.failed_lineages.filter((lineage) => lineage.count >= 2);
-  for (const checkpoint of summary.dream_checkpoints.slice(0, 2)) {
+  for (const checkpoint of rankCheckpointsByMemory(summary).slice(0, 2)) {
     for (const candidate of checkpoint.next_strategy_candidates) {
       if (isRejectedDreamCandidate(candidate, rejectedApproaches)) continue;
       if (!candidate.retry_reason && isFailedLineageMove(candidate.title, candidate.rationale, failedLineages)) continue;
@@ -389,6 +394,19 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
     });
   }
   return moves.slice(0, 6);
+}
+
+function rankCheckpointsByMemory(summary: RuntimeEvidenceSummary): RuntimeEvidenceSummary["dream_checkpoints"] {
+  return [...summary.dream_checkpoints].sort((a, b) =>
+    checkpointMemoryScore(b) - checkpointMemoryScore(a)
+    || b.occurred_at.localeCompare(a.occurred_at)
+  );
+}
+
+function checkpointMemoryScore(checkpoint: RuntimeEvidenceSummary["dream_checkpoints"][number]): number {
+  return Math.max(0, ...checkpoint.relevant_memories.map((memory) =>
+    memory.ranking_trace?.score ?? sidecarMemoryRankScore(memory)
+  ));
 }
 
 function isFailedLineageMove(
@@ -541,9 +559,57 @@ function buildAdvisoryMemories(summary: RuntimeEvidenceSummary): RuntimeDreamSid
       ...(memory.ref ? { ref: memory.ref } : {}),
       summary: memory.summary,
       authority: "advisory_only" as const,
+      ranking_trace: {
+        score: memory.ranking_trace?.score ?? sidecarMemoryRankScore(memory),
+        decision: "admitted" as const,
+        reason: sidecarMemoryRankReason(memory, memory.ranking_trace?.decision),
+      },
     }))
   );
-  return memories.slice(0, 8);
+  return memories
+    .sort((a, b) => (b.ranking_trace?.score ?? 0) - (a.ranking_trace?.score ?? 0))
+    .map((memory, index) => ({
+      ...memory,
+      ranking_trace: {
+        score: memory.ranking_trace?.score ?? 0,
+        decision: index < 8 ? "admitted" : "rejected",
+        reason: index < 8 ? memory.ranking_trace?.reason ?? "Ranked into sidecar memory context." : "Rejected by sidecar memory cap 8.",
+      },
+    }));
+}
+
+function sidecarMemoryRankScore(
+  memory: RuntimeEvidenceSummary["dream_checkpoints"][number]["relevant_memories"][number]
+): number {
+  const retrievalKind = memory.retrieval?.kind ?? (memory.source_type === "soil" ? "route_hit" : "checkpoint");
+  const routeScore =
+    retrievalKind === "route_hit" ? 0.2
+      : retrievalKind === "fallback_hit" ? 0.08
+        : retrievalKind === "checkpoint" ? 0.05
+          : 0;
+  const score =
+    (memory.relevance_score ?? memory.retrieval?.score ?? 0.5) * 0.35
+    + (memory.source_reliability ?? memory.retrieval?.confidence ?? 0.5) * 0.25
+    + (memory.prior_success_contribution ?? 0) * 0.2
+    + (memory.recency_score ?? 0.5) * 0.1
+    + routeScore;
+  return Math.max(0, Math.min(1, Number(score.toFixed(4))));
+}
+
+function sidecarMemoryRankReason(
+  memory: RuntimeEvidenceSummary["dream_checkpoints"][number]["relevant_memories"][number],
+  checkpointDecision?: "admitted" | "rejected"
+): string {
+  const retrievalKind = memory.retrieval?.kind ?? (memory.source_type === "soil" ? "route_hit" : "checkpoint");
+  return [
+    `sidecar_rank=advisory`,
+    ...(checkpointDecision ? [`checkpoint_decision=${checkpointDecision}`] : []),
+    `kind=${retrievalKind}`,
+    `relevance=${memory.relevance_score ?? memory.retrieval?.score ?? "default"}`,
+    `reliability=${memory.source_reliability ?? memory.retrieval?.confidence ?? "default"}`,
+    `success=${memory.prior_success_contribution ?? 0}`,
+    `recency=${memory.recency_score ?? "default"}`,
+  ].join("; ");
 }
 
 function buildWarnings(

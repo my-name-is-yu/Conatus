@@ -209,6 +209,77 @@ describe("Dream review checkpoint trigger planning", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("ranks Dream memories by relevance, reliability, route priority, and prior success", () => {
+    const goal = makeGoal({ title: "Improve benchmark score" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 1,
+      result: makeEmptyIterationResult("goal-1", 1, { stallDetected: true }),
+      driveScores: [],
+    });
+    expect(request).not.toBeNull();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Rank memories before guidance.",
+      trigger: "plateau",
+      current_goal: "Improve benchmark score",
+      active_dimensions: ["balanced_accuracy"],
+      relevant_memories: [
+        {
+          source_type: "runtime_evidence",
+          ref: "checkpoint://recent-low",
+          summary: "Recent but weak checkpoint memory.",
+          relevance_score: 0.25,
+          source_reliability: 0.4,
+          recency_score: 1,
+          retrieval: { kind: "checkpoint", confidence: 0.4 },
+          authority: "advisory_only",
+        },
+        {
+          source_type: "soil",
+          ref: "soil://old-high",
+          summary: "Older high-confidence route memory with prior success.",
+          relevance_score: 0.92,
+          source_reliability: 0.95,
+          recency_score: 0.15,
+          prior_success_contribution: 0.9,
+          retrieval: { kind: "route_hit", score: 0.92, confidence: 0.95 },
+          authority: "advisory_only",
+        },
+        {
+          source_type: "soil",
+          ref: "soil://fallback-mid",
+          summary: "Fallback memory with moderate score.",
+          relevance_score: 0.72,
+          source_reliability: 0.7,
+          recency_score: 0.7,
+          retrieval: { kind: "fallback_hit", score: 0.72, confidence: 0.7 },
+          authority: "advisory_only",
+        },
+      ],
+      guidance: "Use high-confidence advisory memory.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.8,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.relevant_memories.map((memory) => memory.ref)).toEqual([
+      "soil://old-high",
+      "soil://fallback-mid",
+      "checkpoint://recent-low",
+    ]);
+    expect(normalized.relevant_memories[0]).toMatchObject({
+      authority: "advisory_only",
+      ranking_trace: {
+        decision: "admitted",
+        reason: expect.stringContaining("kind=route_hit"),
+      },
+    });
+    expect(normalized.context_authority).toBe("advisory_only");
+  });
+
   it("carries active hypotheses and rejected approaches into the next checkpoint request", () => {
     const request = buildDreamReviewCheckpointRequest({
       goal: makeGoal(),
