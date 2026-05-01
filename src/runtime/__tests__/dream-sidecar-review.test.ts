@@ -174,6 +174,120 @@ describe("Runtime Dream sidecar review", () => {
     }));
   });
 
+  it("ranks advisory memories across checkpoints and exposes ranking traces", async () => {
+    await seedActiveRun("run:coreloop:memory-rank");
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      id: "old-high-memory",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "dream_checkpoint",
+      scope: { run_id: "run:coreloop:memory-rank", loop_index: 1, phase: "dream_review_checkpoint" },
+      dream_checkpoints: [{
+        trigger: "plateau",
+        summary: "Older checkpoint with strong Soil memory.",
+        current_goal: "Improve benchmark",
+        active_dimensions: ["balanced_accuracy"],
+        recent_strategy_families: [],
+        exhausted: [],
+        promising: [],
+        relevant_memories: [{
+          source_type: "soil",
+          ref: "soil://old-high",
+          summary: "Older high-confidence route memory with prior success.",
+          relevance_score: 0.92,
+          source_reliability: 0.95,
+          recency_score: 0.1,
+          prior_success_contribution: 0.9,
+          retrieval: { kind: "route_hit", score: 0.92, confidence: 0.95 },
+          ranking_trace: {
+            score: 0.9,
+            decision: "rejected",
+            reason: "Rejected by checkpoint memory admission cap 1.",
+          },
+          authority: "advisory_only",
+        }],
+        active_hypotheses: [],
+        rejected_approaches: [],
+        next_strategy_candidates: [{
+          title: "Use old high memory",
+          rationale: "Follow the high-confidence Soil route memory.",
+          target_dimensions: ["balanced_accuracy"],
+        }],
+        guidance: "Preserve useful memory.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.8,
+      }],
+      summary: "Old memory checkpoint saved.",
+    });
+    await ledger.append({
+      id: "recent-low-memory",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "dream_checkpoint",
+      scope: { run_id: "run:coreloop:memory-rank", loop_index: 2, phase: "dream_review_checkpoint" },
+      dream_checkpoints: [{
+        trigger: "iteration",
+        summary: "Recent checkpoint with weak memory.",
+        current_goal: "Improve benchmark",
+        active_dimensions: ["balanced_accuracy"],
+        recent_strategy_families: [],
+        exhausted: [],
+        promising: [],
+        relevant_memories: [{
+          source_type: "runtime_evidence",
+          ref: "checkpoint://recent-low",
+          summary: "Recent but weak checkpoint memory.",
+          relevance_score: 0.25,
+          source_reliability: 0.4,
+          recency_score: 1,
+          retrieval: { kind: "checkpoint", confidence: 0.4 },
+          authority: "advisory_only",
+        }],
+        active_hypotheses: [],
+        rejected_approaches: [],
+        next_strategy_candidates: [{
+          title: "Use recent low memory",
+          rationale: "Follow the recent checkpoint memory.",
+          target_dimensions: ["balanced_accuracy"],
+        }],
+        guidance: "Preserve recency.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.8,
+      }],
+      summary: "Recent memory checkpoint saved.",
+    });
+
+    const review = await createRuntimeDreamSidecarReview({
+      stateManager,
+      runId: "run:coreloop:memory-rank",
+    });
+
+    expect(review.advisory_memories.map((memory) => memory.ref).slice(0, 2)).toEqual([
+      "soil://old-high",
+      "checkpoint://recent-low",
+    ]);
+    expect(review.advisory_memories[0]).toMatchObject({
+      authority: "advisory_only",
+      ranking_trace: {
+        decision: "admitted",
+        reason: expect.stringContaining("checkpoint_decision=rejected"),
+      },
+    });
+    expect(review.suggested_next_moves[0]).toMatchObject({
+      title: "Use old high memory",
+      source: "dream_checkpoint",
+    });
+    expect(review.advisory_memories[0]?.ranking_trace?.reason).not.toContain("Rejected by checkpoint memory admission cap 1.");
+    expect(review.advisory_memories[0]).toMatchObject({
+      authority: "advisory_only",
+      ranking_trace: {
+        decision: "admitted",
+        reason: expect.stringContaining("kind=route_hit"),
+      },
+    });
+  });
+
   it("summarizes repeated failed lineages and avoids suggesting them without retry evidence", async () => {
     await seedActiveRun("run:coreloop:failed-lineage");
     const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
