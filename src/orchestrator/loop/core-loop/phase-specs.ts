@@ -132,6 +132,47 @@ export const DreamReviewStrategyCandidateSchema = z.object({
 }).strict();
 export type DreamReviewStrategyCandidate = z.infer<typeof DreamReviewStrategyCandidateSchema>;
 
+export const DreamRunControlRecommendationActionSchema = z.enum([
+  "stay_current_mode",
+  "widen_exploration",
+  "consolidate_candidates",
+  "freeze_experiment_queue",
+  "enter_finalization",
+  "preserve_near_miss_candidates",
+  "retire_low_value_lineage",
+  "request_operator_approval",
+]);
+export type DreamRunControlRecommendationAction = z.infer<typeof DreamRunControlRecommendationActionSchema>;
+
+export const DreamRunControlEvidenceRefSchema = z.object({
+  kind: z.enum(["metric", "artifact", "lineage", "task_history", "deadline", "external_feedback", "memory", "runtime_state"]),
+  ref: z.string().min(1).optional(),
+  summary: z.string().min(1),
+}).strict();
+export type DreamRunControlEvidenceRef = z.infer<typeof DreamRunControlEvidenceRefSchema>;
+
+export const DreamRunControlPolicyDecisionSchema = z.object({
+  disposition: z.enum(["auto_apply", "approval_required", "advisory_only"]),
+  reason: z.string().min(1),
+}).strict();
+export type DreamRunControlPolicyDecision = z.infer<typeof DreamRunControlPolicyDecisionSchema>;
+
+export const DreamRunControlRecommendationSchema = z.object({
+  id: z.string().min(1).optional(),
+  action: DreamRunControlRecommendationActionSchema,
+  rationale: z.string().min(1),
+  evidence: z.array(DreamRunControlEvidenceRefSchema).min(1),
+  target_mode: z.enum(["exploration", "consolidation", "finalization"]).optional(),
+  target_strategy_family: z.string().min(1).optional(),
+  candidate_refs: z.array(z.string().min(1)).default([]),
+  lineage_refs: z.array(z.string().min(1)).default([]),
+  approval_required: z.boolean().default(false),
+  risk: z.enum(["low", "medium", "high"]).default("medium"),
+  confidence: z.number().min(0).max(1).default(0.5),
+  policy_decision: DreamRunControlPolicyDecisionSchema.optional(),
+}).strict();
+export type DreamRunControlRecommendation = z.infer<typeof DreamRunControlRecommendationSchema>;
+
 export const DreamReviewCheckpointEvidenceSchema = z.object({
   summary: z.string().min(1),
   trigger: DreamReviewCheckpointTriggerSchema,
@@ -143,6 +184,7 @@ export const DreamReviewCheckpointEvidenceSchema = z.object({
   promising: z.array(z.string().min(1)).default([]),
   relevant_memories: z.array(DreamReviewMemoryRefSchema).default([]),
   next_strategy_candidates: z.array(DreamReviewStrategyCandidateSchema).default([]),
+  run_control_recommendations: z.array(DreamRunControlRecommendationSchema).default([]),
   guidance: z.string().min(1),
   uncertainty: z.array(z.string().min(1)).default([]),
   context_authority: z.literal("advisory_only").default("advisory_only"),
@@ -286,6 +328,8 @@ export function buildDreamReviewCheckpointSpec(): ReturnType<typeof baseSpec<{
   recentStrategyFamilies: string[];
   metricTrendSummary?: string;
   finalizationReason?: string;
+  currentExecutionMode?: "exploration" | "consolidation" | "finalization";
+  runControlPolicy: "auto_apply_low_risk_require_approval_for_high_cost_or_irreversible";
   memoryAuthorityPolicy: "soil_and_playbooks_are_advisory_only";
   maxGuidanceItems: number;
 }, DreamReviewCheckpointEvidence>> {
@@ -300,6 +344,8 @@ export function buildDreamReviewCheckpointSpec(): ReturnType<typeof baseSpec<{
       recentStrategyFamilies: z.array(z.string()).default([]),
       metricTrendSummary: z.string().optional(),
       finalizationReason: z.string().optional(),
+      currentExecutionMode: z.enum(["exploration", "consolidation", "finalization"]).optional(),
+      runControlPolicy: z.literal("auto_apply_low_risk_require_approval_for_high_cost_or_irreversible"),
       memoryAuthorityPolicy: z.literal("soil_and_playbooks_are_advisory_only"),
       maxGuidanceItems: z.number().int().positive().max(5).default(3),
     }),

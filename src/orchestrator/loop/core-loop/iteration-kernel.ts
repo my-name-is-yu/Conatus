@@ -37,6 +37,7 @@ import {
   buildStallInvestigationSpec,
   buildWaitObservationSpec,
   buildVerificationEvidenceSpec,
+  type DreamReviewCheckpointEvidence,
 } from "./phase-specs.js";
 import type { CorePhasePolicyRegistry } from "./phase-policy.js";
 import type { CoreDecisionEngine } from "./decision-engine.js";
@@ -60,6 +61,7 @@ import {
 import {
   buildDreamReviewCheckpointRequest,
   dreamCheckpointRawRefs,
+  formatDreamRunControlRecommendationContext,
   normalizeDreamReviewCheckpoint,
   type DreamReviewCheckpointRequest,
 } from "./dream-review-checkpoint.js";
@@ -194,9 +196,10 @@ export class CoreIterationKernel {
       gapAggregate: number;
       driveScores: DriveScore[];
       finalizationStatus?: DeadlineFinalizationStatus;
+      executionMode?: ReturnType<typeof deriveExecutionModeFromDeadlineStatus>;
       requestedTrigger?: "iteration" | "plateau" | "breakthrough" | "pre_finalization";
-    }): Promise<void> => {
-      if (dreamReviewCheckpointRan) return;
+    }): Promise<DreamReviewCheckpointEvidence | null> => {
+      if (dreamReviewCheckpointRan) return null;
       const evidenceSummary = await loadDreamReviewEvidenceSummary(this.deps.deps.evidenceLedger, goalId);
       const request = buildDreamReviewCheckpointRequest({
         goal: input.goal,
@@ -204,11 +207,12 @@ export class CoreIterationKernel {
         result,
         driveScores: input.driveScores,
         finalizationStatus: input.finalizationStatus,
+        executionMode: input.executionMode,
         evidenceSummary,
         recentCheckpoints: evidenceSummary?.dream_checkpoints,
         ...(input.requestedTrigger ? { requestedTrigger: input.requestedTrigger } : {}),
       });
-      if (!request) return;
+      if (!request) return null;
 
       const dreamReview = await runPhase("dream-review-checkpoint", () =>
         corePhaseRuntime.run(
@@ -232,6 +236,8 @@ export class CoreIterationKernel {
             recentStrategyFamilies: request.recentStrategyFamilies,
             ...(request.metricTrendSummary ? { metricTrendSummary: request.metricTrendSummary } : {}),
             ...(request.finalizationReason ? { finalizationReason: request.finalizationReason } : {}),
+            ...(request.currentExecutionMode ? { currentExecutionMode: request.currentExecutionMode } : {}),
+            runControlPolicy: request.runControlPolicy,
             memoryAuthorityPolicy: request.memoryAuthorityPolicy,
             maxGuidanceItems: request.maxGuidanceItems,
           },
@@ -239,8 +245,12 @@ export class CoreIterationKernel {
         )
       );
       rememberPhase(dreamReview);
-      await appendDreamReviewCheckpointEvidence(appendRuntimeEvidence, dreamReview, request, input.goal);
+      const checkpoint = await appendDreamReviewCheckpointEvidence(appendRuntimeEvidence, dreamReview, request, input.goal);
+      if (checkpoint?.run_control_recommendations.length) {
+        result.dreamRunControlRecommendations = checkpoint.run_control_recommendations;
+      }
       dreamReviewCheckpointRan = dreamReview.status !== "skipped";
+      return checkpoint;
     };
 
     this.deps.logger?.info(`[CoreLoop] iteration ${loopIndex + 1} starting`, { goalId, loopIndex });
@@ -347,6 +357,7 @@ export class CoreIterationKernel {
         gapAggregate,
         driveScores: [],
         finalizationStatus,
+        executionMode,
         requestedTrigger: "pre_finalization",
       });
       result.skipped = true;
@@ -546,12 +557,16 @@ export class CoreIterationKernel {
       });
     }
 
-    await maybeRunDreamReviewCheckpoint({
+    const dreamCheckpoint = await maybeRunDreamReviewCheckpoint({
       goal,
       gapAggregate,
       driveScores,
       finalizationStatus,
+      executionMode,
     });
+    const dreamRunControlRecommendationContext = formatDreamRunControlRecommendationContext(
+      dreamCheckpoint?.run_control_recommendations
+    );
 
     const publicResearchRequest = buildPublicResearchRequest({
       goal,
@@ -703,6 +718,7 @@ export class CoreIterationKernel {
       targetDimensionOverride: taskGenerationHints.targetDimensionOverride ?? pendingDirective?.focusDimension,
       knowledgeContextPrefix: taskGenerationHints.knowledgeContextPrefix,
       executionMode,
+      runControlRecommendationContext: dreamRunControlRecommendationContext,
     };
     if (!shouldPreferReplanningContext && replanningOptions?.status === "completed") {
       this.deps.logger?.debug("CoreLoop: replanning evidence collected but not adopted as preferred context", {
@@ -851,8 +867,8 @@ async function appendDreamReviewCheckpointEvidence(
   },
   request: DreamReviewCheckpointRequest,
   goal: Goal,
-): Promise<void> {
-  if (execution.status === "skipped") return;
+): Promise<DreamReviewCheckpointEvidence | null> {
+  if (execution.status === "skipped") return null;
   const output = buildDreamReviewCheckpointSpec().outputSchema.safeParse(execution.output);
   if (!output.success) {
     await appendRuntimeEvidence({
@@ -866,7 +882,7 @@ async function appendDreamReviewCheckpointEvidence(
         error: output.error.issues.map((issue) => issue.message).join("; "),
       },
     });
-    return;
+    return null;
   }
 
   const checkpoint = normalizeDreamReviewCheckpoint(output.data, request, goal);
@@ -888,6 +904,7 @@ async function appendDreamReviewCheckpointEvidence(
       ...(execution.turnId ? [{ kind: "agentloop_turn", id: execution.turnId }] : []),
     ],
   });
+  return checkpoint;
 }
 
 async function loadDreamReviewEvidenceSummary(

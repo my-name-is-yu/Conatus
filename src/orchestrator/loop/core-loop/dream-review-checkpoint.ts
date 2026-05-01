@@ -7,8 +7,11 @@ import type { RuntimeEvidenceEntry, RuntimeEvidenceSummary } from "../../../runt
 import type {
   DreamReviewCheckpointEvidence,
   DreamReviewCheckpointTrigger,
+  DreamRunControlPolicyDecision,
+  DreamRunControlRecommendation,
 } from "./phase-specs.js";
 import type { LoopIterationResult } from "../loop-result-types.js";
+import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 
 export interface DreamReviewCheckpointRequest {
   trigger: DreamReviewCheckpointTrigger;
@@ -18,6 +21,8 @@ export interface DreamReviewCheckpointRequest {
   recentStrategyFamilies: string[];
   metricTrendSummary?: string;
   finalizationReason?: string;
+  currentExecutionMode?: ExecutionModeState["mode"];
+  runControlPolicy: "auto_apply_low_risk_require_approval_for_high_cost_or_irreversible";
   memoryAuthorityPolicy: "soil_and_playbooks_are_advisory_only";
   maxGuidanceItems: number;
 }
@@ -33,6 +38,7 @@ export interface BuildDreamReviewCheckpointRequestInput {
   result: LoopIterationResult;
   driveScores: DriveScore[];
   finalizationStatus?: DeadlineFinalizationStatus;
+  executionMode?: ExecutionModeState;
   recentCheckpoints?: RuntimeDreamCheckpointContext[];
   evidenceSummary?: Pick<RuntimeEvidenceSummary, "best_evidence" | "recent_entries"> | null;
   requestedTrigger?: DreamReviewCheckpointTrigger;
@@ -58,7 +64,9 @@ export function buildDreamReviewCheckpointRequest(
     ...(input.evidenceSummary?.best_evidence ? { bestEvidenceSummary: entrySummary(input.evidenceSummary.best_evidence) } : {}),
     recentStrategyFamilies: recentStrategyFamilies(input.evidenceSummary?.recent_entries ?? []),
     ...(metricTrendSummary ? { metricTrendSummary } : {}),
-    ...(input.finalizationStatus?.reason ? { finalizationReason: input.finalizationStatus.reason } : {}),
+    ...(isPreFinalization(input.finalizationStatus) ? { finalizationReason: input.finalizationStatus?.reason } : {}),
+    ...(input.executionMode?.mode ? { currentExecutionMode: input.executionMode.mode } : {}),
+    runControlPolicy: "auto_apply_low_risk_require_approval_for_high_cost_or_irreversible",
     memoryAuthorityPolicy: "soil_and_playbooks_are_advisory_only",
     maxGuidanceItems: 3,
   };
@@ -78,16 +86,151 @@ export function normalizeDreamReviewCheckpoint(
       ...memory,
       authority: "advisory_only",
     })),
+    run_control_recommendations: normalizeRunControlRecommendations(output.run_control_recommendations, request),
     context_authority: "advisory_only",
+  };
+}
+
+export function formatDreamRunControlRecommendationContext(
+  recommendations: DreamRunControlRecommendation[] | undefined
+): string | undefined {
+  const actionable = (recommendations ?? []).filter((recommendation) =>
+    recommendation.policy_decision?.disposition === "auto_apply"
+  );
+  if (actionable.length === 0) return undefined;
+
+  return [
+    "Dream run-control recommendations:",
+    ...actionable.slice(0, 5).map((recommendation, index) => {
+      const evidence = recommendation.evidence
+        .map((item) => `${item.kind}: ${item.summary}`)
+        .join("; ");
+      const policy = recommendation.policy_decision
+        ? `${recommendation.policy_decision.disposition}: ${recommendation.policy_decision.reason}`
+        : "advisory_only";
+      return [
+        `${index + 1}. ${recommendation.action}`,
+        `rationale=${recommendation.rationale}`,
+        `evidence=${evidence}`,
+        `policy=${policy}`,
+      ].join(" | ");
+    }),
+  ].join("\n");
+}
+
+function normalizeRunControlRecommendations(
+  recommendations: DreamRunControlRecommendation[],
+  request: DreamReviewCheckpointRequest
+): DreamRunControlRecommendation[] {
+  return recommendations.map((recommendation, index) => ({
+    ...recommendation,
+    id: recommendation.id ?? `${request.trigger}-run-control-${index + 1}`,
+    policy_decision: decideRunControlPolicy(recommendation, request),
+  }));
+}
+
+function decideRunControlPolicy(
+  recommendation: DreamRunControlRecommendation,
+  request: DreamReviewCheckpointRequest
+): DreamRunControlPolicyDecision {
+  if (
+    recommendation.approval_required
+    || recommendation.risk === "high"
+    || recommendation.action === "request_operator_approval"
+  ) {
+    return {
+      disposition: "approval_required",
+      reason: "High-cost, irreversible, or explicit operator-approval recommendations cannot be auto-applied.",
+    };
+  }
+
+  if (recommendation.action === "enter_finalization") {
+    if (recommendation.risk !== "low") {
+      return {
+        disposition: "advisory_only",
+        reason: "Only low-risk finalization recommendations are auto-applied as task-generation guidance.",
+      };
+    }
+    const hasDeadlineEvidence = recommendation.evidence.some((evidence) => evidence.kind === "deadline");
+    if (request.finalizationReason || hasDeadlineEvidence) {
+      return {
+        disposition: "auto_apply",
+        reason: "Finalization recommendation is backed by deadline-state evidence.",
+      };
+    }
+    return {
+      disposition: "approval_required",
+      reason: "Entering finalization without deadline evidence requires operator approval.",
+    };
+  }
+
+  if (recommendation.action === "freeze_experiment_queue") {
+    if (recommendation.risk !== "low") {
+      return {
+        disposition: "advisory_only",
+        reason: "Only low-risk queue-freeze recommendations are auto-applied as task-generation guidance.",
+      };
+    }
+    if (request.finalizationReason) {
+      return {
+        disposition: "auto_apply",
+        reason: "Freezing the queue is allowed inside the finalization window.",
+      };
+    }
+    return {
+      disposition: "approval_required",
+      reason: "Freezing active work outside finalization requires operator approval.",
+    };
+  }
+
+  if (
+    recommendation.action === "widen_exploration"
+    && request.trigger === "plateau"
+    && recommendation.evidence.some((evidence) => evidence.kind === "lineage" || evidence.kind === "task_history")
+  ) {
+    return {
+      disposition: recommendation.risk === "low" ? "auto_apply" : "advisory_only",
+      reason: "Plateau evidence supports feeding divergent exploration guidance into task generation.",
+    };
+  }
+
+  if (
+    recommendation.action === "stay_current_mode"
+    || recommendation.action === "consolidate_candidates"
+    || recommendation.action === "preserve_near_miss_candidates"
+    || recommendation.action === "retire_low_value_lineage"
+  ) {
+    if (recommendation.risk !== "low") {
+      return {
+        disposition: "advisory_only",
+        reason: "Only low-risk run-control recommendations are auto-applied as task-generation guidance.",
+      };
+    }
+    return {
+      disposition: "auto_apply",
+      reason: "Low-risk run-control recommendation can be applied as task-generation guidance.",
+    };
+  }
+
+  return {
+    disposition: "advisory_only",
+    reason: "Recommendation is preserved for operator/runtime review but is not auto-applied.",
   };
 }
 
 export function dreamCheckpointRawRefs(
   output: DreamReviewCheckpointEvidence
 ): Array<{ kind: string; id?: string }> {
-  return output.relevant_memories
+  const memoryRefs = output.relevant_memories
     .map((memory) => memory.ref ? { kind: `dream_${memory.source_type}_memory`, id: memory.ref } : null)
     .filter((ref): ref is { kind: string; id: string } => ref !== null);
+  const recommendationEvidenceRefs = output.run_control_recommendations
+    .flatMap((recommendation) => recommendation.evidence)
+    .map((evidence) => evidence.ref
+      ? { kind: `dream_run_control_${evidence.kind}`, id: evidence.ref }
+      : null)
+    .filter((ref): ref is { kind: string; id: string } => ref !== null);
+  return [...memoryRefs, ...recommendationEvidenceRefs];
 }
 
 function inferCheckpointTrigger(

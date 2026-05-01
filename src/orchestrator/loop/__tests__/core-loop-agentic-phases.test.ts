@@ -208,6 +208,18 @@ function createDeps(tmpDir: string, options?: { stall?: boolean; publicResearch?
             target_dimensions: ["dim1"],
             expected_evidence_gain: "Shows whether the plateau is strategy-driven.",
           }],
+          run_control_recommendations: [{
+            action: "widen_exploration",
+            target_strategy_family: "bounded_variant",
+            rationale: "Repeated same-lineage attempts have stopped moving the metric.",
+            evidence: [{
+              kind: "lineage",
+              ref: "lineage:continue",
+              summary: "Recent task history repeats the same implementation family.",
+            }],
+            risk: "low",
+            confidence: 0.82,
+          }],
           guidance: "Use the bounded variant before generating the next task.",
           uncertainty: ["Need one more metric sample."],
           context_authority: "advisory_only",
@@ -538,15 +550,23 @@ describe("CoreLoop agentic phase hooks", () => {
         summary: "dream-summary",
         context_authority: "advisory_only",
         relevant_memories: [expect.objectContaining({ authority: "advisory_only" })],
+        run_control_recommendations: [expect.objectContaining({
+          action: "widen_exploration",
+          policy_decision: expect.objectContaining({ disposition: "auto_apply" }),
+        })],
       })],
       raw_refs: expect.arrayContaining([
         expect.objectContaining({ kind: "dream_soil_memory", id: "soil://goal-1/checkpoint" }),
+        expect.objectContaining({ kind: "dream_run_control_lineage", id: "lineage:continue" }),
       ]),
     }));
     const taskCycleArgs = (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(taskCycleArgs[4]).toContain("dream-summary");
     expect(taskCycleArgs[4]).toContain("Use the bounded variant before generating the next task.");
     expect(taskCycleArgs[4]).toContain("Bounded variant: Changes one factor and preserves the current proof lane.");
+    expect(taskCycleArgs[7]).toMatchObject({
+      runControlRecommendationContext: expect.stringContaining("widen_exploration"),
+    });
   });
 
   it("keeps wait observation on a short read-only budget separate from normal AgentLoop execution", async () => {

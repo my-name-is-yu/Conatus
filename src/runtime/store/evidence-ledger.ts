@@ -208,6 +208,38 @@ export const RuntimeEvidenceDreamCheckpointStrategyCandidateSchema = z.object({
 }).strict();
 export type RuntimeEvidenceDreamCheckpointStrategyCandidate = z.infer<typeof RuntimeEvidenceDreamCheckpointStrategyCandidateSchema>;
 
+export const RuntimeEvidenceDreamRunControlRecommendationSchema = z.object({
+  id: z.string().min(1).optional(),
+  action: z.enum([
+    "stay_current_mode",
+    "widen_exploration",
+    "consolidate_candidates",
+    "freeze_experiment_queue",
+    "enter_finalization",
+    "preserve_near_miss_candidates",
+    "retire_low_value_lineage",
+    "request_operator_approval",
+  ]),
+  rationale: z.string().min(1),
+  evidence: z.array(z.object({
+    kind: z.enum(["metric", "artifact", "lineage", "task_history", "deadline", "external_feedback", "memory", "runtime_state"]),
+    ref: z.string().min(1).optional(),
+    summary: z.string().min(1),
+  }).strict()).min(1),
+  target_mode: z.enum(["exploration", "consolidation", "finalization"]).optional(),
+  target_strategy_family: z.string().min(1).optional(),
+  candidate_refs: z.array(z.string().min(1)).default([]),
+  lineage_refs: z.array(z.string().min(1)).default([]),
+  approval_required: z.boolean().default(false),
+  risk: z.enum(["low", "medium", "high"]).default("medium"),
+  confidence: z.number().min(0).max(1).default(0.5),
+  policy_decision: z.object({
+    disposition: z.enum(["auto_apply", "approval_required", "advisory_only"]),
+    reason: z.string().min(1),
+  }).strict().optional(),
+}).strict();
+export type RuntimeEvidenceDreamRunControlRecommendation = z.infer<typeof RuntimeEvidenceDreamRunControlRecommendationSchema>;
+
 export const RuntimeEvidenceDreamCheckpointSchema = z.object({
   trigger: RuntimeEvidenceDreamCheckpointTriggerSchema,
   summary: z.string().min(1),
@@ -219,6 +251,7 @@ export const RuntimeEvidenceDreamCheckpointSchema = z.object({
   promising: z.array(z.string().min(1)).default([]),
   relevant_memories: z.array(RuntimeEvidenceDreamCheckpointMemoryRefSchema).default([]),
   next_strategy_candidates: z.array(RuntimeEvidenceDreamCheckpointStrategyCandidateSchema).default([]),
+  run_control_recommendations: z.array(RuntimeEvidenceDreamRunControlRecommendationSchema).optional(),
   guidance: z.string().min(1),
   uncertainty: z.array(z.string().min(1)).default([]),
   context_authority: z.literal("advisory_only").default("advisory_only"),

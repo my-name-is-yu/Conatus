@@ -132,6 +132,7 @@ export interface TaskCycleRunOptions {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
   executionMode?: ExecutionModeState;
+  runControlRecommendationContext?: string;
 }
 
 export interface TaskLifecycleDeps extends TaskLifecycleCoreDeps {
