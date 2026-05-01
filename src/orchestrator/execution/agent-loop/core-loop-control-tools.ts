@@ -122,7 +122,7 @@ class CoreLoopControlTool<TInput> implements ITool<TInput> {
 export interface DaemonBackedCoreLoopControlDeps {
   stateManager: StateManager;
   host?: string;
-  daemonClientFactory?: () => Promise<Pick<DaemonClient, "startGoal" | "stopGoal" | "getSnapshot">>;
+  daemonClientFactory?: () => Promise<Pick<DaemonClient, "startGoal" | "stopGoal" | "pauseGoal" | "resumeGoal" | "getSnapshot">>;
 }
 
 export function createDaemonBackedCoreLoopControlToolset(
@@ -165,7 +165,7 @@ export function createDaemonBackedCoreLoopControlToolset(
     return { goalId, goal };
   };
 
-  const getDaemonClient = async (): Promise<Pick<DaemonClient, "startGoal" | "stopGoal" | "getSnapshot">> => {
+  const getDaemonClient = async (): Promise<Pick<DaemonClient, "startGoal" | "stopGoal" | "pauseGoal" | "resumeGoal" | "getSnapshot">> => {
     if (deps.daemonClientFactory) return deps.daemonClientFactory();
 
     const baseDir = deps.stateManager.getBaseDir();
@@ -245,11 +245,12 @@ export function createDaemonBackedCoreLoopControlToolset(
     },
     goalStart: startGoal,
     async goalResume(input) {
-      return startGoal(input);
+      const client = await getDaemonClient();
+      return { ...(await client.resumeGoal(input.goalId)), goalId: input.goalId };
     },
     async goalPause(input) {
       const client = await getDaemonClient();
-      return { ...(await client.stopGoal(input.goalId)), goalId: input.goalId };
+      return { ...(await client.pauseGoal(input.goalId)), goalId: input.goalId };
     },
     async goalCancel(input) {
       const client = await getDaemonClient();

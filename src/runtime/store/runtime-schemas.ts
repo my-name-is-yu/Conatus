@@ -46,6 +46,46 @@ export const RuntimeQueueRecordSchema = z.object({
 });
 export type RuntimeQueueRecord = z.infer<typeof RuntimeQueueRecordSchema>;
 
+export const RuntimeSafePauseStateSchema = z.enum([
+  "running",
+  "pause_requested",
+  "paused",
+  "resumed",
+  "emergency_stopped",
+  "completed",
+]);
+export type RuntimeSafePauseState = z.infer<typeof RuntimeSafePauseStateSchema>;
+
+export const RuntimeSafePauseCheckpointSchema = z.object({
+  checkpoint_id: z.string().min(1),
+  checkpointed_at: z.string().datetime(),
+  reason: z.string().optional(),
+  active_goals: z.array(z.string()),
+  queued_goal_ids: z.array(z.string()),
+  current_mode: z.string().nullable(),
+  candidate_evidence_refs: z.array(z.string()),
+  artifact_refs: z.array(z.string()),
+  next_action: z.string().nullable(),
+  supervisor_state_ref: z.string().nullable(),
+  background_run_ids: z.array(z.string()),
+});
+export type RuntimeSafePauseCheckpoint = z.infer<typeof RuntimeSafePauseCheckpointSchema>;
+
+export const RuntimeSafePauseRecordSchema = z.object({
+  schema_version: z.literal("runtime-safe-pause-v1"),
+  goal_id: z.string().min(1),
+  state: RuntimeSafePauseStateSchema,
+  requested_at: z.string().datetime().optional(),
+  paused_at: z.string().datetime().optional(),
+  resumed_at: z.string().datetime().optional(),
+  completed_at: z.string().datetime().optional(),
+  updated_at: z.string().datetime(),
+  requested_by: z.string().optional(),
+  reason: z.string().optional(),
+  checkpoint: RuntimeSafePauseCheckpointSchema.optional(),
+});
+export type RuntimeSafePauseRecord = z.infer<typeof RuntimeSafePauseRecordSchema>;
+
 export const GoalLeaseRecordSchema = z.object({
   goal_id: z.string(),
   owner_token: z.string(),

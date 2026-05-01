@@ -317,6 +317,14 @@ export class DaemonClient {
     return this.post(`/goals/${encodeURIComponent(goalId)}/stop`, {});
   }
 
+  async pauseGoal(goalId: string): Promise<{ ok: boolean; goalId?: string }> {
+    return this.post(`/goals/${encodeURIComponent(goalId)}/pause`, {});
+  }
+
+  async resumeGoal(goalId: string): Promise<{ ok: boolean; goalId?: string }> {
+    return this.post(`/goals/${encodeURIComponent(goalId)}/resume`, {});
+  }
+
   async approve(goalId: string, requestId: string, approved: boolean): Promise<{ ok: boolean }> {
     return this.post(`/goals/${encodeURIComponent(goalId)}/approve`, { requestId, approved });
   }

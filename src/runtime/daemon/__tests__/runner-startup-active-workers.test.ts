@@ -207,4 +207,129 @@ describe("runner startup active workers snapshot", () => {
     beginGracefulShutdown(context as never);
     await startupPromise;
   });
+
+  it("does not enqueue paused goals that safe-pause restore removed during startup", async () => {
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const eventsDir = path.join(runtimeRoot, "events");
+    const logger = new Logger({
+      dir: path.join(tmpDir, "logs"),
+      level: "error",
+      consoleOutput: false,
+    });
+    const eventServer = new EventServer(
+      {
+        writeEvent: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      {
+        port: 0,
+        eventsDir,
+      },
+      logger,
+    );
+    const supervisor = {
+      start: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      getState: vi.fn().mockReturnValue({
+        workers: [],
+        crashCounts: {},
+        suspendedGoals: [],
+        updatedAt: Date.now(),
+      }),
+    };
+
+    const context = {
+      config: {
+        event_server_port: 0,
+        check_interval_ms: 50,
+        max_concurrent_goals: 1,
+        iterations_per_cycle: 1,
+        crash_recovery: {
+          graceful_shutdown_timeout_ms: 1_000,
+        },
+      },
+      state: {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        last_loop_at: null,
+        loop_count: 0,
+        active_goals: [],
+        status: "stopped",
+        crash_count: 0,
+        last_error: null,
+        last_resident_at: null,
+        resident_activity: null,
+      },
+      driveSystem: {
+        startWatcher: vi.fn(),
+        stopWatcher: vi.fn(),
+        writeEvent: vi.fn(),
+      },
+      deps: {
+        shutdownSignalTarget: undefined,
+      },
+      eventServer,
+      eventDispatcher: {
+        start: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      },
+      commandDispatcher: {
+        start: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      },
+      supervisor,
+      logger,
+      runtimeRoot,
+      currentGoalIds: [] as string[],
+      running: true,
+      shuttingDown: false,
+      initializeRuntimeFoundation: vi.fn().mockResolvedValue(undefined),
+      acquireRuntimeLeadership: vi.fn().mockResolvedValue(undefined),
+      saveRuntimeHealthSnapshot: vi.fn().mockResolvedValue(undefined),
+      restoreSafePauseState: vi.fn(function (this: { currentGoalIds: string[]; state: Record<string, unknown> }) {
+        this.currentGoalIds = [];
+        this.state.active_goals = [];
+        this.state.safe_pause_goals = {
+          "goal-1": {
+            schema_version: "runtime-safe-pause-v1",
+            goal_id: "goal-1",
+            state: "paused",
+            requested_at: new Date().toISOString(),
+            paused_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        };
+      }),
+      startStartupRuntimeStoreMaintenance: vi.fn(),
+      stopStatusHeartbeat: null,
+      shutdownCoordinator: null,
+      queueClaimSweeper: null,
+      approvalBroker: null,
+      gateway: null,
+      approvalFn: undefined,
+      restoreState: vi.fn().mockImplementation(async (goalIds: string[]) => goalIds),
+      reconcileInterruptedExecutions: vi.fn().mockResolvedValue([]),
+      saveDaemonState: vi.fn().mockResolvedValue(undefined),
+      writeShutdownMarker: vi.fn().mockResolvedValue(undefined),
+      runSupervisorMaintenanceCycle: vi.fn().mockResolvedValue(undefined),
+      reconcileRuntimeControlOperationsAfterStartup: vi.fn().mockResolvedValue(undefined),
+      startStartupRuntimeStoreMaintenancePromise: null,
+      drainStartupRuntimeStoreMaintenance: vi.fn().mockResolvedValue(undefined),
+      releaseStartupOwnership: vi.fn().mockResolvedValue(undefined),
+      captureProviderRuntimeFingerprint: vi.fn().mockResolvedValue(null),
+      handleInboundEnvelope: vi.fn().mockResolvedValue(undefined),
+      onEventReceived: vi.fn(),
+      cleanup: vi.fn().mockResolvedValue(undefined),
+    };
+    shutdownContext = context;
+
+    startupPromise = startDaemonRunner(context as never, ["goal-1"]);
+
+    await waitFor(() => supervisor.start.mock.calls.length > 0);
+
+    expect(context.restoreSafePauseState).toHaveBeenCalled();
+    expect(supervisor.start).toHaveBeenCalledWith([]);
+
+    beginGracefulShutdown(context as never);
+    await startupPromise;
+  });
 });

@@ -21,6 +21,7 @@ export interface RuntimeStorePaths {
   evidenceLedgerDir: string;
   evidenceLedgerGoalsDir: string;
   evidenceLedgerRunsDir: string;
+  safePausesDir: string;
   leasesDir: string;
   goalLeasesDir: string;
   dlqDir: string;
@@ -39,6 +40,7 @@ export interface RuntimeStorePaths {
   browserSessionPath(sessionId: string): string;
   evidenceGoalPath(goalId: string): string;
   evidenceRunPath(runId: string): string;
+  safePausePath(goalId: string): string;
   guardrailBreakerPath(key: string): string;
   goalLeasePath(goalId: string): string;
   completedByIdempotencyPath(idempotencyKey: string): string;
@@ -89,6 +91,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const evidenceLedgerDir = path.join(rootDir, "evidence-ledger");
   const evidenceLedgerGoalsDir = path.join(evidenceLedgerDir, "goals");
   const evidenceLedgerRunsDir = path.join(evidenceLedgerDir, "runs");
+  const safePausesDir = path.join(rootDir, "safe-pauses");
   const leasesDir = path.join(rootDir, "leases");
   const goalLeasesDir = path.join(leasesDir, "goal");
   const dlqDir = path.join(rootDir, "dlq");
@@ -114,6 +117,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     evidenceLedgerDir,
     evidenceLedgerGoalsDir,
     evidenceLedgerRunsDir,
+    safePausesDir,
     leasesDir,
     goalLeasesDir,
     dlqDir,
@@ -149,6 +153,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     evidenceRunPath(runId: string) {
       return path.join(evidenceLedgerRunsDir, `${encodeRuntimePathSegment(runId)}.jsonl`);
+    },
+    safePausePath(goalId: string) {
+      return path.join(safePausesDir, `${encodeRuntimePathSegment(goalId)}.json`);
     },
     guardrailBreakerPath(key: string) {
       return path.join(guardrailBreakersDir, recordFileName(encodeRuntimePathSegment(key)));
@@ -187,6 +194,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.evidenceLedgerDir,
       paths.evidenceLedgerGoalsDir,
       paths.evidenceLedgerRunsDir,
+      paths.safePausesDir,
       paths.leasesDir,
       paths.goalLeasesDir,
       paths.dlqDir,

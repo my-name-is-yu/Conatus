@@ -12,6 +12,8 @@ export interface CommandDispatcherDeps {
   logger?: Logger;
   onGoalStart?: (goalId: string, envelope: Envelope) => Promise<void> | void;
   onGoalStop?: (goalId: string, envelope: Envelope) => Promise<void> | void;
+  onGoalPause?: (goalId: string, envelope: Envelope) => Promise<void> | void;
+  onGoalResume?: (goalId: string, envelope: Envelope) => Promise<void> | void;
   onChatMessage?: (
     goalId: string,
     message: string,
@@ -132,6 +134,22 @@ export class CommandDispatcher {
           throw new Error("goal_stop command is missing goalId");
         }
         await this.deps.onGoalStop?.(goalId, envelope);
+        return;
+      }
+      case "goal_pause": {
+        const goalId = envelope.goal_id ?? this.readStringField(envelope.payload, "goalId");
+        if (!goalId) {
+          throw new Error("goal_pause command is missing goalId");
+        }
+        await this.deps.onGoalPause?.(goalId, envelope);
+        return;
+      }
+      case "goal_resume": {
+        const goalId = envelope.goal_id ?? this.readStringField(envelope.payload, "goalId");
+        if (!goalId) {
+          throw new Error("goal_resume command is missing goalId");
+        }
+        await this.deps.onGoalResume?.(goalId, envelope);
         return;
       }
       case "chat_message": {
