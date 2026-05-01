@@ -22,6 +22,7 @@ import { KaggleMetricsSchema, parseKaggleMetricsCompatible, type KaggleMetrics }
 const DEFAULT_MAX_OUTPUT_CHARS = 20_000;
 const SUBMISSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const OUTPUT_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const KagglePortfolioSlotSchema = z.enum(["safe", "aggressive", "diverse"]);
 
 export interface KaggleCommandResult {
   exitCode: number;
@@ -80,6 +81,7 @@ export const KaggleSubmissionPrepareInputSchema = z.object({
   metrics_path: z.string().min(1).optional(),
   submission_id: z.string().regex(SUBMISSION_ID_PATTERN).optional(),
   output_filename: z.string().regex(OUTPUT_FILENAME_PATTERN).optional(),
+  portfolio_slot: KagglePortfolioSlotSchema.optional(),
   message: z.string().min(1).optional(),
   notes: z.string().min(1).optional(),
 }).strict();
@@ -132,6 +134,7 @@ const PreparedSubmissionMetadataSchema = z.object({
   submission_id: z.string().regex(SUBMISSION_ID_PATTERN),
   message: z.string().nullable(),
   notes: z.string().nullable(),
+  portfolio_slot: KagglePortfolioSlotSchema.default("safe"),
   source: ArtifactRefSchema,
   prepared: ArtifactRefSchema,
   provenance: z.object({
@@ -215,6 +218,7 @@ export class KaggleSubmissionPrepareTool implements ITool<KaggleSubmissionPrepar
       await fs.copyFile(sourcePath, preparedPath);
 
       const now = new Date().toISOString();
+      const portfolioSlot = input.portfolio_slot ?? "safe";
       const metadata = {
         schema_version: "kaggle-submission-v1",
         created_at: now,
@@ -222,6 +226,7 @@ export class KaggleSubmissionPrepareTool implements ITool<KaggleSubmissionPrepar
         submission_id: submissionId,
         message: input.message ?? null,
         notes: input.notes ?? null,
+        portfolio_slot: portfolioSlot,
         source: artifactRef(workspaceRoot, sourcePath),
         prepared: artifactRef(workspaceRoot, preparedPath),
         provenance: {
@@ -248,6 +253,8 @@ export class KaggleSubmissionPrepareTool implements ITool<KaggleSubmissionPrepar
             file: workspaceRelativePath(workspaceRoot, preparedPath),
             message: input.message ?? "",
           },
+          portfolio_slot: portfolioSlot,
+          portfolio_policy: portfolioPolicyForSlot(portfolioSlot),
         },
         summary: `Prepared Kaggle submission ${submissionId} for ${input.competition}`,
         durationMs: Date.now() - startTime,
@@ -268,6 +275,12 @@ export class KaggleSubmissionPrepareTool implements ITool<KaggleSubmissionPrepar
   isConcurrencySafe(_input: KaggleSubmissionPrepareInput): boolean {
     return false;
   }
+}
+
+function portfolioPolicyForSlot(slot: z.infer<typeof KagglePortfolioSlotSchema>): string {
+  if (slot === "safe") return "Prefer validation-adjusted candidates with OOF-safe CV, stable folds/seeds, low leakage risk, and acceptable public-gap evidence.";
+  if (slot === "aggressive") return "Allow a higher local CV/public LB candidate when risk is explicit and it diversifies the submission set.";
+  return "Prefer a candidate from a distinct model/feature/seed lineage to reduce correlated private leaderboard failure.";
 }
 
 export class KaggleSubmitTool extends KaggleSubmissionToolBase<KaggleSubmitInput> {

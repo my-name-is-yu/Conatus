@@ -10,11 +10,15 @@ import type {
   ToolResult,
 } from "../types.js";
 import {
+  KAGGLE_VALIDATION_CHECKLIST,
   KaggleMetricDirectionSchema,
+  KaggleLongRunValidationContractSchema,
   type KaggleMetricParseResult,
   type KaggleMetrics,
+  type KaggleLongRunValidationContract,
   normalizedMetricScore,
   parseKaggleMetricsCompatible,
+  summarizeKaggleValidation,
 } from "./metrics.js";
 import {
   ensureDirectoryWithinStateRoot,
@@ -44,6 +48,7 @@ export const KaggleExperimentStartInputSchema = z.object({
   task_id: z.string().optional(),
   expected_metrics_path: z.string().min(1).optional(),
   artifact_refs: z.array(z.string().min(1)).default([]),
+  validation_contract: KaggleLongRunValidationContractSchema,
 }).strict();
 export type KaggleExperimentStartInput = z.infer<typeof KaggleExperimentStartInputSchema>;
 
@@ -118,6 +123,8 @@ interface ExperimentMetadata {
     args: string[];
     env_keys: string[];
   };
+  validation_contract: KaggleLongRunValidationContract;
+  validation_checklist: typeof KAGGLE_VALIDATION_CHECKLIST;
   process: {
     session_id: string;
     metadata_path?: string;
@@ -158,6 +165,10 @@ type CompareRow = {
   direction: "maximize" | "minimize";
   score: number;
   normalized_score: number;
+  robust_score: number;
+  raw_rank?: number;
+  robust_rank?: number;
+  validation: ReturnType<typeof summarizeKaggleValidation>;
   metrics: KaggleMetrics;
   metrics_source_schema: "strict" | "loose";
   metrics_warnings: string[];
@@ -206,6 +217,7 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
     try {
       const commandArgs = input.args ?? [];
       const artifactRefs = input.artifact_refs ?? [];
+      const validationContract = KaggleLongRunValidationContractSchema.parse(input.validation_contract);
       const experimentId = input.experiment_id
         ? validateKaggleExperimentId(input.experiment_id)
         : generateExperimentId();
@@ -230,6 +242,8 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
         metrics_path: metricsPath,
         report_path: resolved.reportPath,
         next_action_path: resolved.nextActionPath,
+        validation_contract: validationContract,
+        validation_checklist: KAGGLE_VALIDATION_CHECKLIST,
       };
       await fs.writeFile(resolved.commandPath, `${JSON.stringify(commandMetadata, null, 2)}\n`, "utf-8");
 
@@ -263,7 +277,7 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
         ],
       }, resolved.workspaceRoot, context);
 
-      const metadata = experimentMetadata({ ...input, args: commandArgs, artifact_refs: artifactRefs }, resolved, experimentId, metricsPath, extraRefs, session);
+      const metadata = experimentMetadata({ ...input, args: commandArgs, artifact_refs: artifactRefs, validation_contract: validationContract }, resolved, experimentId, metricsPath, extraRefs, session);
       await fs.writeFile(resolved.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf-8");
       await fs.writeFile(resolved.processPath, `${JSON.stringify(session, null, 2)}\n`, "utf-8");
 
@@ -271,6 +285,8 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
         experiment_id: experimentId,
         competition: input.competition,
         process: session,
+        validation_contract: validationContract,
+        validation_checklist: KAGGLE_VALIDATION_CHECKLIST,
         metadata: artifactRef(resolved.workspaceRoot, resolved.metadataPath),
         artifacts: {
           log: artifactRef(resolved.workspaceRoot, resolved.logPath),
@@ -671,6 +687,7 @@ export class KaggleMetricReportTool extends KaggleToolBase<KaggleMetricReportInp
         metrics: metrics.metrics,
         metrics_source_schema: metrics.source_schema,
         warnings,
+        validation_checklist: KAGGLE_VALIDATION_CHECKLIST,
         artifact: artifactRef(workspaceRoot, metricsPath),
         wait_metadata: {
           metrics: {
@@ -749,6 +766,7 @@ export class KaggleCompareExperimentsTool extends KaggleToolBase<KaggleCompareEx
         }
         const direction = input.metric_direction ?? metrics.metrics.direction;
         const normalizedScore = direction === "maximize" ? metrics.metrics.cv_score : -metrics.metrics.cv_score;
+        const validation = summarizeKaggleValidation(metrics.metrics);
         rows.push({
           experiment_id: experimentId,
           status: "ok",
@@ -756,6 +774,8 @@ export class KaggleCompareExperimentsTool extends KaggleToolBase<KaggleCompareEx
           direction,
           score: metrics.metrics.cv_score,
           normalized_score: normalizedScore,
+          robust_score: normalizedScore - validation.robust_penalty,
+          validation,
           metrics: metrics.metrics,
           metrics_source_schema: metrics.source_schema,
           metrics_warnings: metrics.warnings,
@@ -799,24 +819,46 @@ export class KaggleCompareExperimentsTool extends KaggleToolBase<KaggleCompareEx
         };
       }
 
-      const best = validRows[0]!;
-      const runnerUp = validRows[1];
-      const delta = runnerUp ? best.normalized_score - runnerUp.normalized_score : null;
+      const rawRows = [...validRows].sort((a, b) => b.normalized_score - a.normalized_score);
+      const robustRows = [...validRows].sort((a, b) =>
+        b.robust_score - a.robust_score || b.normalized_score - a.normalized_score
+      );
+      const best = robustRows[0]!;
+      const rawBest = rawRows[0]!;
+      const runnerUp = robustRows[1];
+      const delta = runnerUp ? best.robust_score - runnerUp.robust_score : null;
       const rankTable = rows.map((row) => row.status === "ok"
-        ? { ...row, rank: validRows.findIndex((valid) => valid.experiment_id === row.experiment_id) + 1 }
+        ? {
+          ...row,
+          rank: rawRows.findIndex((valid) => valid.experiment_id === row.experiment_id) + 1,
+          raw_rank: rawRows.findIndex((valid) => valid.experiment_id === row.experiment_id) + 1,
+          robust_rank: robustRows.findIndex((valid) => valid.experiment_id === row.experiment_id) + 1,
+        }
         : { ...row, rank: null });
       return {
         success: true,
         data: {
           status: rows.length === validRows.length ? "ok" : "inconclusive",
           best_experiment_id: best.experiment_id,
+          raw_best_experiment_id: rawBest.experiment_id,
+          recommendation_mode: "validation_adjusted",
+          raw_cv_delta: rawRows[1] ? rawBest.normalized_score - rawRows[1]!.normalized_score : null,
           direction: best.direction,
           metric_name: best.metric_name,
           delta,
           rows: rankTable,
+          final_report_sections: [
+            "local_cv_oof",
+            "public_leaderboard_gap",
+            "private_leaderboard_uncertainty",
+            "portfolio_slot_rationale",
+          ],
+          validation_checklist: KAGGLE_VALIDATION_CHECKLIST,
           recommendation: delta === null
             ? `Use ${best.experiment_id}; it is the only valid experiment.`
-            : `Use ${best.experiment_id}; it leads by ${delta}.`,
+            : best.experiment_id === rawBest.experiment_id
+              ? `Use ${best.experiment_id}; it leads after CV stability, OOF safety, leakage, drift, and public-gap checks.`
+              : `Use ${best.experiment_id}; raw CV top-1 ${rawBest.experiment_id} is not the safe recommendation after validation risk adjustment.`,
         },
         summary: `Best Kaggle experiment is ${best.experiment_id} (${best.metric_name}=${best.score}, ${best.direction})`,
         durationMs: Date.now() - startTime,
@@ -911,6 +953,8 @@ function experimentMetadata(
       args: input.args,
       env_keys: Object.keys(input.env ?? {}).sort(),
     },
+    validation_contract: input.validation_contract,
+    validation_checklist: KAGGLE_VALIDATION_CHECKLIST,
     process: {
       session_id: session.session_id,
       metadata_path: session.metadataPath,
