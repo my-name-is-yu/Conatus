@@ -1,6 +1,7 @@
+import * as path from "node:path";
 import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
 import type { ProgressEvent } from "../../orchestrator/loop/core-loop.js";
-import type { GoalCycleScheduleSnapshotEntry } from "./maintenance.js";
+import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import { errorMessage } from "./runner-errors.js";
 import { getDueWaitGoalIds } from "./wait-deadline-resolver.js";
 
@@ -89,6 +90,35 @@ function buildLoopErrorPayload(goalId: string, error: unknown, context: GoalCycl
   };
 }
 
+async function broadcastOpenOperatorHandoffs(context: GoalCycleRunnerContext, goalId: string): Promise<void> {
+  if (!context.eventServer) return;
+  const runtimeRoot = context.runtimeRoot
+    ?? (typeof context.stateManager?.getBaseDir === "function"
+      ? path.join(context.stateManager.getBaseDir(), "runtime")
+      : null);
+  if (!runtimeRoot) return;
+
+  const broadcasted = context.operatorHandoffBroadcastedIds instanceof Set
+    ? context.operatorHandoffBroadcastedIds
+    : new Set<string>();
+  context.operatorHandoffBroadcastedIds = broadcasted;
+
+  try {
+    const handoffs = await new RuntimeOperatorHandoffStore(runtimeRoot).listOpen();
+    for (const handoff of handoffs) {
+      if (handoff.goal_id && handoff.goal_id !== goalId) continue;
+      if (broadcasted.has(handoff.handoff_id)) continue;
+      broadcasted.add(handoff.handoff_id);
+      await context.eventServer.broadcast("operator_handoff_required", handoff);
+    }
+  } catch (err) {
+    context.logger?.warn?.("Failed to broadcast operator handoffs", {
+      goalId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 export async function runDaemonGoalCycleLoop(context: GoalCycleRunnerContext): Promise<void> {
   while (context.running && !context.shuttingDown) {
     try {
@@ -156,6 +186,7 @@ export async function runDaemonGoalCycleLoop(context: GoalCycleRunnerContext): P
               loopCount: context.state.loop_count,
               status: goal?.status ?? "unknown",
             });
+            await broadcastOpenOperatorHandoffs(context, goalId);
             void context.eventServer.broadcast?.("loop_complete", buildLoopCompletePayload(goalId, result));
           }
           await context.broadcastGoalUpdated(goalId, result.finalStatus);

@@ -148,6 +148,12 @@ export {
   RuntimeBudgetThresholdActionSchema,
   RuntimeBudgetUsageSchema,
 } from "./budget-store.js";
+export {
+  RuntimeOperatorHandoffRecordSchema,
+  RuntimeOperatorHandoffStatusSchema,
+  RuntimeOperatorHandoffStore,
+  RuntimeOperatorHandoffTriggerSchema,
+} from "./operator-handoff-store.js";
 export type {
   RuntimeBudgetCreateInput,
   RuntimeBudgetDimension,
@@ -163,6 +169,12 @@ export type {
   RuntimeBudgetUsageInput,
   RuntimeBudgetUsageUpdateInput,
 } from "./budget-store.js";
+export type {
+  RuntimeOperatorHandoffInput,
+  RuntimeOperatorHandoffRecord,
+  RuntimeOperatorHandoffStatus,
+  RuntimeOperatorHandoffTrigger,
+} from "./operator-handoff-store.js";
 export type {
   RuntimeExperimentQueueCreateInput,
   RuntimeExperimentQueueExecutionDirective,

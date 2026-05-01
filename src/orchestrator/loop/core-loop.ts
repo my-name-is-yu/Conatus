@@ -31,6 +31,10 @@ import type {
   RuntimeBudgetRecord,
   RuntimeBudgetStatus,
 } from "../../runtime/store/budget-store.js";
+import type {
+  RuntimeOperatorHandoffInput,
+  RuntimeOperatorHandoffTrigger,
+} from "../../runtime/store/operator-handoff-store.js";
 
 // Re-export types for backward compatibility
 export type {
@@ -287,6 +291,7 @@ export class CoreLoop {
         }
       }
       await this.recordRuntimeBudgetUsage(runtimeBudgetId, iterationResult);
+      await this.recordOperatorHandoffForIteration(goalId, runtimeBudgetId, iterationResult);
       void this.deps.hookManager?.emit("LoopCycleEnd", { goal_id: goalId, data: { loopIndex, status: iterationResult.error ? "error" : "ok" } });
 
       iterations.push(iterationResult);
@@ -556,6 +561,9 @@ export class CoreLoop {
   }> {
     const status = await this.loadRuntimeBudgetStatus(budgetId);
     if (!status) return { stop: false, finalStatus: "stopped" };
+    if (status.finalization_required || status.handoff_required) {
+      await this.recordBudgetOperatorHandoff(goalId, status);
+    }
     if (status.finalization_required) return { stop: true, finalStatus: "finalization" };
     if (status.dimensions.some((dimension) => dimension.exhausted && dimension.exhaustion_policy === "stop")) {
       return { stop: true, finalStatus: "stopped" };
@@ -576,6 +584,7 @@ export class CoreLoop {
       );
       if (approved) return { stop: false, finalStatus: "stopped" };
     }
+    await this.recordBudgetOperatorHandoff(goalId, status);
     return { stop: true, finalStatus: "stopped" };
   }
 
@@ -629,4 +638,118 @@ export class CoreLoop {
     }
   }
 
+  private async recordOperatorHandoffForIteration(
+    goalId: string,
+    budgetId: string | null,
+    iterationResult: LoopIterationResult
+  ): Promise<void> {
+    if (this.config.dryRun || !this.deps.operatorHandoffStore) return;
+    const finalization = iterationResult.finalizationStatus;
+    if (!finalization) return;
+    const plan = finalization.finalization_plan;
+    const isDeadlineWindow = finalization.mode === "finalization" || finalization.mode === "missed_deadline";
+    if (!isDeadlineWindow && !plan?.handoff_required) return;
+
+    const approvalActions = plan?.approval_required_actions ?? [];
+    const triggers: RuntimeOperatorHandoffTrigger[] = ["deadline", "finalization"];
+    if (approvalActions.length > 0) triggers.push("external_action");
+    if (plan?.reproducibility_manifest.status === "required_missing") triggers.push("policy");
+
+    const firstAction = approvalActions[0];
+    const bestArtifact = plan?.best_artifact ?? null;
+    await this.createOperatorHandoff({
+      handoff_id: `handoff:${this.currentActivationContext?.backgroundRun?.backgroundRunId ?? goalId}:deadline-finalization`,
+      goal_id: goalId,
+      ...(this.currentActivationContext?.backgroundRun?.backgroundRunId
+        ? { run_id: this.currentActivationContext.backgroundRun.backgroundRunId }
+        : {}),
+      triggers: uniqueTriggers(triggers),
+      title: `Operator handoff: ${goalId}`,
+      summary: finalization.reason,
+      current_status: [
+        `mode=${finalization.mode}`,
+        finalization.deadline ? `deadline=${finalization.deadline}` : null,
+        finalization.remaining_ms !== null ? `remaining_ms=${finalization.remaining_ms}` : null,
+        budgetId ? `budget=${budgetId}` : null,
+      ].filter(Boolean).join(", "),
+      recommended_action: approvalActions.length > 0
+        ? `Review and approve required finalization action: ${approvalActions.map((action) => action.label).join(", ")}.`
+        : "Review the deadline finalization state before continuing autonomous work.",
+      candidate_options: bestArtifact
+        ? [{
+            id: bestArtifact.id ?? bestArtifact.path ?? bestArtifact.state_relative_path ?? "best_artifact",
+            label: bestArtifact.label,
+            tradeoff: bestArtifact.summary ?? "Use the current best observable artifact for handoff/finalization.",
+          }]
+        : [],
+      risks: [
+        "Continuing autonomous exploration may miss or has already missed the deadline window.",
+        ...(approvalActions.length > 0 ? ["External or irreversible finalization actions remain blocked until approval."] : []),
+      ],
+      required_approvals: approvalActions.map((action) => action.label),
+      next_action: {
+        label: firstAction?.label ?? "Review deadline finalization",
+        ...(firstAction?.tool_name ? { tool_name: firstAction.tool_name } : {}),
+        ...(firstAction?.payload_ref ? { payload_ref: firstAction.payload_ref } : {}),
+        approval_required: true,
+      },
+      gate: {
+        autonomous_task_generation: isDeadlineWindow ? "pause" : "constrain",
+        external_action_requires_approval: true,
+      },
+      evidence_refs: [
+        { kind: "deadline_finalization_status", ref: `goal:${goalId}:iteration:${iterationResult.loopIndex}`, observed_at: finalization.evaluated_at },
+        ...(bestArtifact?.path ? [{ kind: bestArtifact.kind ?? "artifact", ref: bestArtifact.path, observed_at: bestArtifact.occurred_at }] : []),
+        ...(bestArtifact?.state_relative_path ? [{ kind: "state_artifact", ref: bestArtifact.state_relative_path, observed_at: bestArtifact.occurred_at }] : []),
+      ],
+      created_at: finalization.evaluated_at,
+    });
+  }
+
+  private async recordBudgetOperatorHandoff(goalId: string, status: RuntimeBudgetStatus): Promise<void> {
+    if (this.config.dryRun || !this.deps.operatorHandoffStore) return;
+    if (!status.handoff_required && !status.approval_required && !status.finalization_required) return;
+    const approvalRequestId = `budget:${status.budget_id}`;
+    await this.createOperatorHandoff({
+      handoff_id: approvalRequestId,
+      goal_id: goalId,
+      ...(status.scope.run_id ? { run_id: status.scope.run_id } : {}),
+      triggers: ["budget"],
+      title: `Budget handoff: ${status.budget_id}`,
+      summary: "Runtime budget threshold reached before autonomous work can continue.",
+      current_status: status.dimensions
+        .map((dimension) => `${dimension.dimension}: used=${dimension.used}/${dimension.limit}, remaining=${dimension.remaining}`)
+        .join("; "),
+      recommended_action: "Review budget usage and approve, finalize, or pause the run.",
+      risks: ["Continuing without an operator decision can exceed the configured runtime budget."],
+      required_approvals: status.approval_required ? ["continue_after_budget_threshold"] : [],
+      ...(status.approval_required ? { approval_request_id: approvalRequestId } : {}),
+      next_action: {
+        label: status.finalization_required ? "Finalize run" : "Review budget threshold",
+        approval_required: true,
+      },
+      gate: {
+        autonomous_task_generation: status.finalization_required || status.handoff_required ? "pause" : "constrain",
+        external_action_requires_approval: true,
+      },
+      evidence_refs: [{ kind: "runtime_budget", ref: status.budget_id }],
+    });
+  }
+
+  private async createOperatorHandoff(input: RuntimeOperatorHandoffInput): Promise<void> {
+    try {
+      await this.deps.operatorHandoffStore?.create(input);
+    } catch (err) {
+      this.logger?.warn("CoreLoop: failed to record operator handoff", {
+        goalId: input.goal_id,
+        handoffId: input.handoff_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+}
+
+function uniqueTriggers(triggers: RuntimeOperatorHandoffTrigger[]): RuntimeOperatorHandoffTrigger[] {
+  return [...new Set(triggers)];
 }

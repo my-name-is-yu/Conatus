@@ -378,6 +378,21 @@ describe("EventSubscriber", () => {
       expect(received[0].message).toContain("Approve daily brief dispatch");
     });
 
+    it("formats operator handoff events as actionable approvals", () => {
+      const sub = makeSubscriber("goal-abc", "normal");
+      const received: TendNotification[] = [];
+      sub.on("notification", (n: TendNotification) => received.push(n));
+
+      const raw = `event: operator_handoff_required\ndata: {"goal_id":"goal-abc","handoff_id":"handoff-123","title":"Deadline handoff","recommended_action":"Review final artifact"}`;
+      (sub as any).parseSSEMessage(raw);
+
+      expect(received).toHaveLength(1);
+      expect(received[0].type).toBe("approval");
+      expect(received[0].requestId).toBe("handoff-123");
+      expect(received[0].message).toContain("Deadline handoff");
+      expect(received[0].message).toContain("Review final artifact");
+    });
+
     it("projects loop_error events into notifications and chat events", () => {
       const sub = makeSubscriber("goal-abc", "normal");
       const notifications: TendNotification[] = [];
@@ -546,6 +561,61 @@ describe("EventSubscriber", () => {
         event.type === "activity"
         && event.message.includes("Approve daily brief dispatch")
         && event.sourceId === "daemon:goal-xyz:approval_required:approval-123"
+      ))).toBe(true);
+
+      vi.unstubAllGlobals();
+    });
+
+    it("projects snapshot operator handoffs into chat events during bootstrap", async () => {
+      const firstStream = new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      });
+      const retryStream = new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            approvals: [],
+            operator_handoffs: [{
+              goal_id: "goal-xyz",
+              handoff_id: "handoff-123",
+              title: "Deadline handoff",
+              recommended_action: "Review final artifact",
+            }],
+            last_outbox_seq: 5,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          body: firstStream,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          body: retryStream,
+        });
+
+      vi.stubGlobal("fetch", mockFetch);
+
+      const sub = new EventSubscriber("http://localhost:9000", "goal-xyz", "normal");
+      const received: ChatEvent[] = [];
+      sub.on("chat_event", (event: ChatEvent) => received.push(event));
+
+      await sub.subscribe();
+
+      expect(received.some((event) => (
+        event.type === "activity"
+        && event.message.includes("Deadline handoff")
+        && event.sourceId === "daemon:goal-xyz:operator_handoff_required:handoff-123"
       ))).toBe(true);
 
       vi.unstubAllGlobals();

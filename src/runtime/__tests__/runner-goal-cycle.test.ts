@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
+import * as fsp from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { runDaemonGoalCycleLoop } from "../daemon/runner-goal-cycle.js";
 import type { LoopResult, ProgressEvent } from "../../orchestrator/loop/core-loop.js";
+import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   return {
@@ -118,6 +122,86 @@ describe("runDaemonGoalCycleLoop", () => {
         status: "completed",
       })
     );
+  });
+
+  it("broadcasts newly persisted operator handoffs to live daemon subscribers", async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runner-handoff-"));
+    try {
+      const broadcast = vi.fn();
+      const handoffStore = new RuntimeOperatorHandoffStore(path.join(tmpDir, "runtime"));
+      const run = vi.fn().mockImplementation(async () => {
+        await handoffStore.create({
+          handoff_id: "handoff-live",
+          goal_id: "goal-1",
+          triggers: ["deadline", "finalization"],
+          title: "Deadline handoff",
+          summary: "Deadline finalization requires review.",
+          current_status: "mode=finalization",
+          recommended_action: "Review final artifact.",
+          next_action: {
+            label: "Review final artifact",
+            approval_required: true,
+          },
+        });
+        return makeLoopResult({ finalStatus: "finalization" });
+      });
+
+      let context: Record<string, unknown>;
+      context = {
+        running: true,
+        shuttingDown: false,
+        currentGoalIds: ["goal-1"],
+        config: { iterations_per_cycle: 1 },
+        state: {
+          loop_count: 0,
+          last_loop_at: null,
+          status: "running",
+          active_goals: ["goal-1"],
+        },
+        consecutiveIdleCycles: 0,
+        currentLoopIndex: 0,
+        coreLoop: { run },
+        eventServer: { broadcast },
+        stateManager: {
+          getBaseDir: () => tmpDir,
+          loadGoal: vi.fn().mockResolvedValue({ status: "active" }),
+        },
+        logger: { info: vi.fn(), warn: vi.fn() },
+        refreshOperationalState: vi.fn(),
+        collectGoalCycleSnapshot: vi.fn().mockResolvedValue([]),
+        determineActiveGoals: vi.fn().mockResolvedValue(["goal-1"]),
+        maybeRefreshProviderRuntime: vi.fn().mockResolvedValue(undefined),
+        broadcastGoalUpdated: vi.fn().mockResolvedValue(undefined),
+        handleLoopError: vi.fn(),
+        saveDaemonState: vi.fn().mockResolvedValue(undefined),
+        processCronTasks: vi.fn().mockResolvedValue(undefined),
+        processScheduleEntries: vi.fn().mockResolvedValue(undefined),
+        expireCronTasks: vi.fn().mockResolvedValue(undefined),
+        proactiveTick: vi.fn().mockResolvedValue(undefined),
+        runRuntimeStoreMaintenance: vi.fn().mockResolvedValue(undefined),
+        getNextInterval: vi.fn().mockReturnValue(1),
+        getMaxGapScore: vi.fn().mockResolvedValue(0.5),
+        calculateAdaptiveInterval: vi.fn().mockReturnValue(1),
+        sleep: vi.fn().mockImplementation(async () => {
+          context.running = false;
+        }),
+        handleCriticalError: vi.fn(),
+        cleanup: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await runDaemonGoalCycleLoop(context);
+
+      expect(broadcast).toHaveBeenCalledWith(
+        "operator_handoff_required",
+        expect.objectContaining({
+          handoff_id: "handoff-live",
+          goal_id: "goal-1",
+          status: "open",
+        })
+      );
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("broadcasts loop_error when the CoreLoop run fails", async () => {

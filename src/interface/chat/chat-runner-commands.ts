@@ -47,6 +47,7 @@ import type { DaemonSnapshot } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import { BrowserSessionStore } from "../../runtime/interactive-automation/index.js";
 import { GuardrailStore } from "../../runtime/guardrails/index.js";
+import { RuntimeOperatorHandoffStore } from "../../runtime/store/operator-handoff-store.js";
 import * as path from "node:path";
 
 export const COMMAND_HELP = `Available commands:
@@ -433,12 +434,25 @@ export class ChatRunnerCommandHandler {
     const remoteGuardrails = snapshot?.guardrails && typeof snapshot.guardrails === "object"
       ? snapshot.guardrails
       : null;
+    const remoteOperatorHandoffs = Array.isArray(snapshot?.operator_handoffs)
+      ? snapshot.operator_handoffs
+      : null;
     const pendingAuth = remoteAuthSessions ?? await this.loadPendingAuthSessionsFromRuntime();
+    const operatorHandoffs = remoteOperatorHandoffs ?? await this.loadOpenOperatorHandoffsFromRuntime();
     const { openBreakers, backpressureActiveCount } = remoteGuardrails
       ? this.extractGuardrailSummaryFromSnapshot(remoteGuardrails)
       : await this.loadGuardrailsFromRuntime();
     const lines: string[] = [];
+    if (operatorHandoffs.length > 0) {
+      lines.push("Operator handoffs pending:");
+      for (const handoff of operatorHandoffs.slice(0, 5)) {
+        const record = handoff as Record<string, unknown>;
+        const triggers = Array.isArray(record["triggers"]) ? record["triggers"].join(",") : "unknown";
+        lines.push(`- ${String(record["title"] ?? record["handoff_id"] ?? "handoff")} [${triggers}] ${String(record["recommended_action"] ?? "")}`);
+      }
+    }
     if (pendingAuth.length > 0) {
+      if (lines.length > 0) lines.push("");
       lines.push("Auth handoffs pending:");
       for (const session of pendingAuth.slice(0, 5)) {
         const record = session as Record<string, unknown>;
@@ -463,6 +477,11 @@ export class ChatRunnerCommandHandler {
   private async loadPendingAuthSessionsFromRuntime(): Promise<Array<Record<string, unknown>>> {
     const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
     return new BrowserSessionStore(runtimeRoot).listPendingAuth() as Promise<Array<Record<string, unknown>>>;
+  }
+
+  private async loadOpenOperatorHandoffsFromRuntime(): Promise<Array<Record<string, unknown>>> {
+    const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
+    return new RuntimeOperatorHandoffStore(runtimeRoot).listOpen() as Promise<Array<Record<string, unknown>>>;
   }
 
   private async loadGuardrailsFromRuntime(): Promise<{

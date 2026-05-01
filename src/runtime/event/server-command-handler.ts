@@ -1,6 +1,5 @@
 import type * as http from "node:http";
 import { createEnvelope, type Envelope } from "../types/envelope.js";
-import type { ApprovalBroker } from "../approval-broker.js";
 import type { SlackChannelAdapter } from "../gateway/slack-channel-adapter.js";
 import { RuntimeControlOperationKindSchema } from "../store/index.js";
 import { readBody, writeJson, writeJsonError } from "./server-http.js";
@@ -9,9 +8,8 @@ export class EventServerCommandHandler {
   constructor(
     private readonly broadcast: (eventType: string, data: unknown) => Promise<void>,
     private readonly getCommandEnvelopeHook: () => ((envelope: Envelope) => void | Promise<void>) | undefined,
-    private readonly hasPendingApprovalRequest: (requestId: string) => boolean,
+    private readonly canResolveApproval: (requestId: string) => Promise<boolean>,
     private readonly resolveApproval: (requestId: string, approved: boolean) => Promise<boolean>,
-    private readonly getApprovalBroker: () => ApprovalBroker | undefined,
     private readonly getSlackChannelAdapter: () => SlackChannelAdapter | undefined
   ) {}
 
@@ -108,7 +106,7 @@ export class EventServerCommandHandler {
       try {
         const body = await readBody(req);
         const { requestId, approved } = JSON.parse(body) as { requestId: string; approved: boolean };
-        if (!this.getApprovalBroker() && !this.hasPendingApprovalRequest(requestId)) {
+        if (!(await this.canResolveApproval(requestId))) {
           writeJson(res, 404, { ok: false });
           return;
         }

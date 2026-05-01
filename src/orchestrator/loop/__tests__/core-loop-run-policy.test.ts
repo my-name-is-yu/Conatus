@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CoreLoop, makeEmptyIterationResult, type CoreLoopDeps } from "../core-loop.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
+import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
 
 function makeDeps(): CoreLoopDeps {
   return {
@@ -210,5 +211,116 @@ describe("CoreLoop run policies", () => {
     expect(result.finalStatus).toBe("stopped");
     expect(runOneIteration).not.toHaveBeenCalled();
     expect(waitApprovalBroker.requestApproval).not.toHaveBeenCalled();
+  });
+
+  it("records a budget handoff before stopping at finalization threshold", async () => {
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-core-budget-handoff-"));
+    tempDirs.push(tempDir);
+    const runtimeRoot = path.join(tempDir, "runtime");
+    const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot);
+    const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+    await runtimeBudgetStore.create({
+      budget_id: "budget-finalize",
+      scope: { goal_id: "goal-budget-finalize" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [{ dimension: "iterations", limit: 2, finalization_at_remaining: 0 }],
+    });
+    await runtimeBudgetStore.recordTaskExecution("budget-finalize", { iterations: 2 });
+
+    const loop = new CoreLoop({
+      ...makeDeps(),
+      runtimeBudgetStore,
+      operatorHandoffStore,
+      reportingEngine: { generateExecutionSummary: vi.fn(), saveReport: vi.fn() },
+    } as unknown as CoreLoopDeps, {
+      maxIterations: 2,
+      delayBetweenLoopsMs: 0,
+      autoDecompose: false,
+      runtimeBudget: {
+        budgetId: "budget-finalize",
+        limits: [{ dimension: "iterations", limit: 2, finalization_at_remaining: 0 }],
+      },
+    });
+    const runOneIteration = vi.spyOn(loop, "runOneIteration").mockResolvedValue(
+      makeEmptyIterationResult("goal-budget-finalize", 0)
+    );
+
+    const result = await loop.run("goal-budget-finalize");
+
+    expect(result.totalIterations).toBe(0);
+    expect(result.finalStatus).toBe("finalization");
+    expect(runOneIteration).not.toHaveBeenCalled();
+    expect(await operatorHandoffStore.listOpen()).toEqual([
+      expect.objectContaining({
+        handoff_id: "budget:budget-finalize",
+        goal_id: "goal-budget-finalize",
+        triggers: ["budget"],
+        title: "Budget handoff: budget-finalize",
+        gate: expect.objectContaining({
+          autonomous_task_generation: "pause",
+        }),
+      }),
+    ]);
+  });
+
+  it("uses the budget approval request id for handoff records that also require approval", async () => {
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-core-budget-approval-handoff-"));
+    tempDirs.push(tempDir);
+    const runtimeRoot = path.join(tempDir, "runtime");
+    const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot);
+    const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+    await runtimeBudgetStore.create({
+      budget_id: "budget-review",
+      scope: { goal_id: "goal-budget-review" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [{
+        dimension: "iterations",
+        limit: 2,
+        approval_at_remaining: 0,
+        handoff_at_remaining: 0,
+      }],
+    });
+    await runtimeBudgetStore.recordTaskExecution("budget-review", { iterations: 2 });
+    const waitApprovalBroker = { requestApproval: vi.fn().mockResolvedValue(true) };
+
+    const loop = new CoreLoop({
+      ...makeDeps(),
+      runtimeBudgetStore,
+      operatorHandoffStore,
+      waitApprovalBroker,
+      reportingEngine: { generateExecutionSummary: vi.fn(), saveReport: vi.fn() },
+    } as unknown as CoreLoopDeps, {
+      maxIterations: 1,
+      delayBetweenLoopsMs: 0,
+      autoDecompose: false,
+      runtimeBudget: {
+        budgetId: "budget-review",
+        limits: [{
+          dimension: "iterations",
+          limit: 2,
+          approval_at_remaining: 0,
+          handoff_at_remaining: 0,
+        }],
+      },
+    });
+    const runOneIteration = vi.spyOn(loop, "runOneIteration").mockResolvedValue(
+      makeEmptyIterationResult("goal-budget-review", 0)
+    );
+
+    await loop.run("goal-budget-review");
+
+    expect(waitApprovalBroker.requestApproval).toHaveBeenCalledWith(
+      "goal-budget-review",
+      expect.objectContaining({ id: "budget:budget-review" }),
+      undefined,
+      "budget:budget-review",
+    );
+    expect(await operatorHandoffStore.load("budget:budget-review")).toMatchObject({
+      handoff_id: "budget:budget-review",
+      approval_request_id: "budget:budget-review",
+      status: "open",
+      triggers: ["budget"],
+    });
+    expect(runOneIteration).toHaveBeenCalledTimes(1);
   });
 });

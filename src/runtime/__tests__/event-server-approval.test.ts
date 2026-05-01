@@ -6,6 +6,7 @@ import { EventServer } from "../event-server.js";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
 import { createRuntimeStorePaths } from "../store/runtime-paths.js";
+import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import type { ApprovalRecord } from "../store/runtime-schemas.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
@@ -188,6 +189,105 @@ describe("EventServer durable approval integration", () => {
       const resolvedPath = paths.approvalResolvedPath("approval-http");
       const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
       expect(resolved.state).toBe("approved");
+    } finally {
+      await server.stop();
+    }
+  }, 15_000);
+
+  it("resolves durable operator handoffs through the goal approval endpoint", async () => {
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const handoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+    await handoffStore.create({
+      handoff_id: "handoff-http",
+      goal_id: "goal-1",
+      triggers: ["deadline", "finalization"],
+      title: "Deadline handoff",
+      summary: "Deadline finalization requires review.",
+      current_status: "mode=finalization",
+      recommended_action: "Approve finalization.",
+      next_action: {
+        label: "Approve finalization",
+        approval_required: true,
+      },
+    });
+    const server = new EventServer(
+      createMockDriveSystem() as never,
+      {
+        port: 0,
+        eventsDir: path.join(tmpDir, "events"),
+        runtimeRoot,
+      }
+    );
+
+    try {
+      await server.start();
+      const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "handoff-http",
+        approved: true,
+      }, server.getAuthToken());
+
+      expect(result.status).toBe(200);
+      expect(await handoffStore.listOpen()).toEqual([]);
+      expect(await handoffStore.load("handoff-http")).toMatchObject({
+        status: "approved",
+        resolved_at: expect.any(String),
+      });
+    } finally {
+      await server.stop();
+    }
+  }, 15_000);
+
+  it("resolves both ApprovalBroker and durable handoff when they share a handoff request id", async () => {
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const handoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+    await handoffStore.create({
+      handoff_id: "handoff-shared",
+      goal_id: "goal-1",
+      triggers: ["external_action"],
+      title: "External action handoff",
+      summary: "External action requires approval.",
+      current_status: "task=pending",
+      recommended_action: "Approve external action.",
+      approval_request_id: "handoff-shared",
+      next_action: {
+        label: "Approve external action",
+        approval_required: true,
+      },
+    });
+    const broker = new ApprovalBroker({
+      store: new ApprovalStore(runtimeRoot),
+      createId: () => "unused-approval",
+    });
+    const server = new EventServer(
+      createMockDriveSystem() as never,
+      {
+        port: 0,
+        eventsDir: path.join(tmpDir, "events"),
+        runtimeRoot,
+        approvalBroker: broker,
+      }
+    );
+
+    try {
+      await server.start();
+      const approval = server.requestApproval("goal-1", {
+        id: "task-1",
+        description: "Approve external action",
+        action: "submit",
+      }, { requestId: "handoff-shared" });
+
+      const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "handoff-shared",
+        approved: true,
+      }, server.getAuthToken());
+
+      expect(result.status).toBe(200);
+      await expect(approval).resolves.toBe(true);
+      expect(await handoffStore.listOpen()).toEqual([]);
+      expect(await handoffStore.load("handoff-shared")).toMatchObject({
+        status: "approved",
+        resolved_at: expect.any(String),
+      });
     } finally {
       await server.stop();
     }

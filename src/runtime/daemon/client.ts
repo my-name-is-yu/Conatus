@@ -34,6 +34,7 @@ export interface DaemonSnapshot {
   auth_sessions?: unknown[];
   guardrails?: Record<string, unknown> | null;
   runtime_sessions?: unknown;
+  operator_handoffs?: unknown[];
 }
 
 export interface DaemonHealth {
@@ -416,6 +417,9 @@ export class DaemonClient {
       }
       for (const approval of snapshot.approvals ?? []) {
         this.emit("approval_required", approval);
+      }
+      for (const handoff of snapshot.operator_handoffs ?? []) {
+        this.emit("operator_handoff_required", handoff);
       }
     } catch {
       // Snapshot bootstrap is optional; fall back to a direct stream connect.

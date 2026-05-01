@@ -7,6 +7,10 @@ import { GuardrailStore } from "../guardrails/index.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { createRuntimeSessionRegistry } from "../session-registry/index.js";
 import type { RuntimeSessionRegistrySnapshot } from "../session-registry/types.js";
+import {
+  RuntimeOperatorHandoffStore,
+  type RuntimeOperatorHandoffRecord,
+} from "../store/operator-handoff-store.js";
 
 type ActiveWorkersProvider = () =>
   | Array<Record<string, unknown>>
@@ -21,6 +25,7 @@ export interface EventServerSnapshotData {
   auth_sessions: Array<Record<string, unknown>>;
   guardrails: Record<string, unknown> | null;
   runtime_sessions: RuntimeSessionRegistrySnapshot | null;
+  operator_handoffs: RuntimeOperatorHandoffRecord[];
 }
 
 export class EventServerSnapshotReader {
@@ -35,7 +40,7 @@ export class EventServerSnapshotReader {
     outboxStore?: OutboxStore,
     activeWorkersProvider?: ActiveWorkersProvider
   ): Promise<EventServerSnapshotData> {
-    const [daemon, goals, latestOutbox, activeWorkers, authSessions, guardrails, runtimeSessions] = await Promise.all([
+    const [daemon, goals, latestOutbox, activeWorkers, authSessions, guardrails, runtimeSessions, operatorHandoffs] = await Promise.all([
       this.readDaemonState(),
       this.readGoalSummaries(),
       outboxStore?.loadLatest() ?? Promise.resolve(null),
@@ -43,6 +48,7 @@ export class EventServerSnapshotReader {
       this.readPendingAuthSessions(),
       this.readGuardrailSnapshot(),
       this.readRuntimeSessionSnapshot(),
+      this.readOpenOperatorHandoffs(),
     ]);
 
     return {
@@ -54,6 +60,7 @@ export class EventServerSnapshotReader {
       auth_sessions: authSessions,
       guardrails,
       runtime_sessions: runtimeSessions,
+      operator_handoffs: operatorHandoffs,
     };
   }
 
@@ -103,6 +110,10 @@ export class EventServerSnapshotReader {
     if (!this.stateManager) return null;
     const registry = createRuntimeSessionRegistry({ stateManager: this.stateManager });
     return registry.snapshot();
+  }
+
+  private async readOpenOperatorHandoffs(): Promise<RuntimeOperatorHandoffRecord[]> {
+    return new RuntimeOperatorHandoffStore(this.runtimeRoot()).listOpen();
   }
 
   async readDaemonStateRaw(): Promise<string | null> {
