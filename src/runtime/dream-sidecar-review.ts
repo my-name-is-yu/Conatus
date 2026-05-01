@@ -12,6 +12,7 @@ import type {
   RuntimeEvidenceEntry,
   RuntimeEvidenceDreamCheckpointRejectedApproach,
   RuntimeEvidenceDreamCheckpointStrategyCandidate,
+  RuntimeFailedLineageContext,
   RuntimeEvidenceSummary,
 } from "./store/evidence-ledger.js";
 import { BackgroundRunLedger } from "./store/background-run-store.js";
@@ -320,6 +321,9 @@ function buildKnownGaps(summary: RuntimeEvidenceSummary): string[] {
   for (const rejected of collectRejectedApproaches(summary).slice(0, 3)) {
     gaps.add(`Rejected approach: ${rejected.approach} (${rejected.rejection_reason})`);
   }
+  for (const lineage of summary.failed_lineages.filter((item) => item.count >= 2).slice(0, 3)) {
+    gaps.add(`Repeated failed lineage: ${lineageLabel(lineage)} (count=${lineage.count})`);
+  }
   if (!summary.best_evidence) gaps.add("No best evidence has been recorded for this run.");
   if (summary.metric_trends.length === 0) gaps.add("No progress metric history has been recorded for this run.");
   return [...gaps].slice(0, 6);
@@ -340,9 +344,11 @@ function buildStrategyFamilies(summary: RuntimeEvidenceSummary): string[] {
 function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamSidecarReview["suggested_next_moves"] {
   const moves: RuntimeDreamSidecarReview["suggested_next_moves"] = [];
   const rejectedApproaches = collectRejectedApproaches(summary);
+  const failedLineages = summary.failed_lineages.filter((lineage) => lineage.count >= 2);
   for (const checkpoint of summary.dream_checkpoints.slice(0, 2)) {
     for (const candidate of checkpoint.next_strategy_candidates) {
       if (isRejectedDreamCandidate(candidate, rejectedApproaches)) continue;
+      if (!candidate.retry_reason && isFailedLineageMove(candidate.title, candidate.rationale, failedLineages)) continue;
       moves.push({
         title: candidate.title,
         rationale: candidate.rationale,
@@ -360,6 +366,7 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
   for (const memo of summary.research_memos.slice(0, 2)) {
     for (const finding of memo.findings.slice(0, 2)) {
       if (isRejectedMove(finding.proposed_experiment, finding.applicability, rejectedApproaches)) continue;
+      if (isFailedLineageMove(finding.proposed_experiment, finding.applicability, failedLineages)) continue;
       moves.push({
         title: finding.proposed_experiment,
         rationale: finding.applicability,
@@ -382,6 +389,34 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
     });
   }
   return moves.slice(0, 6);
+}
+
+function isFailedLineageMove(
+  title: string,
+  rationale: string,
+  failedLineages: RuntimeFailedLineageContext[]
+): boolean {
+  if (failedLineages.length === 0) return false;
+  const moveText = normalizeRejectedMoveText(`${title} ${rationale}`);
+  if (!moveText) return false;
+  return failedLineages.some((lineage) => {
+    const lineageTexts = [
+      lineage.strategy_family,
+      lineage.hypothesis,
+      lineage.task_action,
+    ].map((value) => normalizeRejectedMoveText(value ?? "")).filter(Boolean);
+    return lineageTexts.some((lineageText) =>
+      moveText.includes(lineageText) || lineageText.includes(moveText)
+    );
+  });
+}
+
+function lineageLabel(lineage: RuntimeFailedLineageContext): string {
+  return lineage.strategy_family
+    ?? lineage.task_action
+    ?? lineage.hypothesis
+    ?? lineage.primary_dimension
+    ?? lineage.fingerprint;
 }
 
 function collectRejectedApproaches(summary: RuntimeEvidenceSummary): RuntimeEvidenceDreamCheckpointRejectedApproach[] {

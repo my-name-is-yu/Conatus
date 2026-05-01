@@ -205,6 +205,12 @@ export const RuntimeEvidenceDreamCheckpointStrategyCandidateSchema = z.object({
   rationale: z.string().min(1),
   target_dimensions: z.array(z.string().min(1)).default([]),
   expected_evidence_gain: z.string().min(1).optional(),
+  retry_reason: z.string().min(1).optional(),
+  failed_lineage_warning: z.object({
+    fingerprint: z.string().min(1),
+    count: z.number().int().positive(),
+    reason: z.string().min(1),
+  }).strict().optional(),
 }).strict();
 export type RuntimeEvidenceDreamCheckpointStrategyCandidate = z.infer<typeof RuntimeEvidenceDreamCheckpointStrategyCandidateSchema>;
 
@@ -372,6 +378,21 @@ export interface RuntimeEvidenceReadResult {
   warnings: RuntimeEvidenceReadWarning[];
 }
 
+export interface RuntimeFailedLineageContext {
+  fingerprint: string;
+  count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  strategy_family?: string;
+  hypothesis?: string;
+  primary_dimension?: string;
+  task_action?: string;
+  failure_reason?: string;
+  representative_entry_id: string;
+  representative_summary: string;
+  evidence_entry_ids: string[];
+}
+
 export interface RuntimeEvidenceSummary {
   schema_version: "runtime-evidence-summary-v1";
   generated_at: string;
@@ -388,6 +409,7 @@ export interface RuntimeEvidenceSummary {
   dream_checkpoints: RuntimeDreamCheckpointContext[];
   divergent_exploration: RuntimeEvidenceDivergentHypothesis[];
   recent_failed_attempts: RuntimeEvidenceEntry[];
+  failed_lineages: RuntimeFailedLineageContext[];
   recent_entries: RuntimeEvidenceEntry[];
   warnings: RuntimeEvidenceReadWarning[];
 }
@@ -539,9 +561,91 @@ function summarizeEvidence(
         || entry.verification?.verdict === "fail"
       )
       .slice(0, 5),
+    failed_lineages: summarizeFailedLineages(entries),
     recent_entries: newestFirst.slice(0, 10),
     warnings: read.warnings,
   };
+}
+
+function summarizeFailedLineages(entriesOldestFirst: RuntimeEvidenceEntry[]): RuntimeFailedLineageContext[] {
+  const lineages = new Map<string, RuntimeFailedLineageContext>();
+  for (const entry of entriesOldestFirst) {
+    if (!isFailedEvidenceEntry(entry)) continue;
+    const fingerprintInput = failedLineageFingerprintInput(entry);
+    const normalizedIdentityParts = [
+      normalizeLineageText(fingerprintInput.strategy_family),
+      normalizeLineageText(fingerprintInput.hypothesis),
+      normalizeLineageText(fingerprintInput.primary_dimension),
+      normalizeLineageText(fingerprintInput.task_action),
+    ].filter(Boolean);
+    const normalizedFallbackParts = [normalizeLineageText(fingerprintInput.failure_reason)].filter(Boolean);
+    const fingerprintParts = normalizedIdentityParts.length > 0 ? normalizedIdentityParts : normalizedFallbackParts;
+    if (fingerprintParts.length === 0) continue;
+    const fingerprint = fingerprintParts.join("|");
+    const summary = entry.summary
+      ?? entry.result?.summary
+      ?? entry.verification?.summary
+      ?? entry.result?.error
+      ?? `${entry.kind} failed`;
+    const existing = lineages.get(fingerprint);
+    if (!existing) {
+      lineages.set(fingerprint, {
+        fingerprint,
+        count: 1,
+        first_seen_at: entry.occurred_at,
+        last_seen_at: entry.occurred_at,
+        ...(fingerprintInput.strategy_family ? { strategy_family: fingerprintInput.strategy_family } : {}),
+        ...(fingerprintInput.hypothesis ? { hypothesis: fingerprintInput.hypothesis } : {}),
+        ...(fingerprintInput.primary_dimension ? { primary_dimension: fingerprintInput.primary_dimension } : {}),
+        ...(fingerprintInput.task_action ? { task_action: fingerprintInput.task_action } : {}),
+        ...(fingerprintInput.failure_reason ? { failure_reason: fingerprintInput.failure_reason } : {}),
+        representative_entry_id: entry.id,
+        representative_summary: summary,
+        evidence_entry_ids: [entry.id],
+      });
+      continue;
+    }
+    existing.count += 1;
+    existing.last_seen_at = entry.occurred_at;
+    existing.representative_entry_id = entry.id;
+    existing.representative_summary = summary;
+    existing.evidence_entry_ids = [...existing.evidence_entry_ids, entry.id].slice(-5);
+  }
+
+  return [...lineages.values()]
+    .sort((a, b) => b.count - a.count || b.last_seen_at.localeCompare(a.last_seen_at))
+    .slice(0, 10);
+}
+
+function isFailedEvidenceEntry(entry: RuntimeEvidenceEntry): boolean {
+  return entry.outcome === "failed"
+    || entry.outcome === "regressed"
+    || entry.kind === "failure"
+    || entry.result?.status === "failed"
+    || entry.verification?.verdict === "fail";
+}
+
+function failedLineageFingerprintInput(entry: RuntimeEvidenceEntry): {
+  strategy_family?: string;
+  hypothesis?: string;
+  primary_dimension?: string;
+  task_action?: string;
+  failure_reason?: string;
+} {
+  const strategyFamily = entry.strategy ?? entry.task?.action;
+  return {
+    ...(strategyFamily ? { strategy_family: strategyFamily } : {}),
+    ...(entry.hypothesis ? { hypothesis: entry.hypothesis } : {}),
+    ...(entry.task?.primary_dimension ? { primary_dimension: entry.task.primary_dimension } : {}),
+    ...(entry.task?.action ? { task_action: entry.task.action } : {}),
+    ...(entry.result?.error || entry.result?.summary || entry.verification?.summary
+      ? { failure_reason: entry.result?.error ?? entry.result?.summary ?? entry.verification?.summary }
+      : {}),
+  };
+}
+
+function normalizeLineageText(value: string | undefined): string {
+  return value?.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, " ").trim() ?? "";
 }
 
 function chooseBestEvidence(entriesNewestFirst: RuntimeEvidenceEntry[]): RuntimeEvidenceEntry | null {

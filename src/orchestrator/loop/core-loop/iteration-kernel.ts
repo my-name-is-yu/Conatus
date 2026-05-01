@@ -236,6 +236,7 @@ export class CoreIterationKernel {
             recentStrategyFamilies: request.recentStrategyFamilies,
             activeHypotheses: request.activeHypotheses,
             rejectedApproaches: request.rejectedApproaches,
+            failedLineages: request.failedLineages,
             ...(request.metricTrendSummary ? { metricTrendSummary: request.metricTrendSummary } : {}),
             ...(request.finalizationReason ? { finalizationReason: request.finalizationReason } : {}),
             ...(request.currentExecutionMode ? { currentExecutionMode: request.currentExecutionMode } : {}),

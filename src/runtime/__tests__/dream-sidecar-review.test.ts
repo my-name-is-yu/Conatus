@@ -146,7 +146,7 @@ describe("Runtime Dream sidecar review", () => {
           },
           {
             title: "Feature ablation",
-            rationale: "Test a different mechanism.",
+            rationale: "Test a different mechanism for balanced_accuracy.",
             target_dimensions: ["balanced_accuracy"],
           },
         ],
@@ -167,6 +167,77 @@ describe("Runtime Dream sidecar review", () => {
     expect(review.known_gaps).toContainEqual(expect.stringContaining("Rejected approach: 閾値スイープの再実行"));
     expect(review.suggested_next_moves).not.toContainEqual(expect.objectContaining({
       title: "閾値スイープの再実行",
+    }));
+    expect(review.suggested_next_moves).toContainEqual(expect.objectContaining({
+      title: "Feature ablation",
+      source: "dream_checkpoint",
+    }));
+  });
+
+  it("summarizes repeated failed lineages and avoids suggesting them without retry evidence", async () => {
+    await seedActiveRun("run:coreloop:failed-lineage");
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    for (let index = 0; index < 3; index += 1) {
+      await ledger.append({
+        id: `failed-threshold-${index + 1}`,
+        occurred_at: `2026-04-30T00:0${index}:00.000Z`,
+        kind: "failure",
+        scope: { run_id: "run:coreloop:failed-lineage", task_id: `task-threshold-${index + 1}` },
+        strategy: "threshold_sweep",
+        hypothesis: "Repeat threshold sweep improves balanced accuracy",
+        task: {
+          id: `task-threshold-${index + 1}`,
+          action: "threshold_sweep",
+          primary_dimension: "balanced_accuracy",
+        },
+        verification: { verdict: "fail", summary: "Balanced accuracy stayed inside noise." },
+        summary: "Threshold sweep failed.",
+        outcome: "failed",
+      });
+    }
+    await ledger.append({
+      kind: "dream_checkpoint",
+      scope: { run_id: "run:coreloop:failed-lineage", loop_index: 4, phase: "dream_review_checkpoint" },
+      dream_checkpoints: [{
+        trigger: "plateau",
+        summary: "Dream checkpoint proposed next moves.",
+        current_goal: "Improve benchmark",
+        active_dimensions: ["balanced_accuracy"],
+        recent_strategy_families: ["threshold_sweep"],
+        exhausted: ["threshold_sweep"],
+        promising: ["feature_ablation"],
+        relevant_memories: [],
+        active_hypotheses: [],
+        rejected_approaches: [],
+        next_strategy_candidates: [
+          {
+            title: "threshold_sweep retry",
+            rationale: "Try the same threshold_sweep again.",
+            target_dimensions: ["balanced_accuracy"],
+          },
+          {
+            title: "Feature ablation",
+            rationale: "Test a different mechanism.",
+            target_dimensions: ["balanced_accuracy"],
+          },
+        ],
+        guidance: "Avoid repeated failed lineages.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.88,
+      }],
+      summary: "Plateau checkpoint saved.",
+      outcome: "continued",
+    });
+
+    const review = await createRuntimeDreamSidecarReview({
+      stateManager,
+      runId: "run:coreloop:failed-lineage",
+    });
+
+    expect(review.known_gaps).toContainEqual(expect.stringContaining("Repeated failed lineage: threshold_sweep (count=3)"));
+    expect(review.suggested_next_moves).not.toContainEqual(expect.objectContaining({
+      title: "threshold_sweep retry",
     }));
     expect(review.suggested_next_moves).toContainEqual(expect.objectContaining({
       title: "Feature ablation",

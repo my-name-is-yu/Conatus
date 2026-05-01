@@ -259,6 +259,70 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.best_evidence?.id).toBe("passed-verification");
   });
 
+  it("aggregates repeated failed approaches into failed lineages without mixing divergent approaches", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    for (let index = 0; index < 3; index += 1) {
+      await ledger.append({
+        id: `failed-threshold-${index + 1}`,
+        occurred_at: `2026-04-30T00:0${index}:00.000Z`,
+        kind: "failure",
+        scope: { goal_id: "goal-lineage", task_id: `task-threshold-${index + 1}` },
+        strategy: "threshold_sweep",
+        hypothesis: "Repeat threshold sweep improves balanced accuracy",
+        task: {
+          id: `task-threshold-${index + 1}`,
+          action: "threshold_sweep",
+          primary_dimension: "balanced_accuracy",
+        },
+        verification: {
+          verdict: "fail",
+          summary: [
+            "Balanced accuracy stayed inside noise.",
+            "No significant balanced accuracy gain.",
+            "Metric stayed flat after the sweep.",
+          ][index],
+        },
+        summary: "Threshold sweep failed.",
+        outcome: "failed",
+      });
+    }
+    await ledger.append({
+      id: "failed-ablation",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "failure",
+      scope: { goal_id: "goal-lineage", task_id: "task-ablation" },
+      strategy: "feature_ablation",
+      hypothesis: "Ablate leakage-prone feature group",
+      task: {
+        id: "task-ablation",
+        action: "feature_ablation",
+        primary_dimension: "balanced_accuracy",
+      },
+      verification: { verdict: "fail", summary: "Ablation reduced balanced accuracy." },
+      summary: "Ablation failed differently.",
+      outcome: "failed",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-lineage");
+
+    expect(summary.failed_lineages).toHaveLength(2);
+    expect(summary.failed_lineages[0]).toMatchObject({
+      count: 3,
+      strategy_family: "threshold_sweep",
+      primary_dimension: "balanced_accuracy",
+      representative_entry_id: "failed-threshold-3",
+    });
+    expect(summary.failed_lineages[0]?.evidence_entry_ids).toEqual([
+      "failed-threshold-1",
+      "failed-threshold-2",
+      "failed-threshold-3",
+    ]);
+    expect(summary.failed_lineages[1]).toMatchObject({
+      count: 1,
+      strategy_family: "feature_ablation",
+    });
+  });
+
   it("stores local and external evaluator observations with candidate provenance", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
