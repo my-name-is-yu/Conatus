@@ -940,6 +940,157 @@ describe("RuntimeEvidenceLedger", () => {
     });
   });
 
+  it("preserves near-miss non-winners during stalled candidate selection", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    for (const [index, value] of [0.9704, 0.97042, 0.97041].entries()) {
+      await ledger.append({
+        id: `stalled-balanced-accuracy-${index + 1}`,
+        occurred_at: `2026-04-30T00:0${index}:00.000Z`,
+        kind: "metric",
+        scope: { goal_id: "goal-near-miss-stall", loop_index: index },
+        metrics: [{ label: "balanced_accuracy", value, direction: "maximize", confidence: 0.9 }],
+        summary: "Balanced accuracy stayed inside the plateau band.",
+        outcome: "continued",
+      });
+    }
+    await ledger.append({
+      id: "near-miss-candidate-snapshot",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-near-miss-stall", loop_index: 4 },
+      candidates: [
+        {
+          candidate_id: "raw-best-threshold",
+          label: "Raw best threshold",
+          lineage: {
+            strategy_family: "threshold_sweep",
+            feature_lineage: ["base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["manual-threshold"],
+            seed_lineage: ["seed-42"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: ["threshold-0.48"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.97042, direction: "maximize", confidence: 0.78 }],
+          artifacts: [],
+          similarity: [],
+          robustness: {
+            stability_score: 0.45,
+            risk_penalty: 0.2,
+            evidence_confidence: 0.72,
+            weak_dimensions: [],
+            provenance_refs: ["runs/raw-best/metrics.json"],
+          },
+          disposition: "promoted",
+          disposition_reason: "Highest local metric, but not the only promising path.",
+        },
+        {
+          candidate_id: "weak-class-near-miss",
+          label: "Weak class near miss",
+          lineage: {
+            strategy_family: "class_weight_focus",
+            feature_lineage: ["base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["class-weight-minority"],
+            seed_lineage: ["seed-314"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.97001, direction: "maximize", confidence: 0.9 }],
+          artifacts: [],
+          similarity: [{ candidate_id: "raw-best-threshold", similarity: 0.42, signal: "metric_correlation" }],
+          robustness: {
+            stability_score: 0.88,
+            risk_penalty: 0.02,
+            evidence_confidence: 0.9,
+            weak_dimensions: ["minority_class_recall"],
+            provenance_refs: ["runs/weak-class/metrics.json", "runs/weak-class/per-class.json"],
+            summary: "Misses raw best but improves minority class recall under plateau.",
+          },
+          near_miss: {
+            status: "retained",
+            reason_to_keep: ["weak_dimension_improvement", "stability", "complementarity"],
+            weak_dimensions: ["minority_class_recall"],
+            complementary_candidate_ids: ["raw-best-threshold"],
+            follow_up: {
+              title: "Expand minority class weighting follow-up",
+              rationale: "Use the weak-class gain to test a larger class-weight schedule.",
+              target_dimensions: ["minority_class_recall", "balanced_accuracy"],
+              expected_evidence_gain: "Confirms whether the weak-dimension improvement survives a larger run.",
+            },
+            evidence_refs: ["runs/weak-class/per-class.json"],
+            summary: "Retained because it improves the weak class while staying near raw best.",
+          },
+          disposition: "retained",
+          disposition_reason: "Near miss retained for weak-dimension improvement.",
+        },
+        {
+          candidate_id: "tabnet-diverse-near-miss",
+          label: "TabNet diverse near miss",
+          lineage: {
+            strategy_family: "tabnet",
+            feature_lineage: ["encoded-categorical"],
+            model_lineage: ["tabnet"],
+            config_lineage: ["smoke"],
+            seed_lineage: ["seed-7"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.962, direction: "maximize", confidence: 0.82 }],
+          artifacts: [],
+          similarity: [{ candidate_id: "raw-best-threshold", similarity: 0.28, signal: "declared" }],
+          robustness: {
+            stability_score: 0.76,
+            risk_penalty: 0.03,
+            evidence_confidence: 0.82,
+            weak_dimensions: [],
+            provenance_refs: ["runs/tabnet-smoke/metrics.json"],
+            summary: "Lower score but a distinct strategy family with cheap follow-up potential.",
+          },
+          near_miss: {
+            status: "retained",
+            reason_to_keep: ["novelty"],
+            weak_dimensions: [],
+            complementary_candidate_ids: [],
+            follow_up: {
+              title: "Promote TabNet smoke to a bounded larger fold run",
+              rationale: "The distinct family can test whether the plateau is model-family specific.",
+              target_dimensions: ["balanced_accuracy"],
+            },
+            evidence_refs: ["runs/tabnet-smoke/metrics.json"],
+            summary: "Distinct strategy family kept despite lower local score.",
+          },
+          disposition: "retained",
+          disposition_reason: "Distinct strategy family preserved for stall recovery.",
+        },
+      ],
+      summary: "Stalled candidate snapshot with promising non-winners.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-near-miss-stall");
+
+    expect(summary.candidate_selection_summary.raw_best?.candidate_id).toBe("raw-best-threshold");
+    expect(summary.near_miss_candidates.map((candidate) => candidate.candidate_id)).toEqual([
+      "weak-class-near-miss",
+      "tabnet-diverse-near-miss",
+    ]);
+    expect(summary.near_miss_candidates[0]).toMatchObject({
+      candidate_id: "weak-class-near-miss",
+      raw_best_candidate_id: "raw-best-threshold",
+      reason_to_keep: expect.arrayContaining(["weak_dimension_improvement", "stability", "complementarity"]),
+      weak_dimensions: ["minority_class_recall"],
+      follow_up: {
+        title: "Expand minority class weighting follow-up",
+      },
+    });
+    expect(summary.near_miss_candidates[1]).toMatchObject({
+      candidate_id: "tabnet-diverse-near-miss",
+      strategy_family: "tabnet",
+      reason_to_keep: expect.arrayContaining(["novelty"]),
+    });
+  });
+
   it("stores local and external evaluator observations with candidate provenance", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({

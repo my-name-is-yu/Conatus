@@ -96,6 +96,33 @@ export const RuntimeEvidenceCandidateSimilaritySchema = z.object({
 }).strict();
 export type RuntimeEvidenceCandidateSimilarity = z.infer<typeof RuntimeEvidenceCandidateSimilaritySchema>;
 
+export const RuntimeEvidenceCandidateNearMissReasonSchema = z.enum([
+  "close_to_best",
+  "stability",
+  "novelty",
+  "weak_dimension_improvement",
+  "complementarity",
+  "ensemble_potential",
+]);
+export type RuntimeEvidenceCandidateNearMissReason = z.infer<typeof RuntimeEvidenceCandidateNearMissReasonSchema>;
+
+export const RuntimeEvidenceCandidateNearMissSchema = z.object({
+  status: z.enum(["retained", "promoted", "rejected"]).default("retained"),
+  reason_to_keep: z.array(RuntimeEvidenceCandidateNearMissReasonSchema).min(1),
+  margin_to_best: z.number().min(0).optional(),
+  weak_dimensions: z.array(z.string().min(1)).default([]),
+  complementary_candidate_ids: z.array(z.string().min(1)).default([]),
+  follow_up: z.object({
+    title: z.string().min(1),
+    rationale: z.string().min(1),
+    target_dimensions: z.array(z.string().min(1)).default([]),
+    expected_evidence_gain: z.string().min(1).optional(),
+  }).strict().optional(),
+  evidence_refs: z.array(z.string().min(1)).default([]),
+  summary: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceCandidateNearMiss = z.infer<typeof RuntimeEvidenceCandidateNearMissSchema>;
+
 export const RuntimeEvidenceCandidateRecordSchema = z.object({
   candidate_id: z.string().min(1),
   label: z.string().min(1).optional(),
@@ -119,6 +146,7 @@ export const RuntimeEvidenceCandidateRecordSchema = z.object({
     provenance_refs: z.array(z.string().min(1)).default([]),
     summary: z.string().min(1).optional(),
   }).strict().optional(),
+  near_miss: RuntimeEvidenceCandidateNearMissSchema.optional(),
   disposition: RuntimeEvidenceCandidateDispositionSchema.default("retained"),
   disposition_reason: z.string().min(1).optional(),
   produced_at: z.string().datetime().optional(),
@@ -538,6 +566,30 @@ export interface RuntimeCandidateSelectionSummary {
   };
 }
 
+export interface RuntimeNearMissCandidateContext {
+  candidate_id: string;
+  label?: string;
+  strategy_family: string;
+  evidence_entry_id: string;
+  occurred_at: string;
+  raw_rank: number;
+  raw_metric?: CandidateComparableMetric;
+  raw_best_candidate_id?: string;
+  margin_to_raw_best?: number;
+  reason_to_keep: RuntimeEvidenceCandidateNearMissReason[];
+  weak_dimensions: string[];
+  complementary_candidate_ids: string[];
+  follow_up?: {
+    title: string;
+    rationale: string;
+    target_dimensions: string[];
+    expected_evidence_gain?: string;
+  };
+  retained_reason?: string;
+  evidence_refs: string[];
+  summary?: string;
+}
+
 export interface RuntimeEvidenceSummary {
   schema_version: "runtime-evidence-summary-v1";
   generated_at: string;
@@ -556,6 +608,7 @@ export interface RuntimeEvidenceSummary {
   candidate_lineages: RuntimeCandidateLineageContext[];
   recommended_candidate_portfolio: RuntimeCandidatePortfolioSlot[];
   candidate_selection_summary: RuntimeCandidateSelectionSummary;
+  near_miss_candidates: RuntimeNearMissCandidateContext[];
   recent_failed_attempts: RuntimeEvidenceEntry[];
   failed_lineages: RuntimeFailedLineageContext[];
   recent_entries: RuntimeEvidenceEntry[];
@@ -714,6 +767,7 @@ async function readSummaryIndex(
 function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
   return Array.isArray(summary.candidate_lineages)
     && Array.isArray(summary.recommended_candidate_portfolio)
+    && Array.isArray(summary.near_miss_candidates)
     && typeof summary.candidate_selection_summary === "object"
     && summary.candidate_selection_summary !== null;
 }
@@ -801,6 +855,7 @@ function summarizeEvidence(
     candidate_lineages: summarizeCandidateLineages(entries),
     recommended_candidate_portfolio: selectDiversifiedCandidatePortfolio(entries),
     candidate_selection_summary: summarizeCandidateSelection(entries),
+    near_miss_candidates: summarizeNearMissCandidates(entries),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"
@@ -823,7 +878,7 @@ interface CandidateEvidenceContext {
   metric: CandidateComparableMetric | null;
 }
 
-interface CandidateComparableMetric {
+export interface CandidateComparableMetric {
   label: string;
   value: number;
   direction: "maximize" | "minimize";
@@ -1041,6 +1096,161 @@ function selectDiverseCandidate(
       || b.robust_score - a.robust_score
       || a.raw_rank - b.raw_rank
     )[0] ?? null;
+}
+
+function summarizeNearMissCandidates(entriesOldestFirst: RuntimeEvidenceEntry[]): RuntimeNearMissCandidateContext[] {
+  const primaryMetric = resolvePrimaryCandidateMetricKey(entriesOldestFirst);
+  const contexts = extractCandidateEvidenceContexts(entriesOldestFirst, primaryMetric)
+    .filter((context) => context.candidate.disposition !== "retired");
+  const rawRanked = [...contexts].sort(compareCandidateEvidenceContexts);
+  const rawBest = rawRanked[0] ?? null;
+  const scoredByCandidateId = new Map(
+    scoreCandidateSelectionContexts(rawRanked).map((candidate) => [candidate.candidate_id, candidate])
+  );
+  const result: RuntimeNearMissCandidateContext[] = [];
+  for (const context of rawRanked) {
+    if (!rawBest || context.candidate.candidate_id === rawBest.candidate.candidate_id) continue;
+    const scored = scoredByCandidateId.get(context.candidate.candidate_id);
+    const reasons = nearMissReasonsForCandidate(context, rawBest, scored);
+    if (reasons.length === 0) continue;
+    const nearMiss = context.candidate.near_miss;
+    if (nearMiss?.status === "rejected") continue;
+    result.push({
+      candidate_id: context.candidate.candidate_id,
+      ...(context.candidate.label ? { label: context.candidate.label } : {}),
+      strategy_family: context.candidate.lineage.strategy_family,
+      evidence_entry_id: context.entry_id,
+      occurred_at: context.occurred_at,
+      raw_rank: scored?.raw_rank ?? rawRanked.indexOf(context) + 1,
+      ...(context.metric ? { raw_metric: context.metric } : {}),
+      raw_best_candidate_id: rawBest.candidate.candidate_id,
+      ...nearMissMarginContext(context, rawBest, nearMiss),
+      reason_to_keep: reasons,
+      weak_dimensions: nearMiss?.weak_dimensions ?? context.candidate.robustness?.weak_dimensions ?? [],
+      complementary_candidate_ids: nearMiss?.complementary_candidate_ids ?? complementaryCandidateIds(context.candidate),
+      ...(nearMiss?.follow_up ? { follow_up: nearMiss.follow_up } : {}),
+      ...(context.candidate.disposition_reason ? { retained_reason: context.candidate.disposition_reason } : {}),
+      evidence_refs: nearMiss?.evidence_refs ?? context.candidate.robustness?.provenance_refs ?? [],
+      ...(nearMiss?.summary ?? context.candidate.robustness?.summary
+        ? { summary: nearMiss?.summary ?? context.candidate.robustness?.summary }
+        : {}),
+    });
+  }
+  return result.sort((a, b) =>
+    nearMissReasonRank(b.reason_to_keep) - nearMissReasonRank(a.reason_to_keep)
+    || (b.raw_metric?.confidence ?? 0) - (a.raw_metric?.confidence ?? 0)
+    || a.raw_rank - b.raw_rank
+  ).slice(0, 8);
+}
+
+function nearMissReasonsForCandidate(
+  context: CandidateEvidenceContext,
+  rawBest: CandidateEvidenceContext,
+  scored: RuntimeCandidateSelectionCandidate | undefined
+): RuntimeEvidenceCandidateNearMissReason[] {
+  const explicit = context.candidate.near_miss?.reason_to_keep ?? [];
+  const reasons = new Set<RuntimeEvidenceCandidateNearMissReason>(explicit);
+  if (context.candidate.near_miss?.status === "retained" || context.candidate.near_miss?.status === "promoted") {
+    for (const reason of inferredNearMissReasons(context, rawBest, scored)) reasons.add(reason);
+  } else if (context.candidate.near_miss) {
+    for (const reason of inferredNearMissReasons(context, rawBest, scored)) reasons.add(reason);
+  } else if (isImplicitNearMiss(context, rawBest, scored)) {
+    for (const reason of inferredNearMissReasons(context, rawBest, scored)) reasons.add(reason);
+  }
+  return [...reasons];
+}
+
+function inferredNearMissReasons(
+  context: CandidateEvidenceContext,
+  rawBest: CandidateEvidenceContext,
+  scored: RuntimeCandidateSelectionCandidate | undefined
+): RuntimeEvidenceCandidateNearMissReason[] {
+  const reasons: RuntimeEvidenceCandidateNearMissReason[] = [];
+  const margin = candidateMetricMargin(context.metric, rawBest.metric);
+  if (margin !== null && isCloseToBestMargin(margin, rawBest.metric)) reasons.push("close_to_best");
+  if ((context.candidate.robustness?.stability_score ?? 0) >= 0.8) reasons.push("stability");
+  if ((context.candidate.near_miss?.weak_dimensions.length ?? context.candidate.robustness?.weak_dimensions.length ?? 0) > 0) {
+    reasons.push("weak_dimension_improvement");
+  }
+  if (context.candidate.lineage.strategy_family !== rawBest.candidate.lineage.strategy_family
+    && (scored?.diversity_score ?? inferredDiversityScore(context.candidate, rawBest.candidate.lineage.strategy_family, [context.candidate, rawBest.candidate])) >= 0.5) {
+    reasons.push("novelty");
+  }
+  if (complementaryCandidateIds(context.candidate).length > 0 || highestKnownSimilarity(context.candidate, [context.candidate, rawBest.candidate]) <= 0.5) {
+    reasons.push("complementarity");
+  }
+  const lineageText = [
+    ...context.candidate.lineage.model_lineage,
+    ...context.candidate.lineage.config_lineage,
+    ...(context.candidate.near_miss?.summary ? [context.candidate.near_miss.summary] : []),
+  ].map(normalizeLineageText).join(" ");
+  if (lineageText.includes("stack") || lineageText.includes("ensemble") || lineageText.includes("blend")) {
+    reasons.push("ensemble_potential");
+  }
+  return reasons;
+}
+
+function isImplicitNearMiss(
+  context: CandidateEvidenceContext,
+  rawBest: CandidateEvidenceContext,
+  scored: RuntimeCandidateSelectionCandidate | undefined
+): boolean {
+  if (context.candidate.disposition !== "retained" && context.candidate.disposition !== "promoted") return false;
+  const margin = candidateMetricMargin(context.metric, rawBest.metric);
+  const close = margin !== null && isCloseToBestMargin(margin, rawBest.metric);
+  const weakDimension = (context.candidate.robustness?.weak_dimensions.length ?? 0) > 0;
+  const distinctFamily = context.candidate.lineage.strategy_family !== rawBest.candidate.lineage.strategy_family
+    && (scored?.diversity_score ?? 0) >= 0.5;
+  return close || weakDimension || distinctFamily;
+}
+
+function nearMissMarginContext(
+  context: CandidateEvidenceContext,
+  rawBest: CandidateEvidenceContext,
+  nearMiss: RuntimeEvidenceCandidateNearMiss | undefined
+): Pick<RuntimeNearMissCandidateContext, "margin_to_raw_best"> {
+  const margin = nearMiss?.margin_to_best ?? candidateMetricMargin(context.metric, rawBest.metric);
+  return margin === null || margin === undefined ? {} : { margin_to_raw_best: Math.round(margin * 1_000_000) / 1_000_000 };
+}
+
+function candidateMetricMargin(
+  candidateMetric: CandidateComparableMetric | null,
+  bestMetric: CandidateComparableMetric | null
+): number | null {
+  if (!candidateMetric || !bestMetric || candidateMetric.direction !== bestMetric.direction) return null;
+  const margin = candidateMetric.direction === "maximize"
+    ? bestMetric.value - candidateMetric.value
+    : candidateMetric.value - bestMetric.value;
+  return Number.isFinite(margin) ? Math.max(0, margin) : null;
+}
+
+function isCloseToBestMargin(
+  margin: number,
+  bestMetric: CandidateComparableMetric | null
+): boolean {
+  if (!bestMetric) return false;
+  const tolerance = Math.max(Math.abs(bestMetric.value) * 0.005, 0.001);
+  return margin <= tolerance;
+}
+
+function complementaryCandidateIds(candidate: RuntimeEvidenceCandidateRecord): string[] {
+  const explicit = candidate.near_miss?.complementary_candidate_ids ?? [];
+  if (explicit.length > 0) return explicit;
+  return candidate.similarity
+    .filter((similarity) => similarity.signal === "metric_correlation" && similarity.similarity <= 0.5)
+    .map((similarity) => similarity.candidate_id);
+}
+
+function nearMissReasonRank(reasons: RuntimeEvidenceCandidateNearMissReason[]): number {
+  const weights: Record<RuntimeEvidenceCandidateNearMissReason, number> = {
+    weak_dimension_improvement: 5,
+    novelty: 4,
+    complementarity: 4,
+    ensemble_potential: 3,
+    stability: 2,
+    close_to_best: 1,
+  };
+  return reasons.reduce((score, reason) => score + weights[reason], 0);
 }
 
 function summarizeCandidateLineages(entriesOldestFirst: RuntimeEvidenceEntry[]): RuntimeCandidateLineageContext[] {

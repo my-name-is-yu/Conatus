@@ -75,6 +75,15 @@ export interface RuntimeDreamSidecarReview {
     outcome: RuntimeEvidenceEntry["outcome"] | null;
     occurred_at: string;
   } | null;
+  promising_non_winners: Array<{
+    candidate_id: string;
+    label?: string;
+    strategy_family: string;
+    raw_rank: number;
+    reason_to_keep: string[];
+    follow_up_title?: string;
+    summary?: string;
+  }>;
   known_gaps: string[];
   strategy_families: string[];
   trend_state: {
@@ -98,7 +107,7 @@ export interface RuntimeDreamSidecarReview {
   suggested_next_moves: Array<{
     title: string;
     rationale: string;
-    source: "dream_checkpoint" | "public_research" | "evaluator" | "fallback";
+    source: "dream_checkpoint" | "near_miss" | "public_research" | "evaluator" | "fallback";
   }>;
   operator_decisions: Array<{
     label: string;
@@ -190,6 +199,7 @@ export async function createRuntimeDreamSidecarReview(
       : null,
     status_summary: statusSummary,
     best_evidence: evidenceSummary.best_evidence ? compactEvidence(evidenceSummary.best_evidence) : null,
+    promising_non_winners: buildPromisingNonWinners(evidenceSummary),
     known_gaps: buildKnownGaps(evidenceSummary),
     strategy_families: buildStrategyFamilies(evidenceSummary),
     trend_state: trendState,
@@ -298,7 +308,10 @@ function buildStatusSummary(
   const title = run.title ? `${run.title} ` : "";
   const evidenceCount = `${summary.total_entries} evidence entr${summary.total_entries === 1 ? "y" : "ies"}`;
   const trend = trendState.summary ?? `trend=${trendState.state}`;
-  return `${title}${run.kind} ${run.status}; ${evidenceCount}; ${trend}.`;
+  const nearMissCount = summary.near_miss_candidates.length > 0
+    ? ` ${summary.near_miss_candidates.length} promising non-winner${summary.near_miss_candidates.length === 1 ? "" : "s"}.`
+    : "";
+  return `${title}${run.kind} ${run.status}; ${evidenceCount}; ${trend}.${nearMissCount}`;
 }
 
 function compactEvidence(entry: RuntimeEvidenceEntry): NonNullable<RuntimeDreamSidecarReview["best_evidence"]> {
@@ -309,6 +322,18 @@ function compactEvidence(entry: RuntimeEvidenceEntry): NonNullable<RuntimeDreamS
     outcome: entry.outcome ?? null,
     occurred_at: entry.occurred_at,
   };
+}
+
+function buildPromisingNonWinners(summary: RuntimeEvidenceSummary): RuntimeDreamSidecarReview["promising_non_winners"] {
+  return summary.near_miss_candidates.slice(0, 6).map((candidate) => ({
+    candidate_id: candidate.candidate_id,
+    ...(candidate.label ? { label: candidate.label } : {}),
+    strategy_family: candidate.strategy_family,
+    raw_rank: candidate.raw_rank,
+    reason_to_keep: candidate.reason_to_keep,
+    ...(candidate.follow_up?.title ? { follow_up_title: candidate.follow_up.title } : {}),
+    ...(candidate.summary ? { summary: candidate.summary } : {}),
+  }));
 }
 
 function buildKnownGaps(summary: RuntimeEvidenceSummary): string[] {
@@ -367,6 +392,19 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
         source: "dream_checkpoint",
       });
     }
+  }
+  for (const nearMiss of summary.near_miss_candidates.slice(0, 3)) {
+    const title = nearMiss.follow_up?.title ?? `Follow up near-miss candidate ${nearMiss.candidate_id}`;
+    const rationale = nearMiss.follow_up?.rationale
+      ?? nearMiss.summary
+      ?? `Candidate ${nearMiss.candidate_id} did not beat raw best but was retained for ${nearMiss.reason_to_keep.join(", ")}.`;
+    if (isRejectedMove(title, rationale, rejectedApproaches)) continue;
+    if (isFailedLineageMove(`${nearMiss.strategy_family} ${title}`, rationale, failedLineages)) continue;
+    moves.push({
+      title,
+      rationale,
+      source: "near_miss",
+    });
   }
   for (const memo of summary.research_memos.slice(0, 2)) {
     for (const finding of memo.findings.slice(0, 2)) {

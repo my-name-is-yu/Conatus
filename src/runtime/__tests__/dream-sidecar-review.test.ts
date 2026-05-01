@@ -359,6 +359,140 @@ describe("Runtime Dream sidecar review", () => {
     }));
   });
 
+  it("can promote near-miss follow-ups without retrying a repeated failed lineage", async () => {
+    await seedActiveRun("run:coreloop:near-miss-follow-up");
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    for (let index = 0; index < 3; index += 1) {
+      await ledger.append({
+        id: `failed-threshold-near-miss-${index + 1}`,
+        occurred_at: `2026-04-30T00:0${index}:00.000Z`,
+        kind: "failure",
+        scope: { run_id: "run:coreloop:near-miss-follow-up", task_id: `task-threshold-${index + 1}` },
+        strategy: "threshold_sweep",
+        hypothesis: "Repeat threshold sweep improves balanced accuracy",
+        task: {
+          id: `task-threshold-${index + 1}`,
+          action: "threshold_sweep",
+          primary_dimension: "balanced_accuracy",
+        },
+        verification: { verdict: "fail", summary: "Balanced accuracy stayed inside noise." },
+        summary: "Threshold sweep failed.",
+        outcome: "failed",
+      });
+    }
+    await ledger.append({
+      id: "near-miss-follow-up-snapshot",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:coreloop:near-miss-follow-up", loop_index: 4 },
+      candidates: [
+        {
+          candidate_id: "raw-best-threshold",
+          lineage: {
+            strategy_family: "threshold_sweep",
+            feature_lineage: ["base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["manual-threshold"],
+            seed_lineage: ["seed-42"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: ["threshold-0.48"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.97042, direction: "maximize", confidence: 0.78 }],
+          artifacts: [],
+          similarity: [],
+          disposition: "promoted",
+        },
+        {
+          candidate_id: "threshold-near-miss",
+          lineage: {
+            strategy_family: "threshold_sweep",
+            feature_lineage: ["base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["manual-threshold"],
+            seed_lineage: ["seed-99"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: ["threshold-0.49"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.9702, direction: "maximize", confidence: 0.8 }],
+          artifacts: [],
+          similarity: [{ candidate_id: "raw-best-threshold", similarity: 0.91, signal: "declared" }],
+          near_miss: {
+            status: "retained",
+            reason_to_keep: ["close_to_best"],
+            weak_dimensions: [],
+            complementary_candidate_ids: [],
+            follow_up: {
+              title: "Run close near-miss follow-up",
+              rationale: "Retry the close-to-best candidate with a wider local validation pass.",
+              target_dimensions: ["balanced_accuracy"],
+            },
+            evidence_refs: [],
+            summary: "Close but from a repeatedly failed lineage.",
+          },
+          disposition: "retained",
+        },
+        {
+          candidate_id: "feature-ablation-near-miss",
+          lineage: {
+            strategy_family: "feature_ablation",
+            feature_lineage: ["remove-leaky-counts"],
+            model_lineage: ["catboost"],
+            config_lineage: ["smoke"],
+            seed_lineage: ["seed-314"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.9699, direction: "maximize", confidence: 0.88 }],
+          artifacts: [],
+          similarity: [{ candidate_id: "raw-best-threshold", similarity: 0.35, signal: "declared" }],
+          robustness: {
+            stability_score: 0.86,
+            risk_penalty: 0.02,
+            evidence_confidence: 0.88,
+            weak_dimensions: ["minority_class_recall"],
+            provenance_refs: ["runs/feature-ablation/per-class.json"],
+            summary: "Near miss improves minority class recall through a different mechanism.",
+          },
+          near_miss: {
+            status: "retained",
+            reason_to_keep: ["weak_dimension_improvement", "novelty"],
+            weak_dimensions: ["minority_class_recall"],
+            complementary_candidate_ids: [],
+            follow_up: {
+              title: "Feature ablation larger follow-up",
+              rationale: "Promote the distinct feature-ablation near miss that improved the weak class.",
+              target_dimensions: ["minority_class_recall", "balanced_accuracy"],
+            },
+            evidence_refs: ["runs/feature-ablation/per-class.json"],
+            summary: "Promising non-winner from a distinct strategy family.",
+          },
+          disposition: "retained",
+        },
+      ],
+      summary: "Near-miss snapshot after plateau.",
+      outcome: "continued",
+    });
+
+    const review = await createRuntimeDreamSidecarReview({
+      stateManager,
+      runId: "run:coreloop:near-miss-follow-up",
+    });
+
+    expect(review.status_summary).toContain("promising non-winners");
+    expect(review.promising_non_winners).toContainEqual(expect.objectContaining({
+      candidate_id: "feature-ablation-near-miss",
+      reason_to_keep: expect.arrayContaining(["weak_dimension_improvement", "novelty"]),
+      follow_up_title: "Feature ablation larger follow-up",
+    }));
+    expect(review.suggested_next_moves).not.toContainEqual(expect.objectContaining({
+      title: "Run close near-miss follow-up",
+    }));
+    expect(review.suggested_next_moves).toContainEqual(expect.objectContaining({
+      title: "Feature ablation larger follow-up",
+      source: "near_miss",
+    }));
+  });
+
   it("rejects a missing background run", async () => {
     await expect(createRuntimeDreamSidecarReview({
       stateManager,
