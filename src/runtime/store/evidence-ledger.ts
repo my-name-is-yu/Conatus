@@ -208,6 +208,24 @@ export const RuntimeEvidenceDreamCheckpointStrategyCandidateSchema = z.object({
 }).strict();
 export type RuntimeEvidenceDreamCheckpointStrategyCandidate = z.infer<typeof RuntimeEvidenceDreamCheckpointStrategyCandidateSchema>;
 
+export const RuntimeEvidenceDreamCheckpointActiveHypothesisSchema = z.object({
+  hypothesis: z.string().min(1),
+  supporting_evidence_ref: z.string().min(1).optional(),
+  target_metric_or_dimension: z.string().min(1),
+  expected_next_observation: z.string().min(1),
+  status: z.enum(["active", "testing", "supported", "weakened"]).default("active"),
+}).strict();
+export type RuntimeEvidenceDreamCheckpointActiveHypothesis = z.infer<typeof RuntimeEvidenceDreamCheckpointActiveHypothesisSchema>;
+
+export const RuntimeEvidenceDreamCheckpointRejectedApproachSchema = z.object({
+  approach: z.string().min(1),
+  rejection_reason: z.string().min(1),
+  evidence_ref: z.string().min(1).optional(),
+  revisit_condition: z.string().min(1).optional(),
+  confidence: z.number().min(0).max(1).default(0.5),
+}).strict();
+export type RuntimeEvidenceDreamCheckpointRejectedApproach = z.infer<typeof RuntimeEvidenceDreamCheckpointRejectedApproachSchema>;
+
 export const RuntimeEvidenceDreamRunControlRecommendationSchema = z.object({
   id: z.string().min(1).optional(),
   action: z.enum([
@@ -250,6 +268,8 @@ export const RuntimeEvidenceDreamCheckpointSchema = z.object({
   exhausted: z.array(z.string().min(1)).default([]),
   promising: z.array(z.string().min(1)).default([]),
   relevant_memories: z.array(RuntimeEvidenceDreamCheckpointMemoryRefSchema).default([]),
+  active_hypotheses: z.array(RuntimeEvidenceDreamCheckpointActiveHypothesisSchema).default([]),
+  rejected_approaches: z.array(RuntimeEvidenceDreamCheckpointRejectedApproachSchema).default([]),
   next_strategy_candidates: z.array(RuntimeEvidenceDreamCheckpointStrategyCandidateSchema).default([]),
   run_control_recommendations: z.array(RuntimeEvidenceDreamRunControlRecommendationSchema).optional(),
   guidance: z.string().min(1),

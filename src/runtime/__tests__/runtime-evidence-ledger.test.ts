@@ -402,6 +402,20 @@ describe("RuntimeEvidenceLedger", () => {
           summary: "Earlier run improved after an ablation.",
           authority: "advisory_only",
         }],
+        active_hypotheses: [{
+          hypothesis: "Bounded ablation separates search saturation from model saturation.",
+          supporting_evidence_ref: "metric:accuracy",
+          target_metric_or_dimension: "accuracy",
+          expected_next_observation: "Accuracy changes after one-factor ablation.",
+          status: "testing",
+        }],
+        rejected_approaches: [{
+          approach: "repeat baseline threshold sweep",
+          rejection_reason: "Three previous sweeps did not move accuracy.",
+          evidence_ref: "lineage:baseline-threshold-sweep",
+          revisit_condition: "new validation split exposes threshold instability",
+          confidence: 0.84,
+        }],
         next_strategy_candidates: [{
           title: "Bounded ablation",
           rationale: "Changes one factor before broadening exploration.",
@@ -429,6 +443,14 @@ describe("RuntimeEvidenceLedger", () => {
         source_type: "soil",
         ref: "soil://goal-dream/checkpoint",
         authority: "advisory_only",
+      }],
+      active_hypotheses: [{
+        target_metric_or_dimension: "accuracy",
+        status: "testing",
+      }],
+      rejected_approaches: [{
+        approach: "repeat baseline threshold sweep",
+        evidence_ref: "lineage:baseline-threshold-sweep",
       }],
       next_strategy_candidates: [{ title: "Bounded ablation" }],
     });

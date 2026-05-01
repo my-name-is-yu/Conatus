@@ -5,10 +5,13 @@ import type { MetricTrendContext } from "../../../platform/drive/metric-history.
 import type { RuntimeDreamCheckpointContext } from "../../../runtime/store/dream-checkpoints.js";
 import type { RuntimeEvidenceEntry, RuntimeEvidenceSummary } from "../../../runtime/store/evidence-ledger.js";
 import type {
+  DreamReviewActiveHypothesis,
   DreamReviewCheckpointEvidence,
   DreamReviewCheckpointTrigger,
+  DreamReviewRejectedApproach,
   DreamRunControlPolicyDecision,
   DreamRunControlRecommendation,
+  DreamReviewStrategyCandidate,
 } from "./phase-specs.js";
 import type { LoopIterationResult } from "../loop-result-types.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
@@ -22,6 +25,8 @@ export interface DreamReviewCheckpointRequest {
   metricTrendSummary?: string;
   finalizationReason?: string;
   currentExecutionMode?: ExecutionModeState["mode"];
+  activeHypotheses: DreamReviewActiveHypothesis[];
+  rejectedApproaches: DreamReviewRejectedApproach[];
   runControlPolicy: "auto_apply_low_risk_require_approval_for_high_cost_or_irreversible";
   memoryAuthorityPolicy: "soil_and_playbooks_are_advisory_only";
   maxGuidanceItems: number;
@@ -57,12 +62,16 @@ export function buildDreamReviewCheckpointRequest(
 
   const activeDimensions = topDimensions(input.driveScores, input.goal);
   const metricTrendSummary = input.result.metricTrendContext?.summary;
+  const activeHypotheses = recentActiveHypotheses(input.recentCheckpoints ?? []);
+  const rejectedApproaches = recentRejectedApproaches(input.recentCheckpoints ?? []);
   return {
     trigger,
     reason: reasonForTrigger(trigger, input),
     activeDimensions,
     ...(input.evidenceSummary?.best_evidence ? { bestEvidenceSummary: entrySummary(input.evidenceSummary.best_evidence) } : {}),
     recentStrategyFamilies: recentStrategyFamilies(input.evidenceSummary?.recent_entries ?? []),
+    activeHypotheses,
+    rejectedApproaches,
     ...(metricTrendSummary ? { metricTrendSummary } : {}),
     ...(isPreFinalization(input.finalizationStatus) ? { finalizationReason: input.finalizationStatus?.reason } : {}),
     ...(input.executionMode?.mode ? { currentExecutionMode: input.executionMode.mode } : {}),
@@ -86,6 +95,12 @@ export function normalizeDreamReviewCheckpoint(
       ...memory,
       authority: "advisory_only",
     })),
+    active_hypotheses: output.active_hypotheses,
+    rejected_approaches: output.rejected_approaches,
+    next_strategy_candidates: filterRejectedStrategyCandidates(
+      output.next_strategy_candidates,
+      output.rejected_approaches.length > 0 ? output.rejected_approaches : request.rejectedApproaches
+    ),
     run_control_recommendations: normalizeRunControlRecommendations(output.run_control_recommendations, request),
     context_authority: "advisory_only",
   };
@@ -230,7 +245,70 @@ export function dreamCheckpointRawRefs(
       ? { kind: `dream_run_control_${evidence.kind}`, id: evidence.ref }
       : null)
     .filter((ref): ref is { kind: string; id: string } => ref !== null);
-  return [...memoryRefs, ...recommendationEvidenceRefs];
+  const hypothesisRefs = output.active_hypotheses
+    .map((hypothesis) => hypothesis.supporting_evidence_ref
+      ? { kind: "dream_active_hypothesis_evidence", id: hypothesis.supporting_evidence_ref }
+      : null)
+    .filter((ref): ref is { kind: string; id: string } => ref !== null);
+  const rejectedRefs = output.rejected_approaches
+    .map((approach) => approach.evidence_ref
+      ? { kind: "dream_rejected_approach_evidence", id: approach.evidence_ref }
+      : null)
+    .filter((ref): ref is { kind: string; id: string } => ref !== null);
+  return [...memoryRefs, ...recommendationEvidenceRefs, ...hypothesisRefs, ...rejectedRefs];
+}
+
+function recentActiveHypotheses(checkpoints: RuntimeDreamCheckpointContext[]): DreamReviewActiveHypothesis[] {
+  return dedupeByText(
+    checkpoints.flatMap((checkpoint) => checkpoint.active_hypotheses ?? []),
+    (hypothesis) => hypothesis.hypothesis,
+  ).slice(0, 5);
+}
+
+function recentRejectedApproaches(checkpoints: RuntimeDreamCheckpointContext[]): DreamReviewRejectedApproach[] {
+  return dedupeByText(
+    checkpoints.flatMap((checkpoint) => checkpoint.rejected_approaches ?? []),
+    (approach) => approach.approach,
+  ).slice(0, 8);
+}
+
+function dedupeByText<T>(items: T[], keyFor: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const deduped: T[] = [];
+  for (const item of items) {
+    const key = normalizeApproachText(keyFor(item));
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  return deduped;
+}
+
+function filterRejectedStrategyCandidates(
+  candidates: DreamReviewStrategyCandidate[],
+  rejectedApproaches: DreamReviewRejectedApproach[]
+): DreamReviewStrategyCandidate[] {
+  if (rejectedApproaches.length === 0) return candidates;
+  return candidates.filter((candidate) =>
+    !rejectedApproaches.some((rejected) => rejectedCandidateMatches(candidate, rejected))
+  );
+}
+
+function rejectedCandidateMatches(
+  candidate: DreamReviewStrategyCandidate,
+  rejected: DreamReviewRejectedApproach
+): boolean {
+  const candidateText = normalizeApproachText(`${candidate.title} ${candidate.rationale}`);
+  const approachText = normalizeApproachText(rejected.approach);
+  if (!candidateText || !approachText) return false;
+  const matchesApproach = candidateText.includes(approachText) || approachText.includes(candidateText);
+  if (!matchesApproach) return false;
+  const revisitText = normalizeApproachText(rejected.revisit_condition ?? "");
+  return !revisitText || !candidateText.includes(revisitText);
+}
+
+function normalizeApproachText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, " ").trim();
 }
 
 function inferCheckpointTrigger(

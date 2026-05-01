@@ -84,6 +84,8 @@ describe("Dream review checkpoint trigger planning", () => {
         exhausted: [],
         promising: [],
         relevant_memories: [],
+        active_hypotheses: [],
+        rejected_approaches: [],
         next_strategy_candidates: [],
         guidance: "Try one bounded variant.",
         uncertainty: [],
@@ -136,6 +138,8 @@ describe("Dream review checkpoint trigger planning", () => {
         exhausted: [],
         promising: [],
         relevant_memories: [],
+        active_hypotheses: [],
+        rejected_approaches: [],
         next_strategy_candidates: [],
         guidance: "Try one bounded variant.",
         uncertainty: [],
@@ -169,6 +173,8 @@ describe("Dream review checkpoint trigger planning", () => {
         exhausted: [],
         promising: [],
         relevant_memories: [],
+        active_hypotheses: [],
+        rejected_approaches: [],
         next_strategy_candidates: [],
         guidance: "Try one bounded variant.",
         uncertainty: [],
@@ -201,6 +207,183 @@ describe("Dream review checkpoint trigger planning", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it("carries active hypotheses and rejected approaches into the next checkpoint request", () => {
+    const request = buildDreamReviewCheckpointRequest({
+      goal: makeGoal(),
+      loopIndex: 5,
+      result: makeEmptyIterationResult("goal-1", 5, { stallDetected: true }),
+      driveScores: [],
+      recentCheckpoints: [{
+        trigger: "plateau",
+        summary: "Previous checkpoint rejected repeat sweep.",
+        current_goal: "Improve benchmark score",
+        active_dimensions: ["dim1"],
+        recent_strategy_families: ["threshold_sweep"],
+        exhausted: ["repeat threshold sweep"],
+        promising: ["feature ablation"],
+        relevant_memories: [],
+        active_hypotheses: [{
+          hypothesis: "特徴量アブレーションがリーク感度を示す.",
+          supporting_evidence_ref: "metric:balanced_accuracy",
+          target_metric_or_dimension: "balanced_accuracy",
+          expected_next_observation: "Ablation changes balanced accuracy by more than noise.",
+          status: "testing",
+        }],
+        rejected_approaches: [{
+          approach: "閾値スイープの再実行",
+          rejection_reason: "3回のスイープが指標ノイズ内に収まった.",
+          evidence_ref: "lineage:threshold-sweep",
+          revisit_condition: "new calibration evidence appears",
+          confidence: 0.88,
+        }],
+        next_strategy_candidates: [],
+        guidance: "Avoid repeating threshold sweeps.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.8,
+        entry_id: "entry-checkpoint",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+        loop_index: 2,
+      }],
+    });
+
+    expect(request).toMatchObject({
+      activeHypotheses: [{
+        hypothesis: "特徴量アブレーションがリーク感度を示す.",
+        target_metric_or_dimension: "balanced_accuracy",
+      }],
+      rejectedApproaches: [{
+        approach: "閾値スイープの再実行",
+        evidence_ref: "lineage:threshold-sweep",
+      }],
+    });
+  });
+
+  it("normalizes rejected approaches and suppresses matching next candidates", () => {
+    const goal = makeGoal({ title: "Improve benchmark score" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 1,
+      result: makeEmptyIterationResult("goal-1", 1, { stallDetected: true }),
+      driveScores: [],
+      recentCheckpoints: [{
+        trigger: "plateau",
+        summary: "Previous checkpoint rejected repeat sweep.",
+        current_goal: "Improve benchmark score",
+        active_dimensions: ["dim1"],
+        recent_strategy_families: [],
+        exhausted: ["repeat threshold sweep"],
+        promising: [],
+        relevant_memories: [],
+        active_hypotheses: [],
+        rejected_approaches: [{
+          approach: "repeat threshold sweep",
+          rejection_reason: "Three attempts did not improve the metric.",
+          evidence_ref: "lineage:threshold-sweep",
+          revisit_condition: "new calibration evidence appears",
+          confidence: 0.86,
+        }],
+        next_strategy_candidates: [],
+        guidance: "Avoid repeating threshold sweeps.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.8,
+        entry_id: "entry-checkpoint",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+      }],
+    });
+    expect(request).not.toBeNull();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Plateau review.",
+      trigger: "plateau",
+      current_goal: "Improve benchmark score",
+      active_dimensions: ["dim1"],
+      active_hypotheses: [{
+        hypothesis: "Feature ablation is now the active path.",
+        supporting_evidence_ref: "metric:balanced_accuracy",
+        target_metric_or_dimension: "balanced_accuracy",
+        expected_next_observation: "Ablation moves balanced accuracy.",
+        status: "active",
+      }],
+      rejected_approaches: [{
+        approach: "repeat threshold sweep",
+        rejection_reason: "Three attempts did not improve the metric.",
+        evidence_ref: "lineage:threshold-sweep",
+        revisit_condition: "new calibration evidence appears",
+        confidence: 0.86,
+      }],
+      next_strategy_candidates: [
+        {
+          title: "Repeat threshold sweep",
+          rationale: "Try the same thresholds again.",
+          target_dimensions: ["dim1"],
+        },
+        {
+          title: "Feature ablation",
+          rationale: "Test a different mechanism.",
+          target_dimensions: ["dim1"],
+        },
+      ],
+      guidance: "Try feature ablation.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.8,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.next_strategy_candidates.map((candidate) => candidate.title)).toEqual(["Feature ablation"]);
+    expect(dreamCheckpointRawRefs(normalized)).toEqual(expect.arrayContaining([
+      { kind: "dream_active_hypothesis_evidence", id: "metric:balanced_accuracy" },
+      { kind: "dream_rejected_approach_evidence", id: "lineage:threshold-sweep" },
+    ]));
+  });
+
+  it("suppresses non-ASCII rejected candidates during normalization", () => {
+    const goal = makeGoal({ title: "Improve benchmark score" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 1,
+      result: makeEmptyIterationResult("goal-1", 1, { stallDetected: true }),
+      driveScores: [],
+    });
+    expect(request).not.toBeNull();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Plateau review.",
+      trigger: "plateau",
+      current_goal: "Improve benchmark score",
+      active_dimensions: ["dim1"],
+      rejected_approaches: [{
+        approach: "閾値スイープの再実行",
+        rejection_reason: "3回の試行で改善しなかった.",
+        evidence_ref: "lineage:threshold-sweep",
+        confidence: 0.9,
+      }],
+      next_strategy_candidates: [
+        {
+          title: "閾値スイープの再実行",
+          rationale: "同じ探索をもう一度行う.",
+          target_dimensions: ["dim1"],
+        },
+        {
+          title: "特徴量アブレーション",
+          rationale: "別の仮説を検証する.",
+          target_dimensions: ["dim1"],
+        },
+      ],
+      guidance: "Try feature ablation.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.8,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.next_strategy_candidates.map((candidate) => candidate.title)).toEqual(["特徴量アブレーション"]);
   });
 
   it("normalizes deadline-backed finalization recommendations as auto-applied run control", () => {

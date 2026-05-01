@@ -132,6 +132,24 @@ export const DreamReviewStrategyCandidateSchema = z.object({
 }).strict();
 export type DreamReviewStrategyCandidate = z.infer<typeof DreamReviewStrategyCandidateSchema>;
 
+export const DreamReviewActiveHypothesisSchema = z.object({
+  hypothesis: z.string().min(1),
+  supporting_evidence_ref: z.string().min(1).optional(),
+  target_metric_or_dimension: z.string().min(1),
+  expected_next_observation: z.string().min(1),
+  status: z.enum(["active", "testing", "supported", "weakened"]).default("active"),
+}).strict();
+export type DreamReviewActiveHypothesis = z.infer<typeof DreamReviewActiveHypothesisSchema>;
+
+export const DreamReviewRejectedApproachSchema = z.object({
+  approach: z.string().min(1),
+  rejection_reason: z.string().min(1),
+  evidence_ref: z.string().min(1).optional(),
+  revisit_condition: z.string().min(1).optional(),
+  confidence: z.number().min(0).max(1).default(0.5),
+}).strict();
+export type DreamReviewRejectedApproach = z.infer<typeof DreamReviewRejectedApproachSchema>;
+
 export const DreamRunControlRecommendationActionSchema = z.enum([
   "stay_current_mode",
   "widen_exploration",
@@ -183,6 +201,8 @@ export const DreamReviewCheckpointEvidenceSchema = z.object({
   exhausted: z.array(z.string().min(1)).default([]),
   promising: z.array(z.string().min(1)).default([]),
   relevant_memories: z.array(DreamReviewMemoryRefSchema).default([]),
+  active_hypotheses: z.array(DreamReviewActiveHypothesisSchema).default([]),
+  rejected_approaches: z.array(DreamReviewRejectedApproachSchema).default([]),
   next_strategy_candidates: z.array(DreamReviewStrategyCandidateSchema).default([]),
   run_control_recommendations: z.array(DreamRunControlRecommendationSchema).default([]),
   guidance: z.string().min(1),
@@ -326,6 +346,8 @@ export function buildDreamReviewCheckpointSpec(): ReturnType<typeof baseSpec<{
   activeDimensions: string[];
   bestEvidenceSummary?: string;
   recentStrategyFamilies: string[];
+  activeHypotheses: DreamReviewActiveHypothesis[];
+  rejectedApproaches: DreamReviewRejectedApproach[];
   metricTrendSummary?: string;
   finalizationReason?: string;
   currentExecutionMode?: "exploration" | "consolidation" | "finalization";
@@ -342,6 +364,8 @@ export function buildDreamReviewCheckpointSpec(): ReturnType<typeof baseSpec<{
       activeDimensions: z.array(z.string()).default([]),
       bestEvidenceSummary: z.string().optional(),
       recentStrategyFamilies: z.array(z.string()).default([]),
+      activeHypotheses: z.array(DreamReviewActiveHypothesisSchema).default([]),
+      rejectedApproaches: z.array(DreamReviewRejectedApproachSchema).default([]),
       metricTrendSummary: z.string().optional(),
       finalizationReason: z.string().optional(),
       currentExecutionMode: z.enum(["exploration", "consolidation", "finalization"]).optional(),

@@ -341,6 +341,8 @@ describe("runtime registry CLI commands", () => {
           summary: "Checkpoint before finalization.",
           authority: "advisory_only",
         }],
+        active_hypotheses: [],
+        rejected_approaches: [],
         next_strategy_candidates: [{
           title: "Lock current approach",
           rationale: "Avoid losing a high-signal breakthrough.",
