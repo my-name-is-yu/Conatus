@@ -12,6 +12,10 @@ import {
   type RuntimeExperimentQueueRevision,
 } from "../../../runtime/store/experiment-queue-store.js";
 import {
+  RuntimeBudgetStore,
+  type RuntimeBudgetRecord,
+} from "../../../runtime/store/budget-store.js";
+import {
   createRuntimeDreamSidecarReview,
   RuntimeDreamSidecarReviewError,
   type RuntimeDreamSidecarReview,
@@ -220,6 +224,53 @@ function printExperimentQueueDetail(queue: RuntimeExperimentQueueRecord): void {
   console.log(`  Next item:   ${next ? `${next.item_id} (${next.idempotency_key})` : "-"}`);
 }
 
+function printBudgetRows(store: RuntimeBudgetStore, budgets: RuntimeBudgetRecord[]): void {
+  if (budgets.length === 0) {
+    console.log("No runtime budgets found.");
+    return;
+  }
+
+  console.log("Runtime budgets:\n");
+  console.log(
+    `${"ID".padEnd(ID_WIDTH)} ${"MODE".padEnd(14)} ${"UPDATED".padEnd(UPDATED_WIDTH)} ${"SCOPE".padEnd(WORKSPACE_WIDTH)} TITLE`
+  );
+  console.log("-".repeat(116));
+  for (const budget of budgets) {
+    const status = store.status(budget);
+    const scope = budget.scope.run_id ?? budget.scope.goal_id ?? "-";
+    console.log(
+      `${formatCell(budget.budget_id, ID_WIDTH).padEnd(ID_WIDTH)} ${status.mode.padEnd(14)} ${dateLabel(budget.updated_at).padEnd(UPDATED_WIDTH)} ${formatCell(scope, WORKSPACE_WIDTH).padEnd(WORKSPACE_WIDTH)} ${formatCell(budget.title, TITLE_WIDTH)}`
+    );
+  }
+  console.log(`\nTotal: ${budgets.length} budget(s)`);
+}
+
+function printBudgetDetail(store: RuntimeBudgetStore, budget: RuntimeBudgetRecord): void {
+  const status = store.status(budget);
+  console.log(`Runtime budget: ${budget.budget_id}`);
+  console.log(`  Title:       ${budget.title ?? "-"}`);
+  console.log(`  Goal:        ${budget.scope.goal_id ?? "-"}`);
+  console.log(`  Run:         ${budget.scope.run_id ?? "-"}`);
+  console.log(`  Mode:        ${status.mode}`);
+  console.log(`  Approval:    ${status.approval_required ? "required" : "-"}`);
+  console.log(`  Handoff:     ${status.handoff_required ? "required" : "-"}`);
+  console.log(`  Finalize:    ${status.finalization_required ? "required" : "-"}`);
+  console.log(`  Exhausted:   ${status.exhausted ? "yes" : "no"}`);
+  console.log("  Dimensions:");
+  for (const dimension of status.dimensions) {
+    const actions = dimension.threshold_actions.length > 0 ? ` actions=${dimension.threshold_actions.join(",")}` : "";
+    console.log(`    - ${dimension.dimension}: used=${dimension.used} remaining=${dimension.remaining} limit=${dimension.limit}${actions}`);
+  }
+  if (status.recent_consumption.length > 0) {
+    console.log("  Recent consumption:");
+    for (const entry of status.recent_consumption.slice(0, 5)) {
+      console.log(`    - ${entry.observed_at} ${entry.source} +${entry.amount}${entry.reason ? ` ${entry.reason}` : ""}`);
+    }
+  } else {
+    console.log("  Recent consumption: -");
+  }
+}
+
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -297,7 +348,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
+    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
     return 1;
   }
 
@@ -410,6 +461,40 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     return 0;
   }
 
+  if (runtimeSubcommand === "budgets") {
+    const values = parseListArgs(args.slice(1), "budgets");
+    const store = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const budgets = await store.list();
+    if (values.json) {
+      printJson({
+        schema_version: "runtime-budgets-list-v1",
+        budgets: budgets.map((budget) => ({
+          budget,
+          status: store.status(budget),
+        })),
+      });
+    } else {
+      printBudgetRows(store, budgets);
+    }
+    return 0;
+  }
+
+  if (runtimeSubcommand === "budget") {
+    const values = parseDetailArgs(args.slice(1), "budget");
+    if (!values.id) {
+      logger.error("Error: budget ID is required. Usage: pulseed runtime budget <id> [--json]");
+      return 1;
+    }
+    const store = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const budget = await store.load(values.id);
+    if (!budget) {
+      console.error(`Runtime budget not found: ${values.id}`);
+      return 1;
+    }
+    values.json ? printJson({ budget, status: store.status(budget), task_generation_context: store.taskGenerationContext(budget) }) : printBudgetDetail(store, budget);
+    return 0;
+  }
+
   if (runtimeSubcommand === "dream-review") {
     const values = parseDreamReviewArgs(args.slice(1));
     if (!values.id) {
@@ -435,7 +520,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
   return 1;
 }
 

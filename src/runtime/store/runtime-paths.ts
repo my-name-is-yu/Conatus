@@ -30,6 +30,7 @@ export interface RuntimeStorePaths {
   guardrailBreakersDir: string;
   reproducibilityManifestsDir: string;
   experimentQueuesDir: string;
+  budgetsDir: string;
   backpressureSnapshotPath: string;
   daemonHealthPath: string;
   componentsHealthPath: string;
@@ -46,6 +47,7 @@ export interface RuntimeStorePaths {
   guardrailBreakerPath(key: string): string;
   reproducibilityManifestPath(manifestId: string): string;
   experimentQueuePath(queueId: string): string;
+  budgetPath(budgetId: string): string;
   goalLeasePath(goalId: string): string;
   completedByIdempotencyPath(idempotencyKey: string): string;
   completedByMessagePath(messageId: string): string;
@@ -104,6 +106,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const guardrailBreakersDir = path.join(guardrailsDir, "breakers");
   const reproducibilityManifestsDir = path.join(rootDir, "reproducibility-manifests");
   const experimentQueuesDir = path.join(rootDir, "experiment-queues");
+  const budgetsDir = path.join(rootDir, "budgets");
 
   return {
     rootDir,
@@ -132,6 +135,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     guardrailBreakersDir,
     reproducibilityManifestsDir,
     experimentQueuesDir,
+    budgetsDir,
     backpressureSnapshotPath: path.join(guardrailsDir, "backpressure.json"),
     daemonHealthPath: path.join(healthDir, "daemon.json"),
     componentsHealthPath: path.join(healthDir, "components.json"),
@@ -173,6 +177,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     experimentQueuePath(queueId: string) {
       return path.join(experimentQueuesDir, recordFileName(encodeRuntimePathSegment(queueId)));
+    },
+    budgetPath(budgetId: string) {
+      return path.join(budgetsDir, recordFileName(encodeRuntimePathSegment(budgetId)));
     },
     goalLeasePath(goalId: string) {
       return path.join(goalLeasesDir, `${encodeRuntimePathSegment(goalId)}.json`);
@@ -217,6 +224,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.guardrailBreakersDir,
       paths.reproducibilityManifestsDir,
       paths.experimentQueuesDir,
+      paths.budgetsDir,
     ].map((dir) => fsp.mkdir(dir, { recursive: true }))
   );
 }

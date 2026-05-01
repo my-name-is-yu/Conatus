@@ -99,6 +99,7 @@ export interface CoreIterationKernelDeps {
   incrementTransferCounter: () => number;
   getPendingDirective: (goalId: string) => NextIterationDirective | undefined;
   getActivationContext: () => GoalRunActivationContext | undefined;
+  getRuntimeBudgetContext?: () => Promise<Record<string, unknown> | undefined>;
 }
 
 export interface RunCoreIterationInput {
@@ -728,9 +729,18 @@ export class CoreIterationKernel {
       phase: replanningOptions,
       goalDimensions: goal.dimensions.map((dimension) => dimension.name),
     });
+    const runtimeBudgetContext = await this.deps.getRuntimeBudgetContext?.().catch((err) => {
+      this.deps.logger?.warn("CoreLoop: failed to load runtime budget context", {
+        goalId,
+        loopIndex,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return undefined;
+    });
     const mergedTaskGenerationHints = {
       targetDimensionOverride: taskGenerationHints.targetDimensionOverride ?? pendingDirective?.focusDimension,
       knowledgeContextPrefix: taskGenerationHints.knowledgeContextPrefix,
+      budgetContext: runtimeBudgetContext,
       executionMode,
       runControlRecommendationContext: dreamRunControlRecommendationContext,
     };

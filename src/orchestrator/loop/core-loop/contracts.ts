@@ -35,6 +35,10 @@ import type { CorePhasePolicyRegistry } from "./phase-policy.js";
 import type { CoreDecisionEngine } from "./decision-engine.js";
 import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 import type { RuntimeEvidenceLedgerPort } from "../../../runtime/store/evidence-ledger.js";
+import type {
+  RuntimeBudgetLimitInput,
+  RuntimeBudgetStore,
+} from "../../../runtime/store/budget-store.js";
 import type { DeadlineFinalizationStatus } from "../../../platform/time/deadline-finalization.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 export type {
@@ -132,12 +136,18 @@ export type LoopRunPolicyInput =
   | Partial<LoopRunPolicy>;
 
 export type ResolvedLoopConfig =
-  Required<Omit<LoopConfig, "iterationBudget" | "runPolicy" | "maxIterations">>
-  & Pick<LoopConfig, "iterationBudget">
+  Required<Omit<LoopConfig, "iterationBudget" | "runPolicy" | "maxIterations" | "runtimeBudget">>
+  & Pick<LoopConfig, "iterationBudget" | "runtimeBudget">
   & {
     maxIterations: number | null;
     runPolicy?: LoopRunPolicy;
   };
+
+export interface RuntimeBudgetConfig {
+  budgetId?: string;
+  title?: string;
+  limits?: RuntimeBudgetLimitInput[];
+}
 
 export interface LoopConfig {
   maxIterations?: number | null;
@@ -190,6 +200,12 @@ export interface LoopConfig {
    * If not set, maxIterations acts as the sole upper bound.
    */
   iterationBudget?: IterationBudget;
+  /**
+   * Optional durable runtime budget governance for long-running goal/run work.
+   * When omitted, bounded runs get an iteration budget record derived from maxIterations
+   * if a RuntimeBudgetStore is available.
+   */
+  runtimeBudget?: RuntimeBudgetConfig;
   /**
    * When true (default), automatically consolidate agent memory when a goal completes
    * and raw entry count exceeds consolidationRawThreshold.
@@ -309,6 +325,8 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
   toolRegistry?: ToolRegistry;
   /** Optional durable evidence ledger for long-running autonomous work review/resume. */
   evidenceLedger?: RuntimeEvidenceLedgerPort;
+  /** Optional durable budget store for long-running goal/run budget governance. */
+  runtimeBudgetStore?: RuntimeBudgetStore;
   /** Optional bounded agentloop runner for core phases. */
   corePhaseRunner?: CorePhaseRunner;
   /** Optional live approval broker for wait/resume approvals. */
