@@ -6,6 +6,7 @@ import { CoreLoop, makeEmptyIterationResult, type CoreLoopDeps } from "../core-l
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
+import { RuntimePostmortemReportStore } from "../../../runtime/store/postmortem-report.js";
 
 function makeDeps(): CoreLoopDeps {
   return {
@@ -175,6 +176,49 @@ describe("CoreLoop run policies", () => {
     expect(status.dimensions).toContainEqual(expect.objectContaining({ dimension: "artifacts", used: 2, remaining: 2 }));
   });
 
+  it("generates a durable run postmortem when a background run completes", async () => {
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-core-postmortem-"));
+    tempDirs.push(tempDir);
+    const runtimeRoot = path.join(tempDir, "runtime");
+    const postmortemReportStore = new RuntimePostmortemReportStore(runtimeRoot);
+    const loop = new CoreLoop({
+      ...makeDeps(),
+      postmortemReportStore,
+      reportingEngine: { generateExecutionSummary: vi.fn(), saveReport: vi.fn() },
+    } as unknown as CoreLoopDeps, {
+      maxIterations: 3,
+      delayBetweenLoopsMs: 0,
+      autoDecompose: false,
+    });
+    vi.spyOn(loop, "runOneIteration").mockResolvedValue(
+      makeEmptyIterationResult("goal-postmortem-complete", 0, {
+        completionJudgment: {
+          is_complete: true,
+          blocking_dimensions: [],
+          low_confidence_dimensions: [],
+          needs_verification_task: false,
+          checked_at: new Date().toISOString(),
+        },
+      })
+    );
+
+    const result = await loop.run("goal-postmortem-complete", {
+      activation: { backgroundRun: { backgroundRunId: "run-postmortem-complete" } },
+    });
+
+    const report = await postmortemReportStore.latestFor({ runId: "run-postmortem-complete" });
+    expect(result.finalStatus).toBe("completed");
+    expect(report).toMatchObject({
+      scope: {
+        goal_id: "goal-postmortem-complete",
+        run_id: "run-postmortem-complete",
+      },
+      final_status: "completed",
+      trigger: "completion",
+    });
+    expect(await fsp.readFile(report!.artifact_paths.markdown_path, "utf8")).toContain("Runtime Postmortem");
+  });
+
   it("enforces stop exhaustion policy without asking for approval", async () => {
     const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-core-budget-stop-"));
     tempDirs.push(tempDir);
@@ -219,6 +263,7 @@ describe("CoreLoop run policies", () => {
     const runtimeRoot = path.join(tempDir, "runtime");
     const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot);
     const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+    const postmortemReportStore = new RuntimePostmortemReportStore(runtimeRoot);
     await runtimeBudgetStore.create({
       budget_id: "budget-finalize",
       scope: { goal_id: "goal-budget-finalize" },
@@ -231,6 +276,7 @@ describe("CoreLoop run policies", () => {
       ...makeDeps(),
       runtimeBudgetStore,
       operatorHandoffStore,
+      postmortemReportStore,
       reportingEngine: { generateExecutionSummary: vi.fn(), saveReport: vi.fn() },
     } as unknown as CoreLoopDeps, {
       maxIterations: 2,
@@ -261,6 +307,10 @@ describe("CoreLoop run policies", () => {
         }),
       }),
     ]);
+    expect(await postmortemReportStore.latestFor({ goalId: "goal-budget-finalize" })).toMatchObject({
+      final_status: "finalization",
+      trigger: "finalization",
+    });
   });
 
   it("uses the budget approval request id for handoff records that also require approval", async () => {

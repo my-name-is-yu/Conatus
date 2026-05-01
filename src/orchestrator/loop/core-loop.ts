@@ -391,6 +391,7 @@ export class CoreLoop {
     await runPostLoopHooks({
       goalId,
       sessionId,
+      runId: this.currentActivationContext?.backgroundRun?.backgroundRunId,
       completedAt,
       totalTokensUsed: totalTokens,
       finalStatus,

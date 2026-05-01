@@ -16,6 +16,7 @@ import type { Logger } from "../../runtime/logger.js";
 export interface PostLoopHooksParams {
   goalId: string;
   sessionId: string;
+  runId?: string;
   completedAt: string;
   totalTokensUsed: number;
   finalStatus: LoopResult["finalStatus"];
@@ -38,6 +39,7 @@ export async function runPostLoopHooks(params: PostLoopHooksParams): Promise<voi
   const {
     goalId,
     sessionId,
+    runId,
     completedAt,
     totalTokensUsed,
     finalStatus,
@@ -169,4 +171,37 @@ export async function runPostLoopHooks(params: PostLoopHooksParams): Promise<voi
       });
     }
   }
+
+  if (!config.dryRun && deps.postmortemReportStore && shouldGeneratePostmortem(finalStatus)) {
+    try {
+      await deps.postmortemReportStore.generate({
+        goalId,
+        runId,
+        finalStatus,
+        trigger: postmortemTriggerFor(finalStatus),
+      });
+    } catch (err) {
+      logger?.warn("CoreLoop: postmortem report generation failed", {
+        goalId,
+        runId,
+        finalStatus,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+function shouldGeneratePostmortem(finalStatus: LoopResult["finalStatus"]): boolean {
+  return finalStatus === "completed"
+    || finalStatus === "finalization"
+    || finalStatus === "stopped"
+    || finalStatus === "stalled"
+    || finalStatus === "max_iterations"
+    || finalStatus === "error";
+}
+
+function postmortemTriggerFor(finalStatus: LoopResult["finalStatus"]): "completion" | "pause" | "finalization" {
+  if (finalStatus === "completed") return "completion";
+  if (finalStatus === "finalization") return "finalization";
+  return "pause";
 }
