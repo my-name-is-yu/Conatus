@@ -118,6 +118,147 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.metric_trends[0]?.source_refs[0]?.metric_source).toBe("local-metrics.json");
   });
 
+  it("selects the best maximize metric evidence ahead of an older improved entry", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "old-improved",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-maximize" },
+      metrics: [{ label: "accuracy", value: 0.72, direction: "maximize", confidence: 0.9 }],
+      artifacts: [{ label: "old-metrics", state_relative_path: "runs/old/metrics.json", kind: "metrics" }],
+      summary: "Old shallow improvement.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "new-best",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-maximize" },
+      metrics: [{ label: "accuracy", value: 0.91, direction: "maximize", confidence: 0.8 }],
+      artifacts: [{ label: "new-metrics", state_relative_path: "runs/new/metrics.json", kind: "metrics" }],
+      summary: "New stronger metric evidence.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-maximize");
+
+    expect(summary.best_evidence?.id).toBe("new-best");
+    expect(summary.best_evidence?.artifacts[0]?.state_relative_path).toBe("runs/new/metrics.json");
+  });
+
+  it("selects the best minimize metric evidence", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "higher-loss",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-minimize" },
+      metrics: [{ label: "validation_loss", value: 0.42, direction: "minimize" }],
+      summary: "Loss improved from baseline.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "lower-loss",
+      occurred_at: "2026-04-30T00:05:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-minimize" },
+      metrics: [{ label: "validation_loss", value: 0.31, direction: "minimize" }],
+      summary: "Loss reached the best value.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-minimize");
+
+    expect(summary.best_evidence?.id).toBe("lower-loss");
+  });
+
+  it("does not compare metric entries that reuse a label with the opposite direction", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "old-minimize-score",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-direction-key" },
+      metrics: [{ label: "score", value: 0.1, direction: "minimize" }],
+      artifacts: [{ label: "old-score", state_relative_path: "runs/old-score/metrics.json", kind: "metrics" }],
+      summary: "Old score used a minimize contract.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "new-maximize-score",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-direction-key" },
+      metrics: [{ label: "score", value: 0.9, direction: "maximize" }],
+      artifacts: [{ label: "new-score", state_relative_path: "runs/new-score/metrics.json", kind: "metrics" }],
+      summary: "New score uses the active maximize contract.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-direction-key");
+
+    expect(summary.best_evidence?.id).toBe("new-maximize-score");
+  });
+
+  it("treats the first directed numeric metric as primary when secondary metrics differ", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "best-primary",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-primary" },
+      metrics: [
+        { label: "accuracy", value: 0.9, direction: "maximize" },
+        { label: "latency_ms", value: 320, direction: "minimize" },
+      ],
+      summary: "Best primary accuracy with weaker latency.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "best-secondary",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-primary" },
+      metrics: [
+        { label: "accuracy", value: 0.86, direction: "maximize" },
+        { label: "latency_ms", value: 120, direction: "minimize" },
+      ],
+      summary: "Secondary latency improved while primary regressed.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-primary");
+
+    expect(summary.best_evidence?.id).toBe("best-primary");
+  });
+
+  it("preserves compatible fallback selection for non-metric evidence", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "passed-verification",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "verification",
+      scope: { goal_id: "goal-fallback" },
+      verification: { verdict: "pass", confidence: 0.9, summary: "smoke passed" },
+      summary: "Verification passed.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      id: "latest-artifact",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "artifact",
+      scope: { goal_id: "goal-fallback" },
+      artifacts: [{ label: "report", state_relative_path: "runs/latest/report.md", kind: "report" }],
+      summary: "Latest artifact without metric.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-fallback");
+
+    expect(summary.best_evidence?.id).toBe("passed-verification");
+  });
+
   it("stores local and external evaluator observations with candidate provenance", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
