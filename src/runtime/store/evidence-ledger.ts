@@ -10,6 +10,7 @@ import {
 import { summarizeEvidenceMetricTrends, type MetricTrendContext } from "./metric-history.js";
 import {
   summarizeEvidenceEvaluatorResults,
+  type RuntimeEvaluatorCalibrationContext,
   type RuntimeEvaluatorSummary,
 } from "./evaluator-results.js";
 import {
@@ -199,6 +200,47 @@ export const RuntimeEvidenceEvaluatorProvenanceSchema = z.object({
 }).strict();
 export type RuntimeEvidenceEvaluatorProvenance = z.infer<typeof RuntimeEvidenceEvaluatorProvenanceSchema>;
 
+export const RuntimeEvidenceEvaluatorBudgetSchema = z.object({
+  policy_id: z.string().min(1).optional(),
+  max_attempts: z.number().int().positive().optional(),
+  used_attempts: z.number().int().nonnegative().optional(),
+  remaining_attempts: z.number().int().nonnegative(),
+  approval_required: z.boolean().default(true),
+  deadline_at: z.string().datetime().optional(),
+  phase: z.enum(["exploration", "consolidation", "finalization", "other"]).optional(),
+  portfolio_policy: z.object({
+    diversified_portfolio_required: z.boolean().default(false),
+    reserve_for_finalization: z.boolean().default(false),
+    min_strategy_families: z.number().int().positive().optional(),
+  }).strict().optional(),
+}).strict();
+export type RuntimeEvidenceEvaluatorBudget = z.infer<typeof RuntimeEvidenceEvaluatorBudgetSchema>;
+
+export const RuntimeEvidenceEvaluatorCandidateSnapshotSchema = z.object({
+  evidence_entry_id: z.string().min(1).optional(),
+  primary_metric_label: z.string().min(1).optional(),
+  local_metrics: z.array(RuntimeEvidenceMetricSchema).default([]),
+  robust_selection: z.object({
+    raw_rank: z.number().int().positive().optional(),
+    robust_score: z.number().min(0).max(1).optional(),
+    stability_score: z.number().min(0).max(1).optional(),
+    diversity_score: z.number().min(0).max(1).optional(),
+    risk_penalty: z.number().min(0).max(1).optional(),
+    portfolio_role: z.enum(["raw_best", "robust_best", "safe", "aggressive", "diverse", "near_miss", "other"]).optional(),
+  }).strict().optional(),
+  summary: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceEvaluatorCandidateSnapshot = z.infer<typeof RuntimeEvidenceEvaluatorCandidateSnapshotSchema>;
+
+export const RuntimeEvidenceEvaluatorCalibrationSchema = z.object({
+  mode: z.literal("calibration_only").default("calibration_only"),
+  use_for_selection: z.boolean().default(false),
+  direct_optimization_allowed: z.literal(false).default(false),
+  minimum_observations: z.number().int().positive().default(1),
+  conclusion: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceEvaluatorCalibration = z.infer<typeof RuntimeEvidenceEvaluatorCalibrationSchema>;
+
 export const RuntimeEvidenceEvaluatorObservationSchema = z.object({
   evaluator_id: z.string().min(1),
   signal: RuntimeEvidenceEvaluatorSignalSchema,
@@ -217,6 +259,9 @@ export const RuntimeEvidenceEvaluatorObservationSchema = z.object({
   validation: RuntimeEvidenceEvaluatorValidationSchema.optional(),
   publish_action: RuntimeEvidenceEvaluatorPublishActionSchema.optional(),
   provenance: RuntimeEvidenceEvaluatorProvenanceSchema.optional(),
+  budget: RuntimeEvidenceEvaluatorBudgetSchema.optional(),
+  candidate_snapshot: RuntimeEvidenceEvaluatorCandidateSnapshotSchema.optional(),
+  calibration: RuntimeEvidenceEvaluatorCalibrationSchema.optional(),
   summary: z.string().min(1).optional(),
 }).strict();
 export type RuntimeEvidenceEvaluatorObservation = z.infer<typeof RuntimeEvidenceEvaluatorObservationSchema>;
@@ -546,6 +591,7 @@ export interface RuntimeCandidateSelectionCandidate {
     confidence: number;
   };
   robust_score: number;
+  calibration_adjustment: number;
   metric_score: number;
   stability_score: number;
   diversity_score: number;
@@ -768,6 +814,8 @@ function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean
   return Array.isArray(summary.candidate_lineages)
     && Array.isArray(summary.recommended_candidate_portfolio)
     && Array.isArray(summary.near_miss_candidates)
+    && Array.isArray(summary.evaluator_summary.budgets)
+    && Array.isArray(summary.evaluator_summary.calibration)
     && typeof summary.candidate_selection_summary === "object"
     && summary.candidate_selection_summary !== null;
 }
@@ -835,6 +883,7 @@ function summarizeEvidence(
 ): RuntimeEvidenceSummary {
   const entries = [...read.entries].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
   const newestFirst = [...entries].reverse();
+  const evaluatorSummary = summarizeEvidenceEvaluatorResults(entries);
   return {
     schema_version: "runtime-evidence-summary-v1",
     generated_at: new Date().toISOString(),
@@ -845,7 +894,7 @@ function summarizeEvidence(
     ) ?? null,
     best_evidence: chooseBestEvidence(newestFirst),
     metric_trends: summarizeEvidenceMetricTrends(entries),
-    evaluator_summary: summarizeEvidenceEvaluatorResults(entries),
+    evaluator_summary: evaluatorSummary,
     research_memos: summarizeEvidenceResearchMemos(entries),
     dream_checkpoints: summarizeEvidenceDreamCheckpoints(entries),
     divergent_exploration: entries
@@ -854,7 +903,7 @@ function summarizeEvidence(
       .reverse(),
     candidate_lineages: summarizeCandidateLineages(entries),
     recommended_candidate_portfolio: selectDiversifiedCandidatePortfolio(entries),
-    candidate_selection_summary: summarizeCandidateSelection(entries),
+    candidate_selection_summary: summarizeCandidateSelection(entries, evaluatorSummary),
     near_miss_candidates: summarizeNearMissCandidates(entries),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
@@ -927,12 +976,15 @@ export function selectDiversifiedCandidatePortfolio(
   return selected.map(toPortfolioSlot);
 }
 
-function summarizeCandidateSelection(entriesOldestFirst: RuntimeEvidenceEntry[]): RuntimeCandidateSelectionSummary {
+function summarizeCandidateSelection(
+  entriesOldestFirst: RuntimeEvidenceEntry[],
+  evaluatorSummary?: RuntimeEvaluatorSummary
+): RuntimeCandidateSelectionSummary {
   const primaryMetric = resolvePrimaryCandidateMetricKey(entriesOldestFirst);
   const contexts = extractCandidateEvidenceContexts(entriesOldestFirst, primaryMetric)
     .filter((context) => context.candidate.disposition !== "retired");
   const rawRanked = [...contexts].sort(compareCandidateEvidenceContexts);
-  const scored = scoreCandidateSelectionContexts(rawRanked);
+  const scored = scoreCandidateSelectionContexts(rawRanked, evaluatorSummary?.calibration ?? []);
   const ranked = [...scored].sort((a, b) => b.robust_score - a.robust_score || a.raw_rank - b.raw_rank);
   const rawBest = scored.find((candidate) => candidate.raw_rank === 1) ?? null;
   const robustBest = ranked[0] ?? null;
@@ -951,7 +1003,8 @@ function summarizeCandidateSelection(entriesOldestFirst: RuntimeEvidenceEntry[])
 }
 
 function scoreCandidateSelectionContexts(
-  rawRanked: CandidateEvidenceContext[]
+  rawRanked: CandidateEvidenceContext[],
+  calibration: RuntimeEvaluatorCalibrationContext[] = []
 ): RuntimeCandidateSelectionCandidate[] {
   const metricValues = rawRanked
     .map((context) => context.metric?.value)
@@ -971,8 +1024,9 @@ function scoreCandidateSelectionContexts(
       : Math.min(candidate.robustness.diversity_score, inferredDiversity));
     const riskPenalty = clamp01(candidate.robustness?.risk_penalty ?? inferredCandidateRiskPenalty(candidate));
     const evidenceConfidence = clamp01(candidate.robustness?.evidence_confidence ?? context.metric?.confidence ?? 0.5);
+    const calibrationAdjustment = evaluatorCalibrationAdjustment(candidate.candidate_id, calibration);
     const robustScore = clamp01(candidate.robustness?.robust_score
-      ?? (metricScore * 0.45 + stabilityScore * 0.3 + diversityScore * 0.15 + evidenceConfidence * 0.1 - riskPenalty));
+      ?? (metricScore * 0.45 + stabilityScore * 0.3 + diversityScore * 0.15 + evidenceConfidence * 0.1 - riskPenalty + calibrationAdjustment));
 
     return {
       candidate_id: candidate.candidate_id,
@@ -982,6 +1036,7 @@ function scoreCandidateSelectionContexts(
       raw_rank: index + 1,
       ...(context.metric ? { raw_metric: context.metric } : {}),
       robust_score: roundScore(robustScore),
+      calibration_adjustment: roundScore(calibrationAdjustment),
       metric_score: roundScore(metricScore),
       stability_score: roundScore(stabilityScore),
       diversity_score: roundScore(diversityScore),
@@ -993,9 +1048,25 @@ function scoreCandidateSelectionContexts(
         diversityScore,
         riskPenalty,
         evidenceConfidence,
+        calibrationAdjustment,
       }),
     };
   });
+}
+
+function evaluatorCalibrationAdjustment(
+  candidateId: string,
+  calibration: RuntimeEvaluatorCalibrationContext[]
+): number {
+  const relevant = calibration.filter((item) =>
+    item.candidate_id === candidateId
+    && item.use_for_selection
+    && item.direct_optimization_allowed === false
+  );
+  if (relevant.length === 0) return 0;
+  const average = relevant.reduce((sum, item) => sum + item.selection_adjustment, 0) / relevant.length;
+  if (relevant.length < Math.max(...relevant.map((item) => item.minimum_observations))) return 0;
+  return Math.min(0.08, Math.max(-0.08, average));
 }
 
 function normalizedMetricScore(
@@ -1061,6 +1132,7 @@ function candidateSelectionReasons(
     diversityScore: number;
     riskPenalty: number;
     evidenceConfidence: number;
+    calibrationAdjustment: number;
   }
 ): string[] {
   const reasons: string[] = [];
@@ -1068,6 +1140,8 @@ function candidateSelectionReasons(
   if (scores.diversityScore >= 0.8) reasons.push("diverse lineage");
   if (scores.riskPenalty >= 0.15) reasons.push("penalized for overfit-prone lineage or post-processing");
   if (scores.metricScore >= 0.95) reasons.push("top raw metric evidence");
+  if (scores.calibrationAdjustment > 0) reasons.push("external feedback calibrates local validation upward");
+  if (scores.calibrationAdjustment < 0) reasons.push("external feedback calibrates local validation downward");
   if (candidate.robustness?.summary) reasons.push(candidate.robustness.summary);
   return reasons.length > 0 ? reasons : ["risk-adjusted candidate evidence"];
 }
