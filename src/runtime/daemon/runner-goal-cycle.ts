@@ -147,6 +147,7 @@ export async function runDaemonGoalCycleLoop(context: GoalCycleRunnerContext): P
             void context.eventServer.broadcast?.("loop_complete", buildLoopCompletePayload(goalId, result));
           }
           await context.broadcastGoalUpdated(goalId, result.finalStatus);
+          await context.checkpointPauseIfRequested?.(goalId);
         } catch (err) {
           if (context.eventServer) {
             void context.eventServer.broadcast?.("loop_error", buildLoopErrorPayload(goalId, err, context));

@@ -22,6 +22,9 @@ export {
   RuntimeEnvelopeSchema,
   RuntimeQueueStateSchema,
   RuntimeQueueRecordSchema,
+  RuntimeSafePauseStateSchema,
+  RuntimeSafePauseCheckpointSchema,
+  RuntimeSafePauseRecordSchema,
   GoalLeaseRecordSchema,
   ApprovalStateSchema,
   ApprovalRecordSchema,
@@ -59,6 +62,9 @@ export type {
   RuntimeEnvelopePriority,
   RuntimeQueueState,
   RuntimeQueueRecord,
+  RuntimeSafePauseState,
+  RuntimeSafePauseCheckpoint,
+  RuntimeSafePauseRecord,
   GoalLeaseRecord,
   ApprovalState,
   ApprovalRecord,
@@ -194,6 +200,7 @@ export { ApprovalStore } from "./approval-store.js";
 export type { ApprovalResolutionInput } from "./approval-store.js";
 export { OutboxStore } from "./outbox-store.js";
 export { RuntimeHealthStore } from "./health-store.js";
+export { RuntimeSafePauseStore } from "./safe-pause-store.js";
 export { RuntimeOperationStore } from "./runtime-operation-store.js";
 export {
   BackgroundRunLedger,

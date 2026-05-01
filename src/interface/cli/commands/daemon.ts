@@ -464,6 +464,9 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const runtimeHealth = await new RuntimeHealthStore(runtimeRoot).loadSnapshot();
   const supervisorState = await readSupervisorState(runtimeRoot);
   const taskKpis = await summarizeTaskOutcomeLedgers(baseDir);
+  const safePauseGoals = Object.values(data.safe_pause_goals ?? {});
+  const hasPauseRequested = safePauseGoals.some((pause) => pause.state === "pause_requested");
+  const hasPaused = safePauseGoals.some((pause) => pause.state === "paused");
 
   const status =
     !resolvedRuntimeAlive
@@ -474,6 +477,10 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
           : data.status === "stopping"
             ? "stopping"
             : "stopped"
+      : hasPauseRequested
+        ? "pause requested"
+        : hasPaused && data.active_goals.length === 0
+          ? "paused"
       : data.status === "crashed" || data.status === "stopping"
         ? data.status
         : data.status === "idle"
@@ -561,6 +568,23 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     lines.push(`Resident note:   ${data.resident_activity.summary}`);
     if (data.resident_activity.goal_id) {
       lines.push(`Resident goal:   ${data.resident_activity.goal_id}`);
+    }
+  }
+
+  if (safePauseGoals.length > 0) {
+    lines.push("");
+    lines.push("Safe pause:");
+    for (const pause of safePauseGoals.slice(0, 5)) {
+      const checkpoint = pause.checkpoint?.checkpointed_at
+        ? `, checkpoint ${formatRelativeTimestamp(new Date(pause.checkpoint.checkpointed_at).getTime())}`
+        : "";
+      lines.push(`  - ${pause.goal_id}: ${pause.state}${checkpoint}`);
+      if (pause.checkpoint?.next_action) {
+        lines.push(`    Next action: ${pause.checkpoint.next_action}`);
+      }
+    }
+    if (safePauseGoals.length > 5) {
+      lines.push(`  ... ${safePauseGoals.length - 5} more safe-pause record${safePauseGoals.length === 6 ? "" : "s"}`);
     }
   }
 

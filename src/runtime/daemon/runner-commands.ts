@@ -1,5 +1,11 @@
 import { resolveScheduleEntry } from "../schedule/entry-resolver.js";
-import { RuntimeOperationStore, type RuntimeControlOperationKind } from "../store/index.js";
+import {
+  RuntimeOperationStore,
+  RuntimeSafePauseStore,
+  type RuntimeControlOperationKind,
+  type RuntimeSafePauseCheckpoint,
+  type RuntimeSafePauseRecord,
+} from "../store/index.js";
 import type { Logger } from "../logger.js";
 import type { EventServer } from "../event/server.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
@@ -169,7 +175,7 @@ function extractWaitResume(payload: unknown): WaitResumeActivation | undefined {
 export async function handleGoalStopCommand(
   context: Pick<
     DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state"
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot"
   >,
   goalId: string,
 ): Promise<void> {
@@ -178,10 +184,278 @@ export async function handleGoalStopCommand(
   if (context.state.interrupted_goals) {
     context.state.interrupted_goals = context.state.interrupted_goals.filter((id) => id !== goalId);
   }
+  const store = safePauseStore(context);
+  if (store) {
+    const stopped = await store.markEmergencyStopped(goalId, "goal_stop command requested emergency stop");
+    context.state.safe_pause_goals = {
+      ...(context.state.safe_pause_goals ?? {}),
+      [goalId]: stopped,
+    };
+  }
   await context.saveDaemonState();
   context.supervisor?.deactivateGoal(goalId);
   context.abortSleep();
   await context.broadcastGoalUpdated(goalId, "stopped");
+}
+
+function safePauseStore(context: Pick<DaemonRunnerCommandContext, "runtimeRoot">): RuntimeSafePauseStore | null {
+  return context.runtimeRoot ? new RuntimeSafePauseStore(context.runtimeRoot) : null;
+}
+
+function activeWorkerCount(context: Pick<DaemonRunnerCommandContext, "supervisor">, goalId: string): number {
+  return context.supervisor?.getState().workers.filter((worker) => worker.goalId === goalId).length ?? 0;
+}
+
+function buildSafePauseCheckpoint(
+  context: Pick<DaemonRunnerCommandContext, "currentGoalIds" | "journalQueue" | "supervisor" | "runtimeRoot" | "state">,
+  goalId: string,
+  reason?: string,
+) {
+  const queueSnapshot = context.journalQueue?.snapshot();
+  const queuedGoalIds = queueSnapshot
+    ? Object.values(queueSnapshot.pending)
+        .flat()
+        .map((messageId) => context.journalQueue?.get(messageId)?.envelope.goal_id)
+        .filter((id): id is string => typeof id === "string")
+    : [];
+  const supervisorState = context.supervisor?.getState();
+  const backgroundRunIds = supervisorState?.workers
+    .filter((worker) => worker.goalId === goalId && worker.backgroundRunId)
+    .map((worker) => worker.backgroundRunId!)
+    ?? [];
+  return {
+    checkpoint_id: `safe-pause:${goalId}:${Date.now()}`,
+    checkpointed_at: new Date().toISOString(),
+    reason,
+    active_goals: [...context.currentGoalIds],
+    queued_goal_ids: [...new Set(queuedGoalIds)],
+    current_mode: context.state.status,
+    candidate_evidence_refs: [
+      ...(context.runtimeRoot ? [`${context.runtimeRoot}/evidence-ledger/goals/${encodeURIComponent(goalId)}.jsonl`] : []),
+      ...(queueSnapshot ? [`queue:pending:${Object.values(queueSnapshot.pending).flat().length}`] : []),
+    ],
+    artifact_refs: [
+      ...(context.runtimeRoot ? [`${context.runtimeRoot}/artifacts`] : []),
+      ...(backgroundRunIds.map((runId) => `background-run:${runId}`)),
+    ],
+    next_action: "resume goal to continue from the saved queue/evidence/artifact context",
+    supervisor_state_ref: context.runtimeRoot ? `${context.runtimeRoot}/supervisor-state.json` : null,
+    background_run_ids: [...new Set(backgroundRunIds)],
+  };
+}
+
+function uniqueGoalIds(goalIds: string[]): string[] {
+  return [...new Set(goalIds.filter((goalId) => goalId.trim() !== ""))];
+}
+
+function buildResumeGoalIds(currentGoalIds: string[], goalId: string): string[] {
+  return uniqueGoalIds([...currentGoalIds, goalId]);
+}
+
+function isResumableSafePauseState(record: RuntimeSafePauseRecord | null): boolean {
+  return record?.state === "pause_requested" || record?.state === "paused";
+}
+
+function buildSafePauseResumeReason(checkpoint: RuntimeSafePauseCheckpoint | undefined): string | null {
+  if (!checkpoint) {
+    return null;
+  }
+  const parts = [
+    checkpoint.next_action,
+    checkpoint.current_mode ? `mode=${checkpoint.current_mode}` : null,
+    checkpoint.candidate_evidence_refs.length > 0
+      ? `evidence=${checkpoint.candidate_evidence_refs.join(",")}`
+      : null,
+    checkpoint.artifact_refs.length > 0 ? `artifacts=${checkpoint.artifact_refs.join(",")}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
+
+export async function checkpointPauseIfRequested(
+  context: Pick<
+    DaemonRunnerCommandContext,
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue"
+  >,
+  goalId: string,
+): Promise<boolean> {
+  const current = context.state.safe_pause_goals?.[goalId];
+  if (current?.state !== "pause_requested") {
+    return false;
+  }
+
+  const store = safePauseStore(context);
+  const checkpoint = buildSafePauseCheckpoint(context, goalId, current.reason);
+  const paused = store
+    ? await store.markPaused({ goalId, checkpoint })
+    : {
+        schema_version: "runtime-safe-pause-v1" as const,
+        goal_id: goalId,
+        state: "paused" as const,
+        requested_at: current.requested_at,
+        paused_at: checkpoint.checkpointed_at,
+        updated_at: checkpoint.checkpointed_at,
+        reason: current.reason,
+        checkpoint,
+      };
+  context.state.safe_pause_goals = {
+    ...(context.state.safe_pause_goals ?? {}),
+    [goalId]: paused,
+  };
+  context.currentGoalIds.splice(0, context.currentGoalIds.length, ...context.currentGoalIds.filter((id) => id !== goalId));
+  context.refreshOperationalState();
+  context.supervisor?.deactivateGoal(goalId);
+  await context.saveDaemonState();
+  context.abortSleep();
+  await context.broadcastGoalUpdated(goalId, "paused");
+  return true;
+}
+
+export async function handleGoalPauseCommand(
+  context: Pick<
+    DaemonRunnerCommandContext,
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue"
+  >,
+  goalId: string,
+  reason = "safe pause requested",
+): Promise<void> {
+  const store = safePauseStore(context);
+  const requested = store
+    ? await store.requestPause({ goalId, reason, requestedBy: "daemon-command" })
+    : {
+        schema_version: "runtime-safe-pause-v1" as const,
+        goal_id: goalId,
+        state: "pause_requested" as const,
+        requested_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        requested_by: "daemon-command",
+        reason,
+      };
+  context.state.safe_pause_goals = {
+    ...(context.state.safe_pause_goals ?? {}),
+    [goalId]: requested,
+  };
+  context.refreshOperationalState();
+  await context.saveDaemonState();
+  context.supervisor?.deactivateGoal(goalId);
+  context.abortSleep();
+
+  if (!context.currentGoalIds.includes(goalId) || activeWorkerCount(context, goalId) === 0) {
+    await checkpointPauseIfRequested(context, goalId);
+    return;
+  }
+
+  await context.broadcastGoalUpdated(goalId, "pause_requested");
+}
+
+export async function handleGoalResumeCommand(
+  context: Pick<
+    DaemonRunnerCommandContext,
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot"
+  >,
+  goalId: string,
+): Promise<void> {
+  const store = safePauseStore(context);
+  const existing = store ? await store.load(goalId) : context.state.safe_pause_goals?.[goalId] ?? null;
+  if (!isResumableSafePauseState(existing)) {
+    if (existing) {
+      context.state.safe_pause_goals = {
+        ...(context.state.safe_pause_goals ?? {}),
+        [goalId]: existing,
+      };
+      context.refreshOperationalState();
+      await context.saveDaemonState();
+      await context.broadcastGoalUpdated(goalId, existing.state);
+    }
+    return;
+  }
+  const resumed = store
+    ? await store.markResumed(goalId)
+    : {
+        schema_version: "runtime-safe-pause-v1" as const,
+        goal_id: goalId,
+        state: "resumed" as const,
+        resumed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+  const resumeMetadata = existing?.checkpoint
+    ? {
+        waitResume: {
+          type: "wait_resume" as const,
+          strategyId: "safe-pause-resume",
+          waitReason: buildSafePauseResumeReason(existing.checkpoint),
+        },
+      }
+    : undefined;
+  context.state.safe_pause_goals = {
+    ...(context.state.safe_pause_goals ?? {}),
+    [goalId]: resumed,
+  };
+  context.currentGoalIds.splice(
+    0,
+    context.currentGoalIds.length,
+    ...buildResumeGoalIds(context.currentGoalIds, goalId),
+  );
+  context.refreshOperationalState();
+  await context.saveDaemonState();
+  context.supervisor?.activateGoal(goalId, resumeMetadata);
+  context.abortSleep();
+  await context.broadcastGoalUpdated(goalId, "active");
+}
+
+export async function restoreSafePauseStateFromStore(
+  context: Pick<
+    DaemonRunnerCommandContext,
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "state" | "runtimeRoot" | "journalQueue"
+  >,
+): Promise<RuntimeSafePauseRecord[]> {
+  if (!context.runtimeRoot) {
+    return [];
+  }
+  const records = await new RuntimeSafePauseStore(context.runtimeRoot).list();
+  if (records.length === 0) {
+    return [];
+  }
+  context.state.safe_pause_goals = Object.fromEntries(records.map((record) => [record.goal_id, record]));
+  const pausedGoalIds = new Set(records
+    .filter((record) => record.state === "pause_requested" || record.state === "paused")
+    .map((record) => record.goal_id));
+  if (pausedGoalIds.size > 0) {
+    context.currentGoalIds.splice(
+      0,
+      context.currentGoalIds.length,
+      ...context.currentGoalIds.filter((goalId) => !pausedGoalIds.has(goalId)),
+    );
+    deadletterPausedGoalActivations(context, pausedGoalIds);
+    context.refreshOperationalState();
+  }
+  await context.saveDaemonState();
+  return records;
+}
+
+function deadletterPausedGoalActivations(
+  context: Pick<DaemonRunnerCommandContext, "journalQueue">,
+  pausedGoalIds: ReadonlySet<string>,
+): void {
+  if (!context.journalQueue) {
+    return;
+  }
+  const snapshot = context.journalQueue.snapshot();
+  const messageIds = [
+    ...Object.values(snapshot.pending).flat(),
+    ...Object.values(snapshot.inflight).map((claim) => claim.messageId),
+  ];
+  for (const messageId of messageIds) {
+    const record = context.journalQueue.get(messageId);
+    const envelope = record?.envelope;
+    if (
+      envelope?.type === "event" &&
+      envelope.name === "goal_activated" &&
+      envelope.goal_id &&
+      pausedGoalIds.has(envelope.goal_id)
+    ) {
+      context.journalQueue.deadletter(messageId, "goal is paused by safe-pause checkpoint");
+    }
+  }
 }
 
 export async function handleRuntimeControlCommand(

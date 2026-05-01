@@ -72,6 +72,38 @@ export class EventServerCommandHandler {
       return;
     }
 
+    if (action === "pause") {
+      try {
+        await this.dispatchCommandEnvelope({
+          name: "goal_pause",
+          goalId,
+          dedupeKey: `goal_pause:${goalId}`,
+          payload: { goalId },
+        });
+        await this.broadcast("goal_pause_requested", { goalId });
+        writeJson(res, 200, { ok: true, goalId });
+      } catch (err) {
+        writeJsonError(res, 500, "Command accept failed", err);
+      }
+      return;
+    }
+
+    if (action === "resume") {
+      try {
+        await this.dispatchCommandEnvelope({
+          name: "goal_resume",
+          goalId,
+          dedupeKey: `goal_resume:${goalId}`,
+          payload: { goalId },
+        });
+        await this.broadcast("goal_resume_requested", { goalId });
+        writeJson(res, 200, { ok: true, goalId });
+      } catch (err) {
+        writeJsonError(res, 500, "Command accept failed", err);
+      }
+      return;
+    }
+
     if (action === "approve") {
       try {
         const body = await readBody(req);

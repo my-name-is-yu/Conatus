@@ -255,6 +255,10 @@ export async function startDaemonRunner(
             context.handleGoalStartCommand(goalId, extractGoalStartMetadata(envelope))),
         onGoalStop: async (goalId) =>
           context.runCommandWithHealth("goal_stop", () => context.handleGoalStopCommand(goalId)),
+        onGoalPause: async (goalId) =>
+          context.runCommandWithHealth("goal_pause", () => context.handleGoalPauseCommand(goalId)),
+        onGoalResume: async (goalId) =>
+          context.runCommandWithHealth("goal_resume", () => context.handleGoalResumeCommand(goalId)),
         onChatMessage: async (goalId, message) =>
           context.runCommandWithHealth("chat_message", () => context.handleChatMessageCommand(goalId, message)),
         onApprovalResponse: async (goalId, requestId, approved) =>
@@ -279,6 +283,7 @@ export async function startDaemonRunner(
         supervisor: context.supervisor ? "ok" : "degraded",
       }
     );
+    await context.restoreSafePauseState?.();
     context.startStartupRuntimeStoreMaintenance();
 
     startupReady = true;
@@ -287,7 +292,7 @@ export async function startDaemonRunner(
       await context.eventDispatcher?.start();
       await context.commandDispatcher?.start();
       if (context.supervisor) {
-        await context.supervisor.start(mergedGoalIds);
+        await context.supervisor.start([...context.currentGoalIds]);
         const maintenanceIntervalMs = context.config.check_interval_ms;
         await context.runSupervisorMaintenanceCycle();
         await context.reconcileRuntimeControlOperationsAfterStartup();

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RuntimeSafePauseRecordSchema } from "../store/runtime-schemas.js";
 
 const PID_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 
@@ -86,6 +87,7 @@ export const DaemonStateSchema = z.object({
   last_observe_at: z.string().datetime().nullable().optional(),
   last_wait_reason: z.string().nullable().optional(),
   approval_pending_count: z.number().int().nonnegative().optional(),
+  safe_pause_goals: z.record(RuntimeSafePauseRecordSchema).optional(),
 });
 export type DaemonState = z.infer<typeof DaemonStateSchema>;
 

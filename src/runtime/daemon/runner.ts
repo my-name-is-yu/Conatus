@@ -22,7 +22,7 @@ import { generateCronEntry } from "./signals.js";
 import type { IngressGateway } from "../gateway/index.js";
 import type { Envelope } from "../types/envelope.js";
 import type { LoopSupervisor } from "../executor/index.js";
-import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "../store/index.js";
+import { type ApprovalStore, type OutboxStore, type RuntimeHealthStore } from "../store/index.js";
 import type { RuntimeControlOperationKind } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
 import type { GoalLeaseManager } from "../goal-lease-manager.js";
@@ -62,11 +62,15 @@ import {
   acceptRuntimeEnvelope as acceptRuntimeEnvelopeFn,
   handleApprovalResponseCommand as handleApprovalResponseCommandFn,
   handleChatMessageCommand as handleChatMessageCommandFn,
+  handleGoalPauseCommand as handleGoalPauseCommandFn,
+  handleGoalResumeCommand as handleGoalResumeCommandFn,
   handleGoalStartCommand as handleGoalStartCommandFn,
   handleGoalStopCommand as handleGoalStopCommandFn,
   handleInboundEnvelope as handleInboundEnvelopeFn,
   handleRuntimeControlCommand as handleRuntimeControlCommandFn,
   handleScheduleRunNowCommand as handleScheduleRunNowCommandFn,
+  checkpointPauseIfRequested as checkpointPauseIfRequestedFn,
+  restoreSafePauseStateFromStore as restoreSafePauseStateFromStoreFn,
   type GoalStartMetadata,
 } from "./runner-commands.js";
 import { runDaemonGoalCycleLoop } from "./runner-goal-cycle.js";
@@ -282,6 +286,10 @@ export class DaemonRunner {
     this.refreshResidentDeps = deps.refreshResidentDeps;
 
     this.state = createInitialDaemonState(this.runtimeRoot);
+  }
+
+  private async restoreSafePauseState(): Promise<void> {
+    await restoreSafePauseStateFromStoreFn(this as never);
   }
 
   private refreshOperationalState(): void {
@@ -571,6 +579,18 @@ export class DaemonRunner {
     await handleGoalStopCommandFn(this as never, goalId);
   }
 
+  private async handleGoalPauseCommand(goalId: string): Promise<void> {
+    await handleGoalPauseCommandFn(this as never, goalId);
+  }
+
+  private async handleGoalResumeCommand(goalId: string): Promise<void> {
+    await handleGoalResumeCommandFn(this as never, goalId);
+  }
+
+  private async checkpointPauseIfRequested(goalId: string): Promise<boolean> {
+    return checkpointPauseIfRequestedFn(this as never, goalId);
+  }
+
   private async handleRuntimeControlCommand(
     operationId: string,
     kind: RuntimeControlOperationKind
@@ -624,6 +644,7 @@ export class DaemonRunner {
       });
     }
     await this.broadcastGoalUpdated(goalId, result.status);
+    await this.checkpointPauseIfRequested(goalId);
   }
 
   private async loadExistingGoalTitles(): Promise<string[]> {

@@ -215,6 +215,39 @@ describe("DaemonClient snapshot + replay", () => {
     });
   });
 
+  it("sends safe pause and resume requests as distinct daemon command envelopes", async () => {
+    const envelopes: unknown[] = [];
+    server.setCommandEnvelopeHook((envelope) => {
+      envelopes.push(envelope);
+    });
+    await server.start();
+
+    const client = new DaemonClient({
+      host: "127.0.0.1",
+      port: server.getPort(),
+      authToken: server.getAuthToken(),
+    });
+
+    await expect(client.pauseGoal("goal-bg")).resolves.toEqual({ ok: true, goalId: "goal-bg" });
+    await expect(client.resumeGoal("goal-bg")).resolves.toEqual({ ok: true, goalId: "goal-bg" });
+
+    expect(envelopes).toHaveLength(2);
+    expect(envelopes[0]).toMatchObject({
+      type: "command",
+      name: "goal_pause",
+      goal_id: "goal-bg",
+      dedupe_key: "goal_pause:goal-bg",
+      payload: { goalId: "goal-bg" },
+    });
+    expect(envelopes[1]).toMatchObject({
+      type: "command",
+      name: "goal_resume",
+      goal_id: "goal-bg",
+      dedupe_key: "goal_resume:goal-bg",
+      payload: { goalId: "goal-bg" },
+    });
+  });
+
   it("sends schedule run-now requests as daemon command envelopes", async () => {
     const envelopes: unknown[] = [];
     server.setCommandEnvelopeHook((envelope) => {
