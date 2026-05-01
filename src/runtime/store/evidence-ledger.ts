@@ -69,6 +69,46 @@ export const RuntimeEvidenceMetricSchema = z.object({
 }).strict();
 export type RuntimeEvidenceMetric = z.infer<typeof RuntimeEvidenceMetricSchema>;
 
+export const RuntimeEvidenceCandidateDispositionSchema = z.enum(["retained", "promoted", "retired"]);
+export type RuntimeEvidenceCandidateDisposition = z.infer<typeof RuntimeEvidenceCandidateDispositionSchema>;
+
+export const RuntimeEvidenceCandidateLineageSchema = z.object({
+  parent_candidate_id: z.string().min(1).optional(),
+  source_candidate_id: z.string().min(1).optional(),
+  source_strategy_id: z.string().min(1).optional(),
+  source_strategy: z.string().min(1).optional(),
+  strategy_family: z.string().min(1),
+  feature_lineage: z.array(z.string().min(1)).default([]),
+  model_lineage: z.array(z.string().min(1)).default([]),
+  config_lineage: z.array(z.string().min(1)).default([]),
+  seed_lineage: z.array(z.string().min(1)).default([]),
+  fold_lineage: z.array(z.string().min(1)).default([]),
+  postprocess_lineage: z.array(z.string().min(1)).default([]),
+  notes: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceCandidateLineage = z.infer<typeof RuntimeEvidenceCandidateLineageSchema>;
+
+export const RuntimeEvidenceCandidateSimilaritySchema = z.object({
+  candidate_id: z.string().min(1),
+  similarity: z.number().min(0).max(1),
+  signal: z.enum(["declared", "lineage", "metric_correlation", "artifact_overlap", "other"]).default("declared"),
+  summary: z.string().min(1).optional(),
+}).strict();
+export type RuntimeEvidenceCandidateSimilarity = z.infer<typeof RuntimeEvidenceCandidateSimilaritySchema>;
+
+export const RuntimeEvidenceCandidateRecordSchema = z.object({
+  candidate_id: z.string().min(1),
+  label: z.string().min(1).optional(),
+  lineage: RuntimeEvidenceCandidateLineageSchema,
+  metrics: z.array(RuntimeEvidenceMetricSchema).default([]),
+  artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
+  similarity: z.array(RuntimeEvidenceCandidateSimilaritySchema).default([]),
+  disposition: RuntimeEvidenceCandidateDispositionSchema.default("retained"),
+  disposition_reason: z.string().min(1).optional(),
+  produced_at: z.string().datetime().optional(),
+}).strict();
+export type RuntimeEvidenceCandidateRecord = z.infer<typeof RuntimeEvidenceCandidateRecordSchema>;
+
 export const RuntimeEvidenceEvaluatorSignalSchema = z.enum(["local", "external"]);
 export type RuntimeEvidenceEvaluatorSignal = z.infer<typeof RuntimeEvidenceEvaluatorSignalSchema>;
 
@@ -355,6 +395,7 @@ export const RuntimeEvidenceEntrySchema = z.object({
   research: z.array(RuntimeEvidenceResearchMemoSchema).optional(),
   dream_checkpoints: z.array(RuntimeEvidenceDreamCheckpointSchema).optional(),
   divergent_exploration: z.array(RuntimeEvidenceDivergentHypothesisSchema).optional(),
+  candidates: z.array(RuntimeEvidenceCandidateRecordSchema).optional(),
   artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
   result: z.object({
     status: z.string().min(1).optional(),
@@ -407,6 +448,47 @@ export interface RuntimeFailedLineageContext {
   evidence_entry_ids: string[];
 }
 
+export interface RuntimeCandidateLineageContext {
+  strategy_family: string;
+  candidate_ids: string[];
+  retained_representative_ids: string[];
+  promoted_ids: string[];
+  retired_ids: string[];
+  best_candidate_id?: string;
+  best_metric?: {
+    label: string;
+    value: number;
+    direction: "maximize" | "minimize";
+  };
+  diversity_notes: string[];
+}
+
+export interface RuntimeCandidatePortfolioSlot {
+  candidate_id: string;
+  label?: string;
+  strategy_family: string;
+  role: "top_metric" | "diverse_representative" | "lineage_representative";
+  evidence_entry_id: string;
+  occurred_at: string;
+  metric?: {
+    label: string;
+    value: number;
+    direction: "maximize" | "minimize";
+    confidence: number;
+  };
+  parent_candidate_id?: string;
+  source_candidate_id?: string;
+  source_strategy_id?: string;
+  disposition: RuntimeEvidenceCandidateDisposition;
+  retained_reason?: string;
+  similarity_to_selected?: RuntimeEvidenceCandidateSimilarity;
+}
+
+export interface RuntimeDiversifiedCandidatePortfolioOptions {
+  limit?: number;
+  nearDuplicateSimilarity?: number;
+}
+
 export interface RuntimeEvidenceSummary {
   schema_version: "runtime-evidence-summary-v1";
   generated_at: string;
@@ -422,6 +504,8 @@ export interface RuntimeEvidenceSummary {
   research_memos: RuntimeResearchMemoContext[];
   dream_checkpoints: RuntimeDreamCheckpointContext[];
   divergent_exploration: RuntimeEvidenceDivergentHypothesis[];
+  candidate_lineages: RuntimeCandidateLineageContext[];
+  recommended_candidate_portfolio: RuntimeCandidatePortfolioSlot[];
   recent_failed_attempts: RuntimeEvidenceEntry[];
   failed_lineages: RuntimeFailedLineageContext[];
   recent_entries: RuntimeEvidenceEntry[];
@@ -479,6 +563,7 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
       research: input.research ?? [],
       dream_checkpoints: input.dream_checkpoints ?? [],
       divergent_exploration: input.divergent_exploration ?? [],
+      candidates: input.candidates ?? [],
       artifacts: input.artifacts ?? [],
       raw_refs: input.raw_refs ?? [],
       ...input,
@@ -564,6 +649,7 @@ async function readSummaryIndex(
     const parsed = JSON.parse(text) as RuntimeEvidenceSummaryIndex;
     if (parsed.schema_version !== "runtime-evidence-summary-index-v1") return null;
     if (parsed.summary.schema_version !== "runtime-evidence-summary-v1") return null;
+    if (!isCurrentEvidenceSummaryShape(parsed.summary)) return null;
     const stat = await fsp.stat(canonicalPath);
     if (parsed.canonical_log_size !== stat.size) return null;
     if (parsed.canonical_log_mtime_ms !== stat.mtimeMs) return null;
@@ -573,6 +659,11 @@ async function readSummaryIndex(
   } catch {
     return null;
   }
+}
+
+function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
+  return Array.isArray(summary.candidate_lineages)
+    && Array.isArray(summary.recommended_candidate_portfolio);
 }
 
 async function writeSummaryIndex(
@@ -655,6 +746,8 @@ function summarizeEvidence(
       .flatMap((entry) => entry.divergent_exploration ?? [])
       .slice(-10)
       .reverse(),
+    candidate_lineages: summarizeCandidateLineages(entries),
+    recommended_candidate_portfolio: selectDiversifiedCandidatePortfolio(entries),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"
@@ -667,6 +760,315 @@ function summarizeEvidence(
     failed_lineages: summarizeFailedLineages(entries),
     recent_entries: newestFirst.slice(0, 10),
     warnings: read.warnings,
+  };
+}
+
+interface CandidateEvidenceContext {
+  entry_id: string;
+  occurred_at: string;
+  candidate: RuntimeEvidenceCandidateRecord;
+  metric: CandidateComparableMetric | null;
+}
+
+interface CandidateComparableMetric {
+  label: string;
+  value: number;
+  direction: "maximize" | "minimize";
+  confidence: number;
+}
+
+export function selectDiversifiedCandidatePortfolio(
+  entriesOldestFirst: RuntimeEvidenceEntry[],
+  options: RuntimeDiversifiedCandidatePortfolioOptions = {}
+): RuntimeCandidatePortfolioSlot[] {
+  const limit = options.limit ?? 3;
+  if (limit <= 0) return [];
+  const nearDuplicateSimilarity = options.nearDuplicateSimilarity ?? 0.85;
+  const primaryMetric = resolvePrimaryCandidateMetricKey(entriesOldestFirst);
+  const candidates = extractCandidateEvidenceContexts(entriesOldestFirst, primaryMetric)
+    .filter((context) => context.candidate.disposition !== "retired")
+    .sort(compareCandidateEvidenceContexts);
+  const selected: Array<CandidateEvidenceContext & {
+    role: RuntimeCandidatePortfolioSlot["role"];
+    similarity_to_selected?: RuntimeEvidenceCandidateSimilarity;
+  }> = [];
+  const skipped: Array<CandidateEvidenceContext & { similarity_to_selected?: RuntimeEvidenceCandidateSimilarity }> = [];
+
+  for (const candidate of candidates) {
+    if (selected.length >= limit) break;
+    const duplicateSignal = mostSimilarSelectedCandidate(candidate, selected);
+    if (duplicateSignal && duplicateSignal.similarity >= nearDuplicateSimilarity) {
+      skipped.push({ ...candidate, similarity_to_selected: duplicateSignal });
+      continue;
+    }
+    selected.push({
+      ...candidate,
+      role: selected.length === 0 ? "top_metric" : "diverse_representative",
+      ...(duplicateSignal ? { similarity_to_selected: duplicateSignal } : {}),
+    });
+  }
+
+  for (const candidate of skipped) {
+    if (selected.length >= limit) break;
+    selected.push({
+      ...candidate,
+      role: "lineage_representative",
+    });
+  }
+
+  return selected.map(toPortfolioSlot);
+}
+
+function summarizeCandidateLineages(entriesOldestFirst: RuntimeEvidenceEntry[]): RuntimeCandidateLineageContext[] {
+  const primaryMetric = resolvePrimaryCandidateMetricKey(entriesOldestFirst);
+  const byFamily = new Map<string, CandidateEvidenceContext[]>();
+  for (const context of extractCandidateEvidenceContexts(entriesOldestFirst, primaryMetric)) {
+    const family = context.candidate.lineage.strategy_family;
+    byFamily.set(family, [...(byFamily.get(family) ?? []), context]);
+  }
+
+  return [...byFamily.entries()]
+    .map(([strategyFamily, contexts]) => {
+      const sorted = [...contexts].sort(compareCandidateEvidenceContexts);
+      const best = sorted[0];
+      const diversityNotes = new Set<string>();
+      for (const context of contexts) {
+        for (const similarity of context.candidate.similarity) {
+          if (similarity.similarity >= 0.85) {
+            diversityNotes.add(`${context.candidate.candidate_id} near-duplicate of ${similarity.candidate_id}`);
+          }
+        }
+      }
+      return {
+        strategy_family: strategyFamily,
+        candidate_ids: contexts.map((context) => context.candidate.candidate_id),
+        retained_representative_ids: sorted
+          .filter((context) => context.candidate.disposition === "retained" || context.candidate.disposition === "promoted")
+          .map((context) => context.candidate.candidate_id)
+          .slice(0, 3),
+        promoted_ids: contexts
+          .filter((context) => context.candidate.disposition === "promoted")
+          .map((context) => context.candidate.candidate_id),
+        retired_ids: contexts
+          .filter((context) => context.candidate.disposition === "retired")
+          .map((context) => context.candidate.candidate_id),
+        ...(best ? { best_candidate_id: best.candidate.candidate_id } : {}),
+        ...(best?.metric
+          ? {
+              best_metric: {
+                label: best.metric.label,
+                value: best.metric.value,
+                direction: best.metric.direction,
+              },
+            }
+          : {}),
+        diversity_notes: [...diversityNotes].slice(0, 5),
+      } satisfies RuntimeCandidateLineageContext;
+    })
+    .sort((a, b) => {
+      const aMetric = a.best_metric;
+      const bMetric = b.best_metric;
+      if (aMetric && bMetric && aMetric.direction === bMetric.direction) {
+        const delta = aMetric.direction === "maximize" ? bMetric.value - aMetric.value : aMetric.value - bMetric.value;
+        if (delta !== 0) return delta;
+      }
+      if (aMetric && !bMetric) return -1;
+      if (!aMetric && bMetric) return 1;
+      return a.strategy_family.localeCompare(b.strategy_family);
+    });
+}
+
+function extractCandidateEvidenceContexts(
+  entriesOldestFirst: RuntimeEvidenceEntry[],
+  primaryMetric: ComparableMetricKey | null
+): CandidateEvidenceContext[] {
+  const contexts: CandidateEvidenceContext[] = [];
+  for (const entry of entriesOldestFirst) {
+    for (const candidate of entry.candidates ?? []) {
+      contexts.push({
+        entry_id: entry.id,
+        occurred_at: candidate.produced_at ?? entry.occurred_at,
+        candidate,
+        metric: candidateComparableMetric(candidate, primaryMetric),
+      });
+    }
+  }
+  return contexts;
+}
+
+function resolvePrimaryCandidateMetricKey(entriesOldestFirst: RuntimeEvidenceEntry[]): ComparableMetricKey | null {
+  const candidates = entriesOldestFirst.flatMap((entry) => entry.candidates ?? []);
+  const byMetric = new Map<string, {
+    key: ComparableMetricKey;
+    candidate_count: number;
+    position_sum: number;
+    latest_index: number;
+  }>();
+
+  candidates.forEach((candidate, candidateIndex) => {
+    const seenForCandidate = new Set<string>();
+    candidate.metrics.forEach((metric, metricIndex) => {
+      if (typeof metric.value !== "number" || !Number.isFinite(metric.value)) return;
+      if (metric.direction !== "maximize" && metric.direction !== "minimize") return;
+      const key = { label: metric.label, direction: metric.direction };
+      const mapKey = `${key.label}:${key.direction}`;
+      if (seenForCandidate.has(mapKey)) return;
+      seenForCandidate.add(mapKey);
+      const existing = byMetric.get(mapKey);
+      if (!existing) {
+        byMetric.set(mapKey, {
+          key,
+          candidate_count: 1,
+          position_sum: metricIndex,
+          latest_index: candidateIndex,
+        });
+        return;
+      }
+      existing.candidate_count += 1;
+      existing.position_sum += metricIndex;
+      existing.latest_index = candidateIndex;
+    });
+  });
+
+  return [...byMetric.values()].sort((a, b) => {
+    const coverageDelta = b.candidate_count - a.candidate_count;
+    if (coverageDelta !== 0) return coverageDelta;
+    const localityDelta = Number(isLocalValidationMetricLabel(b.key.label)) - Number(isLocalValidationMetricLabel(a.key.label));
+    if (localityDelta !== 0) return localityDelta;
+    const positionDelta = a.position_sum / a.candidate_count - b.position_sum / b.candidate_count;
+    if (positionDelta !== 0) return positionDelta;
+    return b.latest_index - a.latest_index;
+  })[0]?.key ?? null;
+}
+
+function isLocalValidationMetricLabel(label: string): boolean {
+  const normalized = normalizeLineageText(label);
+  const externalHints = ["public", "private", "leaderboard", "external", "lb", "submission"];
+  for (const hint of externalHints) {
+    if (normalized === hint || normalized.includes(hint)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function candidateComparableMetric(
+  candidate: RuntimeEvidenceCandidateRecord,
+  primaryMetric: ComparableMetricKey | null
+): CandidateComparableMetric | null {
+  for (const metric of candidate.metrics) {
+    if (primaryMetric && (metric.label !== primaryMetric.label || metric.direction !== primaryMetric.direction)) continue;
+    if (typeof metric.value !== "number" || !Number.isFinite(metric.value)) continue;
+    if (metric.direction !== "maximize" && metric.direction !== "minimize") continue;
+    return {
+      label: metric.label,
+      value: metric.value,
+      direction: metric.direction,
+      confidence: metric.confidence ?? 1,
+    };
+  }
+  return null;
+}
+
+function compareCandidateEvidenceContexts(a: CandidateEvidenceContext, b: CandidateEvidenceContext): number {
+  const metricDelta = compareCandidateMetrics(a.metric, b.metric);
+  if (metricDelta !== 0) return metricDelta;
+  const dispositionDelta = dispositionRank(b.candidate.disposition) - dispositionRank(a.candidate.disposition);
+  if (dispositionDelta !== 0) return dispositionDelta;
+  const confidenceDelta = (b.metric?.confidence ?? 0) - (a.metric?.confidence ?? 0);
+  if (confidenceDelta !== 0) return confidenceDelta;
+  return b.occurred_at.localeCompare(a.occurred_at);
+}
+
+function compareCandidateMetrics(a: CandidateComparableMetric | null, b: CandidateComparableMetric | null): number {
+  if (a && b && a.direction === b.direction) {
+    const valueDelta = a.direction === "maximize" ? b.value - a.value : a.value - b.value;
+    if (valueDelta !== 0) return valueDelta;
+  }
+  if (a && !b) return -1;
+  if (!a && b) return 1;
+  return 0;
+}
+
+function dispositionRank(disposition: RuntimeEvidenceCandidateDisposition): number {
+  if (disposition === "promoted") return 2;
+  if (disposition === "retained") return 1;
+  return 0;
+}
+
+function mostSimilarSelectedCandidate(
+  candidate: CandidateEvidenceContext,
+  selected: CandidateEvidenceContext[]
+): RuntimeEvidenceCandidateSimilarity | undefined {
+  let best: RuntimeEvidenceCandidateSimilarity | undefined;
+  for (const selectedCandidate of selected) {
+    const similarity = similarityBetweenCandidates(candidate.candidate, selectedCandidate.candidate);
+    if (!similarity) continue;
+    if (!best || similarity.similarity > best.similarity) best = similarity;
+  }
+  return best;
+}
+
+function similarityBetweenCandidates(
+  candidate: RuntimeEvidenceCandidateRecord,
+  selected: RuntimeEvidenceCandidateRecord
+): RuntimeEvidenceCandidateSimilarity | undefined {
+  const direct = candidate.similarity.find((similarity) => similarity.candidate_id === selected.candidate_id);
+  const inverse = selected.similarity.find((similarity) => similarity.candidate_id === candidate.candidate_id);
+  if (direct && inverse) return direct.similarity >= inverse.similarity ? direct : inverse;
+  if (direct) return direct;
+  if (inverse) {
+    return {
+      ...inverse,
+      candidate_id: selected.candidate_id,
+    };
+  }
+  if (
+    candidate.lineage.strategy_family === selected.lineage.strategy_family
+    && candidateLineageFingerprint(candidate) === candidateLineageFingerprint(selected)
+  ) {
+    return {
+      candidate_id: selected.candidate_id,
+      similarity: 0.9,
+      signal: "lineage",
+      summary: "candidate shares strategy family and lineage fingerprint",
+    };
+  }
+  return undefined;
+}
+
+function candidateLineageFingerprint(candidate: RuntimeEvidenceCandidateRecord): string {
+  const lineage = candidate.lineage;
+  return [
+    lineage.strategy_family,
+    ...lineage.feature_lineage,
+    ...lineage.model_lineage,
+    ...lineage.config_lineage,
+    ...lineage.postprocess_lineage,
+  ].map(normalizeLineageText).filter(Boolean).join("|");
+}
+
+function toPortfolioSlot(
+  context: CandidateEvidenceContext & {
+    role: RuntimeCandidatePortfolioSlot["role"];
+    similarity_to_selected?: RuntimeEvidenceCandidateSimilarity;
+  }
+): RuntimeCandidatePortfolioSlot {
+  const candidate = context.candidate;
+  return {
+    candidate_id: candidate.candidate_id,
+    ...(candidate.label ? { label: candidate.label } : {}),
+    strategy_family: candidate.lineage.strategy_family,
+    role: context.role,
+    evidence_entry_id: context.entry_id,
+    occurred_at: context.occurred_at,
+    ...(context.metric ? { metric: context.metric } : {}),
+    ...(candidate.lineage.parent_candidate_id ? { parent_candidate_id: candidate.lineage.parent_candidate_id } : {}),
+    ...(candidate.lineage.source_candidate_id ? { source_candidate_id: candidate.lineage.source_candidate_id } : {}),
+    ...(candidate.lineage.source_strategy_id ? { source_strategy_id: candidate.lineage.source_strategy_id } : {}),
+    disposition: candidate.disposition,
+    ...(candidate.disposition_reason ? { retained_reason: candidate.disposition_reason } : {}),
+    ...(context.similarity_to_selected ? { similarity_to_selected: context.similarity_to_selected } : {}),
   };
 }
 

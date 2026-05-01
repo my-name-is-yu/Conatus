@@ -150,6 +150,47 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.best_evidence?.id).toBe("indexed-after");
   });
 
+  it("rebuilds stale summary indexes that predate candidate summary fields", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "candidate-index-source",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:candidate-index" },
+      candidates: [{
+        candidate_id: "candidate-index-a",
+        lineage: {
+          strategy_family: "catboost",
+          feature_lineage: [],
+          model_lineage: ["catboost"],
+          config_lineage: [],
+          seed_lineage: [],
+          fold_lineage: [],
+          postprocess_lineage: [],
+        },
+        metrics: [{ label: "balanced_accuracy", value: 0.9, direction: "maximize" }],
+        artifacts: [],
+        similarity: [],
+        disposition: "retained",
+      }],
+      summary: "Candidate index source.",
+      outcome: "improved",
+    });
+    await ledger.rebuildSummaryIndexForRun("run:candidate-index");
+    const indexPath = `${ledger.runPath("run:candidate-index")}.summary.json`;
+    const staleIndex = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
+      summary: Record<string, unknown>;
+    };
+    delete staleIndex.summary.candidate_lineages;
+    delete staleIndex.summary.recommended_candidate_portfolio;
+    await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
+
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:candidate-index");
+
+    expect(summary.candidate_lineages).toHaveLength(1);
+    expect(summary.recommended_candidate_portfolio[0]?.candidate_id).toBe("candidate-index-a");
+  });
+
   it("preserves full canonical history when append maintains an existing index", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     for (let index = 0; index < 12; index += 1) {
@@ -493,6 +534,175 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.failed_lineages[1]).toMatchObject({
       count: 1,
       strategy_family: "feature_ablation",
+    });
+  });
+
+  it("retains a lower-score diverse candidate in the recommended lineage portfolio", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "candidate-snapshot",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-candidate-lineage", run_id: "run:candidate-lineage" },
+      candidates: [
+        {
+          candidate_id: "catboost-seed-42",
+          label: "CatBoost seed 42",
+          lineage: {
+            source_strategy_id: "strategy-catboost",
+            strategy_family: "catboost",
+            feature_lineage: ["base-features"],
+            model_lineage: ["catboost"],
+            config_lineage: ["depth-6", "lr-0.06"],
+            seed_lineage: ["seed-42"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: ["none"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.984, direction: "maximize", confidence: 0.88 }],
+          artifacts: [{ label: "metrics-a", state_relative_path: "runs/catboost-seed-42/metrics.json", kind: "metrics" }],
+          similarity: [{ candidate_id: "catboost-seed-99", similarity: 0.96, signal: "declared" }],
+          disposition: "promoted",
+          disposition_reason: "Best local metric inside the CatBoost family.",
+        },
+        {
+          candidate_id: "catboost-seed-99",
+          label: "CatBoost seed 99",
+          lineage: {
+            parent_candidate_id: "catboost-seed-42",
+            source_strategy_id: "strategy-catboost",
+            strategy_family: "catboost",
+            feature_lineage: ["base-features"],
+            model_lineage: ["catboost"],
+            config_lineage: ["depth-6", "lr-0.06"],
+            seed_lineage: ["seed-99"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: ["none"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.982, direction: "maximize", confidence: 0.87 }],
+          artifacts: [{ label: "metrics-b", state_relative_path: "runs/catboost-seed-99/metrics.json", kind: "metrics" }],
+          similarity: [{ candidate_id: "catboost-seed-42", similarity: 0.96, signal: "declared" }],
+          disposition: "retained",
+          disposition_reason: "High-score seed variant, but near-duplicate of the family representative.",
+        },
+        {
+          candidate_id: "linear-stack",
+          label: "Linear stack",
+          lineage: {
+            source_strategy_id: "strategy-linear-stack",
+            strategy_family: "linear_stack",
+            feature_lineage: ["rank-features"],
+            model_lineage: ["ridge-stack"],
+            config_lineage: ["stack-v1"],
+            seed_lineage: ["seed-7"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: ["class-prior-calibration"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.951, direction: "maximize", confidence: 0.8 }],
+          artifacts: [{ label: "metrics-c", state_relative_path: "runs/linear-stack/metrics.json", kind: "metrics" }],
+          similarity: [],
+          disposition: "retained",
+          disposition_reason: "Lower local score, but a distinct mechanism that can complement the CatBoost lineage.",
+        },
+      ],
+      summary: "Candidate lineage snapshot after local validation.",
+      outcome: "improved",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-candidate-lineage");
+
+    expect(summary.candidate_lineages.map((lineage) => lineage.strategy_family)).toEqual([
+      "catboost",
+      "linear_stack",
+    ]);
+    expect(summary.candidate_lineages[0]).toMatchObject({
+      strategy_family: "catboost",
+      candidate_ids: ["catboost-seed-42", "catboost-seed-99"],
+      best_candidate_id: "catboost-seed-42",
+      best_metric: { label: "balanced_accuracy", value: 0.984, direction: "maximize" },
+    });
+    expect(summary.candidate_lineages[0]?.diversity_notes).toContain(
+      "catboost-seed-42 near-duplicate of catboost-seed-99"
+    );
+    expect(summary.recommended_candidate_portfolio.map((slot) => slot.candidate_id)).toEqual([
+      "catboost-seed-42",
+      "linear-stack",
+      "catboost-seed-99",
+    ]);
+    expect(summary.recommended_candidate_portfolio[1]).toMatchObject({
+      candidate_id: "linear-stack",
+      strategy_family: "linear_stack",
+      role: "diverse_representative",
+      retained_reason: "Lower local score, but a distinct mechanism that can complement the CatBoost lineage.",
+    });
+    expect(summary.recommended_candidate_portfolio[2]).toMatchObject({
+      candidate_id: "catboost-seed-99",
+      role: "lineage_representative",
+      similarity_to_selected: {
+        candidate_id: "catboost-seed-42",
+        similarity: 0.96,
+      },
+    });
+  });
+
+  it("ranks diversified candidates by the primary metric label instead of unrelated scores", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "mixed-metric-candidate-snapshot",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-candidate-primary-metric" },
+      candidates: [
+        {
+          candidate_id: "local-best",
+          lineage: {
+            strategy_family: "catboost",
+            feature_lineage: ["base-features"],
+            model_lineage: ["catboost"],
+            config_lineage: [],
+            seed_lineage: [],
+            fold_lineage: [],
+            postprocess_lineage: [],
+          },
+          metrics: [
+            { label: "balanced_accuracy", value: 0.97, direction: "maximize" },
+            { label: "public_lb", value: 0.94, direction: "maximize" },
+          ],
+          artifacts: [],
+          similarity: [],
+          disposition: "promoted",
+        },
+        {
+          candidate_id: "public-only-spike",
+          lineage: {
+            strategy_family: "public-probe",
+            feature_lineage: ["probe-features"],
+            model_lineage: ["probe"],
+            config_lineage: [],
+            seed_lineage: [],
+            fold_lineage: [],
+            postprocess_lineage: [],
+          },
+          metrics: [
+            { label: "public_lb", value: 0.999, direction: "maximize" },
+            { label: "balanced_accuracy", value: 0.91, direction: "maximize" },
+          ],
+          artifacts: [],
+          similarity: [],
+          disposition: "retained",
+        },
+      ],
+      summary: "Mixed candidate metrics snapshot.",
+      outcome: "improved",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-candidate-primary-metric");
+
+    expect(summary.recommended_candidate_portfolio[0]).toMatchObject({
+      candidate_id: "local-best",
+      metric: {
+        label: "balanced_accuracy",
+        value: 0.97,
+      },
     });
   });
 
