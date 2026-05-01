@@ -48,6 +48,7 @@ import {
   type DeadlineFinalizationArtifact,
   type DeadlineFinalizationStatus,
 } from "../../../platform/time/deadline-finalization.js";
+import { deriveExecutionModeFromDeadlineStatus } from "../../../platform/time/execution-mode.js";
 import type { DriveScore } from "../../../base/types/drive.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { CorePhaseKind } from "../../execution/agent-loop/core-phase-runner.js";
@@ -338,6 +339,8 @@ export class CoreIterationKernel {
       })
     );
     result.finalizationStatus = finalizationStatus;
+    const executionMode = deriveExecutionModeFromDeadlineStatus(finalizationStatus);
+    result.executionMode = executionMode;
     if (shouldStopExplorationForFinalization(finalizationStatus)) {
       await maybeRunDreamReviewCheckpoint({
         goal,
@@ -699,6 +702,7 @@ export class CoreIterationKernel {
     const mergedTaskGenerationHints = {
       targetDimensionOverride: taskGenerationHints.targetDimensionOverride ?? pendingDirective?.focusDimension,
       knowledgeContextPrefix: taskGenerationHints.knowledgeContextPrefix,
+      executionMode,
     };
     if (!shouldPreferReplanningContext && replanningOptions?.status === "completed") {
       this.deps.logger?.debug("CoreLoop: replanning evidence collected but not adopted as preferred context", {

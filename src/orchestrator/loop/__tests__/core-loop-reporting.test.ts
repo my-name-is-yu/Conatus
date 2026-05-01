@@ -387,7 +387,7 @@ describe("CoreLoop", async () => {
       const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
       await loop.runOneIteration("goal-1", 0);
 
-      expect(mocks.reportingEngine.generateExecutionSummary).toHaveBeenCalledWith({
+      expect(mocks.reportingEngine.generateExecutionSummary).toHaveBeenCalledWith(expect.objectContaining({
         goalId: "goal-1",
         loopIndex: 0,
         observation: expect.arrayContaining([
@@ -399,7 +399,8 @@ describe("CoreLoop", async () => {
         stallDetected: false,
         pivotOccurred: false,
         elapsedMs: expect.any(Number),
-      });
+        executionMode: expect.objectContaining({ mode: "exploration" }),
+      }));
     });
 
     it("calls reportingEngine.saveReport with generated report", async () => {

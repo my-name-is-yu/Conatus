@@ -59,6 +59,7 @@ import type { ToolExecutor } from "../../../tools/executor.js";
 import type { TaskAgentLoopRunner } from "../agent-loop/task-agent-loop-runner.js";
 import { taskAgentLoopResultToAgentResult } from "../agent-loop/task-agent-loop-result.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
+import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 import {
   formatPlaybookHints,
   formatPatternHints,
@@ -130,6 +131,7 @@ export interface TaskLifecycleOptions {
 export interface TaskCycleRunOptions {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
+  executionMode?: ExecutionModeState;
 }
 
 export interface TaskLifecycleDeps extends TaskLifecycleCoreDeps {
@@ -250,9 +252,10 @@ export class TaskLifecycle {
     knowledgeContext?: string,
     adapterType?: string,
     existingTasks?: string[],
-    workspaceContext?: string
+    workspaceContext?: string,
+    executionMode?: ExecutionModeState
   ): Promise<Task | null> {
-    const result = await this._generateTaskWithTokens(goalId, targetDimension, strategyId, knowledgeContext, adapterType, existingTasks, workspaceContext);
+    const result = await this._generateTaskWithTokens(goalId, targetDimension, strategyId, knowledgeContext, adapterType, existingTasks, workspaceContext, executionMode);
     return result.task;
   }
 
@@ -264,7 +267,8 @@ export class TaskLifecycle {
     knowledgeContext?: string,
     adapterType?: string,
     existingTasks?: string[],
-    workspaceContext?: string
+    workspaceContext?: string,
+    executionMode?: ExecutionModeState
   ): Promise<{ task: Task | null; tokensUsed: number; playbookIdsUsed: string[] }> {
     let resolvedKnowledgeContext = knowledgeContext;
     const playbookIdsUsed = new Set<string>();
@@ -341,7 +345,8 @@ export class TaskLifecycle {
       resolvedKnowledgeContext,
       adapterType,
       existingTasks,
-      workspaceContext
+      workspaceContext,
+      executionMode
     );
     return {
       ...generated,
@@ -539,8 +544,8 @@ export class TaskLifecycle {
       buildDimensionSelectionBackoff: (runGoalId) => this.buildDimensionSelectionBackoff(runGoalId),
       selectTargetDimension: (runGapVector, runDriveContext, dimensions, selectionOptions) =>
         this.selectTargetDimension(runGapVector, runDriveContext, dimensions, selectionOptions),
-      generateTaskWithTokens: (runGoalId, targetDimension, strategyId, runKnowledgeContext, adapterType, runExistingTasks, runWorkspaceContext) =>
-        this._generateTaskWithTokens(runGoalId, targetDimension, strategyId, runKnowledgeContext, adapterType, runExistingTasks, runWorkspaceContext),
+      generateTaskWithTokens: (runGoalId, targetDimension, strategyId, runKnowledgeContext, adapterType, runExistingTasks, runWorkspaceContext, executionMode) =>
+        this._generateTaskWithTokens(runGoalId, targetDimension, strategyId, runKnowledgeContext, adapterType, runExistingTasks, runWorkspaceContext, executionMode),
       enrichmentDeps: () => this.enrichmentDeps(),
       checkIrreversibleApproval: (task) => this.checkIrreversibleApproval(task),
       preExecution: {

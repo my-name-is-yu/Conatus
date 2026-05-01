@@ -1,6 +1,10 @@
 import * as _path from "node:path";
 import { access, readFile } from "node:fs/promises";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import {
+  formatExecutionModePromptSection,
+  type ExecutionModeState,
+} from "../../../platform/time/execution-mode.js";
 
 interface RepositoryPromptContext {
   projectName: string;
@@ -179,7 +183,8 @@ export async function buildTaskGenerationPrompt(
   existingTasks?: string[],
   workspaceContext?: string,
   reflections?: string,
-  lessons?: string
+  lessons?: string,
+  executionMode?: ExecutionModeState
 ): Promise<string> {
   // Load goal context to enrich the prompt
   const goal = await stateManager.loadGoal(goalId);
@@ -332,9 +337,10 @@ Constraints:
 
   const reflectionsSection = reflections ? `\n${reflections}\n` : "";
   const lessonsSection = lessons ? `\n${lessons}\n` : "";
+  const executionModeSection = formatExecutionModePromptSection(executionMode);
 
   return `${goalSection}
-${dimensionSection}
+${dimensionSection}${executionModeSection}
 ${parentSection ? `${parentSection}\n` : ""}${issueSection ? `${issueSection}\n` : ""}${purposeSection ? `${purposeSection}\n` : ""}${repoSection}${adapterSection}${knowledgeSection}${workspaceSection}${existingTasksSection}${failureContextSection}${recentFailureHistorySection}${reflectionsSection}${lessonsSection}
 Requirements:
 - Specific to actual project (goal, description, repo context)

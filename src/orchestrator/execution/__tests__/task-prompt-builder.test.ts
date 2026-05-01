@@ -167,6 +167,39 @@ describe("buildTaskGenerationPrompt — task purpose section", () => {
   });
 });
 
+describe("buildTaskGenerationPrompt — execution mode", () => {
+  it("injects finalization mode task-category gates", async () => {
+    const goal = makeGoal({ id: "g-mode", title: "Deadline Goal" });
+    const sm = makeMockStateManager({ "g-mode": goal });
+
+    const prompt = await buildTaskGenerationPrompt(
+      sm,
+      "g-mode",
+      "quality",
+      undefined,
+      "openai_codex_cli",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        mode: "finalization",
+        source: "deadline_finalization",
+        reason: "Remaining time is inside the reserved finalization buffer.",
+        changed_at: "2026-05-01T00:00:00.000Z",
+        finalization_mode: "finalization",
+        approval_required_to_explore: true,
+      }
+    );
+
+    expect(prompt).toContain("=== Current Execution Mode ===");
+    expect(prompt).toContain("Mode: finalization");
+    expect(prompt).toContain("Allowed task categories: artifact verification, packaging, candidate selection from existing evidence");
+    expect(prompt).toContain("Blocked by default: new speculative experiments");
+    expect(prompt).toContain("Returning to broad exploration requires explicit operator approval.");
+  });
+});
+
 describe("buildTaskGenerationPrompt — section ordering", () => {
   it("places parent chain and task purpose before adapter section", async () => {
     const parent = makeGoal({ id: "par", title: "Parent" });

@@ -479,6 +479,11 @@ describe("CoreLoop", async () => {
           ],
         },
       });
+      expect(iteration.executionMode).toMatchObject({
+        mode: "finalization",
+        source: "deadline_finalization",
+        approval_required_to_explore: true,
+      });
       expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
       expect(evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
         kind: "decision",
@@ -488,8 +493,38 @@ describe("CoreLoop", async () => {
       expect(mocks.reportingEngine.generateExecutionSummary).toHaveBeenCalledWith(
         expect.objectContaining({
           finalizationStatus: expect.objectContaining({ mode: "finalization" }),
+          executionMode: expect.objectContaining({ mode: "finalization" }),
         })
       );
+    });
+
+    it("passes consolidation execution mode into task generation before the finalization cutoff", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      const deadline = new Date(Date.now() + 35 * 60_000).toISOString();
+      await mocks.stateManager.saveGoal(makeGoal({
+        deadline,
+        finalization_policy: {
+          minimum_buffer_ms: 30 * 60_000,
+          consolidation_buffer_ms: 10 * 60_000,
+          best_artifact_selection: "best_evidence",
+          verification_steps: [],
+          external_actions: [],
+        },
+      }));
+
+      const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0, autoDecompose: false });
+      const result = await loop.run("goal-1", { maxIterations: 1 });
+      const iteration = result.iterations[0]!;
+
+      expect(iteration.executionMode).toMatchObject({
+        mode: "consolidation",
+        source: "deadline_finalization",
+      });
+      expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
+      const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
+      expect(callArgs[7]).toMatchObject({
+        executionMode: expect.objectContaining({ mode: "consolidation" }),
+      });
     });
 
     it("uses the goal artifact selection rule instead of always using best_evidence", async () => {

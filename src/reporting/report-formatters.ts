@@ -119,15 +119,20 @@ export function buildExecutionSummaryContent(
     elapsedMs,
     waitStatus,
     finalizationStatus,
+    executionMode,
   } = params;
 
   const now = new Date().toISOString();
   const elapsedSec = (elapsedMs / 1000).toFixed(1);
+  const structuralExecutionMode = executionMode
+    ? isStructuralExecutionMode(executionMode)
+    : false;
 
   const isStructuralEvent =
     stallDetected
     || pivotOccurred
     || taskResult === null
+    || structuralExecutionMode
     || waitStatus !== undefined
     || finalizationStatus !== undefined;
   const useBrief = verbosity === "brief" && !isStructuralEvent;
@@ -166,6 +171,7 @@ export function buildExecutionSummaryContent(
   const stallStatus = stallDetected ? "Yes" : "No";
   const pivotStatus = pivotOccurred ? "Yes" : "No";
   const waitSection = waitStatus ? formatWaitStatusSection(waitStatus) : "";
+  const executionModeSection = executionMode ? formatExecutionModeSection(executionMode) : "";
   const finalizationSection = finalizationStatus ? formatFinalizationStatusSection(finalizationStatus) : "";
 
   return (
@@ -178,10 +184,33 @@ export function buildExecutionSummaryContent(
     `### Status\n\n` +
     `- **Stall detected**: ${stallStatus}\n` +
     `- **Strategy pivot**: ${pivotStatus}\n\n` +
+    executionModeSection +
     waitSection +
     finalizationSection +
     `### Elapsed Time\n\n${elapsedSec}s`
   );
+}
+
+function isStructuralExecutionMode(
+  executionMode: NonNullable<ExecutionSummaryParams["executionMode"]>
+): boolean {
+  return executionMode.mode !== "exploration" || executionMode.finalization_mode !== "no_deadline";
+}
+
+function formatExecutionModeSection(
+  executionMode: NonNullable<ExecutionSummaryParams["executionMode"]>
+): string {
+  const lines = [
+    "### Execution Mode",
+    "",
+    `- **Mode**: ${executionMode.mode}`,
+    `- **Source**: ${executionMode.source}`,
+    `- **Reason**: ${executionMode.reason}`,
+  ];
+  if (executionMode.approval_required_to_explore !== undefined) {
+    lines.push(`- **Approval required to explore**: ${executionMode.approval_required_to_explore ? "Yes" : "No"}`);
+  }
+  return `${lines.join("\n")}\n\n`;
 }
 
 function formatWaitStatusSection(waitStatus: NonNullable<ExecutionSummaryParams["waitStatus"]>): string {

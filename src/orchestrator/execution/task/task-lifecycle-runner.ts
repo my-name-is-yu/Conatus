@@ -22,16 +22,19 @@ import { persistTaskCycleSideEffects } from "./task-side-effects.js";
 import { reloadTaskFromDisk, verifyExecutionWithGitDiff } from "./task-execution-helpers-internal.js";
 import { appendTaskOutcomeEvent, setTaskOutcomeTokens } from "./task-outcome-ledger.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
+import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 
 export interface TaskGenerationResult {
   task: Task | null;
   tokensUsed: number;
   playbookIdsUsed: string[];
+  refusalReason?: string;
 }
 
 export interface TaskCycleRunOptionsShape {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
+  executionMode?: ExecutionModeState;
 }
 
 export interface TaskLifecycleTaskCycleContext {
@@ -72,7 +75,8 @@ export interface TaskLifecycleTaskCycleContext {
     knowledgeContext?: string,
     adapterType?: string,
     existingTasks?: string[],
-    workspaceContext?: string
+    workspaceContext?: string,
+    executionMode?: ExecutionModeState
   ) => Promise<TaskGenerationResult>;
   enrichmentDeps: () => {
     knowledgeTransfer?: KnowledgeTransfer;
@@ -172,7 +176,8 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
       enrichedKnowledgeContext,
       adapter.adapterType,
       existingTasks,
-      workspaceContext
+      workspaceContext,
+      options?.executionMode
     )
   );
 
@@ -180,7 +185,11 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   const playbookIdsUsed = genResult.playbookIdsUsed;
   const task = genResult.task;
   if (task === null) {
-    logger?.warn("TaskLifecycle: task generation returned null (duplicate detected), skipping cycle");
+    logger?.warn(
+      genResult.refusalReason
+        ? `TaskLifecycle: task generation refused (${genResult.refusalReason}), skipping cycle`
+        : "TaskLifecycle: task generation returned null (duplicate detected), skipping cycle"
+    );
     return createSkippedTaskResult(goalId, targetDimension, taskCycleTokens);
   }
 

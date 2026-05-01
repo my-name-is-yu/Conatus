@@ -3,6 +3,7 @@ import type { CompletionJudgment } from "../../base/types/satisficing.js";
 import type { StallAnalysis, StallReport } from "../../base/types/stall.js";
 import type { MetricTrendContext } from "../../platform/drive/metric-history.js";
 import type { DeadlineFinalizationStatus } from "../../platform/time/deadline-finalization.js";
+import type { ExecutionModeState } from "../../platform/time/execution-mode.js";
 import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
 import type { WaitExpiryOutcome } from "../../base/types/strategy.js";
 import type { RuntimeEvidenceDivergentHypothesis } from "../../runtime/store/evidence-ledger.js";
@@ -50,6 +51,8 @@ export interface LoopIterationResult {
   };
   /** Deadline-aware finalization planning state for this iteration. */
   finalizationStatus?: DeadlineFinalizationStatus;
+  /** Current runtime execution mode and transition evidence for this iteration. */
+  executionMode?: ExecutionModeState;
   pivotOccurred: boolean;
   completionJudgment: CompletionJudgment;
   elapsedMs: number;

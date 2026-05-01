@@ -15,6 +15,15 @@ function buildLoopCompletePayload(goalId: string, result: LoopResult): Record<st
     iterations: result.totalIterations,
     gap: lastIteration?.gapAggregate,
     status: result.finalStatus,
+    executionMode: lastIteration?.executionMode
+      ? {
+          mode: lastIteration.executionMode.mode,
+          source: lastIteration.executionMode.source,
+          reason: lastIteration.executionMode.reason,
+          changedAt: lastIteration.executionMode.changed_at,
+          approvalRequiredToExplore: lastIteration.executionMode.approval_required_to_explore ?? false,
+        }
+      : undefined,
     wait: lastIteration?.waitExpiryOutcome
       ? {
           strategyId: lastIteration.waitStrategyId,

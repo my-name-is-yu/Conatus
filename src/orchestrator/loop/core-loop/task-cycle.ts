@@ -25,6 +25,7 @@ import {
 } from "../../execution/context/context-builder.js";
 import type { CapabilityAcquisitionOutcome } from "./capability.js";
 import type { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
+import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 export { detectStallsAndRebalance } from "./task-cycle-stall.js";
 export {
   evaluateWaitStrategiesForObserveOnly,
@@ -149,6 +150,7 @@ export interface LoopCallbacks {
 export interface TaskGenerationHints {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
+  executionMode?: ExecutionModeState;
 }
 
 export interface StallActionHints {
