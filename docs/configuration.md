@@ -229,7 +229,10 @@ Common scriptable commands:
 |---|---|
 | `pulseed setup` | Configure provider, model, and adapter |
 | `pulseed goal add "<text>"` | Create a goal |
-| `pulseed run --goal <id>` | Execute CoreLoop for one goal |
+| `pulseed run --goal <id>` | Execute CoreLoop for one goal with bounded policy (default max 100 iterations) |
+| `pulseed run --goal <id> --resident` | Execute CoreLoop with resident policy; iteration count is telemetry, not a lifecycle cap |
+| `pulseed daemon start --iterations-per-cycle <n>` | Start daemon workers in bounded canary mode with `<n>` as the CoreLoop cap |
+| `pulseed daemon start --resident --iterations-per-cycle <n>` | Start daemon workers in resident mode with `<n>` as a telemetry window |
 | `pulseed status --goal <id>` | Inspect goal state |
 | `pulseed report --goal <id>` | Read the latest report |
 | `pulseed task list --goal <id>` | Inspect tasks |

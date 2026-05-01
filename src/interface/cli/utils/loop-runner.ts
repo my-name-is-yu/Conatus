@@ -24,7 +24,8 @@ export function buildLoopLogger(): Logger {
 export function buildProgressHandler(): (event: ProgressEvent) => void {
   let lastIterationLogged = -1;
   return (event: ProgressEvent): void => {
-    const prefix = `[${event.iteration}/${event.maxIterations}]`;
+    const limit = event.maxIterations === null ? "resident" : String(event.maxIterations);
+    const prefix = `[${event.iteration}/${limit}]`;
     if (event.phase === "Observing...") {
       if (event.iteration !== lastIterationLogged) {
         lastIterationLogged = event.iteration;

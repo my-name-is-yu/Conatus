@@ -118,10 +118,34 @@ export interface WaitApprovalBroker {
  * LoopConfig with all required fields resolved (except iterationBudget which remains optional).
  * Used as the internal config type throughout CoreLoop and its sub-modules.
  */
-export type ResolvedLoopConfig = Required<Omit<LoopConfig, "iterationBudget">> & Pick<LoopConfig, "iterationBudget">;
+export type LoopRunPolicyMode = "bounded" | "resident";
+
+export interface LoopRunPolicy {
+  mode: LoopRunPolicyMode;
+  maxIterations: number | null;
+}
+
+export type LoopRunPolicyInput =
+  | LoopRunPolicyMode
+  | Partial<LoopRunPolicy>;
+
+export type ResolvedLoopConfig =
+  Required<Omit<LoopConfig, "iterationBudget" | "runPolicy" | "maxIterations">>
+  & Pick<LoopConfig, "iterationBudget">
+  & {
+    maxIterations: number | null;
+    runPolicy?: LoopRunPolicy;
+  };
 
 export interface LoopConfig {
-  maxIterations?: number;
+  maxIterations?: number | null;
+  /**
+   * Bounded runs use maxIterations as a lifecycle cap. Resident runs use
+   * iteration count only as telemetry/checkpoint metadata and continue until
+   * completion, stall, explicit stop/pause, error policy, or another lifecycle
+   * controller stops them.
+   */
+  runPolicy?: LoopRunPolicyInput;
   maxConsecutiveErrors?: number;
   delayBetweenLoopsMs?: number;
   adapterType?: string;
@@ -305,7 +329,7 @@ export interface ProgressEvent {
   /** 1-based iteration number */
   iteration: number;
   /** Maximum iterations configured */
-  maxIterations: number;
+  maxIterations: number | null;
   /** Current phase label */
   phase: ProgressPhase;
   /** Gap aggregate from latest gap calculation (undefined before first gap calc) */

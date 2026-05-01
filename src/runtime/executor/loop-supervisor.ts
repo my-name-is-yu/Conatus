@@ -13,16 +13,19 @@ import { getPulseedDirPath } from '../../base/utils/paths.js';
 import type { BackgroundRunLedger } from '../store/background-run-store.js';
 import type { BackgroundRun, RuntimeSessionRef } from '../session-registry/types.js';
 import type { WaitResumeActivation } from '../../base/types/goal-activation.js';
+import type { LoopRunPolicyMode } from '../../orchestrator/loop/core-loop.js';
 
 export interface SupervisorConfig {
   concurrency: number;
   iterationsPerCycle: number;
+  maxIterations?: number | null;
   maxCrashCount: number;
   crashBackoffBaseMs: number;
   stateFilePath: string;
   pollIntervalMs: number;
   claimLeaseMs: number;
   leaseRenewIntervalMs: number;
+  runPolicy: LoopRunPolicyMode;
 }
 
 export interface SupervisorDeps {
@@ -84,6 +87,7 @@ const DEFAULT_CONFIG: SupervisorConfig = {
   pollIntervalMs: 100,
   claimLeaseMs: 30_000,
   leaseRenewIntervalMs: 10_000,
+  runPolicy: 'resident',
 };
 
 function workerStatusToBackgroundRunStatus(
@@ -120,7 +124,11 @@ export class LoopSupervisor {
   }
 
   async start(initialGoalIds: string[]): Promise<void> {
-    const workerCfg: GoalWorkerConfig = { iterationsPerCycle: this.config.iterationsPerCycle };
+    const workerCfg: GoalWorkerConfig = {
+      iterationsPerCycle: this.config.iterationsPerCycle,
+      maxIterations: this.config.maxIterations,
+      runPolicy: this.config.runPolicy,
+    };
     for (let i = 0; i < this.config.concurrency; i++) {
       this.workers.push(new GoalWorker(this.deps.coreLoopFactory(), workerCfg, {
         onRunStart: () => {
@@ -194,7 +202,11 @@ export class LoopSupervisor {
       return;
     }
 
-    const workerCfg: GoalWorkerConfig = { iterationsPerCycle: this.config.iterationsPerCycle };
+    const workerCfg: GoalWorkerConfig = {
+      iterationsPerCycle: this.config.iterationsPerCycle,
+      maxIterations: this.config.maxIterations,
+      runPolicy: this.config.runPolicy,
+    };
     this.workers = [];
     for (let i = 0; i < this.config.concurrency; i++) {
       this.workers.push(new GoalWorker(coreLoopFactory(), workerCfg, {

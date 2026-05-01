@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { CoreLoop } from '../../orchestrator/loop/core-loop.js';
 import type { LoopResult } from '../../orchestrator/loop/core-loop.js';
+import type { LoopRunPolicyMode } from '../../orchestrator/loop/core-loop.js';
 import type { GoalRunActivationContext } from '../../base/types/goal-activation.js';
 
 export interface GoalWorkerConfig {
   iterationsPerCycle: number; // default 5
+  maxIterations?: number | null;
+  runPolicy?: LoopRunPolicyMode;
 }
 
 export type WorkerStatus = 'idle' | 'running' | 'crashed';
@@ -53,8 +56,13 @@ export class GoalWorker {
       let cumulativeIterations = 0;
       do {
         this.extendRequested = false;
+        const maxIterations =
+          this.config.runPolicy === 'resident'
+            ? null
+            : this.config.maxIterations ?? this.config.iterationsPerCycle;
         lastResult = await this.coreLoop.run(goalId, {
-          maxIterations: this.config.iterationsPerCycle,
+          maxIterations,
+          ...(this.config.runPolicy ? { runPolicy: this.config.runPolicy } : {}),
           ...(activation ? { activation } : {}),
         });
         cumulativeIterations += lastResult.totalIterations;

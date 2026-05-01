@@ -61,7 +61,7 @@ export async function cmdStart(
   characterConfigManager: CharacterConfigManager,
   args: string[]
 ): Promise<void> {
-  let values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; "max-concurrent-goals"?: string; workspace?: string };
+  let values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; workspace?: string };
   try {
     ({ values } = parseArgs({
       args,
@@ -72,11 +72,12 @@ export async function cmdStart(
         detach: { type: "boolean", short: "d" },
         "check-interval-ms": { type: "string" },
         "iterations-per-cycle": { type: "string" },
+        resident: { type: "boolean" },
         "max-concurrent-goals": { type: "string" },
         workspace: { type: "string" },
       },
       strict: false,
-    }) as { values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; "max-concurrent-goals"?: string; workspace?: string } });
+    }) as { values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; workspace?: string } });
   } catch (err) {
     getCliLogger().error(formatOperationError("parse start command arguments", err));
     values = {};
@@ -126,6 +127,14 @@ export async function cmdStart(
     }
     daemonConfig = daemonConfig ?? {};
     daemonConfig.iterations_per_cycle = parsed;
+    if (values.resident === true) {
+      daemonConfig.run_policy = { mode: "resident", max_iterations: null };
+    } else {
+      daemonConfig.run_policy = { mode: "bounded", max_iterations: parsed };
+    }
+  } else if (values.resident === true) {
+    daemonConfig = daemonConfig ?? {};
+    daemonConfig.run_policy = { mode: "resident", max_iterations: null };
   }
   if (values["max-concurrent-goals"]) {
     const parsed = parseInt(values["max-concurrent-goals"], 10);
@@ -651,11 +660,20 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const proactive = cfg.proactive_mode ? "on" : "off";
   const crashEnabled = cfg.crash_recovery.enabled ? "enabled" : "disabled";
   const maxRetries = cfg.crash_recovery.max_retries;
+  const runPolicy =
+    cfg.run_policy.mode === "resident"
+      ? "resident (unbounded; iterations reported as telemetry)"
+      : `bounded (${cfg.run_policy.max_iterations ?? cfg.iterations_per_cycle} iterations max)`;
+  const workerCycle =
+    cfg.run_policy.mode === "resident"
+      ? `${cfg.iterations_per_cycle} iteration telemetry window`
+      : `${cfg.run_policy.max_iterations ?? cfg.iterations_per_cycle} iterations max`;
 
   lines.push("");
   lines.push("Config:");
   lines.push(`  Interval:      ${intervalMin}m (adaptive sleep: ${adaptiveSleep})`);
-  lines.push(`  Iterations:    ${cfg.iterations_per_cycle} per cycle`);
+  lines.push(`  Run policy:    ${runPolicy}`);
+  lines.push(`  Worker cycle:  ${workerCycle}`);
   lines.push(`  Concurrency:   ${cfg.max_concurrent_goals} goal${cfg.max_concurrent_goals === 1 ? "" : "s"}`);
   lines.push(`  Proactive:     ${proactive}`);
   lines.push("  Runtime:       durable auto-recovery");
