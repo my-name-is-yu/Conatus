@@ -83,6 +83,7 @@ function createStateManagerMock() {
   return {
     listGoalIds: vi.fn(async () => [] as string[]),
     loadGoal: vi.fn(async () => null),
+    getBaseDir: vi.fn(() => "/tmp/pulseed-tui-test"),
   };
 }
 
@@ -233,6 +234,46 @@ describe("standalone slash command routing", () => {
     expect(chatRunner.execute).toHaveBeenNthCalledWith(2, "/config", "~/workspace");
     expect(intentRecognizer.recognize).not.toHaveBeenCalled();
     expect(actionHandler.handle).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
+  it("persists a RunSpec draft and forwards typed metadata for natural-language long-running runs", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/kaggle",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.");
+
+    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.executeIngressMessage).toHaveBeenCalledOnce();
+    const calls = chatRunner.executeIngressMessage.mock.calls as unknown as Array<[
+      { metadata: Record<string, unknown> },
+      string,
+    ]>;
+    const [ingress, cwd] = calls[0]!;
+    expect(cwd).toBe("/work/kaggle");
+    expect(ingress.metadata).toMatchObject({
+      run_spec_profile: "kaggle",
+      run_spec_status: "draft",
+    });
+    expect(String(ingress.metadata.run_spec_id)).toMatch(/^runspec-/);
 
     screen.unmount();
   });

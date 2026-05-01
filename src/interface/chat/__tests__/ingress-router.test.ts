@@ -123,6 +123,30 @@ describe("IngressRouter", () => {
     expect(route.eventProjectionPolicy).toBe("turn_only");
   });
 
+  it("classifies Kaggle long-running requests as needing RunSpec derivation on the caller path", () => {
+    const route = router.selectRoute(
+      buildStandaloneIngressMessage({
+        text: "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
+        channel: "tui",
+        platform: "local_tui",
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      }),
+      {
+        hasAgentLoop: true,
+        hasToolLoop: true,
+      }
+    );
+
+    expect(route.kind).toBe("agent_loop");
+    expect(route.runSpecIntent).toMatchObject({
+      needsRunSpec: true,
+      profile: "kaggle",
+    });
+  });
+
   it("does not classify Japanese threshold phrasing with regex-based daemon routing", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
