@@ -39,6 +39,7 @@ import { CapabilityDetector } from "../../../platform/observation/capability-det
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 import { WaitDeadlineResolver, getDueWaitGoalIds } from "../../../runtime/daemon/wait-deadline-resolver.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
+import { RuntimeReproducibilityManifestStore } from "../../../runtime/store/reproducibility-manifest.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -418,6 +419,7 @@ describe("CoreLoop", async () => {
           consolidation_buffer_ms: 0,
           deliverable_contract: "Package the latest benchmark report",
           best_artifact_selection: "best_evidence",
+          require_reproducibility_manifest: false,
           verification_steps: ["Run final smoke test"],
           external_actions: [
             {
@@ -508,6 +510,7 @@ describe("CoreLoop", async () => {
           minimum_buffer_ms: 30 * 60_000,
           consolidation_buffer_ms: 10 * 60_000,
           best_artifact_selection: "best_evidence",
+          require_reproducibility_manifest: false,
           verification_steps: [],
           external_actions: [],
         },
@@ -537,6 +540,7 @@ describe("CoreLoop", async () => {
           minimum_buffer_ms: 30 * 60_000,
           consolidation_buffer_ms: 0,
           best_artifact_selection: "latest_artifact",
+          require_reproducibility_manifest: false,
           verification_steps: [],
           external_actions: [],
         },
@@ -588,6 +592,7 @@ describe("CoreLoop", async () => {
           minimum_buffer_ms: 30 * 60_000,
           consolidation_buffer_ms: 0,
           best_artifact_selection: "best_evidence",
+          require_reproducibility_manifest: false,
           verification_steps: [],
           external_actions: [],
         },
@@ -625,6 +630,116 @@ describe("CoreLoop", async () => {
       });
     });
 
+    it("observes a ready reproducibility manifest before final handoff", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      const deadline = new Date(Date.now() + 10 * 60_000).toISOString();
+      await mocks.stateManager.saveGoal(makeGoal({
+        deadline,
+        finalization_policy: {
+          minimum_buffer_ms: 30 * 60_000,
+          consolidation_buffer_ms: 0,
+          best_artifact_selection: "latest_artifact",
+          require_reproducibility_manifest: true,
+          verification_steps: [],
+          external_actions: [],
+        },
+      }));
+
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      await fs.promises.mkdir(path.join(runtimeRoot, "runs/final"), { recursive: true });
+      await fs.promises.writeFile(path.join(runtimeRoot, "runs/final/report.md"), "# Final report\n", "utf8");
+      const evidenceLedger = new RuntimeEvidenceLedger(runtimeRoot);
+      await evidenceLedger.append({
+        id: "final-artifact",
+        occurred_at: "2026-04-30T00:10:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: "goal-1" },
+        artifacts: [{ label: "reports/final.md", state_relative_path: "runs/final/report.md", kind: "report" }],
+        summary: "Final artifact ready.",
+        outcome: "improved",
+      });
+      const manifest = await new RuntimeReproducibilityManifestStore(runtimeRoot).createOrUpdateForCandidate({
+        goalId: "goal-1",
+        deliverableArtifact: {
+          label: "reports/final.md",
+          kind: "report",
+          state_relative_path: "runs/final/report.md",
+          source: "runtime_evidence_ledger",
+        },
+        codeState: { commit: "abc123", dirty: false },
+      });
+
+      const loop = new CoreLoop(
+        { ...deps, evidenceLedger },
+        { delayBetweenLoopsMs: 0, autoDecompose: false }
+      );
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.finalizationStatus?.finalization_plan).toMatchObject({
+        reproducibility_manifest: {
+          required: true,
+          status: "ready",
+          manifest_id: manifest.manifest_id,
+        },
+        handoff_required: false,
+      });
+    });
+
+    it("does not accept a ready manifest when no final artifact is selected", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      const deadline = new Date(Date.now() + 10 * 60_000).toISOString();
+      await mocks.stateManager.saveGoal(makeGoal({
+        deadline,
+        finalization_policy: {
+          minimum_buffer_ms: 30 * 60_000,
+          consolidation_buffer_ms: 0,
+          best_artifact_selection: "latest_verified",
+          require_reproducibility_manifest: true,
+          verification_steps: [],
+          external_actions: [],
+        },
+      }));
+
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      await fs.promises.mkdir(path.join(runtimeRoot, "runs/final"), { recursive: true });
+      await fs.promises.writeFile(path.join(runtimeRoot, "runs/final/report.md"), "# Final report\n", "utf8");
+      const evidenceLedger = new RuntimeEvidenceLedger(runtimeRoot);
+      await evidenceLedger.append({
+        id: "unverified-final-artifact",
+        occurred_at: "2026-04-30T00:10:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: "goal-1" },
+        artifacts: [{ label: "reports/final.md", state_relative_path: "runs/final/report.md", kind: "report" }],
+        summary: "Unverified artifact ready.",
+        outcome: "continued",
+      });
+      await new RuntimeReproducibilityManifestStore(runtimeRoot).createOrUpdateForCandidate({
+        goalId: "goal-1",
+        deliverableArtifact: {
+          label: "reports/final.md",
+          kind: "report",
+          state_relative_path: "runs/final/report.md",
+          source: "runtime_evidence_ledger",
+        },
+        codeState: { commit: "abc123", dirty: false },
+      });
+
+      const loop = new CoreLoop(
+        { ...deps, evidenceLedger },
+        { delayBetweenLoopsMs: 0, autoDecompose: false }
+      );
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.finalizationStatus?.finalization_plan).toMatchObject({
+        best_artifact: null,
+        reproducibility_manifest: {
+          required: true,
+          status: "required_missing",
+        },
+        handoff_required: true,
+      });
+    });
+
     it("can select the latest verified artifact for finalization", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       const deadline = new Date(Date.now() + 10 * 60_000).toISOString();
@@ -634,6 +749,7 @@ describe("CoreLoop", async () => {
           minimum_buffer_ms: 30 * 60_000,
           consolidation_buffer_ms: 0,
           best_artifact_selection: "latest_verified",
+          require_reproducibility_manifest: false,
           verification_steps: [],
           external_actions: [],
         },

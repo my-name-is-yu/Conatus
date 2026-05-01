@@ -143,6 +143,7 @@ export const GoalFinalizationPolicySchema = z.object({
   consolidation_buffer_ms: z.number().int().nonnegative().default(0),
   deliverable_contract: z.string().min(1).optional(),
   best_artifact_selection: z.enum(["best_evidence", "latest_artifact", "latest_verified"]).default("best_evidence"),
+  require_reproducibility_manifest: z.boolean().default(false),
   verification_steps: z.array(z.string().min(1)).default([]),
   external_actions: z.array(GoalFinalizationExternalActionSchema).default([]),
 }).strict();

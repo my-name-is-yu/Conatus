@@ -19,6 +19,7 @@ function finalizationPolicy(
     minimum_buffer_ms: 30 * 60_000,
     consolidation_buffer_ms: 0,
     best_artifact_selection: "best_evidence" as const,
+    require_reproducibility_manifest: false,
     verification_steps: [],
     external_actions: [],
     ...overrides,
@@ -91,6 +92,10 @@ describe("deadline finalization planning", () => {
     expect(status.finalization_plan).toMatchObject({
       deliverable_contract: "Final report ready for handoff",
       best_artifact: { label: "best-report.md" },
+      reproducibility_manifest: {
+        required: false,
+        status: "not_required",
+      },
       verification_steps: ["Run smoke test", "Confirm artifact path"],
     });
     expect(shouldStopExplorationForFinalization(status)).toBe(true);
@@ -139,5 +144,41 @@ describe("deadline finalization planning", () => {
       },
     ]);
     expect(status.finalization_plan?.handoff_required).toBe(true);
+  });
+
+  it("can require a reproducibility manifest before final delivery", () => {
+    const missing = buildDeadlineFinalizationStatus({
+      goal: makeGoal({
+        deadline: deadlineIn(10 * 60_000),
+        finalization_policy: finalizationPolicy({
+          require_reproducibility_manifest: true,
+        }),
+      }),
+      now: NOW,
+    });
+
+    expect(missing.finalization_plan?.reproducibility_manifest).toMatchObject({
+      required: true,
+      status: "required_missing",
+    });
+    expect(missing.finalization_plan?.handoff_required).toBe(true);
+
+    const ready = buildDeadlineFinalizationStatus({
+      goal: makeGoal({
+        deadline: deadlineIn(10 * 60_000),
+        finalization_policy: finalizationPolicy({
+          require_reproducibility_manifest: true,
+        }),
+      }),
+      now: NOW,
+      reproducibilityManifestId: "candidate:run:final:candidate-a",
+    });
+
+    expect(ready.finalization_plan?.reproducibility_manifest).toMatchObject({
+      required: true,
+      status: "ready",
+      manifest_id: "candidate:run:final:candidate-a",
+    });
+    expect(ready.finalization_plan?.handoff_required).toBe(false);
   });
 });

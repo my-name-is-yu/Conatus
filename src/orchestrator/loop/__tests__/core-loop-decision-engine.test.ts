@@ -99,6 +99,11 @@ describe("CoreDecisionEngine", () => {
             deliverable_contract: "Prepare final report",
             best_artifact_selection: "best_evidence",
             best_artifact: null,
+            reproducibility_manifest: {
+              required: false,
+              status: "not_required",
+              reason: "Reproducibility manifest is not required by this finalization policy.",
+            },
             verification_steps: [],
             approval_required_actions: [],
             handoff_required: false,
