@@ -649,7 +649,33 @@ describe("run subcommand", async () => {
 
     expect(vi.mocked(CoreLoop)).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ maxIterations: 5 })
+      expect.objectContaining({
+        maxIterations: 5,
+        runPolicy: { mode: "bounded", maxIterations: 5 },
+      })
+    );
+  });
+
+  it("forwards --resident to CoreLoop as an unbounded resident policy", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "g-resident" }));
+
+    vi.mocked(CoreLoop).mockImplementation(
+      function(_deps: unknown, config: unknown) { return {
+          run: vi.fn().mockResolvedValue(makeLoopResult()),
+          stop: vi.fn(),
+          _capturedConfig: config,
+          setTimeHorizonEngine: vi.fn(),
+        } as unknown as CoreLoop; }
+    );
+
+    await runCLI("run", "--goal", "g-resident", "--resident");
+
+    expect(vi.mocked(CoreLoop)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        maxIterations: null,
+        runPolicy: { mode: "resident", maxIterations: null },
+      })
     );
   });
 });

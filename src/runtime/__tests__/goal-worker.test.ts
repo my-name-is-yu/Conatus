@@ -70,6 +70,39 @@ describe("GoalWorker", () => {
   // ─── 2. WorkerResult mapping ───
 
   describe("execute() returns correct WorkerResult", () => {
+    it("passes resident run policy without a numeric max iteration cap", async () => {
+      const loopResult = makeLoopResult({ goalId: "g1", totalIterations: 2, finalStatus: "stopped" });
+      const coreLoop = makeMockCoreLoop(loopResult);
+      const worker = new GoalWorker(coreLoop as any, {
+        iterationsPerCycle: 5,
+        runPolicy: "resident",
+      });
+
+      await worker.execute("g1");
+
+      expect(coreLoop.run).toHaveBeenCalledWith("g1", {
+        maxIterations: null,
+        runPolicy: "resident",
+      });
+    });
+
+    it("passes bounded run policy maxIterations instead of the telemetry cycle size", async () => {
+      const loopResult = makeLoopResult({ goalId: "g1", totalIterations: 7, finalStatus: "max_iterations" });
+      const coreLoop = makeMockCoreLoop(loopResult);
+      const worker = new GoalWorker(coreLoop as any, {
+        iterationsPerCycle: 5,
+        maxIterations: 7,
+        runPolicy: "bounded",
+      });
+
+      await worker.execute("g1");
+
+      expect(coreLoop.run).toHaveBeenCalledWith("g1", {
+        maxIterations: 7,
+        runPolicy: "bounded",
+      });
+    });
+
     it("maps completed LoopResult to completed WorkerResult", async () => {
       const loopResult = makeLoopResult({ goalId: "g1", totalIterations: 5, finalStatus: "completed" });
       const worker = new GoalWorker(makeMockCoreLoop(loopResult) as any);

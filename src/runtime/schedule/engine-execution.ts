@@ -254,7 +254,7 @@ export async function executeEscalationTargetEntryForEngine(
 }
 
 export async function executeEscalationTargetGoalForEngine(
-  host: Pick<ScheduleExecutionHost, "logger"> & { coreLoop?: { run(goalId: string, options?: { maxIterations?: number }): Promise<any> } },
+  host: Pick<ScheduleExecutionHost, "logger"> & { coreLoop?: { run(goalId: string, options?: { maxIterations?: number | null; runPolicy?: "bounded" | "resident" }): Promise<any> } },
   goalId: string
 ): Promise<ScheduleResult> {
   const now = new Date().toISOString();
@@ -272,7 +272,7 @@ export async function executeEscalationTargetGoalForEngine(
 
   const startedAt = Date.now();
   try {
-    const result = await host.coreLoop.run(goalId);
+    const result = await host.coreLoop.run(goalId, { maxIterations: 10, runPolicy: "bounded" });
     return ScheduleResultSchema.parse({
       entry_id: randomUUID(),
       status: "ok",

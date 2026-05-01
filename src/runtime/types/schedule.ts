@@ -57,8 +57,17 @@ export type CronConfig = z.infer<typeof CronConfigSchema>;
 
 export const GoalTriggerConfigSchema = z.object({
   goal_id: z.string(),
-  max_iterations: z.number().default(10),
+  run_policy: z.enum(["bounded", "resident"]).default("bounded"),
+  max_iterations: z.number().int().positive().nullable().default(10),
   skip_if_active: z.boolean().default(true),
+}).superRefine((value, ctx) => {
+  if (value.run_policy === "bounded" && value.max_iterations === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["max_iterations"],
+      message: "bounded goal triggers require max_iterations",
+    });
+  }
 });
 
 export type GoalTriggerConfig = z.infer<typeof GoalTriggerConfigSchema>;

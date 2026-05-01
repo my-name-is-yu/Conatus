@@ -301,6 +301,69 @@ describe("cmdStart", () => {
     );
   });
 
+  it("treats --iterations-per-cycle as a bounded daemon canary cap by default", async () => {
+    process.env.PULSEED_WATCHDOG_CHILD = "1";
+
+    await cmdStart(
+      { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+      {} as never,
+      ["--iterations-per-cycle", "1"]
+    );
+
+    expect(daemonRunnerArgs[0]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          iterations_per_cycle: 1,
+          run_policy: { mode: "bounded", max_iterations: 1 },
+        }),
+      })
+    );
+  });
+
+  it("allows --resident to keep --iterations-per-cycle as daemon telemetry", async () => {
+    process.env.PULSEED_WATCHDOG_CHILD = "1";
+
+    await cmdStart(
+      { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+      {} as never,
+      ["--resident", "--iterations-per-cycle", "3"]
+    );
+
+    expect(daemonRunnerArgs[0]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          iterations_per_cycle: 3,
+          run_policy: { mode: "resident", max_iterations: null },
+        }),
+      })
+    );
+  });
+
+  it("keeps legacy daemon.json iterations_per_cycle configs bounded", async () => {
+    process.env.PULSEED_WATCHDOG_CHILD = "1";
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 0, iterations_per_cycle: 2 }),
+      "utf-8"
+    );
+
+    await cmdStart(
+      { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+      {} as never,
+      []
+    );
+
+    expect(daemonRunnerArgs[0]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          iterations_per_cycle: 2,
+          run_policy: { mode: "bounded", max_iterations: 2 },
+        }),
+      })
+    );
+  });
+
   it("launches RuntimeWatchdog on the top-level daemon start path", async () => {
     await cmdStart(
       { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,

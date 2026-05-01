@@ -62,7 +62,7 @@ interface ScheduleEngineDeps {
   // Using Record<string,unknown> here allows ScheduleEngine to dispatch without constructing
   // a full Report object. Full Report integration deferred to Phase 4.
   notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
-  coreLoop?: { run(goalId: string, options?: { maxIterations?: number; activation?: GoalRunActivationContext }): Promise<any> };
+  coreLoop?: { run(goalId: string, options?: { maxIterations?: number | null; runPolicy?: "bounded" | "resident"; activation?: GoalRunActivationContext }): Promise<any> };
   stateManager?: StateManager;
   reportingEngine?: { generateNotification(type: string, context: Record<string, unknown>): Promise<any> };
   hookManager?: HookManager;
@@ -83,7 +83,7 @@ export class ScheduleEngine {
   private dataSourceRegistry?: Map<string, IDataSourceAdapter> | DataSourceRegistry;
   private llmClient?: ILLMClient;
   private notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
-  private coreLoop?: { run(goalId: string, options?: { maxIterations?: number; activation?: GoalRunActivationContext }): Promise<any> };
+  private coreLoop?: { run(goalId: string, options?: { maxIterations?: number | null; runPolicy?: "bounded" | "resident"; activation?: GoalRunActivationContext }): Promise<any> };
   private stateManager?: StateManager;
   private reportingEngine?: { generateNotification(type: string, context: Record<string, unknown>): Promise<any> };
   private hookManager?: HookManager;

@@ -23,7 +23,7 @@ interface LayerDeps {
   dataSourceRegistry?: Map<string, IDataSourceAdapter> | DataSourceRegistry;
   llmClient?: ILLMClient;
   notificationDispatcher?: { dispatch(report: Record<string, unknown>): Promise<any> };
-  coreLoop?: { run(goalId: string, options?: { maxIterations?: number; activation?: GoalRunActivationContext }): Promise<any> };
+  coreLoop?: { run(goalId: string, options?: { maxIterations?: number | null; runPolicy?: "bounded" | "resident"; activation?: GoalRunActivationContext }): Promise<any> };
   stateManager?: StateManager;
   reportingEngine?: { generateNotification(type: string, context: Record<string, unknown>): Promise<any> };
   hookManager?: HookManager;
@@ -259,7 +259,9 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
       });
     }
 
-    const result = await deps.coreLoop.run(cfg.goal_id, { maxIterations: cfg.max_iterations });
+    const result = cfg.run_policy === "resident"
+      ? await deps.coreLoop.run(cfg.goal_id, { maxIterations: null, runPolicy: "resident" })
+      : await deps.coreLoop.run(cfg.goal_id, { maxIterations: cfg.max_iterations ?? 10, runPolicy: "bounded" });
     const tokensUsed = result?.tokensUsed ?? 0;
     if (result) {
       deps.logger.info(`GoalTrigger "${entry.name}" completed: status=${result.finalStatus}, iterations=${result.totalIterations}`);

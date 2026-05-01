@@ -100,7 +100,8 @@ Usage:
 
 Options (pulseed run):
   --goal <id>                         Goal ID to run (required)
-  --max-iterations <n>               Override max iterations (default: 100)
+  --max-iterations <n>               Bounded run cap (default: 100)
+  --resident, --no-max-iterations    Resident run policy; no iteration-count lifecycle cap
   --adapter <type>                    Adapter: claude_api | claude_code_cli | github_issue (default: claude_api)
   --tree                              Enable tree mode (iterate across all tree nodes)
   --yes, -y                           Auto-approve all tasks (skip approval prompts)

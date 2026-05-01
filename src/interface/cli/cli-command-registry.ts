@@ -86,13 +86,15 @@ export async function dispatchCommand(
   const subcommand = argv[0];
 
   if (subcommand === "run") {
-    let values: { goal?: string[]; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean; workspace?: string };
+    let values: { goal?: string[]; "max-iterations"?: string; resident?: boolean; "no-max-iterations"?: boolean; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean; workspace?: string };
     try {
       ({ values } = parseArgs({
         args: argv.slice(1),
         options: {
           goal: { type: "string", multiple: true },
           "max-iterations": { type: "string" },
+          resident: { type: "boolean" },
+          "no-max-iterations": { type: "boolean" },
           adapter: { type: "string" },
           tree: { type: "boolean" },
           yes: { type: "boolean", short: "y" },
@@ -100,7 +102,7 @@ export async function dispatchCommand(
           workspace: { type: "string" },
         },
         strict: false,
-      }) as { values: { goal?: string[]; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean; workspace?: string } });
+      }) as { values: { goal?: string[]; "max-iterations"?: string; resident?: boolean; "no-max-iterations"?: boolean; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean; workspace?: string } });
     } catch (err) {
       logger.error(formatOperationError("parse run command arguments", err));
       values = {};
@@ -108,11 +110,11 @@ export async function dispatchCommand(
 
     const goalIds = values.goal ?? [];
     if (goalIds.length === 0) {
-      logger.error(formatGoalRequiredError("run", "pulseed run --goal <id> [--max-iterations <n>] [--adapter <type>] [--tree] [--workspace <path>] [--yes]"));
+      logger.error(formatGoalRequiredError("run", "pulseed run --goal <id> [--max-iterations <n>|--resident] [--adapter <type>] [--tree] [--workspace <path>] [--yes]"));
       return 1;
     }
     if (goalIds.length > 1) {
-      logger.error(formatMultiGoalError("run", "pulseed run --goal <id> [--max-iterations <n>] [--adapter <type>] [--tree] [--workspace <path>] [--yes]"));
+      logger.error(formatMultiGoalError("run", "pulseed run --goal <id> [--max-iterations <n>|--resident] [--adapter <type>] [--tree] [--workspace <path>] [--yes]"));
       return 1;
     }
     const goalId = goalIds[0];
@@ -149,10 +151,23 @@ export async function dispatchCommand(
     }
 
     const loopConfig: LoopConfig = {};
+    const residentRequested = values.resident === true || values["no-max-iterations"] === true;
+    if (residentRequested && values["max-iterations"] !== undefined) {
+      logger.error("Error: use either --max-iterations <n> for bounded runs or --resident/--no-max-iterations for resident runs, not both.");
+      return 1;
+    }
+    if (residentRequested) {
+      loopConfig.runPolicy = { mode: "resident", maxIterations: null };
+      loopConfig.maxIterations = null;
+    }
     if (values["max-iterations"] !== undefined) {
       const parsed = parseInt(values["max-iterations"], 10);
-      if (!isNaN(parsed)) {
+      if (!isNaN(parsed) && parsed > 0) {
+        loopConfig.runPolicy = { mode: "bounded", maxIterations: parsed };
         loopConfig.maxIterations = parsed;
+      } else {
+        logger.error("--max-iterations must be a positive integer");
+        return 1;
       }
     }
     if (values.adapter !== undefined) {

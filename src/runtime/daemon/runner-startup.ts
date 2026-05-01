@@ -233,6 +233,8 @@ export async function startDaemonRunner(
         {
           concurrency: context.config.max_concurrent_goals,
           iterationsPerCycle: context.config.iterations_per_cycle,
+          maxIterations: context.config.run_policy?.max_iterations ?? undefined,
+          runPolicy: context.config.run_policy?.mode ?? "resident",
           stateFilePath: path.join(context.runtimeRoot!, "supervisor-state.json"),
         }
       );

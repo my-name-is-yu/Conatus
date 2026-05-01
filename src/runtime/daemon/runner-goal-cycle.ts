@@ -109,8 +109,11 @@ export async function runDaemonGoalCycleLoop(context: GoalCycleRunnerContext): P
 
         try {
           const iterationsPerCycle = context.config.iterations_per_cycle ?? 1;
+          const runPolicy = context.config.run_policy?.mode ?? "resident";
+          const boundedMaxIterations = context.config.run_policy?.max_iterations ?? iterationsPerCycle;
           const result: LoopResult = await context.coreLoop.run(goalId, {
-            maxIterations: iterationsPerCycle,
+            maxIterations: runPolicy === "resident" ? null : boundedMaxIterations,
+            runPolicy,
             onProgress: (event: ProgressEvent) => {
               if (!context.eventServer) return;
               void context.eventServer.broadcast?.("progress", {

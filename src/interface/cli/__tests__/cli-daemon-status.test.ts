@@ -648,7 +648,8 @@ describe("cmdDaemonStatus", () => {
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).toContain("Config:");
     expect(output).toContain("5m (adaptive sleep: off)");
-    expect(output).toContain("10 per cycle");
+    expect(output).toContain("resident (unbounded; iterations reported as telemetry)");
+    expect(output).toContain("10 iteration telemetry window");
     expect(output).toContain("Proactive:     off");
     expect(output).toContain("Runtime:       durable auto-recovery");
     expect(output).toContain("enabled");
@@ -681,7 +682,8 @@ describe("cmdDaemonStatus", () => {
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).toContain("2m (adaptive sleep: on)");
-    expect(output).toContain("5 per cycle");
+    expect(output).toContain("bounded (5 iterations max)");
+    expect(output).toContain("5 iterations max");
     expect(output).toContain("Proactive:     on");
     expect(output).toContain("Runtime:       durable auto-recovery");
     expect(output).toContain("/tmp/pulseed-runtime");
@@ -711,7 +713,8 @@ describe("cmdDaemonStatus", () => {
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).toContain("3m (adaptive sleep: off)");
-    expect(output).toContain("3 per cycle");
+    expect(output).toContain("bounded (3 iterations max)");
+    expect(output).toContain("3 iterations max");
     expect(output).toContain("Runtime:       durable auto-recovery");
   });
 
@@ -739,7 +742,8 @@ describe("cmdDaemonStatus", () => {
     await cmdDaemonStatus([]);
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
-    expect(output).toContain("7 per cycle");
+    expect(output).toContain("bounded (7 iterations max)");
+    expect(output).toContain("7 iterations max");
     expect(output).toContain("Runtime:       durable auto-recovery");
   });
 

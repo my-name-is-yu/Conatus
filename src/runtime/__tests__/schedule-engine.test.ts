@@ -1489,7 +1489,7 @@ describe("Escalation", () => {
 
     await eng.tick();
 
-    expect(coreLoop.run).toHaveBeenCalledWith("goal-target", { maxIterations: 2 });
+    expect(coreLoop.run).toHaveBeenCalledWith("goal-target", { maxIterations: 2, runPolicy: "bounded" });
     const updatedTarget = eng.getEntries().find((e) => e.id === targetEntry.id)!;
     expect(updatedTarget.last_fired_at).not.toBeNull();
   });
@@ -1531,7 +1531,10 @@ describe("Escalation", () => {
 
     expect(results[0]!.status).toBe("escalated");
     expect(results[0]!.escalated_to).toBe("goal-direct");
-    expect(coreLoop.run).toHaveBeenCalledWith("goal-direct");
+    expect(coreLoop.run).toHaveBeenCalledWith("goal-direct", {
+      maxIterations: 10,
+      runPolicy: "bounded",
+    });
   });
 });
 
@@ -2057,7 +2060,35 @@ describe("GoalTrigger execution (Phase 3)", () => {
     const result = await (eng as any).executeGoalTrigger(entry);
 
     expect(result.status).toBe("ok");
-    expect(mockCoreLoop.run).toHaveBeenCalledWith("test-goal-id", { maxIterations: 5 });
+    expect(mockCoreLoop.run).toHaveBeenCalledWith("test-goal-id", { maxIterations: 5, runPolicy: "bounded" });
+  });
+
+  it("executeGoalTrigger can run a resident policy without a numeric max iteration cap", async () => {
+    const mockCoreLoop = {
+      run: vi.fn().mockResolvedValue({ finalStatus: "stopped", totalIterations: 3 }),
+    };
+
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      coreLoop: mockCoreLoop,
+    });
+
+    const entry = await eng.addEntry({
+      ...makeGoalTriggerEntry(),
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        run_policy: "resident",
+        max_iterations: null,
+        skip_if_active: false,
+      },
+    });
+    const result = await (eng as any).executeGoalTrigger(entry);
+
+    expect(result.status).toBe("ok");
+    expect(mockCoreLoop.run).toHaveBeenCalledWith("test-goal-id", {
+      maxIterations: null,
+      runPolicy: "resident",
+    });
   });
 
   it("executeGoalTrigger skips when goal is active and skip_if_active is true", async () => {
@@ -2419,7 +2450,7 @@ describe("GoalTrigger execution — token accumulation (Phase 3)", () => {
     expect(result.status).toBe("ok");
     // tokens_used is 0 until LoopResult exposes token usage (Phase 4 TODO)
     expect(result.tokens_used).toBe(0);
-    expect(mockCoreLoop.run).toHaveBeenCalledWith("test-goal-id", { maxIterations: 3 });
+    expect(mockCoreLoop.run).toHaveBeenCalledWith("test-goal-id", { maxIterations: 3, runPolicy: "bounded" });
   });
 });
 
@@ -2762,7 +2793,7 @@ describe("GoalTrigger token tracking (Phase 4)", () => {
 
     expect(result.status).toBe("ok");
     expect(result.tokens_used).toBe(1500);
-    expect(mockCoreLoop.run).toHaveBeenCalledWith("goal-abc", { maxIterations: 5 });
+    expect(mockCoreLoop.run).toHaveBeenCalledWith("goal-abc", { maxIterations: 5, runPolicy: "bounded" });
   });
 });
 

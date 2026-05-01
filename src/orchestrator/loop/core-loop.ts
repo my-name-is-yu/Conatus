@@ -10,6 +10,7 @@ import type {
   LoopConfig,
   ResolvedLoopConfig,
   CoreLoopDeps,
+  LoopRunPolicyMode,
 } from "./core-loop/contracts.js";
 import {
   runTreeIteration as runTreeIterationImpl,
@@ -24,6 +25,7 @@ import { CoreDecisionEngine } from "./core-loop/decision-engine.js";
 import type { CorePhasePolicyRegistry } from "./core-loop/phase-policy.js";
 import { CoreIterationKernel } from "./core-loop/iteration-kernel.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
+import { resolveLoopConfig, resolveLoopRunPolicy } from "./run-policy.js";
 
 // Re-export types for backward compatibility
 export type {
@@ -37,6 +39,7 @@ export type {
   CoreLoopDeps,
   ProgressEvent,
   ProgressPhase,
+  LoopRunPolicyMode,
 } from "./core-loop/contracts.js";
 export type {
   LoopIterationResult,
@@ -47,6 +50,7 @@ export { makeEmptyIterationResult } from "./loop-result-types.js";
 
 const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget">> = {
   maxIterations: 100,
+  runPolicy: { mode: "bounded", maxIterations: 100 },
   maxConsecutiveErrors: 3,
   delayBetweenLoopsMs: 1000,
   adapterType: "openai_codex_cli",
@@ -94,7 +98,14 @@ export class CoreLoop {
 
   constructor(deps: CoreLoopDeps, config?: LoopConfig, stateDiff?: StateDiffCalculator) {
     this.deps = deps;
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    const mergedConfig: LoopConfig = { ...DEFAULT_CONFIG, ...config };
+    if (config?.maxIterations === undefined && typeof config?.runPolicy === "object") {
+      mergedConfig.maxIterations = config.runPolicy.maxIterations;
+    }
+    if (config?.maxIterations === undefined && config?.runPolicy === "resident") {
+      mergedConfig.maxIterations = null;
+    }
+    this.config = resolveLoopConfig(mergedConfig) as ResolvedLoopConfig;
     this.logger = deps.logger;
     this.stateDiff = stateDiff;
     this.corePhasePolicyRegistry = deps.corePhasePolicyRegistry ?? new StaticCorePhasePolicyRegistry();
@@ -110,20 +121,26 @@ export class CoreLoop {
 
   /**
    * Run the full loop until completion or stop condition.
-   * @param options.maxIterations - Override config.maxIterations for this run only (e.g. per-cycle budget from DaemonRunner).
+   * @param options.maxIterations - Override config.maxIterations for this run only. Use null for resident/unbounded policy.
    */
   async run(
     goalId: string,
-    options?: { maxIterations?: number; onProgress?: CoreLoopDeps["onProgress"]; activation?: GoalRunActivationContext }
+    options?: { maxIterations?: number | null; runPolicy?: LoopConfig["runPolicy"]; onProgress?: CoreLoopDeps["onProgress"]; activation?: GoalRunActivationContext }
   ): Promise<LoopResult> {
     const depsWithMutableProgress = this.deps as CoreLoopDeps;
     const previousOnProgress = depsWithMutableProgress.onProgress;
     const previousMaxIterations = this.config.maxIterations;
+    const previousRunPolicy = this.config.runPolicy;
     if (options?.onProgress) {
       depsWithMutableProgress.onProgress = options.onProgress;
     }
-    if (options?.maxIterations !== undefined) {
-      this.config.maxIterations = options.maxIterations;
+    if (options?.maxIterations !== undefined || options?.runPolicy !== undefined) {
+      const runPolicy = resolveLoopRunPolicy({
+        runPolicy: options?.runPolicy ?? this.config.runPolicy,
+        maxIterations: options?.maxIterations !== undefined ? options.maxIterations : this.config.maxIterations,
+      });
+      this.config.maxIterations = runPolicy.maxIterations;
+      this.config.runPolicy = runPolicy;
     }
     this.currentActivationContext = options?.activation;
 
@@ -186,26 +203,34 @@ export class CoreLoop {
       consecutiveDenied: 0,
       consecutiveEscalations: 0,
     };
-    let finalStatus: LoopResult["finalStatus"] = "max_iterations";
+    let finalStatus: LoopResult["finalStatus"] = this.config.runPolicy?.mode === "bounded" ? "max_iterations" : "stopped";
 
-    // Effective maxIterations: runtime override takes precedence over config.
-    const effectiveMaxIterations = options?.maxIterations ?? this.config.maxIterations;
+    const effectiveRunPolicy = this.config.runPolicy ?? resolveLoopRunPolicy({ maxIterations: this.config.maxIterations });
+    const effectiveMaxIterations = effectiveRunPolicy.maxIterations;
+    const hasIterationCap = effectiveRunPolicy.mode === "bounded" && effectiveMaxIterations !== null;
 
     // Use the provided iterationBudget if set; otherwise create a local one.
-    const budget: IterationBudget = this.config.iterationBudget
-      ?? new IterationBudget(effectiveMaxIterations);
+    const budget: IterationBudget | null = this.config.iterationBudget
+      ?? (hasIterationCap ? new IterationBudget(effectiveMaxIterations) : null);
 
     // Per-node iteration tracking for tree mode.
     const nodeConsumedMap = new Map<string, number>();
 
-    for (let loopIndex = startLoopIndex; loopIndex < startLoopIndex + effectiveMaxIterations; loopIndex++) {
+    for (
+      let loopIndex = startLoopIndex;
+      hasIterationCap ? loopIndex < startLoopIndex + effectiveMaxIterations : true;
+      loopIndex++
+    ) {
       if (this.stopped) {
         finalStatus = "stopped";
         break;
       }
 
-      if (budget.exhausted) {
+      if (budget?.exhausted) {
         this.logger?.info("Iteration budget exhausted, stopping loop");
+        if (effectiveRunPolicy.mode === "bounded") {
+          finalStatus = "max_iterations";
+        }
         break;
       }
 
@@ -237,7 +262,7 @@ export class CoreLoop {
 
       // Only consume budget for non-skipped iterations.
       if (!iterationResult.skipped) {
-        const { allowed, warnings } = budget.consume();
+        const { allowed, warnings } = budget ? budget.consume() : { allowed: true, warnings: [] };
         for (const w of warnings) { this.logger?.warn(w); }
         if (!allowed) {
           this.logger?.info("Iteration budget exhausted, stopping loop");
@@ -324,7 +349,10 @@ export class CoreLoop {
       }
 
       // Delay between loops (skip on last iteration)
-      if (loopIndex < startLoopIndex + effectiveMaxIterations - 1 && this.config.delayBetweenLoopsMs > 0) {
+      const shouldDelay =
+        this.config.delayBetweenLoopsMs > 0 &&
+        (!hasIterationCap || loopIndex < startLoopIndex + effectiveMaxIterations - 1);
+      if (shouldDelay) {
         // Gap 4: adaptive observation frequency — scale delay by pacing status when
         // a TimeHorizonEngine is available. Falls back to fixed delayBetweenLoopsMs.
         let delay = this.config.delayBetweenLoopsMs;
@@ -367,6 +395,7 @@ export class CoreLoop {
       this.currentActivationContext = undefined;
       depsWithMutableProgress.onProgress = previousOnProgress;
       this.config.maxIterations = previousMaxIterations;
+      this.config.runPolicy = previousRunPolicy;
     }
   }
 

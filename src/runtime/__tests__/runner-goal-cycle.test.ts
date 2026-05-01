@@ -96,7 +96,8 @@ describe("runDaemonGoalCycleLoop", () => {
     expect(run).toHaveBeenCalledWith(
       "goal-1",
       expect.objectContaining({
-        maxIterations: 1,
+        maxIterations: null,
+        runPolicy: "resident",
         onProgress: expect.any(Function),
       })
     );
