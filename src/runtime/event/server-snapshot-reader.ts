@@ -4,6 +4,9 @@ import type { ApprovalRequiredEvent } from "../approval-broker.js";
 import type { OutboxStore } from "../store/index.js";
 import { BrowserSessionStore } from "../interactive-automation/index.js";
 import { GuardrailStore } from "../guardrails/index.js";
+import type { StateManager } from "../../base/state/state-manager.js";
+import { createRuntimeSessionRegistry } from "../session-registry/index.js";
+import type { RuntimeSessionRegistrySnapshot } from "../session-registry/types.js";
 
 type ActiveWorkersProvider = () =>
   | Array<Record<string, unknown>>
@@ -17,12 +20,14 @@ export interface EventServerSnapshotData {
   last_outbox_seq: number;
   auth_sessions: Array<Record<string, unknown>>;
   guardrails: Record<string, unknown> | null;
+  runtime_sessions: RuntimeSessionRegistrySnapshot | null;
 }
 
 export class EventServerSnapshotReader {
   constructor(
     private readonly eventsDir: string,
     private readonly configuredRuntimeRoot?: string,
+    private readonly stateManager?: StateManager,
   ) {}
 
   async buildSnapshot(
@@ -30,13 +35,14 @@ export class EventServerSnapshotReader {
     outboxStore?: OutboxStore,
     activeWorkersProvider?: ActiveWorkersProvider
   ): Promise<EventServerSnapshotData> {
-    const [daemon, goals, latestOutbox, activeWorkers, authSessions, guardrails] = await Promise.all([
+    const [daemon, goals, latestOutbox, activeWorkers, authSessions, guardrails, runtimeSessions] = await Promise.all([
       this.readDaemonState(),
       this.readGoalSummaries(),
       outboxStore?.loadLatest() ?? Promise.resolve(null),
       activeWorkersProvider?.() ?? Promise.resolve([]),
       this.readPendingAuthSessions(),
       this.readGuardrailSnapshot(),
+      this.readRuntimeSessionSnapshot(),
     ]);
 
     return {
@@ -47,6 +53,7 @@ export class EventServerSnapshotReader {
       last_outbox_seq: latestOutbox?.seq ?? 0,
       auth_sessions: authSessions,
       guardrails,
+      runtime_sessions: runtimeSessions,
     };
   }
 
@@ -90,6 +97,12 @@ export class EventServerSnapshotReader {
       backpressure_active: backpressure?.active ?? [],
       backpressure_throttled: backpressure?.throttled ?? [],
     };
+  }
+
+  private async readRuntimeSessionSnapshot(): Promise<RuntimeSessionRegistrySnapshot | null> {
+    if (!this.stateManager) return null;
+    const registry = createRuntimeSessionRegistry({ stateManager: this.stateManager });
+    return registry.snapshot();
   }
 
   async readDaemonStateRaw(): Promise<string | null> {
