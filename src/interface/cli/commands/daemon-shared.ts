@@ -4,7 +4,12 @@ import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { DaemonConfigSchema } from "../../../base/types/daemon.js";
 import type { DaemonConfig } from "../../../base/types/daemon.js";
 import type { PIDManager } from "../../../runtime/pid-manager.js";
-import { compactRuntimeHealthKpi, type RuntimeHealthKpi } from "../../../runtime/store/index.js";
+import {
+  compactRuntimeHealthKpi,
+  type RuntimeHealthKpi,
+  type RuntimeLongRunHealth,
+  type RuntimeLongRunHealthSummary,
+} from "../../../runtime/store/index.js";
 import type { SupervisorState } from "../../../runtime/executor/index.js";
 import { getCliLogger } from "../cli-logger.js";
 
@@ -103,6 +108,41 @@ export function formatKpiCompactLine(kpi: RuntimeHealthKpi): string {
     return "KPI snapshot:    unavailable";
   }
   return `KPI snapshot:    process=${compact.process_alive ? "up" : "down"} accept=${compact.can_accept_command ? "up" : "down"} execute=${compact.can_execute_task ? "up" : "down"} (${compact.status})`;
+}
+
+const LONG_RUN_SUMMARY_LABELS: Record<RuntimeLongRunHealthSummary, string> = {
+  alive_and_progressing: "alive and progressing",
+  alive_but_metric_stalled: "alive but metric-stalled",
+  alive_but_artifact_stalled: "alive but artifact-stalled",
+  alive_but_waiting: "alive but waiting",
+  alive_but_stalled: "alive but stalled",
+  dead_but_resumable: "dead but resumable",
+  dead_needs_intervention: "dead and needs intervention",
+  unknown: "unknown",
+};
+
+function formatEvidenceTimestamp(timestamp: number | undefined): string {
+  return timestamp === undefined
+    ? "n/a"
+    : `${new Date(timestamp).toISOString()} (${formatRelativeTimestamp(timestamp)})`;
+}
+
+export function formatLongRunHealthLines(health: RuntimeLongRunHealth): string[] {
+  const signals = health.signals;
+  const lines = [
+    `  Summary:        ${LONG_RUN_SUMMARY_LABELS[health.summary]} (${formatRelativeTimestamp(health.checked_at)})`,
+    `  Process:        ${signals.process.status}${signals.process.pid ? ` pid=${signals.process.pid}` : ""}; evidence=${formatEvidenceTimestamp(signals.process.observed_at ?? signals.process.checked_at)}`,
+    `  Child activity: ${signals.child_activity.status}${signals.child_activity.active_count !== undefined ? ` count=${signals.child_activity.active_count}` : ""}; evidence=${formatEvidenceTimestamp(signals.child_activity.observed_at ?? signals.child_activity.checked_at)}`,
+    `  Log freshness:  ${signals.log_freshness.status}; evidence=${formatEvidenceTimestamp(signals.log_freshness.observed_at)}`,
+    `  Artifact fresh: ${signals.artifact_freshness.status}; evidence=${formatEvidenceTimestamp(signals.artifact_freshness.observed_at)}`,
+    `  Metric fresh:   ${signals.metric_freshness.status}; evidence=${formatEvidenceTimestamp(signals.metric_freshness.observed_at)}`,
+    `  Metric trend:   ${signals.metric_progress.status}; evidence=${formatEvidenceTimestamp(signals.metric_progress.observed_at)}`,
+    `  Blocker:        ${signals.blocker.status}; evidence=${formatEvidenceTimestamp(signals.blocker.observed_at ?? signals.blocker.checked_at)}`,
+  ];
+  if (signals.expected_next_checkpoint_at !== undefined) {
+    lines.push(`  Next checkpoint:${" ".repeat(1)}${formatEvidenceTimestamp(signals.expected_next_checkpoint_at)}`);
+  }
+  return lines;
 }
 
 export interface RuntimeTaskOutcomeDetails {

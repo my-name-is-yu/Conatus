@@ -87,6 +87,95 @@ export type OutboxRecord = z.infer<typeof OutboxRecordSchema>;
 export const RuntimeHealthStatusSchema = z.enum(["ok", "degraded", "failed"]);
 export type RuntimeHealthStatus = z.infer<typeof RuntimeHealthStatusSchema>;
 
+export const RuntimeLongRunProcessStatusSchema = z.enum(["alive", "dead", "unknown"]);
+export type RuntimeLongRunProcessStatus = z.infer<typeof RuntimeLongRunProcessStatusSchema>;
+
+export const RuntimeLongRunChildActivityStatusSchema = z.enum(["active", "idle", "unknown"]);
+export type RuntimeLongRunChildActivityStatus = z.infer<typeof RuntimeLongRunChildActivityStatusSchema>;
+
+export const RuntimeLongRunFreshnessStatusSchema = z.enum(["fresh", "stale", "missing", "unknown"]);
+export type RuntimeLongRunFreshnessStatus = z.infer<typeof RuntimeLongRunFreshnessStatusSchema>;
+
+export const RuntimeLongRunMetricProgressStatusSchema = z.enum([
+  "improved",
+  "plateau",
+  "regressed",
+  "missing",
+  "unknown",
+]);
+export type RuntimeLongRunMetricProgressStatus = z.infer<typeof RuntimeLongRunMetricProgressStatusSchema>;
+
+export const RuntimeLongRunBlockerStatusSchema = z.enum([
+  "none",
+  "approval_wait",
+  "auth_wait",
+  "operator_wait",
+  "resource_pressure",
+  "blocked",
+  "unknown",
+]);
+export type RuntimeLongRunBlockerStatus = z.infer<typeof RuntimeLongRunBlockerStatusSchema>;
+
+export const RuntimeLongRunHealthSummarySchema = z.enum([
+  "alive_and_progressing",
+  "alive_but_metric_stalled",
+  "alive_but_artifact_stalled",
+  "alive_but_waiting",
+  "alive_but_stalled",
+  "dead_but_resumable",
+  "dead_needs_intervention",
+  "unknown",
+]);
+export type RuntimeLongRunHealthSummary = z.infer<typeof RuntimeLongRunHealthSummarySchema>;
+
+const RuntimeLongRunSignalBaseSchema = z.object({
+  checked_at: z.number().int().nonnegative(),
+  observed_at: z.number().int().nonnegative().optional(),
+  reason: z.string().optional(),
+});
+
+export const RuntimeLongRunHealthSignalsSchema = z.object({
+  process: RuntimeLongRunSignalBaseSchema.extend({
+    status: RuntimeLongRunProcessStatusSchema,
+    pid: z.number().int().positive().optional(),
+  }),
+  child_activity: RuntimeLongRunSignalBaseSchema.extend({
+    status: RuntimeLongRunChildActivityStatusSchema,
+    active_count: z.number().int().nonnegative().optional(),
+  }),
+  log_freshness: RuntimeLongRunSignalBaseSchema.extend({
+    status: RuntimeLongRunFreshnessStatusSchema,
+    path: z.string().optional(),
+  }),
+  artifact_freshness: RuntimeLongRunSignalBaseSchema.extend({
+    status: RuntimeLongRunFreshnessStatusSchema,
+    path: z.string().optional(),
+  }),
+  metric_freshness: RuntimeLongRunSignalBaseSchema.extend({
+    status: RuntimeLongRunFreshnessStatusSchema,
+    metric_name: z.string().optional(),
+  }),
+  metric_progress: RuntimeLongRunSignalBaseSchema.extend({
+    status: RuntimeLongRunMetricProgressStatusSchema,
+    metric_name: z.string().optional(),
+    previous_value: z.number().optional(),
+    current_value: z.number().optional(),
+  }),
+  blocker: RuntimeLongRunSignalBaseSchema.extend({
+    status: RuntimeLongRunBlockerStatusSchema,
+  }),
+  expected_next_checkpoint_at: z.number().int().nonnegative().optional(),
+  resumable: z.boolean().optional(),
+});
+export type RuntimeLongRunHealthSignals = z.infer<typeof RuntimeLongRunHealthSignalsSchema>;
+
+export const RuntimeLongRunHealthSchema = z.object({
+  summary: RuntimeLongRunHealthSummarySchema,
+  checked_at: z.number().int().nonnegative(),
+  signals: RuntimeLongRunHealthSignalsSchema,
+});
+export type RuntimeLongRunHealth = z.infer<typeof RuntimeLongRunHealthSchema>;
+
 export const RuntimeHealthCapabilitySchema = z.object({
   status: RuntimeHealthStatusSchema,
   checked_at: z.number().int().nonnegative(),
@@ -126,6 +215,7 @@ export const RuntimeDaemonHealthSchema = z.object({
   leader: z.boolean(),
   checked_at: z.number().int().nonnegative(),
   kpi: RuntimeHealthKpiSchema.optional(),
+  long_running: RuntimeLongRunHealthSchema.optional(),
   details: z.record(z.unknown()).optional(),
 });
 export type RuntimeDaemonHealth = z.infer<typeof RuntimeDaemonHealthSchema>;
@@ -142,6 +232,7 @@ export const RuntimeHealthSnapshotSchema = z.object({
   checked_at: z.number().int().nonnegative(),
   components: z.record(RuntimeHealthStatusSchema),
   kpi: RuntimeHealthKpiSchema.optional(),
+  long_running: RuntimeLongRunHealthSchema.optional(),
   details: z.record(z.unknown()).optional(),
 });
 export type RuntimeHealthSnapshot = z.infer<typeof RuntimeHealthSnapshotSchema>;
@@ -218,6 +309,74 @@ export function summarizeRuntimeHealthStatus(
   if (statuses.includes("failed")) return "failed";
   if (statuses.includes("degraded")) return "degraded";
   return "ok";
+}
+
+export function classifyLongRunHealth(
+  signals: RuntimeLongRunHealthSignals
+): RuntimeLongRunHealthSummary {
+  if (signals.process.status === "dead") {
+    return signals.resumable === true ? "dead_but_resumable" : "dead_needs_intervention";
+  }
+
+  if (signals.process.status !== "alive") {
+    return "unknown";
+  }
+
+  if (signals.blocker.status !== "none" && signals.blocker.status !== "unknown") {
+    return "alive_but_waiting";
+  }
+
+  if (signals.metric_progress.status === "improved") {
+    return "alive_and_progressing";
+  }
+
+  if (signals.artifact_freshness.status === "fresh" && signals.metric_progress.status === "unknown") {
+    return "alive_and_progressing";
+  }
+
+  if (signals.metric_progress.status === "plateau" || signals.metric_progress.status === "regressed") {
+    return "alive_but_metric_stalled";
+  }
+
+  if (
+    signals.artifact_freshness.status === "stale" ||
+    signals.artifact_freshness.status === "missing"
+  ) {
+    return "alive_but_artifact_stalled";
+  }
+
+  if (signals.metric_freshness.status === "stale") {
+    return "alive_but_metric_stalled";
+  }
+
+  if (
+    signals.child_activity.status === "idle" &&
+    signals.log_freshness.status !== "fresh" &&
+    signals.artifact_freshness.status !== "fresh"
+  ) {
+    return "alive_but_stalled";
+  }
+
+  return "unknown";
+}
+
+export function buildLongRunHealth(
+  signals: RuntimeLongRunHealthSignals,
+  checkedAt = Math.max(
+    signals.process.checked_at,
+    signals.child_activity.checked_at,
+    signals.log_freshness.checked_at,
+    signals.artifact_freshness.checked_at,
+    signals.metric_freshness.checked_at,
+    signals.metric_progress.checked_at,
+    signals.blocker.checked_at
+  )
+): RuntimeLongRunHealth {
+  return RuntimeLongRunHealthSchema.parse({
+    summary: classifyLongRunHealth(signals),
+    checked_at: checkedAt,
+    signals,
+  });
 }
 
 export function evolveRuntimeHealthKpi(

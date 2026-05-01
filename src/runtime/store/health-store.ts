@@ -63,6 +63,7 @@ export class RuntimeHealthStore {
       checked_at: Math.max(daemon.checked_at, components.checked_at),
       components: components.components,
       kpi: daemon.kpi,
+      long_running: daemon.long_running,
       details: daemon.details,
     });
   }
@@ -75,6 +76,7 @@ export class RuntimeHealthStore {
         leader: parsed.leader,
         checked_at: parsed.checked_at,
         kpi: parsed.kpi,
+        long_running: parsed.long_running,
         details: parsed.details,
       }),
       this.saveComponentsHealth({
@@ -102,6 +104,7 @@ export class RuntimeHealthStore {
         checked_at: Math.max(daemon.checked_at, components.checked_at),
         components: components.components,
         kpi: daemon.kpi,
+        long_running: daemon.long_running,
         details: daemon.details,
       });
     }
@@ -135,6 +138,7 @@ export class RuntimeHealthStore {
             command_acceptance: "repaired from missing components health",
             task_execution: "repaired from missing components health",
           }),
+        long_running: daemon.long_running,
         details: {
           ...daemon.details,
           repaired: true,
@@ -149,6 +153,7 @@ export class RuntimeHealthStore {
           leader: daemon.leader,
           checked_at: now,
           kpi: degradedSnapshot.kpi,
+          long_running: degradedSnapshot.long_running,
           details: degradedSnapshot.details,
         }),
       ]);
@@ -182,6 +187,7 @@ export class RuntimeHealthStore {
         checked_at: Math.max(now, components.checked_at),
         components: components.components,
         kpi: repairedDaemon.kpi,
+        long_running: repairedDaemon.long_running,
         details: repairedDaemon.details,
       });
     }
