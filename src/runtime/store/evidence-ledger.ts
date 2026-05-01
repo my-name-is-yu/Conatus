@@ -21,6 +21,12 @@ import {
   summarizeEvidenceDreamCheckpoints,
   type RuntimeDreamCheckpointContext,
 } from "./dream-checkpoints.js";
+import {
+  summarizeArtifactRetention,
+  RuntimeArtifactRetentionClassSchema,
+  type RuntimeArtifactRetentionSummary,
+} from "./artifact-retention.js";
+import type { RuntimeReproducibilityManifest } from "./reproducibility-manifest.js";
 
 export const RuntimeEvidenceOutcomeSchema = z.enum([
   "improved",
@@ -55,6 +61,10 @@ export const RuntimeEvidenceArtifactRefSchema = z.object({
   state_relative_path: z.string().min(1).optional(),
   url: z.string().url().optional(),
   kind: z.enum(["log", "metrics", "report", "diff", "url", "other"]).default("other"),
+  retention_class: RuntimeArtifactRetentionClassSchema.optional(),
+  size_bytes: z.number().int().nonnegative().optional(),
+  source: z.string().min(1).optional(),
+  dependency_refs: z.array(z.string().min(1)).optional(),
 }).strict();
 export type RuntimeEvidenceArtifactRef = z.infer<typeof RuntimeEvidenceArtifactRefSchema>;
 
@@ -655,6 +665,7 @@ export interface RuntimeEvidenceSummary {
   recommended_candidate_portfolio: RuntimeCandidatePortfolioSlot[];
   candidate_selection_summary: RuntimeCandidateSelectionSummary;
   near_miss_candidates: RuntimeNearMissCandidateContext[];
+  artifact_retention: RuntimeArtifactRetentionSummary;
   recent_failed_attempts: RuntimeEvidenceEntry[];
   failed_lineages: RuntimeFailedLineageContext[];
   recent_entries: RuntimeEvidenceEntry[];
@@ -727,7 +738,7 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
       await fsp.appendFile(target, `${JSON.stringify(entry)}\n`, "utf8");
     }));
     await Promise.all([...targets].map(async (target) => {
-      await rebuildSummaryIndex(target);
+      await rebuildSummaryIndex(target, this.paths);
     }));
     return [entry];
   }
@@ -741,34 +752,41 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
   }
 
   async summarizeGoal(goalId: string): Promise<RuntimeEvidenceSummary> {
-    const indexed = await readSummaryIndex(this.paths.evidenceGoalPath(goalId), { goal_id: goalId });
+    const manifests = await readReproducibilityManifests(this.paths, { goal_id: goalId });
+    const indexed = manifests.length === 0
+      ? await readSummaryIndex(this.paths.evidenceGoalPath(goalId), { goal_id: goalId })
+      : null;
     if (indexed) return indexed.summary;
     const read = await this.readByGoal(goalId);
-    const summary = summarizeEvidence({ goal_id: goalId }, read);
+    const summary = summarizeEvidence({ goal_id: goalId }, read, manifests);
     return summary;
   }
 
   async summarizeRun(runId: string): Promise<RuntimeEvidenceSummary> {
-    const indexed = await readSummaryIndex(this.paths.evidenceRunPath(runId), { run_id: runId });
+    const manifests = await readReproducibilityManifests(this.paths, { run_id: runId });
+    const indexed = manifests.length === 0
+      ? await readSummaryIndex(this.paths.evidenceRunPath(runId), { run_id: runId })
+      : null;
     if (indexed) return indexed.summary;
     const read = await this.readByRun(runId);
-    const summary = summarizeEvidence({ run_id: runId }, read);
+    const summary = summarizeEvidence({ run_id: runId }, read, manifests);
     return summary;
   }
 
   async rebuildSummaryIndexForGoal(goalId: string): Promise<RuntimeEvidenceSummary> {
-    return rebuildSummaryIndex(this.paths.evidenceGoalPath(goalId));
+    return rebuildSummaryIndex(this.paths.evidenceGoalPath(goalId), this.paths);
   }
 
   async rebuildSummaryIndexForRun(runId: string): Promise<RuntimeEvidenceSummary> {
-    return rebuildSummaryIndex(this.paths.evidenceRunPath(runId));
+    return rebuildSummaryIndex(this.paths.evidenceRunPath(runId), this.paths);
   }
 }
 
-async function rebuildSummaryIndex(canonicalPath: string): Promise<RuntimeEvidenceSummary> {
+async function rebuildSummaryIndex(canonicalPath: string, paths: RuntimeStorePaths): Promise<RuntimeEvidenceSummary> {
   const scope = summaryScopeFromPath(canonicalPath);
   const read = await readEvidenceFile(canonicalPath);
-  const summary = summarizeEvidence(scope, read);
+  const manifests = await readReproducibilityManifests(paths, scope);
+  const summary = summarizeEvidence(scope, read, manifests);
   await writeSummaryIndex(canonicalPath, summary);
   return summary;
 }
@@ -781,6 +799,43 @@ function summaryScopeFromPath(canonicalPath: string): RuntimeEvidenceSummary["sc
   const basename = path.basename(canonicalPath, ".jsonl");
   const decoded = decodeURIComponent(basename);
   return canonicalPath.includes(`${path.sep}runs${path.sep}`) ? { run_id: decoded } : { goal_id: decoded };
+}
+
+async function readReproducibilityManifests(
+  paths: RuntimeStorePaths,
+  scope: RuntimeEvidenceSummary["scope"]
+): Promise<RuntimeReproducibilityManifest[]> {
+  let fileNames: string[];
+  try {
+    fileNames = await fsp.readdir(paths.reproducibilityManifestsDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+
+  const manifests: RuntimeReproducibilityManifest[] = [];
+  for (const fileName of fileNames) {
+    if (!fileName.endsWith(".json")) continue;
+    try {
+      const parsed = JSON.parse(await fsp.readFile(path.join(paths.reproducibilityManifestsDir, fileName), "utf8")) as Partial<RuntimeReproducibilityManifest>;
+      if (parsed.schema_version !== "runtime-reproducibility-manifest-v1") continue;
+      if (scope.goal_id && parsed.scope?.goal_id !== scope.goal_id) continue;
+      if (scope.run_id && parsed.scope?.run_id !== scope.run_id) continue;
+      manifests.push({
+        ...parsed,
+        artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isManifestArtifactRef) : [],
+      } as RuntimeReproducibilityManifest);
+    } catch {
+      continue;
+    }
+  }
+  return manifests;
+}
+
+function isManifestArtifactRef(value: unknown): value is RuntimeReproducibilityManifest["artifacts"][number] {
+  return typeof value === "object"
+    && value !== null
+    && typeof (value as { label?: unknown }).label === "string";
 }
 
 async function readSummaryIndex(
@@ -814,6 +869,8 @@ function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean
   return Array.isArray(summary.candidate_lineages)
     && Array.isArray(summary.recommended_candidate_portfolio)
     && Array.isArray(summary.near_miss_candidates)
+    && typeof summary.artifact_retention === "object"
+    && summary.artifact_retention !== null
     && Array.isArray(summary.evaluator_summary.budgets)
     && Array.isArray(summary.evaluator_summary.calibration)
     && typeof summary.candidate_selection_summary === "object"
@@ -879,7 +936,8 @@ async function readEvidenceFile(filePath: string): Promise<RuntimeEvidenceReadRe
 
 function summarizeEvidence(
   scope: RuntimeEvidenceSummary["scope"],
-  read: RuntimeEvidenceReadResult
+  read: RuntimeEvidenceReadResult,
+  manifests: RuntimeReproducibilityManifest[] = []
 ): RuntimeEvidenceSummary {
   const entries = [...read.entries].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
   const newestFirst = [...entries].reverse();
@@ -905,6 +963,7 @@ function summarizeEvidence(
     recommended_candidate_portfolio: selectDiversifiedCandidatePortfolio(entries),
     candidate_selection_summary: summarizeCandidateSelection(entries, evaluatorSummary),
     near_miss_candidates: summarizeNearMissCandidates(entries),
+    artifact_retention: summarizeArtifactRetention(entries, { manifests }),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"
