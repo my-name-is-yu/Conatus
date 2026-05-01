@@ -37,7 +37,13 @@ import { ShellTool } from "../../tools/system/ShellTool/ShellTool.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 import { applyChatEventToMessages } from "../chat/chat-event-state.js";
 import { setActiveCursorEscape } from "./cursor-tracker.js";
-import { createRunSpecStore, deriveRunSpecFromText, type RunSpec } from "../../runtime/run-spec/index.js";
+import {
+  createRunSpecStore,
+  deriveRunSpecFromText,
+  formatRunSpecSetupProposal,
+  handleRunSpecConfirmationInput,
+  type RunSpec,
+} from "../../runtime/run-spec/index.js";
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
@@ -159,25 +165,38 @@ export function deriveDaemonGoalIdFromActiveGoals(
   return currentGoalId && activeGoals.includes(currentGoalId) ? currentGoalId : activeGoals[0]!;
 }
 
-function formatRunSpecDraftMessage(spec: RunSpec): string {
-  const missing = spec.missing_fields.map((field) => field.question);
-  const lines = [
-    `RunSpec draft saved: ${spec.id}`,
-    `Profile: ${spec.profile}`,
-    `Objective: ${spec.objective}`,
-    `Workspace: ${spec.workspace?.path ?? "unresolved"}`,
-    `Progress: ${spec.progress_contract.semantics}`,
-  ];
-  if (spec.metric) {
-    lines.push(`Metric: ${spec.metric.name} (${spec.metric.direction})`);
-  }
-  if (spec.deadline) {
-    lines.push(`Deadline: ${spec.deadline.raw}${spec.deadline.iso_at ? ` (${spec.deadline.iso_at})` : ""}`);
-  }
-  if (missing.length > 0) {
-    lines.push("Questions:", ...missing.map((question) => `- ${question}`));
-  }
-  return lines.join("\n");
+function buildRunSpecIngress(input: string, spec: RunSpec, effectiveCwd: string) {
+  return {
+    ingress_id: randomUUID(),
+    received_at: new Date().toISOString(),
+    channel: "tui" as const,
+    platform: "local_tui",
+    text: input,
+    actor: {
+      surface: "tui" as const,
+      platform: "local_tui",
+    },
+    runtimeControl: {
+      allowed: true,
+      approvalMode: "interactive" as const,
+    },
+    metadata: {
+      run_spec_id: spec.id,
+      run_spec_profile: spec.profile,
+      run_spec_status: spec.status,
+    },
+    replyTarget: {
+      surface: "tui" as const,
+      channel: "tui" as const,
+      platform: "local_tui",
+      metadata: {
+        run_spec_id: spec.id,
+        run_spec_profile: spec.profile,
+        run_spec_status: spec.status,
+      },
+    },
+    cwd: effectiveCwd,
+  };
 }
 
 interface AppProps {
@@ -374,6 +393,7 @@ export function App({
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const approvalRequestRef = useRef<ApprovalRequest | null>(null);
+  const [pendingRunSpec, setPendingRunSpec] = useState<RunSpec | null>(null);
 
   // Ctrl-C double-press exit state
   const [ctrlCPending, setCtrlCPending] = useState(false);
@@ -536,6 +556,35 @@ export function App({
           return;
         }
 
+        if (pendingRunSpec && chatRunner) {
+          const effectiveCwd = cwd ?? process.cwd();
+          const result = handleRunSpecConfirmationInput(pendingRunSpec, input, {
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          });
+          const savedRunSpec = await createRunSpecStore(stateManager).save(result.spec);
+          if (result.kind === "cancelled") {
+            setPendingRunSpec(null);
+          } else if (result.kind === "confirmed") {
+            setPendingRunSpec(null);
+          } else {
+            setPendingRunSpec(savedRunSpec);
+          }
+          setMessages((prev) => [...prev, {
+            id: randomUUID(),
+            role: "pulseed" as const,
+            text: result.message,
+            timestamp: new Date(),
+            messageType: result.kind === "blocked" || result.kind === "unrecognized" ? ("warning" as const) : ("info" as const),
+          }].slice(-MAX_MESSAGES));
+          if (result.kind === "confirmed") {
+            await chatRunner.executeIngressMessage(
+              buildRunSpecIngress(savedRunSpec.source_text, savedRunSpec, effectiveCwd),
+              effectiveCwd,
+            );
+          }
+          return;
+        }
+
         // Slash commands go through IntentRecognizer -> ActionHandler (standalone)
         // or through daemon REST API (daemon mode)
         if (input.startsWith("/") && intentRecognizer && actionHandler) {
@@ -639,48 +688,19 @@ export function App({
             const effectiveCwd = cwd ?? process.cwd();
             const runSpec = deriveRunSpecFromText(input, {
               cwd: effectiveCwd,
+              conversationId: chatRunner.getConversationId?.() ?? null,
               timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             });
             if (runSpec) {
               const savedRunSpec = await createRunSpecStore(stateManager).save(runSpec);
+              setPendingRunSpec(savedRunSpec);
               setMessages((prev) => [...prev, {
                 id: randomUUID(),
                 role: "pulseed" as const,
-                text: formatRunSpecDraftMessage(savedRunSpec),
+                text: formatRunSpecSetupProposal(savedRunSpec),
                 timestamp: new Date(),
                 messageType: savedRunSpec.missing_fields.length > 0 ? ("warning" as const) : ("info" as const),
               }].slice(-MAX_MESSAGES));
-              await chatRunner.executeIngressMessage({
-                ingress_id: randomUUID(),
-                received_at: new Date().toISOString(),
-                channel: "tui",
-                platform: "local_tui",
-                text: input,
-                actor: {
-                  surface: "tui",
-                  platform: "local_tui",
-                },
-                runtimeControl: {
-                  allowed: true,
-                  approvalMode: "interactive",
-                },
-                metadata: {
-                  run_spec_id: savedRunSpec.id,
-                  run_spec_profile: savedRunSpec.profile,
-                  run_spec_status: savedRunSpec.status,
-                },
-                replyTarget: {
-                  surface: "tui",
-                  channel: "tui",
-                  platform: "local_tui",
-                  metadata: {
-                    run_spec_id: savedRunSpec.id,
-                    run_spec_profile: savedRunSpec.profile,
-                    run_spec_status: savedRunSpec.status,
-                  },
-                },
-                cwd: effectiveCwd,
-              }, effectiveCwd);
             } else {
               await chatRunner.execute(input, effectiveCwd);
             }
@@ -710,7 +730,7 @@ export function App({
         setIsProcessing(false);
       }
     },
-    [intentRecognizer, actionHandler, chatRunner, daemonClient, isDaemonMode, daemonLoopState.goalId, startLoop, stopLoop, isProcessing, cwd, stateManager]
+    [intentRecognizer, actionHandler, chatRunner, daemonClient, isDaemonMode, daemonLoopState.goalId, startLoop, stopLoop, isProcessing, cwd, stateManager, pendingRunSpec]
   );
 
   // goalCount: 1 when there is an active goal in the loop, 0 otherwise

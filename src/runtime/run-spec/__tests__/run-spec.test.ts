@@ -4,6 +4,10 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { deriveRunSpecFromText, recognizeRunSpecIntent } from "../derive.js";
 import { createRunSpecStore } from "../store.js";
+import {
+  formatRunSpecSetupProposal,
+  handleRunSpecConfirmationInput,
+} from "../confirmation.js";
 
 const NOW = new Date("2026-05-02T00:00:00.000Z");
 
@@ -134,5 +138,86 @@ describe("RunSpecStore", () => {
 
     await expect(store.save({ ...spec!, id: "../sessions/foo" })).rejects.toThrow();
     await expect(store.load("../sessions/foo")).rejects.toThrow();
+  });
+});
+
+describe("RunSpec confirmation", () => {
+  it("confirms a complete RunSpec", () => {
+    const spec = deriveRunSpecFromText(
+      "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
+      {
+        cwd: "/repo/kaggle",
+        now: NOW,
+      },
+    );
+    expect(spec).not.toBeNull();
+
+    const result = handleRunSpecConfirmationInput(spec!, "confirm", { now: NOW });
+
+    expect(result.kind).toBe("confirmed");
+    expect(result.spec.status).toBe("confirmed");
+  });
+
+  it("revises missing required fields before confirmation", () => {
+    const spec = deriveRunSpecFromText("Run a long-running Kaggle experiment for top 20%.", {
+      now: NOW,
+    });
+    expect(spec).not.toBeNull();
+
+    const revisedWorkspace = handleRunSpecConfirmationInput(spec!, "workspace /repo/kaggle", { now: NOW });
+    expect(revisedWorkspace.kind).toBe("revised");
+    expect(revisedWorkspace.spec.workspace).toMatchObject({ path: "/repo/kaggle", source: "user" });
+
+    const revisedDeadline = handleRunSpecConfirmationInput(revisedWorkspace.spec, "deadline tomorrow morning", { now: NOW });
+    expect(revisedDeadline.kind).toBe("revised");
+    expect(revisedDeadline.spec.deadline).toMatchObject({ raw: "tomorrow morning" });
+
+    const confirmed = handleRunSpecConfirmationInput(revisedDeadline.spec, "confirm", { now: NOW });
+    expect(confirmed.kind).toBe("confirmed");
+  });
+
+  it("cancels a pending RunSpec", () => {
+    const spec = deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+    });
+    expect(spec).not.toBeNull();
+
+    const result = handleRunSpecConfirmationInput(spec!, "cancel", { now: NOW });
+
+    expect(result.kind).toBe("cancelled");
+    expect(result.spec.status).toBe("cancelled");
+  });
+
+  it("blocks confirmation while required fields remain unresolved", () => {
+    const spec = deriveRunSpecFromText("Run a long-running Kaggle experiment for top 20%.", {
+      now: NOW,
+    });
+    expect(spec).not.toBeNull();
+
+    const result = handleRunSpecConfirmationInput(spec!, "confirm", { now: NOW });
+
+    expect(result.kind).toBe("blocked");
+    expect(result.message).toContain("Which local or remote workspace");
+    expect(result.message).toContain("What deadline or review time");
+  });
+
+  it("shows risky external actions as approval-gated in the proposal", () => {
+    const spec = deriveRunSpecFromText(
+      "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
+      {
+        cwd: "/repo/kaggle",
+        now: NOW,
+      },
+    );
+    expect(spec).not.toBeNull();
+
+    const proposal = formatRunSpecSetupProposal(spec!);
+
+    expect(proposal).toContain("Submit policy: approval_required");
+    expect(proposal).toContain("Publish policy: unspecified");
+    expect(proposal).toContain("External actions: approval_required");
+    expect(proposal).toContain("Secret policy: approval_required");
+    expect(proposal).toContain("Irreversible actions: approval_required");
   });
 });
