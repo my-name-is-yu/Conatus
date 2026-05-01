@@ -1,10 +1,10 @@
-import React from "react";
+import React, { act } from "react";
 import { render } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "../../../runtime/daemon/client.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { TuiChatSurface } from "../chat-surface.js";
-import { App, formatDaemonConnectionState } from "../app.js";
+import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from "../app.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
@@ -12,6 +12,9 @@ const testState = vi.hoisted(() => ({
     task: { work_description: string; rationale: string; goal_id: string };
     onDecision: (approved: boolean) => void;
   },
+  lastDashboardProps: null as null | Record<string, unknown>,
+  runtimeSessionSnapshots: [] as Array<Record<string, unknown>>,
+  runtimeSessionSnapshotCalls: 0,
 }));
 
 vi.mock("ink", async () => {
@@ -42,8 +45,24 @@ vi.mock("../fullscreen-chat.js", async () => {
 });
 
 vi.mock("../dashboard.js", () => ({
-  Dashboard: () => null,
+  Dashboard: (props: Record<string, unknown>) => {
+    testState.lastDashboardProps = props;
+    return null;
+  },
   statusLabel: (status: string) => status,
+}));
+
+vi.mock("../../../runtime/session-registry/index.js", () => ({
+  createRuntimeSessionRegistry: () => ({
+    snapshot: vi.fn(async () => {
+      const index = Math.min(
+        testState.runtimeSessionSnapshotCalls,
+        Math.max(0, testState.runtimeSessionSnapshots.length - 1),
+      );
+      testState.runtimeSessionSnapshotCalls += 1;
+      return testState.runtimeSessionSnapshots[index] ?? null;
+    }),
+  }),
 }));
 
 vi.mock("../help-overlay.js", () => ({ HelpOverlay: () => null }));
@@ -120,6 +139,7 @@ describe("standalone slash command routing", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -357,9 +377,13 @@ describe("daemon-mode chat routing", () => {
   beforeEach(() => {
     testState.lastChatProps = null;
     testState.lastApprovalProps = null;
+    testState.lastDashboardProps = null;
+    testState.runtimeSessionSnapshots = [];
+    testState.runtimeSessionSnapshotCalls = 0;
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -510,5 +534,87 @@ describe("daemon-mode chat routing", () => {
     expect(daemonClient.chat).not.toHaveBeenCalled();
 
     screen.unmount();
+  });
+
+  it("refreshes runtime session snapshots while the dashboard remains open", async () => {
+    vi.useFakeTimers();
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    testState.runtimeSessionSnapshots = [
+      {
+        schema_version: "runtime-session-registry-v1",
+        generated_at: "2026-05-02T00:00:00.000Z",
+        sessions: [],
+        background_runs: [],
+        warnings: [],
+      },
+      {
+        schema_version: "runtime-session-registry-v1",
+        generated_at: "2026-05-02T00:00:05.000Z",
+        sessions: [],
+        background_runs: [{
+          schema_version: "background-run-v1",
+          id: "run-refresh",
+          kind: "coreloop_run",
+          parent_session_id: null,
+          child_session_id: null,
+          process_session_id: null,
+          status: "running",
+          notify_policy: "done_only",
+          reply_target_source: "none",
+          pinned_reply_target: null,
+          title: "Refreshed work",
+          workspace: "/repo",
+          created_at: "2026-05-02T00:00:00.000Z",
+          started_at: "2026-05-02T00:00:00.000Z",
+          updated_at: "2026-05-02T00:00:05.000Z",
+          completed_at: null,
+          summary: null,
+          error: null,
+          artifacts: [],
+          source_refs: [],
+        }],
+        warnings: [],
+      },
+    ];
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await vi.runOnlyPendingTimersAsync();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/dashboard");
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(testState.lastDashboardProps?.runtimeSessions).toMatchObject({
+      generated_at: "2026-05-02T00:00:00.000Z",
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DASHBOARD_REFRESH_INTERVAL_MS + 1);
+    });
+
+    expect(testState.runtimeSessionSnapshotCalls).toBeGreaterThanOrEqual(2);
+    expect(testState.lastDashboardProps?.runtimeSessions).toMatchObject({
+      generated_at: "2026-05-02T00:00:05.000Z",
+      background_runs: [expect.objectContaining({ id: "run-refresh" })],
+    });
+
+    screen.unmount();
+    vi.useRealTimers();
   });
 });

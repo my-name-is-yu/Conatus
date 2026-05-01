@@ -37,6 +37,8 @@ import { ShellTool } from "../../tools/system/ShellTool/ShellTool.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 import { applyChatEventToMessages } from "../chat/chat-event-state.js";
 import { setActiveCursorEscape } from "./cursor-tracker.js";
+import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
+import type { RuntimeSessionRegistrySnapshot } from "../../runtime/session-registry/types.js";
 import {
   createRunSpecStore,
   deriveRunSpecFromText,
@@ -47,6 +49,7 @@ import {
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
+export const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
 export const APP_HEADER_ROWS = SEEDY_PIXEL.split("\n").length;
 const STATUS_BAR_ROWS = 3;
 
@@ -274,6 +277,7 @@ export function App({
   const termCols = stdout?.columns ?? 80;
   const termRows = stdout?.rows ?? 24;
   const [showSidebar, setShowSidebar] = useState(false);
+  const [runtimeSessionSnapshot, setRuntimeSessionSnapshot] = useState<RuntimeSessionRegistrySnapshot | null>(null);
 
   // ── Loop state ──
   // In standalone mode, useLoop() manages state via CoreLoop.
@@ -409,6 +413,31 @@ export function App({
       onApprovalReady(showApprovalRequest);
     }
   }, [onApprovalReady, showApprovalRequest]);
+
+  useEffect(() => {
+    if (!showSidebar) return;
+    let cancelled = false;
+
+    const refreshRuntimeSessions = async () => {
+      try {
+        const registry = createRuntimeSessionRegistry({ stateManager });
+        const snapshot = await registry.snapshot();
+        if (!cancelled) setRuntimeSessionSnapshot(snapshot);
+      } catch {
+        if (!cancelled) setRuntimeSessionSnapshot(null);
+      }
+    };
+
+    void refreshRuntimeSessions();
+    const interval = setInterval(() => {
+      void refreshRuntimeSessions();
+    }, DASHBOARD_REFRESH_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [showSidebar, stateManager]);
 
   // Start ChatRunner session on mount (standalone mode)
   useEffect(() => {
@@ -787,7 +816,7 @@ export function App({
             paddingX={1}
             overflow="hidden"
           >
-            <Dashboard state={loopState} />
+            <Dashboard state={loopState} runtimeSessions={runtimeSessionSnapshot} />
           </Box>
         )}
 
