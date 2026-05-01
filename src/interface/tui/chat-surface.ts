@@ -7,6 +7,7 @@ import type { CrossPlatformIngressMessage } from "../chat/cross-platform-session
 export interface TuiChatSurface {
   onEvent?: ChatEventHandler;
   startSession(cwd: string): void;
+  getConversationId?(): string;
   execute(input: string, cwd: string): Promise<ChatRunResult>;
   interruptAndRedirect(input: string, cwd: string): Promise<ChatRunResult>;
   executeIngressMessage(ingress: CrossPlatformIngressMessage, cwd: string): Promise<ChatRunResult>;
@@ -25,6 +26,10 @@ export class SharedManagerTuiChatSurface implements TuiChatSurface {
 
   startSession(cwd: string): void {
     this.sessionCwd = cwd;
+  }
+
+  getConversationId(): string {
+    return this.conversationId;
   }
 
   execute(input: string, cwd: string): Promise<ChatRunResult> {

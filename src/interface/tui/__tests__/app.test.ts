@@ -93,6 +93,7 @@ function createChatRunnerMock() {
     execute: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
     interruptAndRedirect: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
     executeIngressMessage: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
+    getConversationId: vi.fn(() => "tui-conversation-test"),
     onEvent: undefined,
   };
 }
@@ -238,7 +239,7 @@ describe("standalone slash command routing", () => {
     screen.unmount();
   });
 
-  it("persists a RunSpec draft and forwards typed metadata for natural-language long-running runs", async () => {
+  it("persists a RunSpec draft and waits for confirmation before forwarding long-running runs", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
 
@@ -262,6 +263,11 @@ describe("standalone slash command routing", () => {
     await testState.lastChatProps!.onSubmit("Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.");
 
     expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+
+    await flush();
+    await testState.lastChatProps!.onSubmit("confirm");
+
     expect(chatRunner.executeIngressMessage).toHaveBeenCalledOnce();
     const calls = chatRunner.executeIngressMessage.mock.calls as unknown as Array<[
       { metadata: Record<string, unknown> },
@@ -271,9 +277,40 @@ describe("standalone slash command routing", () => {
     expect(cwd).toBe("/work/kaggle");
     expect(ingress.metadata).toMatchObject({
       run_spec_profile: "kaggle",
-      run_spec_status: "draft",
+      run_spec_status: "confirmed",
     });
     expect(String(ingress.metadata.run_spec_id)).toMatch(/^runspec-/);
+
+    screen.unmount();
+  });
+
+  it("does not start a long-running run when required RunSpec fields remain unresolved", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/kaggle",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("Run this Kaggle competition and aim for top 15%. Keep submissions approval-gated.");
+    await flush();
+    await testState.lastChatProps!.onSubmit("confirm");
+
+    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
 
     screen.unmount();
   });
