@@ -7,6 +7,8 @@ import type { PulSeedEvent } from "../../base/types/drive.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { OutboxStore } from "../store/outbox-store.js";
 import { BrowserSessionStore } from "../interactive-automation/index.js";
+import { StateManager } from "../../base/state/state-manager.js";
+import { BackgroundRunLedger } from "../store/background-run-store.js";
 
 // ─── Helpers ───
 
@@ -716,6 +718,88 @@ describe("snapshot and outbox replay", () => {
         iterations: 0,
       },
     ]);
+  });
+
+  it("includes runtime session catalog data in daemon snapshot when a state manager is configured", async () => {
+    const stateManager = new StateManager(tmpDir, undefined, { walEnabled: false });
+    await stateManager.init();
+    await stateManager.writeRaw("chat/sessions/chat-runtime.json", {
+      id: "chat-runtime",
+      cwd: "/repo",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:10:00.000Z",
+      title: "Runtime snapshot",
+      messages: [],
+      agentLoopStatePath: "chat/agentloop/agent-runtime.state.json",
+      agentLoopStatus: "running",
+      agentLoopResumable: true,
+      agentLoopUpdatedAt: "2026-05-01T00:11:00.000Z",
+    });
+    await stateManager.writeRaw("chat/agentloop/agent-runtime.state.json", {
+      sessionId: "agent-runtime",
+      traceId: "trace-runtime",
+      turnId: "turn-runtime",
+      goalId: "goal-runtime",
+      cwd: "/repo",
+      modelRef: "native:test",
+      messages: [],
+      modelTurns: 1,
+      toolCalls: 0,
+      compactions: 0,
+      completionValidationAttempts: 0,
+      calledTools: [],
+      lastToolLoopSignature: null,
+      repeatedToolLoopCount: 0,
+      finalText: "",
+      status: "running",
+      updatedAt: "2026-05-01T00:12:00.000Z",
+    });
+    await new BackgroundRunLedger(path.join(tmpDir, "runtime")).create({
+      id: "run:coreloop:ledger-active",
+      kind: "coreloop_run",
+      notify_policy: "silent",
+      status: "running",
+      child_session_id: "session:coreloop:ledger-active",
+      title: "Ledger active run",
+      workspace: "/repo",
+      created_at: "2026-05-01T00:05:00.000Z",
+      started_at: "2026-05-01T00:05:00.000Z",
+      updated_at: "2026-05-01T00:13:00.000Z",
+    });
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      stateManager,
+    });
+    await server.start();
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as {
+      runtime_sessions?: {
+        schema_version: string;
+        sessions: Array<{ id: string; kind: string; status: string }>;
+        background_runs: Array<{ id: string; kind: string; status: string }>;
+      } | null;
+    };
+    expect(snapshot.runtime_sessions?.schema_version).toBe("runtime-session-registry-v1");
+    expect(snapshot.runtime_sessions?.sessions).toContainEqual(expect.objectContaining({
+      id: "session:agent:agent-runtime",
+      kind: "agent",
+      status: "active",
+    }));
+    expect(snapshot.runtime_sessions?.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:agent:agent-runtime",
+      kind: "agent_run",
+      status: "running",
+    }));
+    expect(snapshot.runtime_sessions?.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:coreloop:ledger-active",
+      kind: "coreloop_run",
+      status: "running",
+    }));
   });
 
   it("reads auth handoff sessions from an explicitly configured runtime root", async () => {

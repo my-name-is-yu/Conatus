@@ -308,6 +308,7 @@ export async function cmdStart(
       port: resolvedDaemonConfig.event_server_port,
       eventsDir: getEventsDir(daemonBaseDir),
       runtimeRoot: resolveDaemonRuntimeRoot(daemonBaseDir, resolvedDaemonConfig.runtime_root),
+      stateManager: deps.stateManager,
     },
     logger
   );

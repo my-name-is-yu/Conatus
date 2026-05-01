@@ -2,6 +2,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { TriggerMapper } from "../trigger-mapper.js";
 import type { ApprovalBroker, ApprovalRequiredEvent } from "../approval-broker.js";
 import type { OutboxStore } from "../store/index.js";
+import type { RuntimeSessionRegistrySnapshot } from "../session-registry/types.js";
 
 export interface EventServerConfig {
   host?: string;
@@ -24,6 +25,7 @@ export interface EventServerSnapshot {
   last_outbox_seq: number;
   auth_sessions?: unknown[];
   guardrails?: Record<string, unknown> | null;
+  runtime_sessions?: RuntimeSessionRegistrySnapshot | null;
 }
 
 export type ActiveWorkersProvider = () =>
