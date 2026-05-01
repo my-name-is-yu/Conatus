@@ -386,6 +386,86 @@ describe("Dream review checkpoint trigger planning", () => {
     expect(normalized.next_strategy_candidates.map((candidate) => candidate.title)).toEqual(["特徴量アブレーション"]);
   });
 
+  it("carries repeated failed lineages into checkpoint requests and downranks similar candidates", () => {
+    const goal = makeGoal({ title: "Improve benchmark score" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 1,
+      result: makeEmptyIterationResult("goal-1", 1, { stallDetected: true }),
+      driveScores: [],
+      evidenceSummary: {
+        best_evidence: null,
+        recent_entries: [],
+        failed_lineages: [{
+          fingerprint: "threshold_sweep|balanced_accuracy|balanced_accuracy stayed inside noise",
+          count: 3,
+          first_seen_at: "2026-04-30T00:00:00.000Z",
+          last_seen_at: "2026-04-30T00:10:00.000Z",
+          strategy_family: "threshold_sweep",
+          hypothesis: "Repeat threshold sweep improves balanced accuracy",
+          primary_dimension: "balanced_accuracy",
+          task_action: "threshold_sweep",
+          failure_reason: "Balanced accuracy stayed inside noise.",
+          representative_entry_id: "failed-threshold-3",
+          representative_summary: "Threshold sweep failed.",
+          evidence_entry_ids: ["failed-threshold-1", "failed-threshold-2", "failed-threshold-3"],
+        }],
+      },
+    });
+    expect(request).toMatchObject({
+      failedLineages: [{
+        count: 3,
+        strategy_family: "threshold_sweep",
+        representative_entry_id: "failed-threshold-3",
+      }],
+    });
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Plateau review.",
+      trigger: "plateau",
+      current_goal: "Improve benchmark score",
+      active_dimensions: ["balanced_accuracy"],
+      next_strategy_candidates: [
+        {
+          title: "threshold_sweep retry",
+          rationale: "Try another threshold_sweep attempt.",
+          target_dimensions: ["balanced_accuracy"],
+        },
+        {
+          title: "Feature ablation",
+          rationale: "Test a different mechanism for balanced_accuracy.",
+          target_dimensions: ["balanced_accuracy"],
+        },
+        {
+          title: "threshold_sweep with new calibration evidence",
+          rationale: "Retry threshold_sweep because calibration bins changed.",
+          target_dimensions: ["balanced_accuracy"],
+          retry_reason: "New calibration evidence changes the search space.",
+        },
+      ],
+      guidance: "Avoid repeating failed threshold sweeps without new evidence.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.8,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.next_strategy_candidates.map((candidate) => candidate.title)).toEqual([
+      "Feature ablation",
+      "threshold_sweep with new calibration evidence",
+      "threshold_sweep retry",
+    ]);
+    expect(normalized.next_strategy_candidates[1]?.failed_lineage_warning).toMatchObject({
+      count: 3,
+      reason: expect.stringContaining("Retry override"),
+    });
+    expect(normalized.next_strategy_candidates[2]?.failed_lineage_warning).toMatchObject({
+      count: 3,
+      reason: expect.stringContaining("Similar to failed lineage"),
+    });
+  });
+
   it("normalizes deadline-backed finalization recommendations as auto-applied run control", () => {
     const goal = makeGoal({ title: "Submit final benchmark artifact" });
     const request = buildDreamReviewCheckpointRequest({

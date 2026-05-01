@@ -3,10 +3,11 @@ import type { DriveScore } from "../../../base/types/drive.js";
 import type { DeadlineFinalizationStatus } from "../../../platform/time/deadline-finalization.js";
 import type { MetricTrendContext } from "../../../platform/drive/metric-history.js";
 import type { RuntimeDreamCheckpointContext } from "../../../runtime/store/dream-checkpoints.js";
-import type { RuntimeEvidenceEntry, RuntimeEvidenceSummary } from "../../../runtime/store/evidence-ledger.js";
+import type { RuntimeEvidenceEntry, RuntimeEvidenceSummary, RuntimeFailedLineageContext } from "../../../runtime/store/evidence-ledger.js";
 import type {
   DreamReviewActiveHypothesis,
   DreamReviewCheckpointEvidence,
+  DreamReviewFailedLineage,
   DreamReviewCheckpointTrigger,
   DreamReviewRejectedApproach,
   DreamRunControlPolicyDecision,
@@ -27,6 +28,7 @@ export interface DreamReviewCheckpointRequest {
   currentExecutionMode?: ExecutionModeState["mode"];
   activeHypotheses: DreamReviewActiveHypothesis[];
   rejectedApproaches: DreamReviewRejectedApproach[];
+  failedLineages: DreamReviewFailedLineage[];
   runControlPolicy: "auto_apply_low_risk_require_approval_for_high_cost_or_irreversible";
   memoryAuthorityPolicy: "soil_and_playbooks_are_advisory_only";
   maxGuidanceItems: number;
@@ -45,7 +47,7 @@ export interface BuildDreamReviewCheckpointRequestInput {
   finalizationStatus?: DeadlineFinalizationStatus;
   executionMode?: ExecutionModeState;
   recentCheckpoints?: RuntimeDreamCheckpointContext[];
-  evidenceSummary?: Pick<RuntimeEvidenceSummary, "best_evidence" | "recent_entries"> | null;
+  evidenceSummary?: Pick<RuntimeEvidenceSummary, "best_evidence" | "recent_entries" | "failed_lineages"> | null;
   requestedTrigger?: DreamReviewCheckpointTrigger;
   options?: DreamReviewCheckpointTriggerOptions;
 }
@@ -64,6 +66,7 @@ export function buildDreamReviewCheckpointRequest(
   const metricTrendSummary = input.result.metricTrendContext?.summary;
   const activeHypotheses = recentActiveHypotheses(input.recentCheckpoints ?? []);
   const rejectedApproaches = recentRejectedApproaches(input.recentCheckpoints ?? []);
+  const failedLineages = repeatedFailedLineages(input.evidenceSummary?.failed_lineages ?? []);
   return {
     trigger,
     reason: reasonForTrigger(trigger, input),
@@ -72,6 +75,7 @@ export function buildDreamReviewCheckpointRequest(
     recentStrategyFamilies: recentStrategyFamilies(input.evidenceSummary?.recent_entries ?? []),
     activeHypotheses,
     rejectedApproaches,
+    failedLineages,
     ...(metricTrendSummary ? { metricTrendSummary } : {}),
     ...(isPreFinalization(input.finalizationStatus) ? { finalizationReason: input.finalizationStatus?.reason } : {}),
     ...(input.executionMode?.mode ? { currentExecutionMode: input.executionMode.mode } : {}),
@@ -97,9 +101,12 @@ export function normalizeDreamReviewCheckpoint(
     })),
     active_hypotheses: output.active_hypotheses,
     rejected_approaches: output.rejected_approaches,
-    next_strategy_candidates: filterRejectedStrategyCandidates(
-      output.next_strategy_candidates,
-      output.rejected_approaches.length > 0 ? output.rejected_approaches : request.rejectedApproaches
+    next_strategy_candidates: downrankRepeatedFailedLineageCandidates(
+      filterRejectedStrategyCandidates(
+        output.next_strategy_candidates,
+        output.rejected_approaches.length > 0 ? output.rejected_approaches : request.rejectedApproaches
+      ),
+      request.failedLineages
     ),
     run_control_recommendations: normalizeRunControlRecommendations(output.run_control_recommendations, request),
     context_authority: "advisory_only",
@@ -272,6 +279,24 @@ function recentRejectedApproaches(checkpoints: RuntimeDreamCheckpointContext[]):
   ).slice(0, 8);
 }
 
+function repeatedFailedLineages(lineages: RuntimeFailedLineageContext[]): DreamReviewFailedLineage[] {
+  return lineages
+    .filter((lineage) => lineage.count >= 2)
+    .slice(0, 8)
+    .map((lineage) => ({
+      fingerprint: lineage.fingerprint,
+      count: lineage.count,
+      last_seen_at: lineage.last_seen_at,
+      ...(lineage.strategy_family ? { strategy_family: lineage.strategy_family } : {}),
+      ...(lineage.hypothesis ? { hypothesis: lineage.hypothesis } : {}),
+      ...(lineage.primary_dimension ? { primary_dimension: lineage.primary_dimension } : {}),
+      ...(lineage.task_action ? { task_action: lineage.task_action } : {}),
+      ...(lineage.failure_reason ? { failure_reason: lineage.failure_reason } : {}),
+      representative_entry_id: lineage.representative_entry_id,
+      representative_summary: lineage.representative_summary,
+    }));
+}
+
 function dedupeByText<T>(items: T[], keyFor: (item: T) => string): T[] {
   const seen = new Set<string>();
   const deduped: T[] = [];
@@ -291,6 +316,54 @@ function filterRejectedStrategyCandidates(
   if (rejectedApproaches.length === 0) return candidates;
   return candidates.filter((candidate) =>
     !rejectedApproaches.some((rejected) => rejectedCandidateMatches(candidate, rejected))
+  );
+}
+
+function downrankRepeatedFailedLineageCandidates(
+  candidates: DreamReviewStrategyCandidate[],
+  failedLineages: DreamReviewFailedLineage[]
+): DreamReviewStrategyCandidate[] {
+  if (failedLineages.length === 0) return candidates;
+  const allowed: DreamReviewStrategyCandidate[] = [];
+  const downranked: DreamReviewStrategyCandidate[] = [];
+  for (const candidate of candidates) {
+    const lineage = failedLineages.find((item) => failedLineageMatchesCandidate(item, candidate));
+    if (!lineage) {
+      allowed.push(candidate);
+      continue;
+    }
+    const annotated = {
+      ...candidate,
+      failed_lineage_warning: {
+        fingerprint: lineage.fingerprint,
+        count: lineage.count,
+        reason: candidate.retry_reason
+          ? `Retry override: ${candidate.retry_reason}`
+          : `Similar to failed lineage seen ${lineage.count} times: ${lineage.representative_summary}`,
+      },
+    };
+    if (candidate.retry_reason) {
+      allowed.push(annotated);
+    } else {
+      downranked.push(annotated);
+    }
+  }
+  return [...allowed, ...downranked];
+}
+
+function failedLineageMatchesCandidate(
+  lineage: DreamReviewFailedLineage,
+  candidate: DreamReviewStrategyCandidate
+): boolean {
+  const candidateText = normalizeApproachText(`${candidate.title} ${candidate.rationale}`);
+  if (!candidateText) return false;
+  const lineageTexts = [
+    lineage.strategy_family,
+    lineage.hypothesis,
+    lineage.task_action,
+  ].map((value) => normalizeApproachText(value ?? "")).filter(Boolean);
+  return lineageTexts.some((lineageText) =>
+    candidateText.includes(lineageText) || lineageText.includes(candidateText)
   );
 }
 

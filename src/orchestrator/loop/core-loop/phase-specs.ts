@@ -129,8 +129,28 @@ export const DreamReviewStrategyCandidateSchema = z.object({
   rationale: z.string().min(1),
   target_dimensions: z.array(z.string().min(1)).default([]),
   expected_evidence_gain: z.string().min(1).optional(),
+  retry_reason: z.string().min(1).optional(),
+  failed_lineage_warning: z.object({
+    fingerprint: z.string().min(1),
+    count: z.number().int().positive(),
+    reason: z.string().min(1),
+  }).strict().optional(),
 }).strict();
 export type DreamReviewStrategyCandidate = z.infer<typeof DreamReviewStrategyCandidateSchema>;
+
+export const DreamReviewFailedLineageSchema = z.object({
+  fingerprint: z.string().min(1),
+  count: z.number().int().positive(),
+  last_seen_at: z.string().datetime(),
+  strategy_family: z.string().min(1).optional(),
+  hypothesis: z.string().min(1).optional(),
+  primary_dimension: z.string().min(1).optional(),
+  task_action: z.string().min(1).optional(),
+  failure_reason: z.string().min(1).optional(),
+  representative_entry_id: z.string().min(1),
+  representative_summary: z.string().min(1),
+}).strict();
+export type DreamReviewFailedLineage = z.infer<typeof DreamReviewFailedLineageSchema>;
 
 export const DreamReviewActiveHypothesisSchema = z.object({
   hypothesis: z.string().min(1),
@@ -348,6 +368,7 @@ export function buildDreamReviewCheckpointSpec(): ReturnType<typeof baseSpec<{
   recentStrategyFamilies: string[];
   activeHypotheses: DreamReviewActiveHypothesis[];
   rejectedApproaches: DreamReviewRejectedApproach[];
+  failedLineages: DreamReviewFailedLineage[];
   metricTrendSummary?: string;
   finalizationReason?: string;
   currentExecutionMode?: "exploration" | "consolidation" | "finalization";
@@ -366,6 +387,7 @@ export function buildDreamReviewCheckpointSpec(): ReturnType<typeof baseSpec<{
       recentStrategyFamilies: z.array(z.string()).default([]),
       activeHypotheses: z.array(DreamReviewActiveHypothesisSchema).default([]),
       rejectedApproaches: z.array(DreamReviewRejectedApproachSchema).default([]),
+      failedLineages: z.array(DreamReviewFailedLineageSchema).default([]),
       metricTrendSummary: z.string().optional(),
       finalizationReason: z.string().optional(),
       currentExecutionMode: z.enum(["exploration", "consolidation", "finalization"]).optional(),
