@@ -88,6 +88,7 @@ export { PortfolioManager } from "./orchestrator/strategy/portfolio-manager.js";
 export { CoreLoop } from "./orchestrator/loop/core-loop.js";
 export type { CoreLoopDeps, LoopConfig, LoopResult } from "./orchestrator/loop/core-loop.js";
 export { RuntimeSessionRegistry, createRuntimeSessionRegistry } from "./runtime/session-registry/index.js";
+export { deriveRunSpecFromText, recognizeRunSpecIntent, createRunSpecStore } from "./runtime/run-spec/index.js";
 export {
   createRuntimeDreamSidecarReview,
   RuntimeDreamSidecarReviewError,

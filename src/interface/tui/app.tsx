@@ -37,6 +37,7 @@ import { ShellTool } from "../../tools/system/ShellTool/ShellTool.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 import { applyChatEventToMessages } from "../chat/chat-event-state.js";
 import { setActiveCursorEscape } from "./cursor-tracker.js";
+import { createRunSpecStore, deriveRunSpecFromText, type RunSpec } from "../../runtime/run-spec/index.js";
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
@@ -156,6 +157,27 @@ export function deriveDaemonGoalIdFromActiveGoals(
 ): string | null {
   if (activeGoals.length === 0) return null;
   return currentGoalId && activeGoals.includes(currentGoalId) ? currentGoalId : activeGoals[0]!;
+}
+
+function formatRunSpecDraftMessage(spec: RunSpec): string {
+  const missing = spec.missing_fields.map((field) => field.question);
+  const lines = [
+    `RunSpec draft saved: ${spec.id}`,
+    `Profile: ${spec.profile}`,
+    `Objective: ${spec.objective}`,
+    `Workspace: ${spec.workspace?.path ?? "unresolved"}`,
+    `Progress: ${spec.progress_contract.semantics}`,
+  ];
+  if (spec.metric) {
+    lines.push(`Metric: ${spec.metric.name} (${spec.metric.direction})`);
+  }
+  if (spec.deadline) {
+    lines.push(`Deadline: ${spec.deadline.raw}${spec.deadline.iso_at ? ` (${spec.deadline.iso_at})` : ""}`);
+  }
+  if (missing.length > 0) {
+    lines.push("Questions:", ...missing.map((question) => `- ${question}`));
+  }
+  return lines.join("\n");
 }
 
 interface AppProps {
@@ -614,7 +636,54 @@ export function App({
               }].slice(-MAX_MESSAGES));
             }
           } else if (freeformRoute === "chat_runner" && chatRunner) {
-            await chatRunner.execute(input, cwd ?? process.cwd());
+            const effectiveCwd = cwd ?? process.cwd();
+            const runSpec = deriveRunSpecFromText(input, {
+              cwd: effectiveCwd,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
+            if (runSpec) {
+              const savedRunSpec = await createRunSpecStore(stateManager).save(runSpec);
+              setMessages((prev) => [...prev, {
+                id: randomUUID(),
+                role: "pulseed" as const,
+                text: formatRunSpecDraftMessage(savedRunSpec),
+                timestamp: new Date(),
+                messageType: savedRunSpec.missing_fields.length > 0 ? ("warning" as const) : ("info" as const),
+              }].slice(-MAX_MESSAGES));
+              await chatRunner.executeIngressMessage({
+                ingress_id: randomUUID(),
+                received_at: new Date().toISOString(),
+                channel: "tui",
+                platform: "local_tui",
+                text: input,
+                actor: {
+                  surface: "tui",
+                  platform: "local_tui",
+                },
+                runtimeControl: {
+                  allowed: true,
+                  approvalMode: "interactive",
+                },
+                metadata: {
+                  run_spec_id: savedRunSpec.id,
+                  run_spec_profile: savedRunSpec.profile,
+                  run_spec_status: savedRunSpec.status,
+                },
+                replyTarget: {
+                  surface: "tui",
+                  channel: "tui",
+                  platform: "local_tui",
+                  metadata: {
+                    run_spec_id: savedRunSpec.id,
+                    run_spec_profile: savedRunSpec.profile,
+                    run_spec_status: savedRunSpec.status,
+                  },
+                },
+                cwd: effectiveCwd,
+              }, effectiveCwd);
+            } else {
+              await chatRunner.execute(input, effectiveCwd);
+            }
           } else {
             setMessages((prev) => [...prev, {
               id: randomUUID(), role: "pulseed" as const,
@@ -641,7 +710,7 @@ export function App({
         setIsProcessing(false);
       }
     },
-    [intentRecognizer, actionHandler, chatRunner, daemonClient, isDaemonMode, daemonLoopState.goalId, startLoop, stopLoop, isProcessing, cwd]
+    [intentRecognizer, actionHandler, chatRunner, daemonClient, isDaemonMode, daemonLoopState.goalId, startLoop, stopLoop, isProcessing, cwd, stateManager]
   );
 
   // goalCount: 1 when there is an active goal in the loop, 0 otherwise
