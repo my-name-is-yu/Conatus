@@ -169,6 +169,7 @@ describe("runtime registry CLI commands", () => {
       kind: "verification",
       scope: { goal_id: "goal-evidence", task_id: "task-evidence", loop_index: 0 },
       verification: { verdict: "pass", confidence: 0.95, summary: "focused test passed" },
+      artifacts: [{ label: "final-report", state_relative_path: "reports/final.md", kind: "report", retention_class: "final_deliverable", size_bytes: 42 }],
       summary: "Focused test passed.",
       outcome: "improved",
     });
@@ -179,14 +180,17 @@ describe("runtime registry CLI commands", () => {
     expect(textCode).toBe(0);
     expect(textOutput).toContain("Runtime evidence: goal goal-evidence");
     expect(textOutput).toContain("Best evidence:");
+    expect(textOutput).toContain("Artifact footprint:");
+    expect(textOutput).toContain("1 protected");
 
     logSpy.mockClear();
     const jsonCode = await runCLI("runtime", "evidence", "goal-evidence", "--json");
     const jsonOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
-    const parsed = JSON.parse(jsonOutput) as { total_entries: number; best_evidence: { kind: string } };
+    const parsed = JSON.parse(jsonOutput) as { total_entries: number; best_evidence: { kind: string }; artifact_retention: { total_artifacts: number; protected_count: number } };
     expect(jsonCode).toBe(0);
     expect(parsed.total_entries).toBe(2);
     expect(parsed.best_evidence.kind).toBe("verification");
+    expect(parsed.artifact_retention).toMatchObject({ total_artifacts: 1, protected_count: 1 });
   });
 
   it("shows evaluator local best, external best, gap, and approval gate in runtime evidence", async () => {

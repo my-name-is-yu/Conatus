@@ -159,6 +159,17 @@ export type {
   RuntimeEvidenceSummary,
 } from "./evidence-ledger.js";
 export {
+  RuntimeArtifactRetentionClassSchema,
+  summarizeArtifactRetention,
+} from "./artifact-retention.js";
+export type {
+  RuntimeArtifactCleanupActionKind,
+  RuntimeArtifactCleanupPlan,
+  RuntimeArtifactRetentionClass,
+  RuntimeArtifactRetentionDecision,
+  RuntimeArtifactRetentionSummary,
+} from "./artifact-retention.js";
+export {
   classifyMetricTrend,
   extractMetricObservationsFromEvidence,
   selectMetricTrendForDimension,

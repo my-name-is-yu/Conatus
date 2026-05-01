@@ -381,6 +381,7 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
     console.log("  Metric trends:   -");
   }
   printEvaluatorSummary(summary.evaluator_summary);
+  printArtifactRetentionSummary(summary);
   printResearchMemos(summary);
   printDreamCheckpoints(summary);
   if (summary.recent_failed_attempts.length > 0) {
@@ -394,6 +395,18 @@ function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {
   if (summary.warnings.length > 0) {
     console.log(`  Warnings:        ${summary.warnings.length}`);
   }
+}
+
+function printArtifactRetentionSummary(summary: RuntimeEvidenceSummary): void {
+  const retention = summary.artifact_retention;
+  if (retention.total_artifacts === 0) {
+    console.log("  Artifact footprint: -");
+    return;
+  }
+  const cleanupCandidates = retention.cleanup_plan.actions.filter((action) => action.destructive).length;
+  console.log(`  Artifact footprint: ${retention.total_artifacts} artifacts, ${retention.total_size_bytes} bytes known, ${retention.protected_count} protected`);
+  console.log(`  Retention classes: final=${retention.by_retention_class.final_deliverable}, best=${retention.by_retention_class.best_candidate}, robust=${retention.by_retention_class.robust_candidate}, near_miss=${retention.by_retention_class.near_miss}, repro=${retention.by_retention_class.reproducibility_critical}`);
+  console.log(`  Cleanup plan:     ${cleanupCandidates} destructive candidates, approval_required`);
 }
 
 function printDreamSidecarReview(review: RuntimeDreamSidecarReview): void {
