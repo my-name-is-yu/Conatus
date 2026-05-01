@@ -47,6 +47,22 @@ function metricsJson(experimentId: string, score: number): Record<string, unknow
   };
 }
 
+function validationContract() {
+  return {
+    competition_metric: { name: "accuracy", direction: "maximize" as const, source: "competition_rules" as const },
+    cv: { strategy: "stratified_kfold", fold_count: 5, stratified: true },
+    oof: { present: true, path: "oof.csv", coverage: 1, leak_checked: true },
+    leak_checks: {
+      target_encoding_oof_only: true,
+      stacking_oof_only: true,
+      train_test_boundary_checked: true,
+      duplicate_or_id_leak_checked: true,
+      notes: [],
+    },
+    train_test_drift: { checked: true, adversarial_validation_auc: 0.55 },
+  };
+}
+
 async function waitFor(expectation: () => Promise<boolean>): Promise<void> {
   const deadline = Date.now() + 3_000;
   while (Date.now() < deadline) {
@@ -160,8 +176,9 @@ const fs = require("node:fs");
 console.log("benchmark training started");
 fs.writeFileSync("experiments/exp-benchmark-a/metrics.json", JSON.stringify(${JSON.stringify(metricsJson("exp-benchmark-a", 0.82))}));
 console.log("benchmark training completed");
-`],
+        `],
         artifact_refs: [],
+        validation_contract: validationContract(),
       }, context);
       expect(started.success).toBe(true);
 

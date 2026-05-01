@@ -44,15 +44,22 @@ export {
 export {
   KaggleMetricDirectionSchema,
   KaggleMetricsSchema,
+  KaggleLongRunValidationContractSchema,
+  KaggleValidationContractSchema,
+  KAGGLE_VALIDATION_CHECKLIST,
   compareMetricScores,
   metricThresholdHintForDirection,
   normalizedMetricScore,
   parseKaggleMetrics,
   parseKaggleMetricsCompatible,
+  summarizeKaggleValidation,
   type KaggleMetricsCompatibilityFallback,
   type KaggleMetricDirection,
   type KaggleMetricParseResult,
   type KaggleMetrics,
+  type KaggleLongRunValidationContract,
+  type KaggleValidationContract,
+  type KaggleValidationDiscipline,
   type MetricThresholdHint,
 } from "./metrics.js";
 export {

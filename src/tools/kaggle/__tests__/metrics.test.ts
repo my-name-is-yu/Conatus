@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { KaggleMetricsSchema, metricThresholdHintForDirection, parseKaggleMetricsCompatible } from "../metrics.js";
+import {
+  KaggleMetricsSchema,
+  metricThresholdHintForDirection,
+  parseKaggleMetricsCompatible,
+  summarizeKaggleValidation,
+} from "../metrics.js";
 
 describe("Kaggle metrics helpers", () => {
   it("maps maximize metrics to gte threshold hints", () => {
@@ -82,5 +87,89 @@ describe("Kaggle metrics helpers", () => {
       "train_rows missing; normalized to 0",
       "valid_rows missing; normalized to 0",
     ]));
+  });
+
+  it("preserves validation evidence when normalizing loose real-run metrics", () => {
+    const result = parseKaggleMetricsCompatible({
+      metric_name: "balanced_accuracy",
+      metric_value: 0.84,
+      metric_direction: "higher_is_better",
+      validation: {
+        oof: { present: true, path: "experiments/exp-loose/oof.csv", coverage: 1, leak_checked: true },
+        leak_checks: {
+          target_encoding_oof_only: true,
+          stacking_oof_only: true,
+          train_test_boundary_checked: true,
+        },
+        train_test_drift: { checked: true, adversarial_validation_auc: 0.52 },
+        public_leaderboard: { score: 0.838, submission_id: "exp-loose-public", observed_at: "2026-04-25T00:00:00.000Z" },
+      },
+    }, {
+      experiment_id: "exp-loose",
+      competition: "playground-series-s6e4",
+      log_path: "experiments/exp-loose/train.log",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      source_schema: "loose",
+      metrics: {
+        validation: {
+          oof: { present: true, leak_checked: true },
+          public_leaderboard: { score: 0.838 },
+        },
+      },
+    });
+    expect(result.ok && summarizeKaggleValidation(result.metrics)).toMatchObject({
+      oof_present: true,
+      oof_leak_checked: true,
+      public_lb_score: 0.838,
+      drift_checked: true,
+      risk_level: "medium",
+    });
+  });
+
+  it("keeps usable loose validation sections when one section is malformed or has extra fields", () => {
+    const result = parseKaggleMetricsCompatible({
+      metric_name: "balanced_accuracy",
+      metric_value: 0.84,
+      metric_direction: "higher_is_better",
+      validation: {
+        oof: {
+          present: true,
+          path: "experiments/exp-loose/oof.csv",
+          coverage: 1,
+          leak_checked: true,
+          producer: "local-cv-script",
+        },
+        leak_checks: {
+          target_encoding_oof_only: true,
+          stacking_oof_only: true,
+          train_test_boundary_checked: true,
+          duplicate_or_id_leak_checked: true,
+          inspected_by: "fixture",
+        },
+        train_test_drift: { checked: true, adversarial_validation_auc: 0.52 },
+        public_leaderboard: { score: 0.838, observed_at: "not-a-date" },
+      },
+    }, {
+      experiment_id: "exp-loose",
+      competition: "playground-series-s6e4",
+      log_path: "experiments/exp-loose/train.log",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      source_schema: "loose",
+      metrics: {
+        validation: {
+          oof: { present: true, leak_checked: true },
+          leak_checks: { duplicate_or_id_leak_checked: true },
+          train_test_drift: { checked: true },
+          public_leaderboard: { score: 0.838 },
+        },
+      },
+      warnings: expect.arrayContaining(["validation.public_leaderboard.observed_at malformed; ignored"]),
+    });
   });
 });

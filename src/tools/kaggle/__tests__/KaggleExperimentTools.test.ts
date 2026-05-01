@@ -8,6 +8,7 @@ import {
   KaggleCompareExperimentsTool,
   KaggleExperimentListTool,
   KaggleExperimentReadTool,
+  KaggleExperimentStartInputSchema,
   KaggleExperimentStartTool,
   KaggleExperimentStopTool,
   KaggleMetricReportTool,
@@ -28,6 +29,7 @@ function metricsJson(
   experimentId: string,
   direction: KaggleMetricDirection,
   score: number,
+  overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
     experiment_id: experimentId,
@@ -45,13 +47,36 @@ function metricsJson(
     artifacts: {
       log: `experiments/${experimentId}/train.log`,
     },
+    ...overrides,
   };
 }
 
-async function writeMetrics(root: string, experimentId: string, direction: KaggleMetricDirection, score: number): Promise<void> {
+function validationContract(metricName = "accuracy", direction: KaggleMetricDirection = "maximize") {
+  return {
+    competition_metric: { name: metricName, direction, source: "competition_rules" as const },
+    cv: { strategy: "stratified_kfold", fold_count: 5, stratified: true },
+    oof: { present: true, path: "oof.csv", coverage: 1, leak_checked: true },
+    leak_checks: {
+      target_encoding_oof_only: true,
+      stacking_oof_only: true,
+      train_test_boundary_checked: true,
+      duplicate_or_id_leak_checked: true,
+      notes: [],
+    },
+    train_test_drift: { checked: true, adversarial_validation_auc: 0.55 },
+  };
+}
+
+async function writeMetrics(
+  root: string,
+  experimentId: string,
+  direction: KaggleMetricDirection,
+  score: number,
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
   const dir = path.join(root, "kaggle-runs", "titanic", "experiments", experimentId);
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, "metrics.json"), `${JSON.stringify(metricsJson(experimentId, direction, score), null, 2)}\n`);
+  await fs.writeFile(path.join(dir, "metrics.json"), `${JSON.stringify(metricsJson(experimentId, direction, score, overrides), null, 2)}\n`);
   await fs.writeFile(path.join(dir, "train.log"), "durable log\n");
 }
 
@@ -85,6 +110,53 @@ describe("Kaggle experiment tools", () => {
     await fs.rm(pulseedHome, { recursive: true, force: true });
   });
 
+  it("rejects starting long-running experiments without the validation contract foundation", () => {
+    const baseInput = {
+      workspace: "titanic",
+      competition: "titanic",
+      experiment_id: "missing-validation",
+      command: process.execPath,
+      args: [],
+      artifact_refs: [],
+    };
+    const parsed = KaggleExperimentStartInputSchema.safeParse({
+      ...baseInput,
+      validation_contract: {},
+    });
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual(expect.arrayContaining([
+      "validation_contract.competition_metric",
+      "validation_contract.cv",
+      "validation_contract.oof",
+      "validation_contract.leak_checks",
+      "validation_contract.train_test_drift",
+    ]));
+
+    const unsafe = KaggleExperimentStartInputSchema.safeParse({
+      ...baseInput,
+      experiment_id: "unsafe-validation",
+      validation_contract: {
+        competition_metric: { name: "accuracy", direction: "maximize", source: "competition_rules" },
+        cv: { strategy: "holdout_only" },
+        oof: { present: false, leak_checked: false },
+        leak_checks: {},
+        train_test_drift: { checked: false },
+      },
+    });
+    expect(unsafe.success).toBe(false);
+    expect(unsafe.error?.issues.map((issue) => issue.path.join("."))).toEqual(expect.arrayContaining([
+      "validation_contract.cv.fold_count",
+      "validation_contract.oof.present",
+      "validation_contract.oof.leak_checked",
+      "validation_contract.leak_checks.target_encoding_oof_only",
+      "validation_contract.leak_checks.stacking_oof_only",
+      "validation_contract.leak_checks.train_test_boundary_checked",
+      "validation_contract.leak_checks.duplicate_or_id_leak_checked",
+      "validation_contract.train_test_drift.checked",
+    ]));
+  });
+
   it("starts a process session, writes experiment metadata, and reads durable log and metrics", async () => {
     const startTool = new KaggleExperimentStartTool(manager);
     const readTool = new KaggleExperimentReadTool(manager);
@@ -102,11 +174,19 @@ console.log("training done");
       artifact_refs: [],
       strategy_id: "strategy-1",
       task_id: "task-1",
+      validation_contract: validationContract(),
     }, makeContext(pulseedHome));
 
     expect(result.success).toBe(true);
-    const data = result.data as { process: { session_id: string }; artifacts: { log: { state_relative_path: string } } };
+    const data = result.data as {
+      process: { session_id: string };
+      artifacts: { log: { state_relative_path: string } };
+      validation_checklist: string[];
+      validation_contract: { oof: { leak_checked: boolean } };
+    };
     expect(data.artifacts.log.state_relative_path).toBe("kaggle-runs/titanic/experiments/exp-start/train.log");
+    expect(data.validation_checklist).toEqual(expect.arrayContaining(["cv_split_strategy_declared", "oof_predictions_present_and_leak_checked"]));
+    expect(data.validation_contract.oof.leak_checked).toBe(true);
 
     await waitFor(async () => {
       const raw = await fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "train.log"), "utf-8");
@@ -157,6 +237,8 @@ console.log("training done");
     });
     await expect(fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "config.json"), "utf-8"))
       .resolves.toContain(data.process.session_id);
+    await expect(fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "command.json"), "utf-8"))
+      .resolves.toContain("validation_checklist");
   });
 
   it("recovers experiment reads from files and process metadata without a live process buffer", async () => {
@@ -170,8 +252,9 @@ console.log("training done");
 const fs = require("node:fs");
 console.log("persisted output");
 fs.writeFileSync("experiments/exp-restart/metrics.json", JSON.stringify(${JSON.stringify(metricsJson("exp-restart", "minimize", 0.12))}));
-`],
+      `],
       artifact_refs: [],
+      validation_contract: validationContract("rmse", "minimize"),
     }, makeContext(pulseedHome));
     expect(result.success).toBe(true);
 
@@ -209,6 +292,7 @@ fs.writeFileSync("experiments/exp-restart/metrics.json", JSON.stringify(${JSON.s
       command: process.execPath,
       args: ["-e", "setInterval(() => {}, 1000)"],
       artifact_refs: [],
+      validation_contract: validationContract(),
     }, makeContext(pulseedHome));
     expect(result.success).toBe(true);
 
@@ -252,8 +336,9 @@ fs.writeFileSync("experiments/exp-restart/metrics.json", JSON.stringify(${JSON.s
       args: ["-e", `
 const fs = require("node:fs");
 setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(Date.now())), 50);
-`],
+      `],
       artifact_refs: [],
+      validation_contract: validationContract(),
     }, makeContext(pulseedHome));
     expect(result.success).toBe(true);
     const heartbeatPath = path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-stop", "heartbeat.txt");
@@ -408,6 +493,79 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
       best_experiment_id: null,
       recommendation: "Experiments must share metric_name and direction before comparison.",
     });
+  });
+
+  it("does not recommend raw CV top-1 as the safe candidate when validation risk is high", async () => {
+    await writeMetrics(pulseedHome, "raw-oof-top", "maximize", 0.835, {
+      cv_std: 0.04,
+      validation: {
+        competition_metric: { name: "accuracy", direction: "maximize", source: "competition_rules" },
+        cv: { strategy: "stratified_kfold", fold_count: 5, stratified: true },
+        oof: { present: true, path: "experiments/raw-oof-top/oof.csv", coverage: 1, leak_checked: false },
+        leak_checks: {
+          target_encoding_oof_only: false,
+          stacking_oof_only: false,
+          train_test_boundary_checked: false,
+        },
+        train_test_drift: { checked: true, adversarial_validation_auc: 0.74 },
+        public_leaderboard: { score: 0.76, submission_id: "raw-oof-top-public", observed_at: "2026-04-25T00:00:00.000Z" },
+      },
+    });
+    await writeMetrics(pulseedHome, "stable-safe", "maximize", 0.821, {
+      cv_std: 0.006,
+      validation: {
+        competition_metric: { name: "accuracy", direction: "maximize", source: "competition_rules" },
+        cv: { strategy: "repeated_stratified_kfold", fold_count: 5, repeated_seed_count: 3, stratified: true },
+        oof: { present: true, path: "experiments/stable-safe/oof.csv", coverage: 1, leak_checked: true },
+        leak_checks: {
+          target_encoding_oof_only: true,
+          stacking_oof_only: true,
+          train_test_boundary_checked: true,
+          duplicate_or_id_leak_checked: true,
+        },
+        stability: { repeated_seed_count: 3, seed_score_std: 0.005 },
+        train_test_drift: { checked: true, adversarial_validation_auc: 0.53 },
+        public_leaderboard: { score: 0.819, submission_id: "stable-safe-public", observed_at: "2026-04-25T00:10:00.000Z" },
+      },
+    });
+
+    const tool = new KaggleCompareExperimentsTool(manager);
+    const result = await tool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      experiment_ids: ["raw-oof-top", "stable-safe"],
+    }, makeContext(pulseedHome));
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      best_experiment_id: "stable-safe",
+      raw_best_experiment_id: "raw-oof-top",
+      recommendation_mode: "validation_adjusted",
+      recommendation: expect.stringContaining("raw CV top-1 raw-oof-top is not the safe recommendation"),
+      final_report_sections: expect.arrayContaining(["local_cv_oof", "public_leaderboard_gap", "private_leaderboard_uncertainty"]),
+      validation_checklist: expect.arrayContaining([
+        "oof_predictions_present_and_leak_checked",
+        "target_encoding_and_stacking_are_oof_only",
+        "final_report_separates_local_cv_public_lb_private_uncertainty",
+      ]),
+    });
+    expect((result.data as { rows: Array<{ experiment_id: string; raw_rank?: number; robust_rank?: number; validation?: { risk_level: string; leak_risks: string[] } }> }).rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        experiment_id: "raw-oof-top",
+        raw_rank: 1,
+        robust_rank: 2,
+        validation: expect.objectContaining({
+          risk_level: "high",
+          leak_risks: expect.arrayContaining(["target_encoding_not_oof_safe", "stacking_not_oof_safe"]),
+        }),
+      }),
+      expect.objectContaining({
+        experiment_id: "stable-safe",
+        raw_rank: 2,
+        robust_rank: 1,
+        validation: expect.objectContaining({ risk_level: "low" }),
+      }),
+    ]));
   });
 
 });

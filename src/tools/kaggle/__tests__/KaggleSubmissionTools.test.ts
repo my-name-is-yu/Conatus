@@ -109,8 +109,12 @@ describe("Kaggle submission tools", () => {
       file: { state_relative_path: string; workspace_relative_path: string };
       metadata: { path: string; state_relative_path: string };
       submit_hint: { file: string; message: string };
+      portfolio_slot: string;
+      portfolio_policy: string;
     };
     expect(data.submission_id).toBe("exp-a-public");
+    expect(data.portfolio_slot).toBe("safe");
+    expect(data.portfolio_policy).toContain("validation-adjusted candidates");
     expect(data.file).toMatchObject({
       workspace_relative_path: "submissions/exp-a-public.csv",
       state_relative_path: "kaggle-runs/titanic/submissions/exp-a-public.csv",
@@ -128,6 +132,7 @@ describe("Kaggle submission tools", () => {
       competition: "titanic",
       submission_id: "exp-a-public",
       message: "exp-a public submit",
+      portfolio_slot: "safe",
       provenance: {
         selected_experiment_id: "exp-a",
         local_metrics: {
@@ -137,6 +142,41 @@ describe("Kaggle submission tools", () => {
           artifact: { workspace_relative_path: "experiments/exp-a/metrics.json" },
         },
       },
+    });
+  });
+
+  it("records aggressive and diverse submission portfolio slot intent in local metadata", async () => {
+    const tool = new KaggleSubmissionPrepareTool();
+    const aggressive = await tool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      source_file: "experiments/exp-a/submission.csv",
+      selected_experiment_id: "exp-a",
+      submission_id: "exp-a-aggressive",
+      output_filename: "exp-a-aggressive.csv",
+      portfolio_slot: "aggressive",
+    }, makeContext(pulseedHome));
+    expect(aggressive.success).toBe(true);
+    expect(aggressive.data).toMatchObject({
+      portfolio_slot: "aggressive",
+      portfolio_policy: expect.stringContaining("higher local CV/public LB candidate"),
+    });
+    await expect(fs.readFile(path.join(workspaceRoot, "submissions", "exp-a-aggressive.json"), "utf-8"))
+      .resolves.toContain("\"portfolio_slot\": \"aggressive\"");
+
+    const diverse = await tool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      source_file: "experiments/exp-a/submission.csv",
+      selected_experiment_id: "exp-a",
+      submission_id: "exp-a-diverse",
+      output_filename: "exp-a-diverse.csv",
+      portfolio_slot: "diverse",
+    }, makeContext(pulseedHome));
+    expect(diverse.success).toBe(true);
+    expect(diverse.data).toMatchObject({
+      portfolio_slot: "diverse",
+      portfolio_policy: expect.stringContaining("distinct model/feature/seed lineage"),
     });
   });
 
