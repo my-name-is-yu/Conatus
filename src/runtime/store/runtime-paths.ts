@@ -32,6 +32,7 @@ export interface RuntimeStorePaths {
   experimentQueuesDir: string;
   budgetsDir: string;
   operatorHandoffsDir: string;
+  postmortemsDir: string;
   backpressureSnapshotPath: string;
   daemonHealthPath: string;
   componentsHealthPath: string;
@@ -50,6 +51,9 @@ export interface RuntimeStorePaths {
   experimentQueuePath(queueId: string): string;
   budgetPath(budgetId: string): string;
   operatorHandoffPath(handoffId: string): string;
+  postmortemDir(postmortemId: string): string;
+  postmortemJsonPath(postmortemId: string): string;
+  postmortemMarkdownPath(postmortemId: string): string;
   goalLeasePath(goalId: string): string;
   completedByIdempotencyPath(idempotencyKey: string): string;
   completedByMessagePath(messageId: string): string;
@@ -110,6 +114,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const experimentQueuesDir = path.join(rootDir, "experiment-queues");
   const budgetsDir = path.join(rootDir, "budgets");
   const operatorHandoffsDir = path.join(rootDir, "operator-handoffs");
+  const postmortemsDir = path.join(rootDir, "postmortems");
 
   return {
     rootDir,
@@ -140,6 +145,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     experimentQueuesDir,
     budgetsDir,
     operatorHandoffsDir,
+    postmortemsDir,
     backpressureSnapshotPath: path.join(guardrailsDir, "backpressure.json"),
     daemonHealthPath: path.join(healthDir, "daemon.json"),
     componentsHealthPath: path.join(healthDir, "components.json"),
@@ -188,6 +194,15 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     operatorHandoffPath(handoffId: string) {
       return path.join(operatorHandoffsDir, recordFileName(encodeRuntimePathSegment(handoffId)));
     },
+    postmortemDir(postmortemId: string) {
+      return path.join(postmortemsDir, encodeRuntimePathSegment(postmortemId));
+    },
+    postmortemJsonPath(postmortemId: string) {
+      return path.join(postmortemsDir, encodeRuntimePathSegment(postmortemId), "postmortem.json");
+    },
+    postmortemMarkdownPath(postmortemId: string) {
+      return path.join(postmortemsDir, encodeRuntimePathSegment(postmortemId), "postmortem.md");
+    },
     goalLeasePath(goalId: string) {
       return path.join(goalLeasesDir, `${encodeRuntimePathSegment(goalId)}.json`);
     },
@@ -233,6 +248,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.experimentQueuesDir,
       paths.budgetsDir,
       paths.operatorHandoffsDir,
+      paths.postmortemsDir,
     ].map((dir) => fsp.mkdir(dir, { recursive: true }))
   );
 }

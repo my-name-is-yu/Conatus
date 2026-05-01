@@ -34,6 +34,7 @@ export async function buildStandaloneTuiDeps() {
   const { RuntimeEvidenceLedger } = await import("../../runtime/store/evidence-ledger.js");
   const { RuntimeBudgetStore } = await import("../../runtime/store/budget-store.js");
   const { RuntimeOperatorHandoffStore } = await import("../../runtime/store/operator-handoff-store.js");
+  const { RuntimePostmortemReportStore } = await import("../../runtime/store/postmortem-report.js");
   const { MemoryLifecycleManager, DriveScoreAdapter } = await import("../../platform/knowledge/memory/memory-lifecycle.js");
   const { KnowledgeManager } = await import("../../platform/knowledge/knowledge-manager.js");
   const { CharacterConfigManager } = await import("../../platform/traits/character-config.js");
@@ -209,6 +210,7 @@ export async function buildStandaloneTuiDeps() {
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
   const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot);
   const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+  const postmortemReportStore = new RuntimePostmortemReportStore(runtimeRoot);
 
   const taskLifecycle = new TaskLifecycle({
     stateManager,
@@ -261,6 +263,7 @@ export async function buildStandaloneTuiDeps() {
     evidenceLedger,
     runtimeBudgetStore,
     operatorHandoffStore,
+    postmortemReportStore,
   });
 
   const scheduleEngine = new ScheduleEngine({

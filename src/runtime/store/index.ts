@@ -154,6 +154,12 @@ export {
   RuntimeOperatorHandoffStore,
   RuntimeOperatorHandoffTriggerSchema,
 } from "./operator-handoff-store.js";
+export {
+  RuntimePostmortemEvidenceRefSchema,
+  RuntimePostmortemReportSchema,
+  RuntimePostmortemReportStore,
+  RuntimePostmortemScopeSchema,
+} from "./postmortem-report.js";
 export type {
   RuntimeBudgetCreateInput,
   RuntimeBudgetDimension,
@@ -175,6 +181,12 @@ export type {
   RuntimeOperatorHandoffStatus,
   RuntimeOperatorHandoffTrigger,
 } from "./operator-handoff-store.js";
+export type {
+  RuntimePostmortemEvidenceRef,
+  RuntimePostmortemGenerateInput,
+  RuntimePostmortemReport,
+  RuntimePostmortemScope,
+} from "./postmortem-report.js";
 export type {
   RuntimeExperimentQueueCreateInput,
   RuntimeExperimentQueueExecutionDirective,

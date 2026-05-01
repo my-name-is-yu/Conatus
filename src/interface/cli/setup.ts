@@ -31,6 +31,7 @@ import { ScheduleEngine } from "../../runtime/schedule/engine.js";
 import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import { RuntimeBudgetStore } from "../../runtime/store/budget-store.js";
 import { RuntimeOperatorHandoffStore } from "../../runtime/store/operator-handoff-store.js";
+import { RuntimePostmortemReportStore } from "../../runtime/store/postmortem-report.js";
 import { TreeLoopOrchestrator } from "../../orchestrator/goal/tree-loop-orchestrator.js";
 import { GoalTreeManager } from "../../orchestrator/goal/goal-tree-manager.js";
 import { StateAggregator } from "../../orchestrator/goal/state-aggregator.js";
@@ -323,6 +324,7 @@ export async function buildDeps(
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
   const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot);
   const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
+  const postmortemReportStore = new RuntimePostmortemReportStore(runtimeRoot);
 
   const taskLifecycle = new TaskLifecycle({
     stateManager,
@@ -414,6 +416,7 @@ export async function buildDeps(
     evidenceLedger,
     runtimeBudgetStore,
     operatorHandoffStore,
+    postmortemReportStore,
   }, config);
 
   coreLoop.setTimeHorizonEngine(new TimeHorizonEngine());

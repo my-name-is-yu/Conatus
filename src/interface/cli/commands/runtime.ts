@@ -3,7 +3,7 @@
 import { parseArgs } from "node:util";
 import * as path from "node:path";
 
-import { StateManager } from "../../../base/state/state-manager.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceEntry, type RuntimeEvidenceSummary } from "../../../runtime/store/evidence-ledger.js";
 import {
@@ -15,6 +15,10 @@ import {
   RuntimeBudgetStore,
   type RuntimeBudgetRecord,
 } from "../../../runtime/store/budget-store.js";
+import {
+  RuntimePostmortemReportStore,
+  type RuntimePostmortemReport,
+} from "../../../runtime/store/postmortem-report.js";
 import {
   createRuntimeDreamSidecarReview,
   RuntimeDreamSidecarReviewError,
@@ -348,7 +352,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
+    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>");
     return 1;
   }
 
@@ -427,6 +431,19 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     const ledger = new RuntimeEvidenceLedger(path.join(stateManager.getBaseDir(), "runtime"));
     const summary = await summarizeEvidenceTarget(ledger, values.id);
     values.json ? printJson(summary) : printEvidenceSummary(summary);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "postmortem") {
+    const values = parseDetailArgs(args.slice(1), "postmortem");
+    if (!values.id) {
+      logger.error("Error: goal ID or run ID is required. Usage: pulseed runtime postmortem <goal-id|run-id> [--json]");
+      return 1;
+    }
+    const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+    const store = new RuntimePostmortemReportStore(runtimeRoot);
+    const report = await generatePostmortemTarget(store, values.id, runtimeRoot);
+    values.json ? printJson(report) : printPostmortemSummary(report);
     return 0;
   }
 
@@ -520,7 +537,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime dream-review <run-id>");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>");
   return 1;
 }
 
@@ -534,6 +551,44 @@ async function summarizeEvidenceTarget(ledger: RuntimeEvidenceLedger, id: string
   }
   const runSummary = await ledger.summarizeRun(id);
   return runSummary.total_entries > 0 ? runSummary : goalSummary;
+}
+
+async function generatePostmortemTarget(
+  store: RuntimePostmortemReportStore,
+  id: string,
+  runtimeRoot: string
+): Promise<RuntimePostmortemReport> {
+  if (id.startsWith("run:")) {
+    return store.generate({ runId: id, trigger: "operator_request" });
+  }
+  const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+  const goalSummary = await ledger.summarizeGoal(id);
+  if (goalSummary.total_entries > 0) {
+    return store.generate({ goalId: id, trigger: "operator_request" });
+  }
+  const runSummary = await ledger.summarizeRun(id);
+  return runSummary.total_entries > 0
+    ? store.generate({ runId: id, trigger: "operator_request" })
+    : store.generate({ goalId: id, trigger: "operator_request" });
+}
+
+function printPostmortemSummary(report: RuntimePostmortemReport): void {
+  const target = report.scope.run_id
+    ? `run ${report.scope.run_id}`
+    : `goal ${report.scope.goal_id ?? "-"}`;
+  console.log(`Runtime postmortem: ${target}`);
+  console.log(`  Status:       ${report.final_status}`);
+  console.log(`  Generated:    ${report.generated_at}`);
+  console.log(`  Markdown:     ${report.artifact_paths.markdown_path}`);
+  console.log(`  JSON:         ${report.artifact_paths.json_path}`);
+  console.log(`  Timeline:     ${report.timeline.length} event(s)`);
+  console.log(`  Metrics:      ${report.metric_timeline.length} trend(s)`);
+  console.log(`  Outputs:      ${report.final_outputs.length}`);
+  console.log(`  Manifests:    ${report.manifests.length}`);
+  console.log(`  Follow-ups:   ${report.follow_up_actions.length} proposed, auto_create=false`);
+  if (report.warnings.length > 0) {
+    console.log(`  Warnings:     ${report.warnings.length}`);
+  }
 }
 
 function printEvidenceSummary(summary: RuntimeEvidenceSummary): void {

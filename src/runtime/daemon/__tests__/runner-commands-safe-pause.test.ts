@@ -6,6 +6,7 @@ import { createEnvelope } from "../../types/envelope.js";
 import { JournalBackedQueue } from "../../queue/journal-backed-queue.js";
 import { GoalLeaseManager } from "../../goal-lease-manager.js";
 import { LoopSupervisor } from "../../executor/loop-supervisor.js";
+import { RuntimePostmortemReportStore } from "../../store/postmortem-report.js";
 import { RuntimeSafePauseStore } from "../../store/safe-pause-store.js";
 import { CommandDispatcher } from "../../command-dispatcher.js";
 import {
@@ -121,6 +122,18 @@ describe("daemon safe pause commands", () => {
     });
     expect(currentGoalIds).toEqual([]);
     expect(state.safe_pause_goals?.["goal-1"]?.state).toBe("paused");
+    expect(await new RuntimePostmortemReportStore(tmpDir).latestFor({ goalId: "goal-1" })).toMatchObject({
+      final_status: "paused",
+      trigger: "pause",
+    });
+    expect(await new RuntimePostmortemReportStore(tmpDir).latestFor({ runId: "run-1" })).toMatchObject({
+      scope: {
+        goal_id: "goal-1",
+        run_id: "run-1",
+      },
+      final_status: "paused",
+      trigger: "pause",
+    });
     expect(broadcastGoalUpdated).toHaveBeenLastCalledWith("goal-1", "paused");
   });
 

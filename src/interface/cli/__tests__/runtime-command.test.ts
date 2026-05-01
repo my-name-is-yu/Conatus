@@ -195,6 +195,55 @@ describe("runtime registry CLI commands", () => {
     expect(parsed.artifact_retention).toMatchObject({ total_artifacts: 1, protected_count: 1 });
   });
 
+  it("generates a durable runtime postmortem from the CLI", async () => {
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      id: "postmortem-cli-start",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-postmortem-cli" },
+      metrics: [{ label: "score", value: 0.5, direction: "maximize", observed_at: "2026-04-30T00:00:00.000Z" }],
+      summary: "Initial score recorded.",
+    });
+    await ledger.append({
+      id: "postmortem-cli-final",
+      occurred_at: "2026-04-30T01:00:00.000Z",
+      kind: "artifact",
+      scope: { goal_id: "goal-postmortem-cli" },
+      metrics: [{ label: "score", value: 0.6, direction: "maximize", observed_at: "2026-04-30T01:00:00.000Z" }],
+      artifacts: [{ label: "final-report", state_relative_path: "reports/final.md", kind: "report", retention_class: "final_deliverable" }],
+      summary: "Final report is ready.",
+      outcome: "improved",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const textCode = await runCLI("runtime", "postmortem", "goal-postmortem-cli");
+    const textOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(textCode).toBe(0);
+    expect(textOutput).toContain("Runtime postmortem: goal goal-postmortem-cli");
+    expect(textOutput).toContain("Follow-ups:");
+    expect(textOutput).toContain("postmortem.md");
+
+    logSpy.mockClear();
+    const jsonCode = await runCLI("runtime", "postmortem", "goal-postmortem-cli", "--json");
+    const jsonOutput = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(jsonOutput) as {
+      schema_version: string;
+      metric_timeline: Array<{ metric_key: string; best_value: number }>;
+      final_outputs: Array<{ label: string }>;
+      artifact_paths: { markdown_path: string };
+      follow_up_actions: Array<{ auto_create: boolean }>;
+    };
+
+    expect(jsonCode).toBe(0);
+    expect(parsed.schema_version).toBe("runtime-postmortem-v1");
+    expect(parsed.metric_timeline).toContainEqual(expect.objectContaining({ metric_key: "score", best_value: 0.6 }));
+    expect(parsed.final_outputs).toContainEqual(expect.objectContaining({ label: "final-report" }));
+    expect(parsed.follow_up_actions.every((action) => action.auto_create === false)).toBe(true);
+    await expect(fsp.readFile(parsed.artifact_paths.markdown_path, "utf8")).resolves.toContain("Runtime Postmortem");
+  });
+
   it("shows evaluator local best, external best, gap, and approval gate in runtime evidence", async () => {
     const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
     await ledger.append({
@@ -451,6 +500,29 @@ describe("runtime registry CLI commands", () => {
     expect(code).toBe(0);
     expect(parsed.scope.run_id).toBe("dummy-runtime-run");
     expect(parsed.total_entries).toBe(1);
+  });
+
+  it("generates a postmortem for non-prefixed long-running run IDs", async () => {
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      id: "dummy-run-postmortem-evidence",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "artifact",
+      scope: { run_id: "dummy-runtime-run-postmortem" },
+      summary: "Long-running final report written.",
+      artifacts: [{ label: "summary.md", path: "/tmp/summary.md", kind: "report", retention_class: "final_deliverable" }],
+      outcome: "improved",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await runCLI("runtime", "postmortem", "dummy-runtime-run-postmortem", "--json");
+    const output = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(output) as { scope: { run_id?: string; goal_id?: string }; final_outputs: Array<{ label: string }> };
+
+    expect(code).toBe(0);
+    expect(parsed.scope.run_id).toBe("dummy-runtime-run-postmortem");
+    expect(parsed.scope.goal_id).toBeUndefined();
+    expect(parsed.final_outputs).toContainEqual(expect.objectContaining({ label: "summary.md" }));
   });
 
   it("reports experiment queue phase separately from frozen execution status", async () => {

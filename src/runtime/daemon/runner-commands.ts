@@ -1,6 +1,7 @@
 import { resolveScheduleEntry } from "../schedule/entry-resolver.js";
 import {
   RuntimeOperationStore,
+  RuntimePostmortemReportStore,
   RuntimeSafePauseStore,
   type RuntimeControlOperationKind,
   type RuntimeSafePauseCheckpoint,
@@ -274,7 +275,7 @@ function buildSafePauseResumeReason(checkpoint: RuntimeSafePauseCheckpoint | und
 export async function checkpointPauseIfRequested(
   context: Pick<
     DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue"
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue" | "logger"
   >,
   goalId: string,
 ): Promise<boolean> {
@@ -305,6 +306,29 @@ export async function checkpointPauseIfRequested(
   context.refreshOperationalState();
   context.supervisor?.deactivateGoal(goalId);
   await context.saveDaemonState();
+  if (context.runtimeRoot) {
+    try {
+      const postmortemStore = new RuntimePostmortemReportStore(context.runtimeRoot);
+      await postmortemStore.generate({
+        goalId,
+        finalStatus: "paused",
+        trigger: "pause",
+      });
+      for (const runId of checkpoint.background_run_ids) {
+        await postmortemStore.generate({
+          goalId,
+          runId,
+          finalStatus: "paused",
+          trigger: "pause",
+        });
+      }
+    } catch (err) {
+      context.logger?.warn("Failed to generate safe-pause postmortem", {
+        goalId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
   context.abortSleep();
   await context.broadcastGoalUpdated(goalId, "paused");
   return true;
@@ -313,7 +337,7 @@ export async function checkpointPauseIfRequested(
 export async function handleGoalPauseCommand(
   context: Pick<
     DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue"
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue" | "logger"
   >,
   goalId: string,
   reason = "safe pause requested",

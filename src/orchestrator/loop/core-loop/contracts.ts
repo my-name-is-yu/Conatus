@@ -40,6 +40,7 @@ import type {
   RuntimeBudgetStore,
 } from "../../../runtime/store/budget-store.js";
 import type { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
+import type { RuntimePostmortemReportStore } from "../../../runtime/store/postmortem-report.js";
 import type { DeadlineFinalizationStatus } from "../../../platform/time/deadline-finalization.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 export type {
@@ -330,6 +331,8 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
   runtimeBudgetStore?: RuntimeBudgetStore;
   /** Optional durable operator handoff store for deadline, budget, and approval gates. */
   operatorHandoffStore?: RuntimeOperatorHandoffStore;
+  /** Optional durable postmortem report store for terminal and paused long-running runs. */
+  postmortemReportStore?: RuntimePostmortemReportStore;
   /** Optional bounded agentloop runner for core phases. */
   corePhaseRunner?: CorePhaseRunner;
   /** Optional live approval broker for wait/resume approvals. */
