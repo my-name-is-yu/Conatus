@@ -10,6 +10,8 @@ import type {
 } from "./session-registry/types.js";
 import type {
   RuntimeEvidenceEntry,
+  RuntimeEvidenceDreamCheckpointRejectedApproach,
+  RuntimeEvidenceDreamCheckpointStrategyCandidate,
   RuntimeEvidenceSummary,
 } from "./store/evidence-ledger.js";
 import { BackgroundRunLedger } from "./store/background-run-store.js";
@@ -315,6 +317,9 @@ function buildKnownGaps(summary: RuntimeEvidenceSummary): string[] {
       }
     }
   }
+  for (const rejected of collectRejectedApproaches(summary).slice(0, 3)) {
+    gaps.add(`Rejected approach: ${rejected.approach} (${rejected.rejection_reason})`);
+  }
   if (!summary.best_evidence) gaps.add("No best evidence has been recorded for this run.");
   if (summary.metric_trends.length === 0) gaps.add("No progress metric history has been recorded for this run.");
   return [...gaps].slice(0, 6);
@@ -334,8 +339,10 @@ function buildStrategyFamilies(summary: RuntimeEvidenceSummary): string[] {
 
 function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamSidecarReview["suggested_next_moves"] {
   const moves: RuntimeDreamSidecarReview["suggested_next_moves"] = [];
+  const rejectedApproaches = collectRejectedApproaches(summary);
   for (const checkpoint of summary.dream_checkpoints.slice(0, 2)) {
     for (const candidate of checkpoint.next_strategy_candidates) {
+      if (isRejectedDreamCandidate(candidate, rejectedApproaches)) continue;
       moves.push({
         title: candidate.title,
         rationale: candidate.rationale,
@@ -352,6 +359,7 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
   }
   for (const memo of summary.research_memos.slice(0, 2)) {
     for (const finding of memo.findings.slice(0, 2)) {
+      if (isRejectedMove(finding.proposed_experiment, finding.applicability, rejectedApproaches)) continue;
       moves.push({
         title: finding.proposed_experiment,
         rationale: finding.applicability,
@@ -374,6 +382,49 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
     });
   }
   return moves.slice(0, 6);
+}
+
+function collectRejectedApproaches(summary: RuntimeEvidenceSummary): RuntimeEvidenceDreamCheckpointRejectedApproach[] {
+  const seen = new Set<string>();
+  const rejectedApproaches: RuntimeEvidenceDreamCheckpointRejectedApproach[] = [];
+  for (const checkpoint of summary.dream_checkpoints) {
+    for (const rejected of checkpoint.rejected_approaches ?? []) {
+      const key = normalizeRejectedMoveText(rejected.approach);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      rejectedApproaches.push(rejected);
+    }
+  }
+  return rejectedApproaches;
+}
+
+function isRejectedDreamCandidate(
+  candidate: RuntimeEvidenceDreamCheckpointStrategyCandidate,
+  rejectedApproaches: RuntimeEvidenceDreamCheckpointRejectedApproach[]
+): boolean {
+  return isRejectedMove(candidate.title, candidate.rationale, rejectedApproaches);
+}
+
+function isRejectedMove(
+  title: string,
+  rationale: string,
+  rejectedApproaches: RuntimeEvidenceDreamCheckpointRejectedApproach[]
+): boolean {
+  if (rejectedApproaches.length === 0) return false;
+  const moveText = normalizeRejectedMoveText(`${title} ${rationale}`);
+  if (!moveText) return false;
+  return rejectedApproaches.some((rejected) => {
+    const approachText = normalizeRejectedMoveText(rejected.approach);
+    if (!approachText) return false;
+    const matchesApproach = moveText.includes(approachText) || approachText.includes(moveText);
+    if (!matchesApproach) return false;
+    const revisitText = normalizeRejectedMoveText(rejected.revisit_condition ?? "");
+    return !revisitText || !moveText.includes(revisitText);
+  });
+}
+
+function normalizeRejectedMoveText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, " ").trim();
 }
 
 function buildOperatorDecisions(summary: RuntimeEvidenceSummary): RuntimeDreamSidecarReview["operator_decisions"] {

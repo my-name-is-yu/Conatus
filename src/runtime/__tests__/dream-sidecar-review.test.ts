@@ -62,6 +62,8 @@ describe("Runtime Dream sidecar review", () => {
           summary: "Prior run preserved a breakthrough before finalization.",
           authority: "advisory_only",
         }],
+        active_hypotheses: [],
+        rejected_approaches: [],
         next_strategy_candidates: [{
           title: "Lock current approach",
           rationale: "Confirm the breakthrough is stable before broadening.",
@@ -104,6 +106,71 @@ describe("Runtime Dream sidecar review", () => {
     expect(review.evidence_refs).toContainEqual(expect.objectContaining({
       kind: "evidence_ledger",
       id: "run:coreloop:sidecar",
+    }));
+  });
+
+  it("does not blindly re-suggest a rejected Dream approach", async () => {
+    await seedActiveRun("run:coreloop:rejected");
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      kind: "dream_checkpoint",
+      scope: { run_id: "run:coreloop:rejected", loop_index: 4, phase: "dream_review_checkpoint" },
+      dream_checkpoints: [{
+        trigger: "plateau",
+        summary: "Dream checkpoint rejected the repeated sweep.",
+        current_goal: "Improve benchmark",
+        active_dimensions: ["balanced_accuracy"],
+        recent_strategy_families: ["threshold_sweep"],
+        exhausted: ["閾値スイープの再実行"],
+        promising: ["feature ablation"],
+        relevant_memories: [],
+        active_hypotheses: [{
+          hypothesis: "Feature ablation may expose a stronger path.",
+          supporting_evidence_ref: "metric:balanced_accuracy",
+          target_metric_or_dimension: "balanced_accuracy",
+          expected_next_observation: "Ablation moves balanced accuracy.",
+          status: "active",
+        }],
+        rejected_approaches: [{
+          approach: "閾値スイープの再実行",
+          rejection_reason: "3回のスイープが指標ノイズ内に収まった.",
+          evidence_ref: "lineage:threshold-sweep",
+          revisit_condition: "new calibration evidence appears",
+          confidence: 0.9,
+        }],
+        next_strategy_candidates: [
+          {
+            title: "閾値スイープの再実行",
+            rationale: "同じ探索をもう一度行う.",
+            target_dimensions: ["balanced_accuracy"],
+          },
+          {
+            title: "Feature ablation",
+            rationale: "Test a different mechanism.",
+            target_dimensions: ["balanced_accuracy"],
+          },
+        ],
+        guidance: "Avoid repeating threshold sweeps.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.88,
+      }],
+      summary: "Plateau checkpoint saved.",
+      outcome: "continued",
+    });
+
+    const review = await createRuntimeDreamSidecarReview({
+      stateManager,
+      runId: "run:coreloop:rejected",
+    });
+
+    expect(review.known_gaps).toContainEqual(expect.stringContaining("Rejected approach: 閾値スイープの再実行"));
+    expect(review.suggested_next_moves).not.toContainEqual(expect.objectContaining({
+      title: "閾値スイープの再実行",
+    }));
+    expect(review.suggested_next_moves).toContainEqual(expect.objectContaining({
+      title: "Feature ablation",
+      source: "dream_checkpoint",
     }));
   });
 

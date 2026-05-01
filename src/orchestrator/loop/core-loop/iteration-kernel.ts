@@ -234,6 +234,8 @@ export class CoreIterationKernel {
             activeDimensions: request.activeDimensions,
             ...(request.bestEvidenceSummary ? { bestEvidenceSummary: request.bestEvidenceSummary } : {}),
             recentStrategyFamilies: request.recentStrategyFamilies,
+            activeHypotheses: request.activeHypotheses,
+            rejectedApproaches: request.rejectedApproaches,
             ...(request.metricTrendSummary ? { metricTrendSummary: request.metricTrendSummary } : {}),
             ...(request.finalizationReason ? { finalizationReason: request.finalizationReason } : {}),
             ...(request.currentExecutionMode ? { currentExecutionMode: request.currentExecutionMode } : {}),
