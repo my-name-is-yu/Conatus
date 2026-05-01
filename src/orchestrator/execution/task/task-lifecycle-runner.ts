@@ -35,6 +35,7 @@ export interface TaskCycleRunOptionsShape {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
   executionMode?: ExecutionModeState;
+  runControlRecommendationContext?: string;
 }
 
 export interface TaskLifecycleTaskCycleContext {
@@ -154,9 +155,11 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
     logger?.info("TaskLifecycle: using target dimension override", { goalId, targetDimension });
   }
 
-  const baseKnowledgeContext = options?.knowledgeContextPrefix
-    ? [options.knowledgeContextPrefix, knowledgeContext].filter(Boolean).join("\n\n")
-    : knowledgeContext;
+  const baseKnowledgeContext = [
+    options?.knowledgeContextPrefix,
+    options?.runControlRecommendationContext,
+    knowledgeContext,
+  ].filter(Boolean).join("\n\n") || undefined;
 
   const enrichedKnowledgeContext = await runPhase("enrich-knowledge-context", () =>
     buildEnrichedKnowledgeContext({

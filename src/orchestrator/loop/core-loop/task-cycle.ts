@@ -151,6 +151,7 @@ export interface TaskGenerationHints {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
   executionMode?: ExecutionModeState;
+  runControlRecommendationContext?: string;
 }
 
 export interface StallActionHints {

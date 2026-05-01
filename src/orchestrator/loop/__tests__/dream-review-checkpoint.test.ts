@@ -6,6 +6,9 @@ import type { MetricTrendContext } from "../../../platform/drive/metric-history.
 import { makeEmptyIterationResult } from "../loop-result-types.js";
 import {
   buildDreamReviewCheckpointRequest,
+  dreamCheckpointRawRefs,
+  formatDreamRunControlRecommendationContext,
+  normalizeDreamReviewCheckpoint,
 } from "../core-loop/dream-review-checkpoint.js";
 import { DreamReviewCheckpointEvidenceSchema } from "../core-loop/phase-specs.js";
 
@@ -198,5 +201,283 @@ describe("Dream review checkpoint trigger planning", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it("normalizes deadline-backed finalization recommendations as auto-applied run control", () => {
+    const goal = makeGoal({ title: "Submit final benchmark artifact" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 3,
+      result: makeEmptyIterationResult("goal-1", 3),
+      driveScores: [],
+      finalizationStatus: makeFinalizationStatus(),
+    });
+    expect(request).not.toBeNull();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Deadline is inside finalization buffer.",
+      trigger: "pre_finalization",
+      current_goal: "Submit final benchmark artifact",
+      active_dimensions: ["dim1"],
+      run_control_recommendations: [{
+        action: "enter_finalization",
+        target_mode: "finalization",
+        rationale: "The deadline buffer has started, so remaining work should freeze candidates and package artifacts.",
+        evidence: [{
+          kind: "deadline",
+          ref: "deadline:goal-1",
+          summary: "Reserved finalization buffer has started.",
+        }],
+        risk: "low",
+        confidence: 0.9,
+      }],
+      guidance: "Enter finalization and verify the best artifact.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.9,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.run_control_recommendations[0]).toMatchObject({
+      action: "enter_finalization",
+      policy_decision: {
+        disposition: "auto_apply",
+      },
+    });
+  });
+
+  it("builds task-generation context for divergent exploration after repeated lineage evidence", () => {
+    const goal = makeGoal({ title: "Improve benchmark score" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 1,
+      result: makeEmptyIterationResult("goal-1", 1, {
+        stallDetected: true,
+        metricTrendContext: makeMetricTrendContext({
+          trend: "stalled",
+          summary: "Same CatBoost lineage has not improved balanced accuracy across six observations.",
+        }),
+      }),
+      driveScores: [],
+    });
+    expect(request).not.toBeNull();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "The current lineage is repeating low-value attempts.",
+      trigger: "plateau",
+      current_goal: "Improve benchmark score",
+      active_dimensions: ["dim1"],
+      recent_strategy_families: ["catboost_thresholding", "catboost_thresholding", "catboost_thresholding"],
+      exhausted: ["catboost_thresholding"],
+      promising: ["lightgbm_ranked_features"],
+      run_control_recommendations: [{
+        action: "widen_exploration",
+        target_strategy_family: "lightgbm_ranked_features",
+        rationale: "Repeated same-lineage attempts have stopped moving the metric.",
+        evidence: [
+          {
+            kind: "lineage",
+            ref: "lineage:catboost_thresholding",
+            summary: "Three recent attempts stayed in the same CatBoost thresholding family.",
+          },
+          {
+            kind: "metric",
+            ref: "metric:balanced_accuracy",
+            summary: "Balanced accuracy trend is stalled.",
+          },
+        ],
+        risk: "low",
+        confidence: 0.82,
+      }],
+      guidance: "Try a divergent low-cost branch before another same-lineage task.",
+      uncertainty: ["Need one smoke validation."],
+      context_authority: "advisory_only",
+      confidence: 0.82,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+    const context = formatDreamRunControlRecommendationContext(normalized.run_control_recommendations);
+
+    expect(normalized.run_control_recommendations[0]).toMatchObject({
+      action: "widen_exploration",
+      target_strategy_family: "lightgbm_ranked_features",
+      policy_decision: {
+        disposition: "auto_apply",
+      },
+    });
+    expect(context).toContain("Dream run-control recommendations:");
+    expect(context).toContain("widen_exploration");
+    expect(context).toContain("lineage: Three recent attempts stayed in the same CatBoost thresholding family.");
+    expect(dreamCheckpointRawRefs(normalized)).toEqual(expect.arrayContaining([
+      { kind: "dream_run_control_lineage", id: "lineage:catboost_thresholding" },
+      { kind: "dream_run_control_metric", id: "metric:balanced_accuracy" },
+    ]));
+  });
+
+  it("does not feed advisory-only recommendations into task generation context", () => {
+    const context = formatDreamRunControlRecommendationContext([{
+      id: "medium-risk-widen",
+      action: "widen_exploration",
+      target_strategy_family: "expensive_gpu_sweep",
+      rationale: "Could uncover a better family but needs budget review.",
+      evidence: [{
+        kind: "lineage",
+        ref: "lineage:current",
+        summary: "Current lineage is narrowing.",
+      }],
+      candidate_refs: [],
+      lineage_refs: [],
+      approval_required: false,
+      risk: "medium",
+      confidence: 0.7,
+      policy_decision: {
+        disposition: "advisory_only",
+        reason: "Preserved for review but not auto-applied.",
+      },
+    }]);
+
+    expect(context).toBeUndefined();
+  });
+
+  it("keeps default medium-risk recommendations advisory-only", () => {
+    const goal = makeGoal({ title: "Improve benchmark score" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 1,
+      result: makeEmptyIterationResult("goal-1", 1, {
+        stallDetected: true,
+      }),
+      driveScores: [],
+    });
+    expect(request).not.toBeNull();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Consolidation could help but confidence is incomplete.",
+      trigger: "plateau",
+      current_goal: "Improve benchmark score",
+      active_dimensions: ["dim1"],
+      run_control_recommendations: [{
+        action: "consolidate_candidates",
+        target_mode: "consolidation",
+        rationale: "Candidate evidence should be organized before more exploration.",
+        evidence: [{
+          kind: "artifact",
+          ref: "artifact:candidate-report",
+          summary: "A candidate report exists but has not been revalidated.",
+        }],
+        confidence: 0.7,
+      }],
+      guidance: "Consider consolidation.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.7,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.run_control_recommendations[0]).toMatchObject({
+      risk: "medium",
+      policy_decision: {
+        disposition: "advisory_only",
+      },
+    });
+    expect(formatDreamRunControlRecommendationContext(normalized.run_control_recommendations)).toBeUndefined();
+  });
+
+  it("keeps default medium-risk finalization recommendations advisory-only even with deadline evidence", () => {
+    const goal = makeGoal({ title: "Submit final benchmark artifact" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 3,
+      result: makeEmptyIterationResult("goal-1", 3),
+      driveScores: [],
+      finalizationStatus: makeFinalizationStatus(),
+    });
+    expect(request).not.toBeNull();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Deadline is inside finalization buffer.",
+      trigger: "pre_finalization",
+      current_goal: "Submit final benchmark artifact",
+      active_dimensions: ["dim1"],
+      run_control_recommendations: [{
+        action: "enter_finalization",
+        target_mode: "finalization",
+        rationale: "The deadline buffer has started.",
+        evidence: [{
+          kind: "deadline",
+          ref: "deadline:goal-1",
+          summary: "Reserved finalization buffer has started.",
+        }],
+        confidence: 0.9,
+      }],
+      guidance: "Consider finalization.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.9,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.run_control_recommendations[0]).toMatchObject({
+      risk: "medium",
+      policy_decision: {
+        disposition: "advisory_only",
+      },
+    });
+    expect(formatDreamRunControlRecommendationContext(normalized.run_control_recommendations)).toBeUndefined();
+  });
+
+  it("does not treat ordinary deadline status reasons as finalization-window approval for queue freeze", () => {
+    const goal = makeGoal({ title: "Improve benchmark score" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 1,
+      result: makeEmptyIterationResult("goal-1", 1, {
+        stallDetected: true,
+      }),
+      driveScores: [],
+      finalizationStatus: makeFinalizationStatus({
+        mode: "no_deadline",
+        deadline: null,
+        remaining_ms: null,
+        remaining_exploration_ms: null,
+        reason: "Goal has no deadline.",
+      }),
+    });
+    expect(request).not.toBeNull();
+    expect(request?.finalizationReason).toBeUndefined();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Queue freeze is not yet justified.",
+      trigger: "plateau",
+      current_goal: "Improve benchmark score",
+      active_dimensions: ["dim1"],
+      run_control_recommendations: [{
+        action: "freeze_experiment_queue",
+        rationale: "Freeze current queue.",
+        evidence: [{
+          kind: "runtime_state",
+          ref: "queue:active",
+          summary: "The queue has pending experiments.",
+        }],
+        risk: "low",
+        confidence: 0.8,
+      }],
+      guidance: "Do not freeze without finalization.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.8,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.run_control_recommendations[0]).toMatchObject({
+      policy_decision: {
+        disposition: "approval_required",
+      },
+    });
+    expect(formatDreamRunControlRecommendationContext(normalized.run_control_recommendations)).toBeUndefined();
   });
 });
