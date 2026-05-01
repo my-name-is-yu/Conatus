@@ -183,12 +183,14 @@ describe("RuntimeEvidenceLedger", () => {
     };
     delete staleIndex.summary.candidate_lineages;
     delete staleIndex.summary.recommended_candidate_portfolio;
+    delete staleIndex.summary.candidate_selection_summary;
     await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:candidate-index");
 
     expect(summary.candidate_lineages).toHaveLength(1);
     expect(summary.recommended_candidate_portfolio[0]?.candidate_id).toBe("candidate-index-a");
+    expect(summary.candidate_selection_summary.raw_best?.candidate_id).toBe("candidate-index-a");
   });
 
   it("preserves full canonical history when append maintains an existing index", async () => {
@@ -703,6 +705,238 @@ describe("RuntimeEvidenceLedger", () => {
         label: "balanced_accuracy",
         value: 0.97,
       },
+    });
+  });
+
+  it("separates raw best from robust best and recommends safe aggressive diverse slots", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "robust-selection-snapshot",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-robust-selection" },
+      candidates: [
+        {
+          candidate_id: "manual-mvs-raw-best",
+          label: "Manual MVS raw best",
+          lineage: {
+            strategy_family: "catboost_manual_mvs",
+            feature_lineage: ["focus-base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["manual-class-weight", "mvs"],
+            seed_lineage: ["seed-42"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: ["manual-threshold"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.97084, direction: "maximize", confidence: 0.78 }],
+          artifacts: [{ label: "raw-best-metrics", state_relative_path: "runs/manual-mvs/metrics.json", kind: "metrics" }],
+          similarity: [],
+          robustness: {
+            stability_score: 0.42,
+            diversity_score: 0.25,
+            risk_penalty: 0.28,
+            evidence_confidence: 0.72,
+            repeated_evaluations: 1,
+            mean_score: 0.9688,
+            max_score: 0.97084,
+            score_stddev: 0.0018,
+            fold_score_range: 0.012,
+            seed_score_range: 0.009,
+            weak_dimensions: ["High recall"],
+            provenance_refs: ["runs/manual-mvs/metrics.json"],
+            summary: "Highest local score but unstable and post-processing dependent.",
+          },
+          disposition: "promoted",
+          disposition_reason: "Raw best local metric, kept as aggressive candidate.",
+        },
+        {
+          candidate_id: "default-rs314-robust",
+          label: "Default rs314 robust",
+          lineage: {
+            strategy_family: "catboost_default",
+            feature_lineage: ["focus-base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["default-class-weight"],
+            seed_lineage: ["seed-314"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: ["none"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.97041, direction: "maximize", confidence: 0.9 }],
+          artifacts: [{ label: "robust-metrics", state_relative_path: "runs/default-rs314/metrics.json", kind: "metrics" }],
+          similarity: [{ candidate_id: "manual-mvs-raw-best", similarity: 0.62, signal: "declared" }],
+          robustness: {
+            stability_score: 0.94,
+            diversity_score: 0.58,
+            risk_penalty: 0.02,
+            evidence_confidence: 0.92,
+            repeated_evaluations: 4,
+            mean_score: 0.97012,
+            max_score: 0.97041,
+            score_stddev: 0.0002,
+            fold_score_range: 0.003,
+            seed_score_range: 0.002,
+            weak_dimensions: [],
+            provenance_refs: ["runs/default-rs314/metrics.json", "runs/default-rs314/folds.json"],
+            summary: "Slightly lower local score but stable across folds and seeds.",
+          },
+          disposition: "retained",
+          disposition_reason: "Stable lower-score candidate selected as robust best.",
+        },
+        {
+          candidate_id: "renamed-catboost-duplicate",
+          label: "Renamed CatBoost duplicate",
+          lineage: {
+            strategy_family: "catboost_default_copy",
+            feature_lineage: ["focus-base"],
+            model_lineage: ["catboost"],
+            config_lineage: ["default-class-weight"],
+            seed_lineage: ["seed-2718"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: ["none"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.968, direction: "maximize", confidence: 0.85 }],
+          artifacts: [{ label: "duplicate-metrics", state_relative_path: "runs/renamed-catboost/metrics.json", kind: "metrics" }],
+          similarity: [{ candidate_id: "default-rs314-robust", similarity: 0.94, signal: "declared" }],
+          robustness: {
+            stability_score: 0.8,
+            risk_penalty: 0.02,
+            evidence_confidence: 0.85,
+            repeated_evaluations: 2,
+            mean_score: 0.9679,
+            max_score: 0.968,
+            score_stddev: 0.0003,
+            fold_score_range: 0.003,
+            seed_score_range: 0.003,
+            weak_dimensions: [],
+            provenance_refs: ["runs/renamed-catboost/metrics.json"],
+            summary: "Family label differs, but declared similarity shows this is not a diverse lineage.",
+          },
+          disposition: "retained",
+          disposition_reason: "Near-duplicate retained as backup, not as diverse portfolio representative.",
+        },
+        {
+          candidate_id: "linear-stack-diverse",
+          label: "Linear stack diverse",
+          lineage: {
+            strategy_family: "linear_stack",
+            feature_lineage: ["rank-features"],
+            model_lineage: ["ridge-stack"],
+            config_lineage: ["stack-v1"],
+            seed_lineage: ["seed-7"],
+            fold_lineage: ["5-fold-oof"],
+            postprocess_lineage: ["class-prior-calibration"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.963, direction: "maximize", confidence: 0.86 }],
+          artifacts: [{ label: "diverse-metrics", state_relative_path: "runs/linear-stack/metrics.json", kind: "metrics" }],
+          similarity: [{ candidate_id: "default-rs314-robust", similarity: 0.31, signal: "declared" }],
+          robustness: {
+            stability_score: 0.81,
+            risk_penalty: 0.05,
+            evidence_confidence: 0.84,
+            repeated_evaluations: 3,
+            mean_score: 0.9628,
+            max_score: 0.963,
+            score_stddev: 0.0004,
+            fold_score_range: 0.004,
+            seed_score_range: 0.003,
+            weak_dimensions: [],
+            provenance_refs: ["runs/linear-stack/metrics.json"],
+            summary: "Different lineage retained for complementary final selection.",
+          },
+          disposition: "retained",
+          disposition_reason: "Diverse lineage with stable evidence.",
+        },
+      ],
+      summary: "Robust candidate selection snapshot.",
+      outcome: "improved",
+    });
+
+    const selection = (await ledger.summarizeGoal("goal-robust-selection")).candidate_selection_summary;
+
+    expect(selection.primary_metric).toEqual({ label: "balanced_accuracy", direction: "maximize" });
+    expect(selection.raw_best).toMatchObject({
+      candidate_id: "manual-mvs-raw-best",
+      raw_rank: 1,
+      raw_metric: { value: 0.97084 },
+    });
+    expect(selection.robust_best).toMatchObject({
+      candidate_id: "default-rs314-robust",
+      raw_rank: 2,
+      stability_score: 0.94,
+      risk_penalty: 0.02,
+    });
+    expect(selection.robust_best?.robust_score).toBeGreaterThan(selection.raw_best?.robust_score ?? 0);
+    expect(selection.final_portfolio.safe?.candidate_id).toBe("default-rs314-robust");
+    expect(selection.final_portfolio.aggressive?.candidate_id).toBe("manual-mvs-raw-best");
+    expect(selection.final_portfolio.diverse?.candidate_id).toBe("linear-stack-diverse");
+    expect(selection.ranked.map((candidate) => candidate.candidate_id)).toContain("manual-mvs-raw-best");
+  });
+
+  it("does not fill the diverse slot with a declared near-duplicate from another family", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "near-duplicate-only-selection",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-no-diverse-near-duplicate" },
+      candidates: [
+        {
+          candidate_id: "stable-best",
+          lineage: {
+            strategy_family: "catboost_default",
+            feature_lineage: ["base"],
+            model_lineage: ["catboost"],
+            config_lineage: [],
+            seed_lineage: ["seed-1"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.97, direction: "maximize", confidence: 0.9 }],
+          artifacts: [],
+          similarity: [{ candidate_id: "renamed-near-duplicate", similarity: 0.95, signal: "declared" }],
+          robustness: {
+            stability_score: 0.9,
+            risk_penalty: 0.01,
+            evidence_confidence: 0.9,
+            weak_dimensions: [],
+            provenance_refs: [],
+          },
+          disposition: "retained",
+        },
+        {
+          candidate_id: "renamed-near-duplicate",
+          lineage: {
+            strategy_family: "catboost_renamed",
+            feature_lineage: ["base"],
+            model_lineage: ["catboost"],
+            config_lineage: [],
+            seed_lineage: ["seed-2"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.969, direction: "maximize", confidence: 0.88 }],
+          artifacts: [],
+          similarity: [],
+          robustness: {
+            stability_score: 0.88,
+            diversity_score: 0.9,
+            risk_penalty: 0.01,
+            evidence_confidence: 0.88,
+            weak_dimensions: [],
+            provenance_refs: [],
+          },
+          disposition: "retained",
+        },
+      ],
+      summary: "Near duplicate should not fill diverse slot.",
+      outcome: "continued",
+    });
+
+    const selection = (await ledger.summarizeGoal("goal-no-diverse-near-duplicate")).candidate_selection_summary;
+
+    expect(selection.final_portfolio.diverse).toBeNull();
+    expect(selection.ranked.find((candidate) => candidate.candidate_id === "renamed-near-duplicate")).toMatchObject({
+      diversity_score: 0.05,
     });
   });
 

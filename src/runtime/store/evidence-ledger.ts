@@ -103,6 +103,22 @@ export const RuntimeEvidenceCandidateRecordSchema = z.object({
   metrics: z.array(RuntimeEvidenceMetricSchema).default([]),
   artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
   similarity: z.array(RuntimeEvidenceCandidateSimilaritySchema).default([]),
+  robustness: z.object({
+    stability_score: z.number().min(0).max(1).optional(),
+    diversity_score: z.number().min(0).max(1).optional(),
+    risk_penalty: z.number().min(0).max(1).optional(),
+    robust_score: z.number().min(0).max(1).optional(),
+    evidence_confidence: z.number().min(0).max(1).optional(),
+    repeated_evaluations: z.number().int().nonnegative().optional(),
+    mean_score: z.number().optional(),
+    max_score: z.number().optional(),
+    score_stddev: z.number().min(0).optional(),
+    fold_score_range: z.number().min(0).optional(),
+    seed_score_range: z.number().min(0).optional(),
+    weak_dimensions: z.array(z.string().min(1)).default([]),
+    provenance_refs: z.array(z.string().min(1)).default([]),
+    summary: z.string().min(1).optional(),
+  }).strict().optional(),
   disposition: RuntimeEvidenceCandidateDispositionSchema.default("retained"),
   disposition_reason: z.string().min(1).optional(),
   produced_at: z.string().datetime().optional(),
@@ -489,6 +505,39 @@ export interface RuntimeDiversifiedCandidatePortfolioOptions {
   nearDuplicateSimilarity?: number;
 }
 
+export interface RuntimeCandidateSelectionCandidate {
+  candidate_id: string;
+  label?: string;
+  strategy_family: string;
+  evidence_entry_id: string;
+  raw_rank: number;
+  raw_metric?: {
+    label: string;
+    value: number;
+    direction: "maximize" | "minimize";
+    confidence: number;
+  };
+  robust_score: number;
+  metric_score: number;
+  stability_score: number;
+  diversity_score: number;
+  risk_penalty: number;
+  evidence_confidence: number;
+  reasons: string[];
+}
+
+export interface RuntimeCandidateSelectionSummary {
+  primary_metric: ComparableMetricKey | null;
+  raw_best: RuntimeCandidateSelectionCandidate | null;
+  robust_best: RuntimeCandidateSelectionCandidate | null;
+  ranked: RuntimeCandidateSelectionCandidate[];
+  final_portfolio: {
+    safe: RuntimeCandidateSelectionCandidate | null;
+    aggressive: RuntimeCandidateSelectionCandidate | null;
+    diverse: RuntimeCandidateSelectionCandidate | null;
+  };
+}
+
 export interface RuntimeEvidenceSummary {
   schema_version: "runtime-evidence-summary-v1";
   generated_at: string;
@@ -506,6 +555,7 @@ export interface RuntimeEvidenceSummary {
   divergent_exploration: RuntimeEvidenceDivergentHypothesis[];
   candidate_lineages: RuntimeCandidateLineageContext[];
   recommended_candidate_portfolio: RuntimeCandidatePortfolioSlot[];
+  candidate_selection_summary: RuntimeCandidateSelectionSummary;
   recent_failed_attempts: RuntimeEvidenceEntry[];
   failed_lineages: RuntimeFailedLineageContext[];
   recent_entries: RuntimeEvidenceEntry[];
@@ -663,7 +713,9 @@ async function readSummaryIndex(
 
 function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
   return Array.isArray(summary.candidate_lineages)
-    && Array.isArray(summary.recommended_candidate_portfolio);
+    && Array.isArray(summary.recommended_candidate_portfolio)
+    && typeof summary.candidate_selection_summary === "object"
+    && summary.candidate_selection_summary !== null;
 }
 
 async function writeSummaryIndex(
@@ -748,6 +800,7 @@ function summarizeEvidence(
       .reverse(),
     candidate_lineages: summarizeCandidateLineages(entries),
     recommended_candidate_portfolio: selectDiversifiedCandidatePortfolio(entries),
+    candidate_selection_summary: summarizeCandidateSelection(entries),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"
@@ -817,6 +870,177 @@ export function selectDiversifiedCandidatePortfolio(
   }
 
   return selected.map(toPortfolioSlot);
+}
+
+function summarizeCandidateSelection(entriesOldestFirst: RuntimeEvidenceEntry[]): RuntimeCandidateSelectionSummary {
+  const primaryMetric = resolvePrimaryCandidateMetricKey(entriesOldestFirst);
+  const contexts = extractCandidateEvidenceContexts(entriesOldestFirst, primaryMetric)
+    .filter((context) => context.candidate.disposition !== "retired");
+  const rawRanked = [...contexts].sort(compareCandidateEvidenceContexts);
+  const scored = scoreCandidateSelectionContexts(rawRanked);
+  const ranked = [...scored].sort((a, b) => b.robust_score - a.robust_score || a.raw_rank - b.raw_rank);
+  const rawBest = scored.find((candidate) => candidate.raw_rank === 1) ?? null;
+  const robustBest = ranked[0] ?? null;
+
+  return {
+    primary_metric: primaryMetric,
+    raw_best: rawBest,
+    robust_best: robustBest,
+    ranked,
+    final_portfolio: {
+      safe: selectSafeCandidate(scored),
+      aggressive: rawBest,
+      diverse: selectDiverseCandidate(scored, robustBest),
+    },
+  };
+}
+
+function scoreCandidateSelectionContexts(
+  rawRanked: CandidateEvidenceContext[]
+): RuntimeCandidateSelectionCandidate[] {
+  const metricValues = rawRanked
+    .map((context) => context.metric?.value)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const minMetric = metricValues.length > 0 ? Math.min(...metricValues) : 0;
+  const maxMetric = metricValues.length > 0 ? Math.max(...metricValues) : 0;
+  const rawBestFamily = rawRanked[0]?.candidate.lineage.strategy_family;
+  const allCandidates = rawRanked.map((context) => context.candidate);
+
+  return rawRanked.map((context, index) => {
+    const candidate = context.candidate;
+    const metricScore = normalizedMetricScore(context.metric, minMetric, maxMetric);
+    const stabilityScore = clamp01(candidate.robustness?.stability_score ?? context.metric?.confidence ?? 0.5);
+    const inferredDiversity = inferredDiversityScore(candidate, rawBestFamily, allCandidates);
+    const diversityScore = clamp01(candidate.robustness?.diversity_score === undefined
+      ? inferredDiversity
+      : Math.min(candidate.robustness.diversity_score, inferredDiversity));
+    const riskPenalty = clamp01(candidate.robustness?.risk_penalty ?? inferredCandidateRiskPenalty(candidate));
+    const evidenceConfidence = clamp01(candidate.robustness?.evidence_confidence ?? context.metric?.confidence ?? 0.5);
+    const robustScore = clamp01(candidate.robustness?.robust_score
+      ?? (metricScore * 0.45 + stabilityScore * 0.3 + diversityScore * 0.15 + evidenceConfidence * 0.1 - riskPenalty));
+
+    return {
+      candidate_id: candidate.candidate_id,
+      ...(candidate.label ? { label: candidate.label } : {}),
+      strategy_family: candidate.lineage.strategy_family,
+      evidence_entry_id: context.entry_id,
+      raw_rank: index + 1,
+      ...(context.metric ? { raw_metric: context.metric } : {}),
+      robust_score: roundScore(robustScore),
+      metric_score: roundScore(metricScore),
+      stability_score: roundScore(stabilityScore),
+      diversity_score: roundScore(diversityScore),
+      risk_penalty: roundScore(riskPenalty),
+      evidence_confidence: roundScore(evidenceConfidence),
+      reasons: candidateSelectionReasons(candidate, {
+        metricScore,
+        stabilityScore,
+        diversityScore,
+        riskPenalty,
+        evidenceConfidence,
+      }),
+    };
+  });
+}
+
+function normalizedMetricScore(
+  metric: CandidateComparableMetric | null,
+  minMetric: number,
+  maxMetric: number
+): number {
+  if (!metric) return 0;
+  if (maxMetric === minMetric) return 0.5;
+  const distance = metric.direction === "maximize"
+    ? (metric.value - minMetric) / (maxMetric - minMetric)
+    : (maxMetric - metric.value) / (maxMetric - minMetric);
+  return clamp01(distance);
+}
+
+function inferredDiversityScore(
+  candidate: RuntimeEvidenceCandidateRecord,
+  rawBestFamily: string | undefined,
+  allCandidates: RuntimeEvidenceCandidateRecord[]
+): number {
+  if (!rawBestFamily) return 0.5;
+  const highestSimilarity = highestKnownSimilarity(candidate, allCandidates);
+  const lineageBase = candidate.lineage.strategy_family !== rawBestFamily ? 0.75 : 0.45;
+  if (highestSimilarity > 0) return clamp01(Math.min(lineageBase, 1 - highestSimilarity));
+  return lineageBase;
+}
+
+function highestKnownSimilarity(
+  candidate: RuntimeEvidenceCandidateRecord,
+  allCandidates: RuntimeEvidenceCandidateRecord[]
+): number {
+  let highest = candidate.similarity.reduce((max, similarity) => Math.max(max, similarity.similarity), 0);
+  for (const other of allCandidates) {
+    if (other.candidate_id === candidate.candidate_id) continue;
+    for (const similarity of other.similarity) {
+      if (similarity.candidate_id === candidate.candidate_id) {
+        highest = Math.max(highest, similarity.similarity);
+      }
+    }
+  }
+  return highest;
+}
+
+function inferredCandidateRiskPenalty(candidate: RuntimeEvidenceCandidateRecord): number {
+  const lineageText = [
+    ...candidate.lineage.config_lineage,
+    ...candidate.lineage.postprocess_lineage,
+  ].map(normalizeLineageText).join(" ");
+  if (lineageText.includes("manual") || lineageText.includes("threshold") || lineageText.includes("postprocess")) {
+    return 0.15;
+  }
+  if (lineageText.includes("calibration") || lineageText.includes("weight")) {
+    return 0.08;
+  }
+  return 0;
+}
+
+function candidateSelectionReasons(
+  candidate: RuntimeEvidenceCandidateRecord,
+  scores: {
+    metricScore: number;
+    stabilityScore: number;
+    diversityScore: number;
+    riskPenalty: number;
+    evidenceConfidence: number;
+  }
+): string[] {
+  const reasons: string[] = [];
+  if (scores.stabilityScore >= 0.8) reasons.push("strong stability evidence");
+  if (scores.diversityScore >= 0.8) reasons.push("diverse lineage");
+  if (scores.riskPenalty >= 0.15) reasons.push("penalized for overfit-prone lineage or post-processing");
+  if (scores.metricScore >= 0.95) reasons.push("top raw metric evidence");
+  if (candidate.robustness?.summary) reasons.push(candidate.robustness.summary);
+  return reasons.length > 0 ? reasons : ["risk-adjusted candidate evidence"];
+}
+
+function selectSafeCandidate(
+  candidates: RuntimeCandidateSelectionCandidate[]
+): RuntimeCandidateSelectionCandidate | null {
+  return [...candidates].sort((a, b) =>
+    b.stability_score - a.stability_score
+    || a.risk_penalty - b.risk_penalty
+    || b.robust_score - a.robust_score
+    || a.raw_rank - b.raw_rank
+  )[0] ?? null;
+}
+
+function selectDiverseCandidate(
+  candidates: RuntimeCandidateSelectionCandidate[],
+  robustBest: RuntimeCandidateSelectionCandidate | null
+): RuntimeCandidateSelectionCandidate | null {
+  const robustFamily = robustBest?.strategy_family;
+  return [...candidates]
+    .filter((candidate) => !robustFamily || candidate.strategy_family !== robustFamily)
+    .filter((candidate) => candidate.diversity_score >= 0.5)
+    .sort((a, b) =>
+      b.diversity_score - a.diversity_score
+      || b.robust_score - a.robust_score
+      || a.raw_rank - b.raw_rank
+    )[0] ?? null;
 }
 
 function summarizeCandidateLineages(entriesOldestFirst: RuntimeEvidenceEntry[]): RuntimeCandidateLineageContext[] {
@@ -1151,6 +1375,15 @@ function failedLineageFingerprintInput(entry: RuntimeEvidenceEntry): {
 
 function normalizeLineageText(value: string | undefined): string {
   return value?.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, " ").trim() ?? "";
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+function roundScore(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
 function chooseBestEvidence(entriesNewestFirst: RuntimeEvidenceEntry[]): RuntimeEvidenceEntry | null {
