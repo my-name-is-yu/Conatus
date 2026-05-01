@@ -128,6 +128,31 @@ export {
   RuntimeEvidenceMetricSchema,
   RuntimeEvidenceOutcomeSchema,
 } from "./evidence-ledger.js";
+export {
+  RuntimeExperimentQueueItemSchema,
+  RuntimeExperimentQueueItemStatusSchema,
+  RuntimeExperimentQueuePhaseSchema,
+  RuntimeExperimentQueueProvenanceSchema,
+  RuntimeExperimentQueueRecordSchema,
+  RuntimeExperimentQueueRevisionSchema,
+  RuntimeExperimentQueueRevisionStatusSchema,
+  RuntimeExperimentQueueStore,
+} from "./experiment-queue-store.js";
+export type {
+  RuntimeExperimentQueueCreateInput,
+  RuntimeExperimentQueueExecutionDirective,
+  RuntimeExperimentQueueItem,
+  RuntimeExperimentQueueItemInput,
+  RuntimeExperimentQueueItemResultInput,
+  RuntimeExperimentQueueItemStatus,
+  RuntimeExperimentQueuePhase,
+  RuntimeExperimentQueueProvenance,
+  RuntimeExperimentQueueProvenanceInput,
+  RuntimeExperimentQueueRecord,
+  RuntimeExperimentQueueRevision,
+  RuntimeExperimentQueueRevisionInput,
+  RuntimeExperimentQueueRevisionStatus,
+} from "./experiment-queue-store.js";
 export type {
   RuntimeEvidenceArtifactRef,
   RuntimeEvidenceEvaluatorBudget,

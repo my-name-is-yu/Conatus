@@ -29,6 +29,7 @@ export interface RuntimeStorePaths {
   guardrailsDir: string;
   guardrailBreakersDir: string;
   reproducibilityManifestsDir: string;
+  experimentQueuesDir: string;
   backpressureSnapshotPath: string;
   daemonHealthPath: string;
   componentsHealthPath: string;
@@ -44,6 +45,7 @@ export interface RuntimeStorePaths {
   safePausePath(goalId: string): string;
   guardrailBreakerPath(key: string): string;
   reproducibilityManifestPath(manifestId: string): string;
+  experimentQueuePath(queueId: string): string;
   goalLeasePath(goalId: string): string;
   completedByIdempotencyPath(idempotencyKey: string): string;
   completedByMessagePath(messageId: string): string;
@@ -101,6 +103,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const guardrailsDir = path.join(rootDir, "guardrails");
   const guardrailBreakersDir = path.join(guardrailsDir, "breakers");
   const reproducibilityManifestsDir = path.join(rootDir, "reproducibility-manifests");
+  const experimentQueuesDir = path.join(rootDir, "experiment-queues");
 
   return {
     rootDir,
@@ -128,6 +131,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     guardrailsDir,
     guardrailBreakersDir,
     reproducibilityManifestsDir,
+    experimentQueuesDir,
     backpressureSnapshotPath: path.join(guardrailsDir, "backpressure.json"),
     daemonHealthPath: path.join(healthDir, "daemon.json"),
     componentsHealthPath: path.join(healthDir, "components.json"),
@@ -166,6 +170,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     reproducibilityManifestPath(manifestId: string) {
       return path.join(reproducibilityManifestsDir, recordFileName(encodeRuntimePathSegment(manifestId)));
+    },
+    experimentQueuePath(queueId: string) {
+      return path.join(experimentQueuesDir, recordFileName(encodeRuntimePathSegment(queueId)));
     },
     goalLeasePath(goalId: string) {
       return path.join(goalLeasesDir, `${encodeRuntimePathSegment(goalId)}.json`);
@@ -209,6 +216,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.guardrailsDir,
       paths.guardrailBreakersDir,
       paths.reproducibilityManifestsDir,
+      paths.experimentQueuesDir,
     ].map((dir) => fsp.mkdir(dir, { recursive: true }))
   );
 }
