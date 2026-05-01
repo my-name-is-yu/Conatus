@@ -3,7 +3,32 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { RuntimeHealthStore } from "../store/health-store.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
-import { RuntimeHealthSnapshotSchema, evolveRuntimeHealthKpi } from "../store/runtime-schemas.js";
+import {
+  RuntimeHealthSnapshotSchema,
+  buildLongRunHealth,
+  evolveRuntimeHealthKpi,
+  type RuntimeLongRunHealthSignals,
+} from "../store/runtime-schemas.js";
+
+function longRunSignals(overrides: Partial<RuntimeLongRunHealthSignals>): RuntimeLongRunHealthSignals {
+  const checkedAt = 1_000;
+  return {
+    process: { status: "alive", checked_at: checkedAt, observed_at: checkedAt, pid: 123 },
+    child_activity: { status: "active", checked_at: checkedAt, observed_at: checkedAt, active_count: 1 },
+    log_freshness: { status: "fresh", checked_at: checkedAt, observed_at: checkedAt, path: "coreloop.log" },
+    artifact_freshness: { status: "fresh", checked_at: checkedAt, observed_at: checkedAt, path: "result.json" },
+    metric_freshness: { status: "fresh", checked_at: checkedAt, observed_at: checkedAt, metric_name: "score" },
+    metric_progress: {
+      status: "unknown",
+      checked_at: checkedAt,
+      observed_at: checkedAt,
+      metric_name: "score",
+    },
+    blocker: { status: "none", checked_at: checkedAt, observed_at: checkedAt },
+    resumable: true,
+    ...overrides,
+  };
+}
 
 describe("RuntimeHealthStore", () => {
   let tmpDir: string;
@@ -97,5 +122,82 @@ describe("RuntimeHealthStore", () => {
     const repaired = await store.reconcile(100);
     expect(repaired.kpi).toBeDefined();
     expect(repaired.kpi?.command_acceptance.status).toBe("degraded");
+  });
+
+  it("classifies alive runs with no new artifacts as artifact-stalled", () => {
+    const health = buildLongRunHealth(longRunSignals({
+      artifact_freshness: { status: "stale", checked_at: 2_000, observed_at: 1_000, path: "result.json" },
+      metric_freshness: { status: "stale", checked_at: 2_000, observed_at: 1_000, metric_name: "score" },
+      metric_progress: { status: "unknown", checked_at: 2_000, observed_at: 1_000, metric_name: "score" },
+    }));
+
+    expect(health.summary).toBe("alive_but_artifact_stalled");
+    expect(health.signals.process.status).toBe("alive");
+    expect(health.signals.artifact_freshness.observed_at).toBe(1_000);
+  });
+
+  it("classifies alive runs with a new artifact but no metric improvement as metric-stalled", () => {
+    const health = buildLongRunHealth(longRunSignals({
+      artifact_freshness: { status: "fresh", checked_at: 2_000, observed_at: 2_000, path: "result.json" },
+      metric_progress: {
+        status: "plateau",
+        checked_at: 2_000,
+        observed_at: 2_000,
+        metric_name: "score",
+        previous_value: 0.7,
+        current_value: 0.7,
+      },
+    }));
+
+    expect(health.summary).toBe("alive_but_metric_stalled");
+    expect(health.signals.metric_progress.previous_value).toBe(0.7);
+  });
+
+  it("classifies alive runs with an improved metric as progressing", () => {
+    const health = buildLongRunHealth(longRunSignals({
+      metric_progress: {
+        status: "improved",
+        checked_at: 2_000,
+        observed_at: 2_000,
+        metric_name: "score",
+        previous_value: 0.7,
+        current_value: 0.73,
+      },
+    }));
+
+    expect(health.summary).toBe("alive_and_progressing");
+  });
+
+  it("classifies approval waits separately from stalls", () => {
+    const health = buildLongRunHealth(longRunSignals({
+      artifact_freshness: { status: "stale", checked_at: 2_000, observed_at: 1_000, path: "result.json" },
+      metric_progress: { status: "plateau", checked_at: 2_000, observed_at: 1_000, metric_name: "score" },
+      blocker: {
+        status: "approval_wait",
+        checked_at: 2_000,
+        observed_at: 2_000,
+        reason: "submission requires operator approval",
+      },
+    }));
+
+    expect(health.summary).toBe("alive_but_waiting");
+    expect(health.signals.blocker.status).toBe("approval_wait");
+  });
+
+  it("persists long-running health alongside daemon health", async () => {
+    const longRunning = buildLongRunHealth(longRunSignals({
+      metric_progress: { status: "improved", checked_at: 2_000, observed_at: 2_000, metric_name: "score" },
+    }));
+    await store.saveSnapshot(RuntimeHealthSnapshotSchema.parse({
+      status: "ok",
+      leader: true,
+      checked_at: 2_000,
+      components: { gateway: "ok" },
+      long_running: longRunning,
+    }));
+
+    const loaded = await store.loadSnapshot();
+    expect(loaded?.long_running?.summary).toBe("alive_and_progressing");
+    expect(loaded?.long_running?.signals.metric_progress.observed_at).toBe(2_000);
   });
 });

@@ -193,6 +193,43 @@ describe("cmdDaemonStatus", () => {
           task_execution: { status: "ok", checked_at: now, last_ok_at: now },
           degraded_at: now,
         },
+        long_running: {
+          summary: "alive_but_waiting",
+          checked_at: now,
+          signals: {
+            process: { status: "alive", checked_at: now, observed_at: now, pid: process.pid },
+            child_activity: { status: "active", checked_at: now, observed_at: now, active_count: 1 },
+            log_freshness: { status: "fresh", checked_at: now, observed_at: now, path: "coreloop.log" },
+            artifact_freshness: {
+              status: "fresh",
+              checked_at: now,
+              observed_at: now - 1_000,
+              path: "result.json",
+            },
+            metric_freshness: {
+              status: "fresh",
+              checked_at: now,
+              observed_at: now - 1_000,
+              metric_name: "score",
+            },
+            metric_progress: {
+              status: "plateau",
+              checked_at: now,
+              observed_at: now - 1_000,
+              metric_name: "score",
+              previous_value: 0.7,
+              current_value: 0.7,
+            },
+            blocker: {
+              status: "approval_wait",
+              checked_at: now,
+              observed_at: now,
+              reason: "submission requires approval",
+            },
+            expected_next_checkpoint_at: now + 60_000,
+            resumable: true,
+          },
+        },
         details: { pid: process.pid },
       })
     );
@@ -266,6 +303,11 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Execute task:");
     expect(output).toContain("KPI snapshot:    process=up accept=down execute=up (degraded)");
     expect(output).toContain("Degraded at:");
+    expect(output).toContain("Long-run health:");
+    expect(output).toContain("Summary:        alive but waiting");
+    expect(output).toContain("Artifact fresh: fresh; evidence=");
+    expect(output).toContain("Metric trend:   plateau; evidence=");
+    expect(output).toContain("Blocker:        approval_wait; evidence=");
     expect(output).toContain("Task KPIs:");
     expect(output).toContain("Success rate:    1/1 (100.0%)");
     expect(output).toContain("Ack latency:     p95 1.0s");

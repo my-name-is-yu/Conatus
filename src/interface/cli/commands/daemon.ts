@@ -40,6 +40,7 @@ import {
   formatDurationMs,
   formatGoalMode,
   formatKpiCompactLine,
+  formatLongRunHealthLines,
   formatPercent,
   formatRelativeTime,
   formatRelativeTimestamp,
@@ -588,6 +589,12 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
         `  Recovered at:    ${new Date(runtimeHealth.kpi.recovered_at).toISOString()} (${formatRelativeTimestamp(runtimeHealth.kpi.recovered_at)})`
       );
     }
+  }
+
+  if (runtimeHealth?.long_running) {
+    lines.push("");
+    lines.push("Long-run health:");
+    lines.push(...formatLongRunHealthLines(runtimeHealth.long_running));
   }
 
   if (taskKpis.total_tasks > 0) {

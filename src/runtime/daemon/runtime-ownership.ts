@@ -1,12 +1,17 @@
 import * as path from "node:path";
+import * as fsp from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import type { Logger } from "../logger.js";
 import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
 import { summarizeTaskOutcomeLedgers } from "../../orchestrator/execution/task/task-outcome-ledger.js";
 import {
+  buildLongRunHealth,
   evolveRuntimeHealthKpi,
   type RuntimeDaemonHealth,
   type RuntimeHealthCapabilityStatuses,
+  type RuntimeLongRunHealth,
+  type RuntimeLongRunHealthSignals,
 } from "../store/index.js";
 
 export type RuntimeHealthComponents = Record<
@@ -36,6 +41,17 @@ interface RuntimeTaskOutcomeDetails {
     retried: number;
   };
   healthy_at_0_95: boolean | null;
+}
+
+interface LatestFileEvidence {
+  path: string;
+  mtimeMs: number;
+  metric?: {
+    name: string;
+    value: number;
+    direction: "maximize" | "minimize";
+    observedAt: number;
+  };
 }
 
 export class RuntimeOwnershipCoordinator {
@@ -111,6 +127,261 @@ export class RuntimeOwnershipCoordinator {
     return details;
   }
 
+  private freshnessStatus(
+    observedAt: number | undefined,
+    checkedAt: number,
+    staleAfterMs: number
+  ): "fresh" | "stale" | "missing" {
+    if (observedAt === undefined) {
+      return "missing";
+    }
+    return checkedAt - observedAt <= staleAfterMs ? "fresh" : "stale";
+  }
+
+  private async statFile(filePath: string): Promise<number | undefined> {
+    try {
+      return Math.floor((await fsp.stat(filePath)).mtimeMs);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw err;
+    }
+  }
+
+  private async latestKnownLogEvidence(): Promise<LatestFileEvidence | null> {
+    if (!this.deps.baseDir) {
+      return null;
+    }
+
+    const candidates = [
+      path.join(this.deps.baseDir, "logs", "coreloop.log"),
+      path.join(this.deps.baseDir, "logs", "pulseed.log"),
+    ];
+    let latest: LatestFileEvidence | null = null;
+    for (const candidate of candidates) {
+      const mtimeMs = await this.statFile(candidate);
+      if (mtimeMs === undefined) continue;
+      if (!latest || mtimeMs > latest.mtimeMs) {
+        latest = { path: candidate, mtimeMs };
+      }
+    }
+    return latest;
+  }
+
+  private async latestArtifactEvidence(): Promise<LatestFileEvidence | null> {
+    if (!this.deps.runtimeRoot) {
+      return null;
+    }
+
+    const artifactsDir = path.join(this.deps.runtimeRoot, "artifacts");
+    const latestArtifact = await this.findLatestFile(artifactsDir, (filePath) =>
+      filePath.endsWith("result.json") ||
+      filePath.endsWith("summary.md") ||
+      filePath.endsWith("next-action.json")
+    );
+    if (!latestArtifact) {
+      return null;
+    }
+
+    const latestResult = await this.findLatestFile(artifactsDir, (filePath) => filePath.endsWith("result.json"));
+    return {
+      ...latestArtifact,
+      metric: latestResult
+        ? await this.extractMetricFromResultJson(latestResult.path, latestResult.mtimeMs)
+        : undefined,
+    };
+  }
+
+  private async findLatestFile(
+    rootDir: string,
+    includeFile: (filePath: string) => boolean,
+    depth = 0
+  ): Promise<LatestFileEvidence | null> {
+    if (depth > 3) {
+      return null;
+    }
+
+    let entries: Dirent[];
+    try {
+      entries = await fsp.readdir(rootDir, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw err;
+    }
+
+    let latest: LatestFileEvidence | null = null;
+    for (const entry of entries) {
+      const entryPath = path.join(rootDir, entry.name);
+      if (entry.isDirectory()) {
+        const nested = await this.findLatestFile(entryPath, includeFile, depth + 1);
+        if (nested && (!latest || nested.mtimeMs > latest.mtimeMs)) {
+          latest = nested;
+        }
+        continue;
+      }
+
+      if (!entry.isFile() || !includeFile(entryPath)) {
+        continue;
+      }
+      const mtimeMs = await this.statFile(entryPath);
+      if (mtimeMs !== undefined && (!latest || mtimeMs > latest.mtimeMs)) {
+        latest = { path: entryPath, mtimeMs };
+      }
+    }
+    return latest;
+  }
+
+  private async extractMetricFromResultJson(
+    filePath: string,
+    observedAt: number
+  ): Promise<LatestFileEvidence["metric"]> {
+    try {
+      const raw = JSON.parse(await fsp.readFile(filePath, "utf8")) as unknown;
+      if (!raw || typeof raw !== "object") {
+        return undefined;
+      }
+      const evidence = (raw as { evidence?: unknown }).evidence;
+      if (!Array.isArray(evidence)) {
+        return undefined;
+      }
+      for (const item of evidence) {
+        if (!item || typeof item !== "object") continue;
+        const record = item as Record<string, unknown>;
+        if (record["kind"] !== "metric") continue;
+        if (typeof record["label"] !== "string") continue;
+        if (typeof record["value"] !== "number" || !Number.isFinite(record["value"])) continue;
+        return {
+          name: record["label"],
+          value: record["value"],
+          direction: this.extractMetricDirection(record["summary"]),
+          observedAt,
+        };
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }
+
+  private extractMetricDirection(summary: unknown): "maximize" | "minimize" {
+    if (typeof summary === "string" && summary.includes("direction=minimize")) {
+      return "minimize";
+    }
+    return "maximize";
+  }
+
+  private async readSupervisorActivity(checkedAt: number): Promise<{
+    status: RuntimeLongRunHealthSignals["child_activity"]["status"];
+    activeCount?: number;
+    observedAt?: number;
+  }> {
+    if (!this.deps.runtimeRoot) {
+      return { status: "unknown" };
+    }
+
+    const supervisorPath = path.join(this.deps.runtimeRoot, "supervisor-state.json");
+    try {
+      const raw = JSON.parse(await fsp.readFile(supervisorPath, "utf8")) as unknown;
+      const updatedAt = typeof (raw as { updatedAt?: unknown })?.updatedAt === "number"
+        ? (raw as { updatedAt: number }).updatedAt
+        : checkedAt;
+      const workers = Array.isArray((raw as { workers?: unknown })?.workers)
+        ? (raw as { workers: Array<Record<string, unknown>> }).workers
+        : [];
+      const activeCount = workers.filter((worker) => typeof worker["goalId"] === "string").length;
+      return {
+        status: activeCount > 0 ? "active" : "idle",
+        activeCount,
+        observedAt: updatedAt,
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return { status: "unknown" };
+      }
+      throw err;
+    }
+  }
+
+  private async buildLongRunHealthSnapshot(checkedAt: number): Promise<RuntimeLongRunHealth> {
+    const [previous, logEvidence, artifactEvidence, supervisorActivity, pendingApprovals] = await Promise.all([
+      this.deps.runtimeHealthStore?.loadDaemonHealth(),
+      this.latestKnownLogEvidence(),
+      this.latestArtifactEvidence(),
+      this.readSupervisorActivity(checkedAt),
+      this.deps.approvalStore?.listPending().catch(() => []),
+    ]);
+    const previousMetric = previous?.long_running?.signals.metric_progress.current_value;
+    const currentMetric = artifactEvidence?.metric?.value;
+    const metricDirection = artifactEvidence?.metric?.direction ?? "maximize";
+    const metricProgress =
+      currentMetric === undefined
+        ? "missing"
+        : previousMetric === undefined
+          ? "unknown"
+          : metricDirection === "minimize"
+            ? currentMetric < previousMetric
+              ? "improved"
+              : currentMetric > previousMetric
+                ? "regressed"
+                : "plateau"
+            : currentMetric > previousMetric
+            ? "improved"
+            : currentMetric < previousMetric
+              ? "regressed"
+              : "plateau";
+    const approvalCount = pendingApprovals?.length ?? 0;
+    return buildLongRunHealth({
+      process: {
+        status: "alive",
+        checked_at: checkedAt,
+        observed_at: checkedAt,
+        pid: process.pid,
+      },
+      child_activity: {
+        status: supervisorActivity.status,
+        checked_at: checkedAt,
+        observed_at: supervisorActivity.observedAt,
+        active_count: supervisorActivity.activeCount,
+      },
+      log_freshness: {
+        status: this.freshnessStatus(logEvidence?.mtimeMs, checkedAt, 5 * 60_000),
+        checked_at: checkedAt,
+        observed_at: logEvidence?.mtimeMs,
+        path: logEvidence?.path,
+      },
+      artifact_freshness: {
+        status: this.freshnessStatus(artifactEvidence?.mtimeMs, checkedAt, 10 * 60_000),
+        checked_at: checkedAt,
+        observed_at: artifactEvidence?.mtimeMs,
+        path: artifactEvidence?.path,
+      },
+      metric_freshness: {
+        status: artifactEvidence?.metric
+          ? this.freshnessStatus(artifactEvidence.metric.observedAt, checkedAt, 10 * 60_000)
+          : "missing",
+        checked_at: checkedAt,
+        observed_at: artifactEvidence?.metric?.observedAt,
+        metric_name: artifactEvidence?.metric?.name,
+      },
+      metric_progress: {
+        status: metricProgress,
+        checked_at: checkedAt,
+        observed_at: artifactEvidence?.metric?.observedAt,
+        metric_name: artifactEvidence?.metric?.name,
+        previous_value: previousMetric,
+        current_value: currentMetric,
+      },
+      blocker: {
+        status: approvalCount > 0 ? "approval_wait" : "none",
+        checked_at: checkedAt,
+        observed_at: checkedAt,
+        reason: approvalCount > 0 ? `${approvalCount} pending approval${approvalCount === 1 ? "" : "s"}` : undefined,
+      },
+      expected_next_checkpoint_at:
+        supervisorActivity.status === "active" ? checkedAt + 5 * 60_000 : undefined,
+      resumable: true,
+    });
+  }
+
   private async saveDaemonHealthWithKpi(params: {
     status: RuntimeDaemonHealth["status"];
     checkedAt: number;
@@ -128,6 +399,7 @@ export class RuntimeOwnershipCoordinator {
         params.checkedAt,
         params.reasons,
       ),
+      long_running: await this.buildLongRunHealthSnapshot(params.checkedAt),
       details: await this.buildHealthDetails(this.runtimeHealthPhase),
     });
   }
@@ -170,6 +442,7 @@ export class RuntimeOwnershipCoordinator {
             ? undefined
             : "supervisor or lease health degraded",
       }),
+      long_running: await this.buildLongRunHealthSnapshot(checkedAt),
       details: await this.buildHealthDetails(phase),
     });
   }
@@ -234,6 +507,19 @@ export class RuntimeOwnershipCoordinator {
         task_execution:
           status === "failed" ? "daemon exited unexpectedly" : "daemon stopped",
       }),
+      long_running: previous?.long_running
+        ? buildLongRunHealth({
+            ...previous.long_running.signals,
+            process: {
+              ...previous.long_running.signals.process,
+              status: "dead",
+              checked_at: checkedAt,
+              observed_at: checkedAt,
+              reason: status === "failed" ? "daemon exited unexpectedly" : "daemon stopped",
+            },
+            resumable: status !== "failed",
+          }, checkedAt)
+        : undefined,
       details: await this.buildHealthDetails(this.runtimeHealthPhase),
     });
   }
