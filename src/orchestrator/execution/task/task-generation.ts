@@ -15,6 +15,10 @@ import { loadDreamActivationState } from "../../../platform/dream/dream-activati
 import { getFailureReflectionsForGoal, getReflectionsForGoal } from "../reflection-generator.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
+import {
+  isGeneratedTaskAllowedForExecutionMode,
+  type ExecutionModeState,
+} from "../../../platform/time/execution-mode.js";
 
 // ─── Schema for LLM-generated task fields ───
 
@@ -260,8 +264,9 @@ export async function generateTask(
   knowledgeContext?: string,
   adapterType?: string,
   existingTasks?: string[],
-  workspaceContext?: string
-): Promise<{ task: Task | null; tokensUsed: number }> {
+  workspaceContext?: string,
+  executionMode?: ExecutionModeState
+): Promise<{ task: Task | null; tokensUsed: number; refusalReason?: string }> {
   const isCodeExecutionContext =
     adapterType === "openai_codex_cli" || adapterType === "claude_code_cli";
   const maxGenerationTokens = isCodeExecutionContext ? 1024 : 1536;
@@ -333,7 +338,8 @@ export async function generateTask(
     existingTasks,
     workspaceContext,
     reflectionsBlock || undefined,
-    lessonsBlock || undefined
+    lessonsBlock || undefined,
+    executionMode
   );
   deps.logger?.info("Task generation prompt prepared", {
     goalId,
@@ -410,6 +416,21 @@ export async function generateTask(
     duration_ms: Date.now() - llmStartedAt,
     tokens_used: generationTokens,
   });
+
+  if (!isGeneratedTaskAllowedForExecutionMode(generated, executionMode)) {
+    deps.logger?.warn("Task generation refused exploratory task in finalization mode", {
+      goalId,
+      targetDimension,
+      executionMode: executionMode?.mode,
+      reason: executionMode?.reason,
+      workDescription: generated.work_description,
+    });
+    return {
+      task: null,
+      tokensUsed: generationTokens,
+      refusalReason: "execution_mode_finalization_blocks_exploration",
+    };
+  }
 
   // §4.2 Duplicate task guard — reject if too similar to a recent completed/failed task
   const duplicate = await checkDuplicateTask(

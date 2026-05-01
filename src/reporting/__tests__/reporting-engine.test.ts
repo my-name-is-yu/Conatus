@@ -113,6 +113,27 @@ describe("generateExecutionSummary", () => {
     });
   });
 
+  it("stores execution mode in structured metadata and content", () => {
+    const report = engine.generateExecutionSummary(makeBaseParams({
+      executionMode: {
+        mode: "finalization",
+        source: "deadline_finalization",
+        reason: "Remaining time is inside the reserved finalization buffer.",
+        changed_at: "2026-05-01T00:00:00.000Z",
+        finalization_mode: "finalization",
+        approval_required_to_explore: true,
+      },
+    }));
+
+    expect(report.content).toContain("### Execution Mode");
+    expect(report.content).toContain("finalization");
+    expect(report.metadata?.execution_mode).toMatchObject({
+      mode: "finalization",
+      source: "deadline_finalization",
+      approval_required_to_explore: true,
+    });
+  });
+
   it("stores verification diffs in structured metadata", () => {
     const report = engine.generateExecutionSummary(makeBaseParams({
       taskResult: {
@@ -670,6 +691,32 @@ describe("CharacterConfig — proactivity_level (execution summary verbosity)", 
     expect(report.content).not.toContain("### Observation Results");
     expect(report.content).toContain("Loop 1");
     expect(report.content).toContain("gap:");
+  });
+
+  it("proactivity=1: default exploration execution mode keeps normal loop brief", () => {
+    const config: CharacterConfig = {
+      caution_level: 2,
+      stall_flexibility: 1,
+      communication_directness: 3,
+      proactivity_level: 1,
+    };
+    const eng = new ReportingEngine(stateManager, undefined, config);
+    const report = eng.generateExecutionSummary(makeBaseParams({
+      stallDetected: false,
+      pivotOccurred: false,
+      taskResult: { taskId: "t1", action: "run", dimension: "dim" },
+      executionMode: {
+        mode: "exploration",
+        source: "deadline_finalization",
+        reason: "Goal has no deadline.",
+        changed_at: "2026-05-01T00:00:00.000Z",
+        finalization_mode: "no_deadline",
+      },
+    }));
+
+    expect(report.content).not.toContain("## Execution Summary");
+    expect(report.content).not.toContain("### Execution Mode");
+    expect(report.content).toContain("Loop 1");
   });
 
   it("proactivity=5: execution summary is detailed (full format)", () => {

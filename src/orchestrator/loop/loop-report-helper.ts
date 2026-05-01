@@ -59,6 +59,7 @@ export async function generateLoopReport(
       stallDetected: iterationResult.stallDetected,
       pivotOccurred: iterationResult.pivotOccurred,
       elapsedMs: iterationResult.elapsedMs,
+      ...(iterationResult.executionMode ? { executionMode: iterationResult.executionMode } : {}),
       ...(waitStatus ? { waitStatus } : {}),
       ...(iterationResult.finalizationStatus && iterationResult.finalizationStatus.mode !== "no_deadline"
         ? { finalizationStatus: iterationResult.finalizationStatus }

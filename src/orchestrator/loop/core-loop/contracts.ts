@@ -36,6 +36,7 @@ import type { CoreDecisionEngine } from "./decision-engine.js";
 import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 import type { RuntimeEvidenceLedgerPort } from "../../../runtime/store/evidence-ledger.js";
 import type { DeadlineFinalizationStatus } from "../../../platform/time/deadline-finalization.js";
+import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 export type {
   LoopIterationResult,
   LoopResult,
@@ -96,6 +97,7 @@ export interface ExecutionSummaryParams {
     skipReason?: string;
   };
   finalizationStatus?: DeadlineFinalizationStatus;
+  executionMode?: ExecutionModeState;
 }
 
 export interface ReportingEngine {

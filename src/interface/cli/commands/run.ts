@@ -117,6 +117,10 @@ export async function cmdRun(
   console.log(`Total iterations: ${result.totalIterations}`);
   console.log(`Started at:       ${result.startedAt}`);
   console.log(`Completed at:     ${result.completedAt}`);
+  const executionMode = result.iterations.at(-1)?.executionMode;
+  if (executionMode) {
+    console.log(`Execution mode:   ${executionMode.mode} (${executionMode.reason})`);
+  }
   const finalizationStatus = result.iterations.at(-1)?.finalizationStatus;
   if (finalizationStatus && finalizationStatus.mode !== "no_deadline") {
     console.log(`Finalization:     ${finalizationStatus.mode}`);

@@ -27,6 +27,25 @@ const VALID_TASK_RESPONSE = `\`\`\`json
 }
 \`\`\``;
 
+const EXPLORATORY_TASK_RESPONSE = `\`\`\`json
+{
+  "work_description": "Explore a new experiment family for benchmark scoring",
+  "rationale": "A new candidate approach could improve the result",
+  "approach": "Prototype an additional experiment pipeline and compare it later",
+  "success_criteria": [
+    { "description": "New experiment family is created", "verification_method": "rg experiment-family reports", "is_blocking": true }
+  ],
+  "scope_boundary": {
+    "in_scope": ["new experiment pipeline"],
+    "out_of_scope": ["final artifact packaging"],
+    "blast_radius": "opens a new candidate branch"
+  },
+  "constraints": [],
+  "reversibility": "reversible",
+  "estimated_duration": null
+}
+\`\`\``;
+
 // ─── trigramSimilarity unit tests ───
 
 describe("trigramSimilarity", () => {
@@ -104,6 +123,34 @@ describe("generateTask — duplicate guard (§4.2)", () => {
     const { task } = await generateTask(deps, "goal-1", "test_coverage");
     expect(task).not.toBeNull();
     expect(task!.work_description).toBe("Add unit tests for the authentication module");
+  });
+
+  it("refuses exploratory task families in finalization mode", async () => {
+    const llm = createMockLLMClient([EXPLORATORY_TASK_RESPONSE]);
+    const deps = makeDeps(llm);
+
+    const result = await generateTask(
+      deps,
+      "goal-1",
+      "submission_quality",
+      undefined,
+      undefined,
+      "openai_codex_cli",
+      undefined,
+      undefined,
+      {
+        mode: "finalization",
+        source: "deadline_finalization",
+        reason: "Remaining time is inside the reserved finalization buffer.",
+        changed_at: "2026-05-01T00:00:00.000Z",
+        finalization_mode: "finalization",
+        approval_required_to_explore: true,
+      }
+    );
+
+    expect(result.task).toBeNull();
+    expect(result.refusalReason).toBe("execution_mode_finalization_blocks_exploration");
+    expect(fs.existsSync(`${tmpDir}/tasks/goal-1`)).toBe(false);
   });
 
   it("returns null when generated task is similar to a recently completed task", async () => {
