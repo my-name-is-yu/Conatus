@@ -525,9 +525,128 @@ function summarizeEvidence(
 }
 
 function chooseBestEvidence(entriesNewestFirst: RuntimeEvidenceEntry[]): RuntimeEvidenceEntry | null {
+  const metricBest = chooseBestMetricEvidence(entriesNewestFirst);
+  if (metricBest) return metricBest;
+
+  return chooseBestFallbackEvidence(entriesNewestFirst);
+}
+
+function chooseBestFallbackEvidence(entriesNewestFirst: RuntimeEvidenceEntry[]): RuntimeEvidenceEntry | null {
   return entriesNewestFirst.find((entry) => entry.outcome === "improved")
     ?? entriesNewestFirst.find((entry) => entry.verification?.verdict === "pass")
     ?? entriesNewestFirst.find((entry) => entry.metrics.length > 0)
     ?? entriesNewestFirst.find((entry) => entry.kind === "artifact")
     ?? null;
+}
+
+interface ComparableEvidenceMetric {
+  entry: RuntimeEvidenceEntry;
+  metric: RuntimeEvidenceMetric;
+  value: number;
+  direction: "maximize" | "minimize";
+  primary_metric: ComparableMetricKey;
+  improvement_strength: number;
+  confidence: number;
+  has_pass_verification: boolean;
+  has_artifact: boolean;
+}
+
+interface ComparableMetricKey {
+  label: string;
+  direction: "maximize" | "minimize";
+}
+
+function chooseBestMetricEvidence(entriesNewestFirst: RuntimeEvidenceEntry[]): RuntimeEvidenceEntry | null {
+  const primaryMetric = resolvePrimaryMetricKey(entriesNewestFirst);
+  if (!primaryMetric) return null;
+
+  const oldestFirst = [...entriesNewestFirst].reverse();
+  const baseline = findComparableMetric(oldestFirst, primaryMetric)?.value;
+  const candidates = entriesNewestFirst
+    .map((entry) => {
+      const metric = findComparableMetric([entry], primaryMetric);
+      if (!metric) return null;
+      return {
+        entry,
+        metric: metric.metric,
+        value: metric.value,
+        direction: metric.direction,
+        primary_metric: primaryMetric,
+        improvement_strength: baseline === undefined
+          ? 0
+          : metric.direction === "maximize"
+            ? metric.value - baseline
+            : baseline - metric.value,
+        confidence: metric.metric.confidence ?? entry.verification?.confidence ?? 1,
+        has_pass_verification: entry.verification?.verdict === "pass",
+        has_artifact: entry.artifacts.length > 0 || entry.kind === "artifact",
+      } satisfies ComparableEvidenceMetric;
+    })
+    .filter((candidate): candidate is ComparableEvidenceMetric => Boolean(candidate));
+
+  if (candidates.length === 0) return null;
+  return candidates.sort(compareComparableEvidenceMetrics)[0]?.entry ?? null;
+}
+
+function resolvePrimaryMetricKey(entriesNewestFirst: RuntimeEvidenceEntry[]): ComparableMetricKey | null {
+  for (const entry of entriesNewestFirst) {
+    const metric = findFirstDirectedNumericMetric(entry);
+    if (metric?.direction === "maximize" || metric?.direction === "minimize") {
+      return { label: metric.label, direction: metric.direction };
+    }
+  }
+  return null;
+}
+
+function findComparableMetric(
+  entries: RuntimeEvidenceEntry[],
+  key: ComparableMetricKey
+): { metric: RuntimeEvidenceMetric; value: number; direction: "maximize" | "minimize" } | null {
+  for (const entry of entries) {
+    for (const metric of entry.metrics) {
+      if (metric.label !== key.label || metric.direction !== key.direction) continue;
+      const comparable = toComparableMetric(metric);
+      if (comparable) return comparable;
+    }
+  }
+  return null;
+}
+
+function findFirstDirectedNumericMetric(entry: RuntimeEvidenceEntry): RuntimeEvidenceMetric | null {
+  for (const metric of entry.metrics) {
+    if (toComparableMetric(metric)) return metric;
+  }
+  return null;
+}
+
+function toComparableMetric(
+  metric: RuntimeEvidenceMetric
+): { metric: RuntimeEvidenceMetric; value: number; direction: "maximize" | "minimize" } | null {
+  if (typeof metric.value !== "number" || !Number.isFinite(metric.value)) return null;
+  if (metric.direction !== "maximize" && metric.direction !== "minimize") return null;
+  return {
+    metric,
+    value: metric.value,
+    direction: metric.direction,
+  };
+}
+
+function compareComparableEvidenceMetrics(a: ComparableEvidenceMetric, b: ComparableEvidenceMetric): number {
+  const direction = a.direction;
+  const valueDelta = direction === "maximize" ? b.value - a.value : a.value - b.value;
+  if (valueDelta !== 0) return valueDelta;
+
+  const passDelta = Number(b.has_pass_verification) - Number(a.has_pass_verification);
+  if (passDelta !== 0) return passDelta;
+
+  const artifactDelta = Number(b.has_artifact) - Number(a.has_artifact);
+  if (artifactDelta !== 0) return artifactDelta;
+
+  const confidenceDelta = b.confidence - a.confidence;
+  if (confidenceDelta !== 0) return confidenceDelta;
+
+  const improvementDelta = b.improvement_strength - a.improvement_strength;
+  if (improvementDelta !== 0) return improvementDelta;
+
+  return b.entry.occurred_at.localeCompare(a.entry.occurred_at);
 }

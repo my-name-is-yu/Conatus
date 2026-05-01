@@ -38,6 +38,7 @@ import { ReportingEngine as RealReportingEngine } from "../../../reporting/repor
 import { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 import { WaitDeadlineResolver, getDueWaitGoalIds } from "../../../runtime/daemon/wait-deadline-resolver.js";
+import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -576,6 +577,52 @@ describe("CoreLoop", async () => {
         label: "reports/latest.md",
       });
       expect(evidenceLedger.readByGoal).toHaveBeenCalledWith("goal-1");
+    });
+
+    it("uses metric-aware best evidence for best_evidence finalization artifacts", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      const deadline = new Date(Date.now() + 10 * 60_000).toISOString();
+      await mocks.stateManager.saveGoal(makeGoal({
+        deadline,
+        finalization_policy: {
+          minimum_buffer_ms: 30 * 60_000,
+          consolidation_buffer_ms: 0,
+          best_artifact_selection: "best_evidence",
+          verification_steps: [],
+          external_actions: [],
+        },
+      }));
+      const evidenceLedger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+      await evidenceLedger.append({
+        id: "old-improved",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+        kind: "metric",
+        scope: { goal_id: "goal-1" },
+        metrics: [{ label: "accuracy", value: 0.72, direction: "maximize" }],
+        artifacts: [{ label: "reports/old.md", path: "reports/old.md", kind: "report" }],
+        summary: "Old improved artifact.",
+        outcome: "improved",
+      });
+      await evidenceLedger.append({
+        id: "new-best",
+        occurred_at: "2026-04-30T00:10:00.000Z",
+        kind: "metric",
+        scope: { goal_id: "goal-1" },
+        metrics: [{ label: "accuracy", value: 0.91, direction: "maximize" }],
+        artifacts: [{ label: "reports/new.md", path: "reports/new.md", kind: "report" }],
+        summary: "New best metric artifact.",
+        outcome: "continued",
+      });
+
+      const loop = new CoreLoop(
+        { ...deps, evidenceLedger },
+        { delayBetweenLoopsMs: 0, autoDecompose: false }
+      );
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.finalizationStatus?.finalization_plan?.best_artifact).toMatchObject({
+        label: "reports/new.md",
+      });
     });
 
     it("can select the latest verified artifact for finalization", async () => {
