@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-05-02
+
+### Added
+- Added browser authentication handoff and guardrail runtime semantics for automation paths, daemon snapshots, and guarded browser workflows (#783)
+- Added long-running runtime evidence infrastructure, including runtime evidence ledgers, metric trend history, external evaluator evidence, public research grounding, dream review checkpoints, stall recovery, pause/resume checkpoints, run policies, execution modes, evidence summaries, lineage aggregation, memory ranking, candidate portfolio summaries, and near-miss preservation (#803, #804, #805, #806, #807, #808, #809, #810, #827, #828, #835, #836, #837, #838, #839, #840, #841, #842, #843, #844, #845, #851, #852)
+- Added runtime artifact, session, experiment, governance, handoff, postmortem, Kaggle validation, and TUI operator surfaces for inspecting and operating longer runs from daemon snapshots and the terminal UI (#853, #854, #855, #856, #857, #858, #859, #860, #861, #862, #863, #864, #865)
+- Added natural-language runtime run controls so operator commands can derive and confirm run specs through the production runtime-control path (#867, #876)
+- Added Kaggle artifact metric discovery/readiness fixes and public README achievement updates for benchmark evidence workflows (#800, #801)
+
+### Changed
+- Replaced keyword-first semantic decisions with structured classifiers/parsers for runtime intent recognition, evidence questions, run spec derivation, confirmation decisions, chat interrupts, failure recovery, dashboard labels, and notification routing (#877, #878, #879, #880, #881, #882, #888, #894)
+- Bumped the package version to `0.6.0`
+
+### Fixed
+- Fixed Kaggle workspace preparation inputs and run-readiness blockers so artifact and metric workflows can exercise the intended benchmark paths (#801)
+
 ## [0.5.4] - 2026-04-29
 
 ### Added
