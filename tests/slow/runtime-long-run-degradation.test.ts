@@ -336,6 +336,11 @@ function createFailedLineageFixture(runId: string, size: number): RuntimeEvidenc
           title: "threshold_sweep retry",
           rationale: "Try threshold_sweep again.",
           target_dimensions: ["balanced_accuracy"],
+          failed_lineage_warning: {
+            fingerprint: "threshold sweep|repeating threshold sweep improves balanced accuracy|balanced accuracy|threshold sweep",
+            count: 60,
+            reason: "Synthetic fixture marks repeated failed lineage explicitly.",
+          },
         },
         {
           title: "Feature ablation",
