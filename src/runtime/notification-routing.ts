@@ -1,39 +1,62 @@
 import * as path from "node:path";
+import { z } from "zod";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../base/utils/json-io.js";
 import { getPulseedDirPath } from "../base/utils/paths.js";
 import { NotificationConfigSchema } from "../base/types/notification.js";
 import type { NotificationConfig, PluginNotifierRoute } from "../base/types/notification.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
+import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 
 export interface NotificationRoutingUpdate {
   config: NotificationConfig;
   selected_notifiers: string[];
   report_types: string[];
   mode: "all" | "only" | "none";
+  enabled: boolean | null;
+  applied: boolean;
   summary: string;
+  decision: NotificationRoutingDecision;
 }
 
-interface NotifierAlias {
-  id: string;
-  labels: string[];
+const MIN_NOTIFICATION_ROUTING_CONFIDENCE = 0.7;
+
+export const PluginNotifierIdSchema = z.enum([
+  "discord-bot",
+  "whatsapp-webhook",
+  "signal-bridge",
+  "telegram-bot",
+  "slack-notifier",
+]);
+export type PluginNotifierId = z.infer<typeof PluginNotifierIdSchema>;
+
+export const NotificationReportTypeSchema = z.enum([
+  "urgent_alert",
+  "approval_request",
+  "stall_escalation",
+  "goal_completion",
+  "daily_summary",
+  "weekly_report",
+  "execution_summary",
+  "strategy_change",
+  "capability_escalation",
+]);
+export type NotificationReportType = z.infer<typeof NotificationReportTypeSchema>;
+
+export const NotificationRoutingDecisionSchema = z.object({
+  action: z.enum(["update_routes", "disable_all", "unsupported", "ambiguous"]),
+  selected_notifiers: z.array(PluginNotifierIdSchema).default([]),
+  report_types: z.array(NotificationReportTypeSchema).default([]),
+  mode: z.enum(["all", "only", "none"]).nullable().default(null),
+  enabled: z.boolean().nullable().default(null),
+  confidence: z.number().min(0).max(1),
+  clarification: z.string().optional(),
+  reason: z.string().optional(),
+});
+export type NotificationRoutingDecision = z.output<typeof NotificationRoutingDecisionSchema>;
+
+export interface NotificationRoutingParserContext {
+  llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
 }
-
-const NOTIFIER_ALIASES: NotifierAlias[] = [
-  { id: "discord-bot", labels: ["discord", "ディスコード"] },
-  { id: "whatsapp-webhook", labels: ["whatsapp", "what's app", "ワッツアップ", "ワッツアップ"] },
-  { id: "signal-bridge", labels: ["signal", "シグナル"] },
-  { id: "telegram-bot", labels: ["telegram", "テレグラム"] },
-  { id: "slack-notifier", labels: ["slack", "スラック"] },
-];
-
-const REPORT_TYPE_ALIASES: Array<{ reportTypes: string[]; labels: string[] }> = [
-  { reportTypes: ["urgent_alert", "approval_request"], labels: ["urgent", "緊急", "至急", "承認", "approval"] },
-  { reportTypes: ["stall_escalation"], labels: ["stall", "stuck", "停滞", "詰まり", "ブロック"] },
-  { reportTypes: ["goal_completion"], labels: ["complete", "completion", "完了", "達成"] },
-  { reportTypes: ["daily_summary"], labels: ["daily", "日次", "毎日", "朝", "夕方"] },
-  { reportTypes: ["weekly_report"], labels: ["weekly", "週次", "毎週"] },
-  { reportTypes: ["execution_summary"], labels: ["execution", "実行", "作業"] },
-  { reportTypes: ["strategy_change", "capability_escalation"], labels: ["strategy", "戦略", "方針", "capability", "能力"] },
-];
 
 export function getNotificationConfigPath(baseDir?: string): string {
   return path.join(baseDir ?? getPulseedDirPath(), "notification.json");
@@ -63,43 +86,78 @@ export async function saveNotificationConfig(configPath: string, config: Notific
 
 export async function applyNaturalLanguageNotificationRouting(
   instruction: string,
-  configPath = getNotificationConfigPath()
+  configPath = getNotificationConfigPath(),
+  context: NotificationRoutingParserContext = {},
 ): Promise<NotificationRoutingUpdate> {
   const config = await loadNotificationConfig(configPath, { invalid: "throw" });
-  const update = applyNaturalLanguageNotificationRoutingToConfig(config, instruction);
-  await saveNotificationConfig(configPath, update.config);
+  const update = await applyNaturalLanguageNotificationRoutingToConfig(config, instruction, context);
+  if (update.applied) {
+    await saveNotificationConfig(configPath, update.config);
+  }
   return update;
 }
 
-export function applyNaturalLanguageNotificationRoutingToConfig(
+export async function applyNaturalLanguageNotificationRoutingToConfig(
   config: NotificationConfig,
-  instruction: string
+  instruction: string,
+  context: NotificationRoutingParserContext = {},
+): Promise<NotificationRoutingUpdate> {
+  const decision = await parseNotificationRoutingInstruction(instruction, context);
+  return applyNotificationRoutingDecisionToConfig(config, decision, instruction);
+}
+
+export function applyNotificationRoutingDecisionToConfig(
+  config: NotificationConfig,
+  rawDecision: NotificationRoutingDecision,
+  instruction = "",
 ): NotificationRoutingUpdate {
-  const selected = detectNotifiers(instruction);
-  const reportTypes = detectReportTypes(instruction);
-  const mode = detectMode(instruction, selected.length);
+  const decision = normalizeRoutingDecision(rawDecision);
+  const selected = decision.selected_notifiers;
+  const reportTypes = decision.report_types;
 
   const nextConfig = NotificationConfigSchema.parse(config);
   const currentRoutes = nextConfig.plugin_notifiers.routes;
+  const blocked = decision.action === "ambiguous"
+    || decision.action === "unsupported"
+    || decision.confidence < MIN_NOTIFICATION_ROUTING_CONFIDENCE;
 
-  if (mode === "none") {
+  if (blocked) {
+    return {
+      config: nextConfig,
+      selected_notifiers: selected,
+      report_types: reportTypes,
+      mode: nextConfig.plugin_notifiers.mode,
+      enabled: null,
+      applied: false,
+      summary: buildBlockedSummary(decision, instruction),
+      decision,
+    };
+  }
+
+  if (decision.action === "disable_all") {
     nextConfig.plugin_notifiers = {
       mode: "none",
       routes: currentRoutes,
     };
   } else {
+    const mode = decision.mode ?? "all";
+    const enabled = decision.enabled ?? true;
     nextConfig.plugin_notifiers = {
       mode,
-      routes: mergeRoutes(currentRoutes, selected, reportTypes, !isDisableInstruction(instruction)),
+      routes: mergeRoutes(currentRoutes, selected, reportTypes, enabled),
     };
   }
 
+  const parsed = NotificationConfigSchema.parse(nextConfig);
   return {
-    config: NotificationConfigSchema.parse(nextConfig),
+    config: parsed,
     selected_notifiers: selected,
     report_types: reportTypes,
-    mode,
-    summary: buildSummary(mode, selected, reportTypes, instruction),
+    mode: parsed.plugin_notifiers.mode,
+    enabled: decision.action === "disable_all" ? false : decision.enabled ?? true,
+    applied: true,
+    summary: buildSummary(parsed.plugin_notifiers.mode, selected, reportTypes, decision, instruction),
+    decision,
   };
 }
 
@@ -121,72 +179,64 @@ function mergeRoutes(
   return Array.from(byId.values());
 }
 
-function detectNotifiers(instruction: string): string[] {
-  const normalized = instruction.toLowerCase();
-  const selected: string[] = [];
-  for (const alias of NOTIFIER_ALIASES) {
-    if (alias.labels.some((label) => normalized.includes(label.toLowerCase()))) {
-      selected.push(alias.id);
-    }
+export async function parseNotificationRoutingInstruction(
+  instruction: string,
+  context: NotificationRoutingParserContext = {},
+): Promise<NotificationRoutingDecision> {
+  const trimmed = instruction.trim();
+  const llmClient = context.llmClient;
+  if (!trimmed) {
+    return {
+      action: "ambiguous",
+      selected_notifiers: [],
+      report_types: [],
+      mode: null,
+      enabled: null,
+      confidence: 0,
+      clarification: "Provide the notification routing change to apply.",
+      reason: "empty instruction",
+    };
   }
-  return selected;
-}
-
-function detectReportTypes(instruction: string): string[] {
-  const normalized = instruction.toLowerCase();
-  const selected = new Set<string>();
-  for (const alias of REPORT_TYPE_ALIASES) {
-    if (alias.labels.some((label) => normalized.includes(label.toLowerCase()))) {
-      for (const reportType of alias.reportTypes) {
-        selected.add(reportType);
-      }
-    }
+  if (!llmClient) {
+    return {
+      action: "unsupported",
+      selected_notifiers: [],
+      report_types: [],
+      mode: null,
+      enabled: null,
+      confidence: 0,
+      clarification: "Notification routing changes need the structured routing parser, but no model client is available.",
+      reason: "model unavailable",
+    };
   }
-  const hasGenericReport = ["report", "レポート", "報告"].some((label) => normalized.includes(label));
-  const hasSpecificReport = ["daily_summary", "weekly_report", "execution_summary"]
-    .some((reportType) => selected.has(reportType));
-  if (hasGenericReport && !hasSpecificReport) {
-    selected.add("daily_summary");
-    selected.add("weekly_report");
-    selected.add("execution_summary");
+  try {
+    const response = await llmClient.sendMessage(
+      [{ role: "user", content: trimmed }],
+      { system: getNotificationRoutingPrompt(), max_tokens: 700, temperature: 0 },
+    );
+    const parsed = NotificationRoutingDecisionSchema.parse(
+      llmClient.parseJSON(response.content, NotificationRoutingDecisionSchema)
+    );
+    return normalizeRoutingDecision(parsed);
+  } catch (err) {
+    return {
+      action: "unsupported",
+      selected_notifiers: [],
+      report_types: [],
+      mode: null,
+      enabled: null,
+      confidence: 0,
+      clarification: "Notification routing instruction could not be parsed into the routing schema.",
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
-  return Array.from(selected);
-}
-
-function detectMode(instruction: string, selectedCount: number): "all" | "only" | "none" {
-  if (isDisableInstruction(instruction) && selectedCount === 0) {
-    return "none";
-  }
-  const normalized = instruction.toLowerCase();
-  if (
-    normalized.includes("only") ||
-    normalized.includes("だけ") ||
-    normalized.includes("のみ") ||
-    normalized.includes("一本化")
-  ) {
-    return "only";
-  }
-  return "all";
-}
-
-function isDisableInstruction(instruction: string): boolean {
-  const normalized = instruction.toLowerCase();
-  return (
-    normalized.includes("disable") ||
-    normalized.includes("off") ||
-    normalized.includes("mute") ||
-    normalized.includes("stop") ||
-    normalized.includes("送らない") ||
-    normalized.includes("送信しない") ||
-    normalized.includes("止め") ||
-    normalized.includes("無効")
-  );
 }
 
 function buildSummary(
   mode: "all" | "only" | "none",
   selected: string[],
   reportTypes: string[],
+  decision: NotificationRoutingDecision,
   instruction: string
 ): string {
   if (mode === "none") {
@@ -194,5 +244,93 @@ function buildSummary(
   }
   const target = selected.length > 0 ? selected.join(", ") : "(no specific plugin notifier)";
   const reportScope = reportTypes.length > 0 ? reportTypes.join(", ") : "all report types";
-  return `Plugin notification routing set to ${mode}: ${target} for ${reportScope}`;
+  const enabled = decision.enabled === false ? "disabled" : "enabled";
+  return `Plugin notification routing set to ${mode}: ${target} ${enabled} for ${reportScope}`;
+}
+
+function buildBlockedSummary(decision: NotificationRoutingDecision, instruction: string): string {
+  const reason = decision.clarification ?? decision.reason ?? "instruction was ambiguous or unsupported";
+  const source = instruction ? ` from instruction: ${instruction}` : "";
+  return `Plugin notification routing unchanged${source}. ${reason}`;
+}
+
+function normalizeRoutingDecision(decision: NotificationRoutingDecision): NotificationRoutingDecision {
+  const selected = unique(decision.selected_notifiers);
+  const reportTypes = unique(decision.report_types);
+  if (decision.action === "disable_all") {
+    return {
+      ...decision,
+      selected_notifiers: [],
+      report_types: [],
+      mode: "none",
+      enabled: false,
+    };
+  }
+  if (decision.action !== "update_routes") {
+    return {
+      ...decision,
+      selected_notifiers: selected,
+      report_types: reportTypes,
+      mode: null,
+      enabled: null,
+    };
+  }
+  if (selected.length === 0) {
+    return {
+      ...decision,
+      action: "ambiguous",
+      selected_notifiers: [],
+      report_types: reportTypes,
+      mode: null,
+      enabled: null,
+      clarification: decision.clarification ?? "No supported plugin notifier target was selected.",
+    };
+  }
+  return {
+    ...decision,
+    selected_notifiers: selected,
+    report_types: reportTypes,
+    mode: decision.mode ?? "all",
+    enabled: decision.enabled ?? true,
+  };
+}
+
+function unique<T>(values: T[]): T[] {
+  return Array.from(new Set(values));
+}
+
+function getNotificationRoutingPrompt(): string {
+  return `${getInternalIdentityPrefix("assistant")} Convert the operator's notification-routing instruction into the typed PulSeed notification routing schema.
+
+Do not guess. If the instruction is vague, unsupported, or does not clearly ask to change plugin notification routing, return ambiguous or unsupported. If the user asks to disable every plugin notifier, return disable_all. If the user asks to disable one or more specific notifiers, return update_routes with enabled false. If the user asks for a single selected route to be exclusive, use mode only. Otherwise use mode all.
+
+Supported plugin notifier ids:
+- discord-bot
+- whatsapp-webhook
+- signal-bridge
+- telegram-bot
+- slack-notifier
+
+Supported report types:
+- urgent_alert
+- approval_request
+- stall_escalation
+- goal_completion
+- daily_summary
+- weekly_report
+- execution_summary
+- strategy_change
+- capability_escalation
+
+Respond only as JSON:
+{
+  "action": "update_routes" | "disable_all" | "unsupported" | "ambiguous",
+  "selected_notifiers": ["discord-bot"],
+  "report_types": ["weekly_report"],
+  "mode": "all" | "only" | "none" | null,
+  "enabled": true | false | null,
+  "confidence": 0.0-1.0,
+  "clarification": "question or explanation when ambiguous/unsupported",
+  "reason": "short rationale"
+}`;
 }

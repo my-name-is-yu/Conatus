@@ -11,8 +11,25 @@ vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../../../base/llm/provider-factory.js", () => ({
+  buildLLMClient: vi.fn(),
+}));
+
 import { getPulseedDirPath } from "../../../base/utils/paths.js";
+import { buildLLMClient } from "../../../base/llm/provider-factory.js";
 import { cmdNotify } from "../commands/notify.js";
+
+function mockRoutingDecision(decision: unknown): void {
+  vi.mocked(buildLLMClient).mockResolvedValue({
+    sendMessage: async () => ({
+      content: JSON.stringify(decision),
+      usage: { input_tokens: 0, output_tokens: 0 },
+      stop_reason: "stop",
+    }),
+    parseJSON: (content: string, schema: { parse: (value: unknown) => unknown }) =>
+      schema.parse(JSON.parse(content)),
+  } as never);
+}
 
 describe("cmdNotify", () => {
   let tmpDir: string;
@@ -22,6 +39,7 @@ describe("cmdNotify", () => {
   beforeEach(() => {
     tmpDir = makeTempDir("pulseed-notify-test-");
     vi.mocked(getPulseedDirPath).mockReturnValue(tmpDir);
+    vi.mocked(buildLLMClient).mockReset();
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     consoleErrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -173,6 +191,16 @@ describe("cmdNotify", () => {
   });
 
   it("route updates plugin notifier routing from natural language", async () => {
+    mockRoutingDecision({
+      action: "update_routes",
+      selected_notifiers: ["whatsapp-webhook"],
+      report_types: ["urgent_alert", "approval_request"],
+      mode: "only",
+      enabled: true,
+      confidence: 0.93,
+      reason: "urgent WhatsApp exclusive route",
+    });
+
     const code = await cmdNotify(["route", "緊急通知はWhatsAppだけに送って"]);
 
     expect(code).toBe(0);
@@ -196,6 +224,15 @@ describe("cmdNotify", () => {
   });
 
   it("route rejects invalid existing config without overwriting it", async () => {
+    mockRoutingDecision({
+      action: "update_routes",
+      selected_notifiers: ["discord-bot"],
+      report_types: [],
+      mode: "only",
+      enabled: true,
+      confidence: 0.9,
+      reason: "exclusive discord route",
+    });
     const configPath = path.join(tmpDir, "notification.json");
     const invalidJson = JSON.stringify({ channels: [{ type: "webhook", url: "not-a-url" }] });
     fs.writeFileSync(configPath, invalidJson, "utf-8");
@@ -207,6 +244,25 @@ describe("cmdNotify", () => {
       expect.stringContaining("Invalid notification config")
     );
     expect(fs.readFileSync(configPath, "utf-8")).toBe(invalidJson);
+  });
+
+  it("route does not write config when parser returns ambiguous", async () => {
+    mockRoutingDecision({
+      action: "ambiguous",
+      selected_notifiers: [],
+      report_types: [],
+      mode: null,
+      enabled: null,
+      confidence: 0.3,
+      clarification: "Specify the notifier and report type.",
+      reason: "missing target",
+    });
+
+    const code = await cmdNotify(["route", "通知をいい感じにして"]);
+
+    expect(code).toBe(1);
+    expect(consoleErrSpy).toHaveBeenCalledWith(expect.stringContaining("unchanged"));
+    expect(fs.existsSync(path.join(tmpDir, "notification.json"))).toBe(false);
   });
 
   // ─── remove ───
