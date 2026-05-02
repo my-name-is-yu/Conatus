@@ -1,5 +1,6 @@
 import type { ToolCallContext } from "../../tools/types.js";
 import { SoilQueryTool } from "../../tools/query/SoilQueryTool/SoilQueryTool.js";
+import { SqliteSoilRepository } from "../../platform/soil/sqlite-repository.js";
 import type { GroundingProvider, GroundingSoilResult } from "../contracts.js";
 import { makeSection, makeSource, soilRootFromHome, resolveHomeDir } from "./helpers.js";
 
@@ -17,6 +18,23 @@ function shouldQuerySoil(query: string | undefined): query is string {
   return Boolean(query && query.trim().length >= 8);
 }
 
+function usageSummary(hit: { usageStats?: GroundingSoilResult["hits"][number]["usageStats"] }): string | null {
+  const usage = hit.usageStats;
+  if (!usage) return null;
+  return `usage used=${usage.use_count} validated=${usage.validated_count} negative=${usage.negative_outcome_count}`;
+}
+
+async function recordGroundingUsage(rootDir: string, recordIds: string[]): Promise<void> {
+  const ids = [...new Set(recordIds.filter((recordId) => recordId.length > 0))];
+  if (ids.length === 0) return;
+  const repository = await SqliteSoilRepository.create({ rootDir });
+  try {
+    await repository.recordUsage(ids);
+  } finally {
+    repository.close();
+  }
+}
+
 export const soilKnowledgeProvider: GroundingProvider = {
   key: "soil_knowledge",
   kind: "dynamic",
@@ -27,6 +45,7 @@ export const soilKnowledgeProvider: GroundingProvider = {
     }
 
     let result: GroundingSoilResult | null = null;
+    let defaultSqliteRootDir: string | null = null;
     if (context.request.soilQuery) {
       result = await context.request.soilQuery({
         query,
@@ -35,17 +54,18 @@ export const soilKnowledgeProvider: GroundingProvider = {
       });
     } else {
       const homeDir = resolveHomeDir(context.request.homeDir ?? context.deps.stateManager?.getBaseDir?.());
+      defaultSqliteRootDir = soilRootFromHome(homeDir);
       const tool = new SoilQueryTool();
       const toolResult = await tool.call({
         query,
-        rootDir: soilRootFromHome(homeDir),
+        rootDir: defaultSqliteRootDir,
         limit: context.profile.budgets.maxKnowledgeHits,
       }, buildToolContext(context.request.workspaceRoot ?? process.cwd(), context.request.goalId));
       if (toolResult.success) {
         const data = toolResult.data as {
           retrievalSource: "sqlite" | "index" | "manifest";
           warnings: string[];
-          hits: Array<{ soilId: string; title: string; summary?: string | null; snippet?: string; score?: number }>;
+          hits: GroundingSoilResult["hits"];
         };
         result = {
           retrievalSource: data.retrievalSource,
@@ -57,8 +77,12 @@ export const soilKnowledgeProvider: GroundingProvider = {
 
     const hits = result?.hits ?? [];
     context.runtime.set("soil_hit_count", hits.length);
-    const lines = hits.slice(0, context.profile.budgets.maxKnowledgeHits).map((hit) => {
-      const detail = [hit.summary, hit.snippet].filter(Boolean).join(" | ");
+    const admittedHits = hits.slice(0, context.profile.budgets.maxKnowledgeHits);
+    if (result?.retrievalSource === "sqlite" && defaultSqliteRootDir) {
+      await recordGroundingUsage(defaultSqliteRootDir, admittedHits.map((hit) => hit.recordId ?? ""));
+    }
+    const lines = admittedHits.map((hit) => {
+      const detail = [hit.summary, hit.snippet, usageSummary(hit)].filter(Boolean).join(" | ");
       return `- ${hit.title} (${hit.soilId})${detail ? `: ${detail}` : ""}`;
     });
     const warnings = result?.warnings ?? [];

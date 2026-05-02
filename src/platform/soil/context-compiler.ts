@@ -27,6 +27,7 @@ export interface SoilRouteTargetState {
 
 export interface SoilContextCompilerRepository {
   loadRecords: SoilSearchRepository["loadRecords"];
+  recordUsage?: (recordIds: string[], input?: { used_at?: string }) => Promise<void>;
 }
 
 export interface SoilContextCompilerInput {
@@ -200,6 +201,7 @@ function routeTargetStatesForRecords(records: SoilRecord[]): SoilRouteTargetStat
     );
     const representative = activeRecord ?? recordsForSoil[0];
     states.push({
+      recordId: representative?.record_id,
       soilId,
       isActive: Boolean(activeRecord),
       status: representative?.status,
@@ -299,7 +301,8 @@ function compileRouteItems(
       warnings.push(staleWarning);
     }
     for (const soilId of route.soil_ids) {
-      const rejectionReason = routeTargetRejectionReason(targetStates.get(routeTargetStateKey("soil", soilId)));
+      const targetState = targetStates.get(routeTargetStateKey("soil", soilId));
+      const rejectionReason = routeTargetRejectionReason(targetState);
       if (rejectionReason) {
         warnings.push(`Route ${route.route_id} target ${soilId} was rejected: ${rejectionReason}.`);
         decisions.push({
@@ -319,12 +322,12 @@ function compileRouteItems(
         reason: route.reason,
         score: null,
         soil_id: soilId,
-        record_id: null,
+        record_id: targetState?.recordId ?? null,
         route_id: route.route_id,
       });
       items.push({
         soilId,
-        recordId: null,
+        recordId: targetState?.recordId ?? null,
         routeId: route.route_id,
         source: "route",
         reason: route.reason,
@@ -552,11 +555,18 @@ export async function compileSoilContextFromRepository(
         soil_ids: soilIds,
       })
     : [];
-  return compileSoilContext({
+  const compiled = compileSoilContext({
     ...input,
     routeTargetStates: [
       ...(input.routeTargetStates ?? []),
       ...routeTargetStatesForRecords([...recordsById, ...recordsBySoilId]),
     ],
   });
+  const admittedRecordIds = [...new Set(compiled.items
+    .map((item) => item.recordId)
+    .filter((recordId): recordId is string => recordId !== null))];
+  if (admittedRecordIds.length > 0) {
+    await repository.recordUsage?.(admittedRecordIds, { used_at: compiled.trace.timestamp });
+  }
+  return compiled;
 }

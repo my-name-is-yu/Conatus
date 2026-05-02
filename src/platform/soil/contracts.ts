@@ -87,6 +87,17 @@ export const SoilMemoryLifecycleStateSchema = z.enum([
 ]);
 export type SoilMemoryLifecycleState = z.infer<typeof SoilMemoryLifecycleStateSchema>;
 
+export const SoilRecordUsageStatsSchema = z.object({
+  last_used_at: z.string().datetime().nullable().default(null),
+  use_count: z.number().int().nonnegative().default(0),
+  validated_count: z.number().int().nonnegative().default(0),
+  negative_outcome_count: z.number().int().nonnegative().default(0),
+}).strict();
+export type SoilRecordUsageStats = z.infer<typeof SoilRecordUsageStatsSchema>;
+
+export const SoilRecordOutcomeKindSchema = z.enum(["validated", "negative"]);
+export type SoilRecordOutcomeKind = z.infer<typeof SoilRecordOutcomeKindSchema>;
+
 export const SoilRecordSchema = z.object({
   record_id: z.string().min(1),
   record_key: z.string().min(1),
@@ -109,10 +120,15 @@ export const SoilRecordSchema = z.object({
   source_type: z.string().min(1),
   source_id: z.string().min(1),
   metadata_json: z.record(z.unknown()).default({}),
+  last_used_at: z.string().datetime().nullable().default(null),
+  use_count: z.number().int().nonnegative().default(0),
+  validated_count: z.number().int().nonnegative().default(0),
+  negative_outcome_count: z.number().int().nonnegative().default(0),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
 });
 export type SoilRecord = z.infer<typeof SoilRecordSchema>;
+export type SoilRecordInput = z.input<typeof SoilRecordSchema>;
 
 export const SoilChunkSchema = z.object({
   chunk_id: z.string().min(1),
@@ -360,6 +376,8 @@ export interface SoilWriteRepository {
   applyMutation(mutation: SoilMutationInput): Promise<void>;
   queueReindex(recordIds: string[], reason: string): Promise<void>;
   loadCorrections?(recordIds?: string[]): Promise<SoilCorrectionEntry[]>;
+  recordUsage?(recordIds: string[], input?: { used_at?: string }): Promise<void>;
+  recordOutcome?(recordIds: string[], input: { outcome: SoilRecordOutcomeKind; occurred_at?: string }): Promise<void>;
 }
 
 export interface SoilSearchRepository {

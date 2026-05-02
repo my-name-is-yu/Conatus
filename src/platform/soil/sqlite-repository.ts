@@ -13,6 +13,7 @@ import {
   type SoilPageMember,
   type SoilRecord,
   type SoilRecordFilterInput,
+  type SoilRecordOutcomeKind,
   type SoilRepository,
   type SoilSearchRequestInput,
   type SoilSearchResult,
@@ -30,13 +31,16 @@ import {
   initializeReadonlySoilSqlite,
   initializeSoilSqlite,
   loadOpenEmbeddingReindexRecordIds,
+  recordSoilOutcome,
+  recordSoilUsage,
   replaceSoilPageMembers,
 } from "./sqlite-repository-storage.js";
 
 export class SqliteSoilRepository implements SoilRepository {
   private constructor(
     private readonly db: SqliteDatabase,
-    readonly dbPath: string
+    readonly dbPath: string,
+    private readonly writable: boolean
   ) {}
 
   static async create(configInput: SoilConfigInput = {}): Promise<SqliteSoilRepository> {
@@ -45,7 +49,7 @@ export class SqliteSoilRepository implements SoilRepository {
     await fsp.mkdir(path.dirname(indexPath), { recursive: true });
     const db = new Database(indexPath);
     initializeSoilSqlite(db);
-    return new SqliteSoilRepository(db, indexPath);
+    return new SqliteSoilRepository(db, indexPath, true);
   }
 
   static async openExisting(configInput: SoilConfigInput = {}): Promise<SqliteSoilRepository | null> {
@@ -56,9 +60,15 @@ export class SqliteSoilRepository implements SoilRepository {
     } catch {
       return null;
     }
+    const migrationDb = new Database(indexPath);
+    try {
+      initializeSoilSqlite(migrationDb);
+    } finally {
+      migrationDb.close();
+    }
     const db = new Database(indexPath, { readonly: true, fileMustExist: true });
     initializeReadonlySoilSqlite(db);
-    return new SqliteSoilRepository(db, indexPath);
+    return new SqliteSoilRepository(db, indexPath, false);
   }
 
   close(): void {
@@ -100,6 +110,19 @@ export class SqliteSoilRepository implements SoilRepository {
       JSON.stringify({ record_ids: ids }),
       new Date().toISOString()
     );
+  }
+
+  async recordUsage(recordIds: string[], input: { used_at?: string } = {}): Promise<void> {
+    if (!this.writable) return;
+    recordSoilUsage(this.db, recordIds, input.used_at ?? new Date().toISOString());
+  }
+
+  async recordOutcome(
+    recordIds: string[],
+    input: { outcome: SoilRecordOutcomeKind; occurred_at?: string }
+  ): Promise<void> {
+    if (!this.writable) return;
+    recordSoilOutcome(this.db, recordIds, input.outcome, input.occurred_at ?? new Date().toISOString());
   }
 
   async loadCorrections(recordIds: string[] = []): Promise<SoilCorrectionEntry[]> {

@@ -18,6 +18,24 @@ import {
   unique,
 } from "./sqlite-repository-helpers.js";
 
+interface SoilUsageRow {
+  last_used_at: string | null;
+  use_count: number;
+  validated_count: number;
+  negative_outcome_count: number;
+}
+
+function usageStatsMetadata(row: SoilUsageRow): Record<string, unknown> {
+  return {
+    usage_stats: {
+      last_used_at: row.last_used_at,
+      use_count: row.use_count,
+      validated_count: row.validated_count,
+      negative_outcome_count: row.negative_outcome_count,
+    },
+  };
+}
+
 function hasExplicitMetadataFilter(request: SoilSearchRequest): boolean {
   const recordFilter = request.record_filter;
   const pageFilter = request.page_filter;
@@ -276,7 +294,10 @@ export function lookupDirectCandidates(db: SqliteDatabase, input: SoilSearchRequ
       score: 1,
       snippet: chunk ? buildSnippet(chunk.chunk_text, request.query) : row.summary ?? row.title,
       page_id,
-      metadata_json: parseJsonObject(row.metadata_json),
+      metadata_json: {
+        ...parseJsonObject(row.metadata_json),
+        ...usageStatsMetadata(row),
+      },
     });
   }
 
@@ -318,6 +339,10 @@ export function searchLexicalCandidates(db: SqliteDatabase, input: SoilSearchReq
       ${pageIdSql} AS page_id,
       r.title AS title,
       r.summary AS summary,
+      r.last_used_at AS last_used_at,
+      r.use_count AS use_count,
+      r.validated_count AS validated_count,
+      r.negative_outcome_count AS negative_outcome_count,
       sc.chunk_text AS chunk_text,
       bm25(soil_chunk_fts, 8.0, 5.0, 3.0, 1.0) AS score
     FROM soil_chunk_fts
@@ -333,6 +358,10 @@ export function searchLexicalCandidates(db: SqliteDatabase, input: SoilSearchReq
     page_id: string | null;
     title: string;
     summary: string | null;
+    last_used_at: string | null;
+    use_count: number;
+    validated_count: number;
+    negative_outcome_count: number;
     chunk_text: string;
     score: number;
   }>;
@@ -346,7 +375,7 @@ export function searchLexicalCandidates(db: SqliteDatabase, input: SoilSearchReq
     rank: index + 1,
     score: -1 * row.score,
     snippet: buildSnippet(row.chunk_text, request.query),
-    metadata_json: { title: row.title, summary: row.summary },
+    metadata_json: { title: row.title, summary: row.summary, ...usageStatsMetadata(row) },
   }));
   return dedupeCandidates(candidates, request.limit);
 }
@@ -404,6 +433,10 @@ export function searchDenseCandidates(
       sc.chunk_text,
       r.title,
       r.summary,
+      r.last_used_at,
+      r.use_count,
+      r.validated_count,
+      r.negative_outcome_count,
       ${pageIdSql} AS page_id
     FROM soil_embeddings se
     JOIN soil_chunks sc ON sc.chunk_id = se.chunk_id
@@ -416,7 +449,7 @@ export function searchDenseCandidates(
     title: string;
     summary: string | null;
     page_id: string | null;
-  }>;
+  } & SoilUsageRow>;
 
   const scored: Array<{ row: typeof rows[number]; similarity: number }> = [];
   for (const row of rows) {
@@ -439,7 +472,13 @@ export function searchDenseCandidates(
     rank: index + 1,
     score: similarity,
     snippet: buildSnippet(row.chunk_text, request.query),
-    metadata_json: { model: row.model, embedding_version: row.embedding_version, title: row.title, summary: row.summary },
+    metadata_json: {
+      model: row.model,
+      embedding_version: row.embedding_version,
+      title: row.title,
+      summary: row.summary,
+      ...usageStatsMetadata(row),
+    },
   }));
   return dedupeCandidates(candidates, request.limit);
 }

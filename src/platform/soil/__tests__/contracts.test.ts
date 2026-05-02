@@ -52,6 +52,28 @@ describe("soil contracts", () => {
     expect(parsed.supersedes_record_id).toBe("rec-0");
   });
 
+  it("defaults record usage and outcome statistics for existing records", () => {
+    const parsed = SoilRecordSchema.parse({
+      record_id: "rec-legacy",
+      record_key: "user.preference.legacy",
+      version: 1,
+      record_type: "preference",
+      soil_id: "identity/preferences/legacy",
+      title: "Legacy preference",
+      canonical_text: "Legacy records did not carry usage counters.",
+      status: "active",
+      source_type: "agent_memory",
+      source_id: "legacy-memory",
+      created_at: "2026-04-12T00:00:00.000Z",
+      updated_at: "2026-04-12T00:00:00.000Z",
+    });
+
+    expect(parsed.last_used_at).toBeNull();
+    expect(parsed.use_count).toBe(0);
+    expect(parsed.validated_count).toBe(0);
+    expect(parsed.negative_outcome_count).toBe(0);
+  });
+
   it("parses a page without embedding truth into projection metadata", () => {
     const parsed = SoilPageSchema.parse({
       page_id: "page-1",

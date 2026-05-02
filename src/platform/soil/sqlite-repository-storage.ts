@@ -7,6 +7,7 @@ import {
   SoilCorrectionEntrySchema,
   type SoilMutationInput,
   type SoilPageMember,
+  type SoilRecordOutcomeKind,
 } from "./contracts.js";
 import {
   encodeEmbedding,
@@ -21,10 +22,28 @@ export function initializeSoilSqlite(db: SqliteDatabase): void {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SOIL_SCHEMA_SQL);
+  ensureSoilRecordUsageColumns(db);
 }
 
 export function initializeReadonlySoilSqlite(db: SqliteDatabase): void {
   db.pragma("query_only = ON");
+}
+
+function ensureSoilRecordUsageColumns(db: SqliteDatabase): void {
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(soil_records)").all() as Array<{ name: string }>).map((column) => column.name)
+  );
+  const additions = [
+    ["last_used_at", "TEXT"],
+    ["use_count", "INTEGER NOT NULL DEFAULT 0 CHECK (use_count >= 0)"],
+    ["validated_count", "INTEGER NOT NULL DEFAULT 0 CHECK (validated_count >= 0)"],
+    ["negative_outcome_count", "INTEGER NOT NULL DEFAULT 0 CHECK (negative_outcome_count >= 0)"],
+  ] as const;
+  for (const [column, definition] of additions) {
+    if (!columns.has(column)) {
+      db.prepare(`ALTER TABLE soil_records ADD COLUMN ${column} ${definition}`).run();
+    }
+  }
 }
 
 export function applySoilMutation(db: SqliteDatabase, input: SoilMutationInput): void {
@@ -45,12 +64,14 @@ export function applySoilMutation(db: SqliteDatabase, input: SoilMutationInput):
           record_id, record_key, version, record_type, soil_id, title, summary, canonical_text,
           goal_id, task_id, status, confidence, importance, source_reliability,
           valid_from, valid_to, supersedes_record_id, is_active, source_type, source_id,
-          metadata_json, created_at, updated_at
+          metadata_json, last_used_at, use_count, validated_count, negative_outcome_count,
+          created_at, updated_at
         ) VALUES (
           @record_id, @record_key, @version, @record_type, @soil_id, @title, @summary, @canonical_text,
           @goal_id, @task_id, @status, @confidence, @importance, @source_reliability,
           @valid_from, @valid_to, @supersedes_record_id, @is_active, @source_type, @source_id,
-          @metadata_json, @created_at, @updated_at
+          @metadata_json, @last_used_at, @use_count, @validated_count, @negative_outcome_count,
+          @created_at, @updated_at
         )
         ON CONFLICT(record_id) DO UPDATE SET
           record_key = excluded.record_key,
@@ -73,12 +94,25 @@ export function applySoilMutation(db: SqliteDatabase, input: SoilMutationInput):
           source_type = excluded.source_type,
           source_id = excluded.source_id,
           metadata_json = excluded.metadata_json,
+          last_used_at = CASE
+            WHEN soil_records.last_used_at IS NULL THEN excluded.last_used_at
+            WHEN excluded.last_used_at IS NULL THEN soil_records.last_used_at
+            WHEN excluded.last_used_at > soil_records.last_used_at THEN excluded.last_used_at
+            ELSE soil_records.last_used_at
+          END,
+          use_count = MAX(soil_records.use_count, excluded.use_count),
+          validated_count = MAX(soil_records.validated_count, excluded.validated_count),
+          negative_outcome_count = MAX(soil_records.negative_outcome_count, excluded.negative_outcome_count),
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
       `).run({
         ...record,
         is_active: record.is_active ? 1 : 0,
         metadata_json: serializeJson(record.metadata_json),
+        last_used_at: record.last_used_at,
+        use_count: record.use_count,
+        validated_count: record.validated_count,
+        negative_outcome_count: record.negative_outcome_count,
       });
       contentMutatedRecordIds.add(record.record_id);
     }
@@ -281,6 +315,54 @@ export function applySoilMutation(db: SqliteDatabase, input: SoilMutationInput):
     }
   });
 
+  tx();
+}
+
+export function recordSoilUsage(db: SqliteDatabase, recordIds: string[], usedAt: string): void {
+  const ids = unique(recordIds);
+  if (ids.length === 0) return;
+  const tx = db.transaction(() => {
+    for (const recordId of ids) {
+      db.prepare(`
+        UPDATE soil_records
+        SET
+          last_used_at = CASE
+            WHEN last_used_at IS NULL OR ? > last_used_at THEN ?
+            ELSE last_used_at
+          END,
+          use_count = use_count + 1
+        WHERE record_id = ?
+      `).run(usedAt, usedAt, recordId);
+    }
+  });
+  tx();
+}
+
+export function recordSoilOutcome(
+  db: SqliteDatabase,
+  recordIds: string[],
+  outcome: SoilRecordOutcomeKind,
+  occurredAt: string
+): void {
+  const ids = unique(recordIds);
+  if (ids.length === 0) return;
+  const validatedIncrement = outcome === "validated" ? 1 : 0;
+  const negativeIncrement = outcome === "negative" ? 1 : 0;
+  const tx = db.transaction(() => {
+    for (const recordId of ids) {
+      db.prepare(`
+        UPDATE soil_records
+        SET
+          validated_count = validated_count + ?,
+          negative_outcome_count = negative_outcome_count + ?,
+          updated_at = CASE
+            WHEN ? > updated_at THEN ?
+            ELSE updated_at
+          END
+        WHERE record_id = ?
+      `).run(validatedIncrement, negativeIncrement, occurredAt, occurredAt, recordId);
+    }
+  });
   tx();
 }
 

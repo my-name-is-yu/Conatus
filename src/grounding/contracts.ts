@@ -116,11 +116,18 @@ export interface GroundingMessage {
 }
 
 export interface GroundingSoilHit {
+  recordId?: string;
   soilId: string;
   title: string;
   summary?: string | null;
   snippet?: string;
   score?: number;
+  usageStats?: {
+    last_used_at: string | null;
+    use_count: number;
+    validated_count: number;
+    negative_outcome_count: number;
+  };
 }
 
 export interface GroundingSoilResult {

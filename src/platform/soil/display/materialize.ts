@@ -32,6 +32,10 @@ interface SoilRecordRow {
   source_type: string;
   source_id: string;
   metadata_json: string;
+  last_used_at: string | null;
+  use_count: number;
+  validated_count: number;
+  negative_outcome_count: number;
   created_at: string;
   updated_at: string;
 }
