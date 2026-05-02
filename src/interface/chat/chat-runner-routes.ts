@@ -113,10 +113,15 @@ export async function executeAgentLoopRoute(
     const resumeState = resumeOnly ? await loadResumableAgentLoopState(host) : null;
     if (resumeOnly && !resumeState) {
       const elapsed_ms = Date.now() - start;
-      const output = host.eventBridge.emitLifecycleErrorEvent(
+      const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
         "No resumable native agentloop state found.",
         assistantBuffer.text,
-        eventContext
+        eventContext,
+        {
+          code: "resume_state_missing",
+          stoppedReason: "resume_state_missing",
+        },
+        host.deps.llmClient
       );
       host.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
       return {
@@ -180,7 +185,16 @@ export async function executeAgentLoopRoute(
       });
       host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
     } else {
-      result.output = host.eventBridge.emitLifecycleErrorEvent(result.output || result.error || "Unknown error", assistantBuffer.text, eventContext);
+      result.output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
+        result.output || result.error || "Unknown error",
+        assistantBuffer.text,
+        eventContext,
+        {
+          stoppedReason: result.stopped_reason,
+          agentLoopStopReason: result.agentLoop?.stopReason,
+        },
+        host.deps.llmClient
+      );
       host.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
     }
     return {
@@ -190,7 +204,13 @@ export async function executeAgentLoopRoute(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const output = host.eventBridge.emitLifecycleErrorEvent(message, assistantBuffer.text, eventContext);
+    const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
+      message,
+      assistantBuffer.text,
+      eventContext,
+      {},
+      host.deps.llmClient
+    );
     host.eventBridge.emitLifecycleEndEvent("error", Date.now() - start, eventContext, false);
     return {
       success: false,
@@ -247,7 +267,13 @@ export async function executeToolLoopRoute(
     return { success: true, output: toolResult.output, elapsed_ms };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const output = host.eventBridge.emitLifecycleErrorEvent(message, params.assistantBuffer.text, params.eventContext);
+    const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
+      message,
+      params.assistantBuffer.text,
+      params.eventContext,
+      {},
+      host.deps.llmClient
+    );
     host.eventBridge.emitLifecycleEndEvent("error", Date.now() - params.start, params.eventContext, false);
     return {
       success: false,
@@ -292,7 +318,13 @@ export async function executeAdapterRoute(
     result = await Promise.race([adapterPromise, timeoutPromise]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const output = host.eventBridge.emitLifecycleErrorEvent(message, params.assistantBuffer.text, params.eventContext);
+    const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
+      message,
+      params.assistantBuffer.text,
+      params.eventContext,
+      {},
+      host.deps.llmClient
+    );
     const timeoutElapsedMs = Date.now() - params.start;
     host.eventBridge.emitLifecycleEndEvent("error", timeoutElapsedMs, params.eventContext, false);
     return {
@@ -337,10 +369,15 @@ export async function executeAdapterRoute(
         host.eventBridge.emitDiffArtifact(finalDiffArtifact, params.eventContext);
       }
       host.eventBridge.emitCheckpoint("Verification failed", `Checks are still failing after ${MAX_VERIFY_RETRIES} retries.`, params.eventContext, "verification");
-      const failureOutput = host.eventBridge.emitLifecycleErrorEvent(
+      const failureOutput = await host.eventBridge.emitLifecycleErrorEventWithFallback(
         `Changes applied but tests are still failing after ${MAX_VERIFY_RETRIES} retries.`,
         params.assistantBuffer.text,
-        params.eventContext
+        params.eventContext,
+        {
+          code: "verification_failed",
+          signals: [{ kind: "verification", status: "failed" }],
+        },
+        host.deps.llmClient
       );
       host.eventBridge.emitLifecycleEndEvent("error", Date.now() - params.start, params.eventContext, false);
       return {
@@ -369,7 +406,20 @@ export async function executeAdapterRoute(
     host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, params.eventContext, true);
   } else {
     const partialText = params.assistantBuffer.text !== result.output ? params.assistantBuffer.text : "";
-    result.output = host.eventBridge.emitLifecycleErrorEvent(result.output || result.error || "Unknown error", partialText, params.eventContext);
+    result.output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
+      result.output || result.error || "Unknown error",
+      partialText,
+      params.eventContext,
+      {
+        stoppedReason: result.stopped_reason,
+        signals: [{
+          kind: "adapter",
+          adapterType: host.deps.adapter.adapterType,
+          stoppedReason: result.stopped_reason,
+        }],
+      },
+      host.deps.llmClient
+    );
     host.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, params.eventContext, false);
   }
 

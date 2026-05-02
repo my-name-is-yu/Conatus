@@ -456,7 +456,19 @@ export class ChatRunner {
         });
         this.eventBridge.emitLifecycleEndEvent("completed", runtimeControlResult.elapsed_ms, eventContext, true);
       } else {
-        runtimeControlResult.output = this.eventBridge.emitLifecycleErrorEvent(runtimeControlResult.output, assistantBuffer.text, eventContext);
+        runtimeControlResult.output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
+          runtimeControlResult.output,
+          assistantBuffer.text,
+          eventContext,
+          {
+            signals: [{
+              kind: "runtime",
+              operationState: "runtime_control",
+              stoppedReason: "runtime_control_failed",
+            }],
+          },
+          this.deps.llmClient
+        );
         this.eventBridge.emitLifecycleEndEvent("error", runtimeControlResult.elapsed_ms, eventContext, false);
       }
       return runtimeControlResult;
@@ -514,10 +526,15 @@ export class ChatRunner {
 
     if (resumeOnly && !this.deps.chatAgentLoopRunner) {
       const elapsed_ms = Date.now() - start;
-      const output = this.eventBridge.emitLifecycleErrorEvent(
+      const output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
         "Resume requires the native chat agentloop runtime.",
         assistantBuffer.text,
-        eventContext
+        eventContext,
+        {
+          code: "resume_state_missing",
+          stoppedReason: "resume_state_missing",
+        },
+        this.deps.llmClient
       );
       this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
       return { success: false, output, elapsed_ms };
@@ -555,7 +572,13 @@ export class ChatRunner {
 
     if (!resumeOnly && selectedRoute && selectedRoute.kind !== "adapter") {
       const elapsed_ms = Date.now() - start;
-      const output = this.eventBridge.emitLifecycleErrorEvent(`Unsupported chat route: ${selectedRoute.kind}`, assistantBuffer.text, eventContext);
+      const output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
+        `Unsupported chat route: ${selectedRoute.kind}`,
+        assistantBuffer.text,
+        eventContext,
+        {},
+        this.deps.llmClient
+      );
       this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
       return { success: false, output, elapsed_ms };
     }

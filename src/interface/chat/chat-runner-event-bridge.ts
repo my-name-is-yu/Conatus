@@ -10,7 +10,14 @@ import {
   previewActivityText,
   type GitDiffArtifact,
 } from "./chat-runner-support.js";
-import { classifyFailureRecovery, formatLifecycleFailureMessage } from "./failure-recovery.js";
+import {
+  classifyFailureRecovery,
+  classifyFailureRecoveryWithFallback,
+  formatLifecycleFailureMessage,
+  type FailureRecoveryEvidence,
+  type FailureRecoverySignal,
+} from "./failure-recovery.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 
 export interface AssistantBuffer {
   text: string;
@@ -24,6 +31,7 @@ export interface ActiveChatTurn {
   finished: Promise<void>;
   resolveFinished: () => void;
   recentEvents: string[];
+  recentFailureSignals: FailureRecoverySignal[];
   interruptRequested: boolean;
 }
 
@@ -66,6 +74,7 @@ export class ChatRunnerEventBridge {
       finished,
       resolveFinished,
       recentEvents: [],
+      recentFailureSignals: [],
       interruptRequested: false,
     };
     this.activeTurn = turn;
@@ -133,6 +142,18 @@ export class ChatRunnerEventBridge {
         }
 
         if (event.type === "tool_call_finished") {
+          if (!event.success) {
+            this.rememberActiveTurnFailureSignal(eventContext, {
+              kind: "tool",
+              toolName: event.toolName,
+              status: event.disposition === "cancelled"
+                ? "cancelled"
+                : event.disposition === "approval_denied"
+                  ? "approval_denied"
+                  : "failed",
+              ...(event.disposition ? { disposition: event.disposition } : {}),
+            });
+          }
           this.emitActivity(
             "tool",
             formatToolActivity(event.success ? "Finished" : "Failed", event.toolName, event.outputPreview),
@@ -171,6 +192,13 @@ export class ChatRunnerEventBridge {
         }
 
         if (event.type === "approval_request") {
+          this.rememberActiveTurnFailureSignal(eventContext, {
+            kind: "approval",
+            status: "requested",
+            toolName: event.toolName,
+            permissionLevel: event.permissionLevel,
+            isDestructive: event.isDestructive,
+          });
           this.emitActivity("tool", formatToolActivity("Running", event.toolName, `awaiting approval: ${event.reason}`), eventContext, event.callId);
           this.emitCheckpoint("Approval requested", `${event.toolName}: ${event.reason}`, eventContext, `approval:${event.callId}`);
           this.emitEvent({
@@ -185,6 +213,11 @@ export class ChatRunnerEventBridge {
         }
 
         if (event.type === "approval") {
+          this.rememberActiveTurnFailureSignal(eventContext, {
+            kind: "approval",
+            status: event.status,
+            toolName: event.toolName,
+          });
           this.emitActivity("tool", formatToolActivity("Finished", event.toolName, `approval ${event.status}: ${event.reason}`), eventContext);
           this.emitEvent({
             type: "tool_update",
@@ -217,6 +250,14 @@ export class ChatRunnerEventBridge {
             status: "result",
             message: `${event.phase} ${event.reason}: ${event.inputMessages} -> ${event.outputMessages}`,
             ...this.eventBase(eventContext),
+          });
+        }
+
+        if (event.type === "stopped") {
+          this.rememberActiveTurnFailureSignal(eventContext, {
+            kind: "runtime",
+            stoppedReason: event.reason,
+            operationState: "agent_loop",
           });
         }
       },
@@ -346,9 +387,10 @@ export class ChatRunnerEventBridge {
   emitLifecycleErrorEvent(
     error: string,
     partialText: string,
-    eventContext: ChatEventContext
+    eventContext: ChatEventContext,
+    evidence: FailureRecoveryEvidence = {}
   ): string {
-    const recovery = classifyFailureRecovery(error);
+    const recovery = classifyFailureRecovery(this.buildFailureRecoveryEvidence(error, eventContext, evidence));
     this.emitEvent({
       type: "lifecycle_error",
       error,
@@ -358,6 +400,55 @@ export class ChatRunnerEventBridge {
       ...this.eventBase(eventContext),
     });
     return formatLifecycleFailureMessage(error, partialText, recovery);
+  }
+
+  async emitLifecycleErrorEventWithFallback(
+    error: string,
+    partialText: string,
+    eventContext: ChatEventContext,
+    evidence: FailureRecoveryEvidence = {},
+    llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">
+  ): Promise<string> {
+    const recovery = await classifyFailureRecoveryWithFallback(
+      this.buildFailureRecoveryEvidence(error, eventContext, evidence),
+      llmClient
+    );
+    this.emitEvent({
+      type: "lifecycle_error",
+      error,
+      partialText,
+      persisted: false,
+      recovery,
+      ...this.eventBase(eventContext),
+    });
+    return formatLifecycleFailureMessage(error, partialText, recovery);
+  }
+
+  private buildFailureRecoveryEvidence(
+    error: string,
+    eventContext: ChatEventContext,
+    evidence: FailureRecoveryEvidence
+  ): FailureRecoveryEvidence {
+    return {
+      ...evidence,
+      error,
+      signals: [
+        ...this.collectActiveTurnFailureSignals(eventContext),
+        ...(evidence.signals ?? []),
+      ],
+    };
+  }
+
+  private rememberActiveTurnFailureSignal(eventContext: ChatEventContext, signal: FailureRecoverySignal): void {
+    const activeTurn = this.activeTurn;
+    if (!activeTurn || activeTurn.context.turnId !== eventContext.turnId) return;
+    activeTurn.recentFailureSignals = [...activeTurn.recentFailureSignals, signal].slice(-12);
+  }
+
+  private collectActiveTurnFailureSignals(eventContext: ChatEventContext): FailureRecoverySignal[] {
+    const activeTurn = this.activeTurn;
+    if (!activeTurn || activeTurn.context.turnId !== eventContext.turnId) return [];
+    return activeTurn.recentFailureSignals;
   }
 
   private rememberActiveTurnEvent(event: ChatEvent): void {
