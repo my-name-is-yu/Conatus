@@ -1,0 +1,30 @@
+name: Lifelong Agent Eval
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 18 * * *"
+
+jobs:
+  lifelong-agent-eval:
+    name: lifelong-agent-eval (24)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "npm"
+      - run: npm ci
+      - run: npm run build
+      - name: Run lifelong agent eval
+        env:
+          PULSEED_LIFELONG_EVAL_ARTIFACT: tmp/lifelong-agent-memory-profile-eval.json
+        run: npm run test:lifelong-agent-eval
+      - name: Upload lifelong agent eval artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lifelong-agent-memory-profile-eval
+          path: tmp/lifelong-agent-memory-profile-eval.json
+          if-no-files-found: error

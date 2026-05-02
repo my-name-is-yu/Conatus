@@ -56,7 +56,7 @@ jobs:
           fi
 
           git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > /tmp/changed-files.txt
-          if grep -E '^(src/runtime/|src/platform/(soil|dream)/|src/orchestrator/loop/|tests/slow/|vitest\.runtime-long-run\.config\.ts|package(-lock)?\.json|\.github/workflows/ci\.yml)' /tmp/changed-files.txt; then
+          if grep -E '^(src/runtime/|src/platform/(soil|dream|profile|knowledge|corrections)/|src/base/config/|src/orchestrator/loop/|tests/slow/|vitest\.runtime-long-run\.config\.ts|package(-lock)?\.json|\.github/workflows/ci\.yml|\.github/workflows/lifelong-agent-eval\.yml)' /tmp/changed-files.txt; then
             echo "run_long_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run_long_run=false" >> "$GITHUB_OUTPUT"
@@ -76,6 +76,13 @@ jobs:
       - name: Run runtime long-run degradation tests
         if: ${{ steps.changes.outputs.run_long_run == 'true' }}
         run: npm run test:runtime-long-run
+      - name: Upload slow eval artifacts
+        if: ${{ steps.changes.outputs.run_long_run == 'true' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: slow-eval-artifacts
+          path: tmp/*eval*.json
+          if-no-files-found: warn
       - name: Skip runtime long-run degradation tests
         if: ${{ steps.changes.outputs.run_long_run != 'true' }}
         run: echo "No runtime/evidence/soil/Dream long-run relevant changes detected."
