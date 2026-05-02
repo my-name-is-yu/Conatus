@@ -226,7 +226,16 @@ export class ChatRunner {
     }
 
     const start = Date.now();
-    const redirect = classifyInterruptRedirect(input);
+    const redirect = await classifyInterruptRedirect(input, {
+      llmClient: this.deps.llmClient,
+      cwd: activeTurn.cwd,
+      activeTurnStartedAt: new Date(activeTurn.startedAt).toISOString(),
+      recentEvents: activeTurn.recentEvents,
+      sessionId: this.getSessionId(),
+    });
+    if (this.eventBridge.getActiveTurn() !== activeTurn) {
+      return this.execute(input, cwd, timeoutMs);
+    }
     if (redirect === "background") {
       return this.eventBridge.emitEphemeralAssistantResult(input, [
         "Continuing this same turn in the background is not available yet.",

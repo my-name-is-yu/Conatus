@@ -58,6 +58,45 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   };
 }
 
+function interruptDecision(kind: "diff" | "review" | "summary" | "background" | "redirect" | "unknown", confidence = 0.93): string {
+  return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
+}
+
+function makeInterruptibleAgentLoopRunner() {
+  let capturedSignal: AbortSignal | undefined;
+  let resolveActive: ((value: AgentResult) => void) | undefined;
+  const runner = {
+    execute: vi.fn().mockImplementation((input: { abortSignal?: AbortSignal }) => {
+      capturedSignal = input.abortSignal;
+      return new Promise<AgentResult>((resolve) => {
+        resolveActive = resolve;
+        input.abortSignal?.addEventListener("abort", () => {
+          resolve({
+            success: false,
+            output: "cancelled",
+            error: "cancelled",
+            exit_code: null,
+            elapsed_ms: 10,
+            stopped_reason: "error",
+          });
+        }, { once: true });
+      });
+    }),
+  } as unknown as ChatAgentLoopRunner;
+  return {
+    runner,
+    getSignal: () => capturedSignal,
+    resolveActive: (result: AgentResult = {
+      success: false,
+      output: "cancelled by test",
+      error: null,
+      exit_code: null,
+      elapsed_ms: 1,
+      stopped_reason: "error",
+    }) => resolveActive?.(result),
+  };
+}
+
 function makeAgentLoopState(overrides: Partial<{
   sessionId: string;
   status: "running" | "completed" | "failed";
@@ -2515,49 +2554,170 @@ describe("ChatRunner", () => {
     });
 
     it("does not abort the active turn for unsupported background redirect requests", async () => {
-      let capturedSignal: AbortSignal | undefined;
-      let resolveActive: ((value: {
-        success: boolean;
-        output: string;
-        error: null;
-        exit_code: null;
-        elapsed_ms: number;
-        stopped_reason: string;
-      }) => void) | undefined;
-      const chatAgentLoopRunner = {
-        execute: vi.fn().mockImplementation((input: { abortSignal?: AbortSignal }) => {
-          capturedSignal = input.abortSignal;
-          return new Promise((resolve) => {
-            resolveActive = resolve;
+      const interruptible = makeInterruptibleAgentLoopRunner();
+      const runner = new ChatRunner(makeDeps({
+        stateManager: makeMockStateManager(),
+        chatAgentLoopRunner: interruptible.runner,
+        llmClient: createSingleMockLLMClient(interruptDecision("background")),
+      }));
+      runner.startSession("/repo");
+
+      const active = runner.execute("Implement a feature", "/repo");
+      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+
+      const redirected = await runner.interruptAndRedirect("continúa esto en segundo plano", "/repo");
+
+      expect(interruptible.getSignal()?.aborted).toBe(false);
+      expect(redirected.success).toBe(true);
+      expect(redirected.output).toContain("background is not available yet");
+      expect(runner.hasActiveTurn()).toBe(true);
+
+      interruptible.resolveActive();
+      await active;
+      expect(runner.hasActiveTurn()).toBe(false);
+    });
+
+    it("uses structured interrupt intent classification for multilingual diff redirects", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-interrupt-diff-"));
+      try {
+        execFileSync("git", ["init"], { cwd: tmpDir, stdio: "ignore" });
+        fs.writeFileSync(path.join(tmpDir, "changed.txt"), "hello\n");
+        const interruptible = makeInterruptibleAgentLoopRunner();
+        const runner = new ChatRunner(makeDeps({
+          stateManager: makeMockStateManager(),
+          chatAgentLoopRunner: interruptible.runner,
+          llmClient: createSingleMockLLMClient(interruptDecision("diff")),
+        }));
+        runner.startSession(tmpDir);
+
+        const active = runner.execute("Implement a feature", tmpDir);
+        await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+
+        const interrupted = await runner.interruptAndRedirect("変更点を見せてから止めて", tmpDir);
+
+        expect(interruptible.getSignal()?.aborted).toBe(true);
+        expect(interrupted.output).toContain("Current diff is shown above");
+        await active;
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("uses structured interrupt intent classification for multilingual review redirects", async () => {
+      const interruptible = makeInterruptibleAgentLoopRunner();
+      const reviewAgentLoopRunner = {
+        execute: vi.fn(async () => ({ success: true, output: "read-only review result", review: null })),
+      };
+      const runner = new ChatRunner(makeDeps({
+        stateManager: makeMockStateManager(),
+        chatAgentLoopRunner: interruptible.runner,
+        reviewAgentLoopRunner,
+        llmClient: createSingleMockLLMClient(interruptDecision("review")),
+      }));
+      runner.startSession("/repo");
+
+      const active = runner.execute("Implement a feature", "/repo");
+      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+
+      const interrupted = await runner.interruptAndRedirect("passe en revue sans modifier", "/repo");
+
+      expect(interruptible.getSignal()?.aborted).toBe(true);
+      expect(reviewAgentLoopRunner.execute).toHaveBeenCalledOnce();
+      expect(interrupted.output).toContain("review-only mode");
+      expect(interrupted.output).toContain("read-only review result");
+      await active;
+    });
+
+    it("uses structured interrupt intent classification for multilingual summary redirects", async () => {
+      const interruptible = makeInterruptibleAgentLoopRunner();
+      const runner = new ChatRunner(makeDeps({
+        stateManager: makeMockStateManager(),
+        chatAgentLoopRunner: interruptible.runner,
+        llmClient: createSingleMockLLMClient(interruptDecision("summary")),
+      }));
+      runner.startSession("/repo");
+
+      const active = runner.execute("Implement a feature", "/repo");
+      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+
+      const interrupted = await runner.interruptAndRedirect("bitte kurz zusammenfassen und stoppen", "/repo");
+
+      expect(interruptible.getSignal()?.aborted).toBe(true);
+      expect(interrupted.output).toContain("Interrupted the active turn");
+      expect(interrupted.output).toContain("Recent activity");
+      await active;
+    });
+
+    it("falls back to safe summary interruption for ambiguous interrupt text without keyword fallback", async () => {
+      const interruptible = makeInterruptibleAgentLoopRunner();
+      const runner = new ChatRunner(makeDeps({
+        stateManager: makeMockStateManager(),
+        chatAgentLoopRunner: interruptible.runner,
+        llmClient: createSingleMockLLMClient(interruptDecision("unknown", 0.3)),
+      }));
+      runner.startSession("/repo");
+
+      const active = runner.execute("Implement a feature", "/repo");
+      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+
+      const interrupted = await runner.interruptAndRedirect("looks good maybe", "/repo");
+
+      expect(interruptible.getSignal()?.aborted).toBe(true);
+      expect(interrupted.output).toContain("Interrupted the active turn");
+      expect(interrupted.output).not.toContain("background is not available yet");
+      await active;
+    });
+
+    it("does not apply stale interrupt classification after the active turn finishes", async () => {
+      let releaseClassification!: () => void;
+      const llmClient = {
+        sendMessage: vi.fn(async () => {
+          await new Promise<void>((resolve) => {
+            releaseClassification = resolve;
           });
+          return {
+            content: interruptDecision("diff"),
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "end_turn" as const,
+          };
         }),
+        parseJSON: createSingleMockLLMClient(interruptDecision("diff")).parseJSON,
+      };
+      let finishActive!: () => void;
+      const chatAgentLoopRunner = {
+        execute: vi.fn()
+          .mockImplementationOnce(() => new Promise<AgentResult>((resolve) => {
+            finishActive = () => resolve(CANNED_RESULT);
+          }))
+          .mockResolvedValueOnce({
+            success: true,
+            output: "fresh request executed",
+            error: null,
+            exit_code: 0,
+            elapsed_ms: 5,
+            stopped_reason: "completed",
+          } satisfies AgentResult),
       } as unknown as ChatAgentLoopRunner;
       const runner = new ChatRunner(makeDeps({
         stateManager: makeMockStateManager(),
         chatAgentLoopRunner,
+        llmClient: llmClient as never,
       }));
       runner.startSession("/repo");
 
       const active = runner.execute("Implement a feature", "/repo");
       await vi.waitFor(() => expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce());
-
-      const redirected = await runner.interruptAndRedirect("continue in background", "/repo");
-
-      expect(capturedSignal?.aborted).toBe(false);
-      expect(redirected.success).toBe(true);
-      expect(redirected.output).toContain("background is not available yet");
-      expect(runner.hasActiveTurn()).toBe(true);
-
-      resolveActive?.({
-        success: false,
-        output: "cancelled by test",
-        error: null,
-        exit_code: null,
-        elapsed_ms: 1,
-        stopped_reason: "error",
-      });
+      const redirected = runner.interruptAndRedirect("muéstrame los cambios", "/repo");
+      await vi.waitFor(() => expect(llmClient.sendMessage).toHaveBeenCalledOnce());
+      finishActive();
       await active;
-      expect(runner.hasActiveTurn()).toBe(false);
+      releaseClassification();
+
+      await expect(redirected).resolves.toMatchObject({
+        success: true,
+        output: "fresh request executed",
+      });
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledTimes(2);
     });
 
     it("grounds native chat agentloop through systemPrompt instead of injecting workspace context into the message", async () => {
