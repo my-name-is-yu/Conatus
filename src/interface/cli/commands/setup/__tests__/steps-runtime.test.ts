@@ -7,6 +7,7 @@ import {
   getSelfIdentityResponseForBaseDir,
   loadIdentityFromBaseDir,
 } from "../../../../../base/config/identity-loader.js";
+import { loadRelationshipProfile, seedRelationshipProfileFromSetup } from "../../../../../platform/profile/relationship-profile.js";
 import { renderSeedMd, writeSeedMd } from "../steps-runtime.js";
 
 const tempDirs: string[] = [];
@@ -46,5 +47,23 @@ describe("setup runtime identity files", () => {
     expect(slot).toContain("SEED.md is the canonical local setup file");
     expect(slot).toContain("Active agent name: Sprout");
     expect(response).toContain("私はSproutです");
+  });
+
+  it("seeds a versioned relationship profile without replacing USER.md compatibility", async () => {
+    const dir = makeTempDir();
+    fs.writeFileSync(path.join(dir, "USER.md"), "# About You\n\nName: Yu\n", "utf-8");
+
+    await seedRelationshipProfileFromSetup({
+      baseDir: dir,
+      userName: "Yu",
+      now: "2026-05-02T00:00:00.000Z",
+    });
+
+    const identity = loadIdentityFromBaseDir(dir);
+    const profile = await loadRelationshipProfile(dir);
+    expect(identity.user).toContain("Name: Yu");
+    expect(profile.items).toHaveLength(1);
+    expect(profile.items[0]?.stable_key).toBe("user.identity.name");
+    expect(profile.items[0]?.allowed_scopes).toContain("resident_behavior");
   });
 });

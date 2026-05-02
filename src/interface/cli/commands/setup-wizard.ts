@@ -10,6 +10,7 @@ import {
 } from "../../../base/llm/provider-config.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
+import { seedRelationshipProfileFromSetup } from "../../../platform/profile/relationship-profile.js";
 import { updateGlobalConfig } from "../../../base/config/global-config.js";
 import { readCodexOAuthToken } from "../../../base/llm/provider-config.js";
 import { isDaemonRunning } from "../../../runtime/daemon/client.js";
@@ -702,6 +703,15 @@ export async function runSetupWizard(): Promise<number> {
     writeUserMd(dir, finalAnswers.userName, finalAnswers.importedUserContent);
   } else {
     writeUserMd(dir, finalAnswers.userName);
+  }
+  try {
+    await seedRelationshipProfileFromSetup({
+      baseDir: dir,
+      userName: finalAnswers.userName,
+      importedUserContent: finalAnswers.importedUserContent,
+    });
+  } catch (err) {
+    p.log.warn(`Setup saved, but could not seed relationship profile: ${err instanceof Error ? err.message : String(err)}`);
   }
   clearIdentityCache();
 

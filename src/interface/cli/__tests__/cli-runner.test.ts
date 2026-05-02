@@ -1390,6 +1390,76 @@ describe("ANTHROPIC_API_KEY", async () => {
   });
 });
 
+describe("profile command", () => {
+  it("updates and shows relationship profile items through the production CLI entrypoint", async () => {
+    const updateCode = await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "preference",
+      "--key",
+      "user.preference.status",
+      "--value",
+      "Prefer concise status reports.",
+      "--scope",
+      "local_planning",
+      "--scope",
+      "resident_behavior",
+      "--confidence",
+      "0.9"
+    );
+    expect(updateCode).toBe(0);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const showCode = await runCLI("profile", "show", "--scope", "resident_behavior");
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    consoleSpy.mockRestore();
+
+    expect(showCode).toBe(0);
+    expect(output).toContain("user.preference.status");
+    expect(output).toContain("Prefer concise status reports.");
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "relationship-profile.json"), "utf-8")).items).toHaveLength(1);
+  });
+
+  it("supersedes stale profile values on update", async () => {
+    await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "boundary",
+      "--key",
+      "user.boundary.notifications",
+      "--value",
+      "Notify freely.",
+      "--scope",
+      "resident_behavior"
+    );
+    await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "boundary",
+      "--key",
+      "user.boundary.notifications",
+      "--value",
+      "Ask before non-urgent notifications.",
+      "--scope",
+      "resident_behavior",
+      "--source",
+      "user_correction"
+    );
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const showCode = await runCLI("profile", "show", "--scope", "resident_behavior");
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    consoleSpy.mockRestore();
+
+    expect(showCode).toBe(0);
+    expect(output).toContain("Ask before non-urgent notifications.");
+    expect(output).not.toContain("Notify freely.");
+  });
+});
+
 // ─── Directory initialisation ─────────────────────────────────────────────────
 
 describe("directory initialisation", () => {

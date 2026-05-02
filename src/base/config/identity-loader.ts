@@ -6,6 +6,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getPulseedDirPath } from "../utils/paths.js";
+import {
+  loadRelationshipProfilePromptBlock,
+  type RelationshipProfileConsentScope,
+} from "../../platform/profile/relationship-profile.js";
 
 export interface Identity {
   name: string;
@@ -119,9 +123,27 @@ export function getSelfIdentityResponse(language: SelfIdentityLanguage = "ja", i
   return `私は${name}です。PulSeedを動かす設定済みエージェントとして応答しています。自己認識はPulSeed runtimeのSEED.md/ROOT.md/USER.mdで管理され、プロバイダーやモデル名ではなく、このruntime identityに従います。`;
 }
 
-export function getInternalIdentityPrefix(role: string): string {
-  const { name } = loadIdentity();
-  return `You are ${name}, PulSeed's ${role}. ${getCoreIdentity(name)}`;
+export function getInternalIdentityPrefix(
+  role: string,
+  options: {
+    baseDir?: string;
+    profileScope?: RelationshipProfileConsentScope;
+    includeSensitiveProfile?: boolean;
+  } = {}
+): string {
+  const baseDir = options.baseDir ?? getPulseedDirPath();
+  const identity = options.baseDir ? loadIdentityFromBaseDir(options.baseDir) : loadIdentity();
+  const profileBlock = options.profileScope
+    ? loadRelationshipProfilePromptBlock(
+        baseDir,
+        options.profileScope,
+        { includeSensitive: options.includeSensitiveProfile }
+      )
+    : "";
+  return [
+    `You are ${identity.name}, PulSeed's ${role}. ${getCoreIdentity(identity.name)}`,
+    profileBlock,
+  ].filter((part) => part.trim().length > 0).join("\n\n");
 }
 
 function isUserContentMeaningful(user: string): boolean {

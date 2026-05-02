@@ -193,6 +193,54 @@ Content here.`);
     const result = getInternalIdentityPrefix("planner");
     expect(result).toContain("Pebble");
   });
+
+  it("adds only active relationship profile items for the requested scope", () => {
+    withFiles({
+      "relationship-profile.json": JSON.stringify({
+        schema_version: 1,
+        profile_id: "default",
+        updated_at: "2026-05-02T00:00:00.000Z",
+        items: [
+          {
+            id: "current",
+            stable_key: "user.preference.status",
+            kind: "preference",
+            value: "Prefer concise status reports.",
+            status: "active",
+            version: 2,
+            confidence: 0.9,
+            sensitivity: "private",
+            allowed_scopes: ["local_planning"],
+            provenance: { source: "cli_update" },
+            created_at: "2026-05-02T00:00:00.000Z",
+            updated_at: "2026-05-02T00:00:00.000Z",
+            superseded_at: null,
+            superseded_by: null,
+          },
+          {
+            id: "old",
+            stable_key: "user.preference.status",
+            kind: "preference",
+            value: "Prefer verbose status reports.",
+            status: "superseded",
+            version: 1,
+            confidence: 0.9,
+            sensitivity: "private",
+            allowed_scopes: ["local_planning"],
+            provenance: { source: "cli_update" },
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-02T00:00:00.000Z",
+            superseded_at: "2026-05-02T00:00:00.000Z",
+            superseded_by: "current",
+          },
+        ],
+        audit_events: [],
+      }),
+    });
+    const result = getInternalIdentityPrefix("planner", { profileScope: "local_planning" });
+    expect(result).toContain("Prefer concise status reports.");
+    expect(result).not.toContain("Prefer verbose status reports.");
+  });
 });
 
 describe("runtime identity slot", () => {

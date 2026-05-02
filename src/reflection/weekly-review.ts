@@ -89,7 +89,10 @@ export async function runWeeklyReview(deps: {
   let summary = "";
 
   if (goalSummaries.length > 0) {
-    const prompt = `${getInternalIdentityPrefix("weekly reviewer")} Analyze this week's goal progress and provide a strategic review.
+    const prompt = `${getInternalIdentityPrefix("weekly reviewer", {
+      baseDir,
+      profileScope: "local_planning",
+    })} Analyze this week's goal progress and provide a strategic review.
 
 Goals (weekly_delta = how much gap closed this week, 0-1):
 ${JSON.stringify(goalSummaries, null, 2)}

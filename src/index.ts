@@ -223,6 +223,27 @@ export { MemoryLifecycleManager } from "./platform/knowledge/memory/memory-lifec
 export { CharacterConfigManager } from "./platform/traits/character-config.js";
 export { CharacterConfigSchema, DEFAULT_CHARACTER_CONFIG } from "./base/types/character.js";
 export type { CharacterConfig } from "./base/types/character.js";
+export {
+  RelationshipProfileItemKindSchema,
+  RelationshipProfileConsentScopeSchema,
+  RelationshipProfileSensitivitySchema,
+  RelationshipProfileItemStatusSchema,
+  RelationshipProfileStoreSchema,
+  loadRelationshipProfile,
+  loadRelationshipProfileSync,
+  saveRelationshipProfile,
+  upsertRelationshipProfileItem,
+  selectActiveRelationshipProfileItems,
+  formatRelationshipProfilePromptBlock,
+  seedRelationshipProfileFromSetup,
+} from "./platform/profile/relationship-profile.js";
+export type {
+  RelationshipProfileItem,
+  RelationshipProfileStore,
+  RelationshipProfileItemKind,
+  RelationshipProfileConsentScope,
+  RelationshipProfileSensitivity,
+} from "./platform/profile/relationship-profile.js";
 export { CuriosityEngine } from "./platform/traits/curiosity-engine.js";
 export { GoalDependencyGraph } from "./orchestrator/goal/goal-dependency-graph.js";
 export { KnowledgeGraph } from "./platform/knowledge/knowledge-graph.js";
