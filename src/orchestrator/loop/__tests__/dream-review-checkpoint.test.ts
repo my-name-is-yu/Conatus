@@ -280,6 +280,77 @@ describe("Dream review checkpoint trigger planning", () => {
     expect(normalized.context_authority).toBe("advisory_only");
   });
 
+  it("uses soil usage outcomes as advisory ranking signal without changing authority", () => {
+    const goal = makeGoal({ title: "Improve benchmark score" });
+    const request = buildDreamReviewCheckpointRequest({
+      goal,
+      loopIndex: 1,
+      result: makeEmptyIterationResult("goal-1", 1, { stallDetected: true }),
+      driveScores: [],
+    });
+    expect(request).not.toBeNull();
+
+    const parsed = DreamReviewCheckpointEvidenceSchema.parse({
+      summary: "Rank usage-aware memories.",
+      trigger: "plateau",
+      current_goal: "Improve benchmark score",
+      active_dimensions: ["balanced_accuracy"],
+      relevant_memories: [
+        {
+          source_type: "soil",
+          ref: "soil://validated",
+          summary: "Validated memory with slightly lower base score.",
+          relevance_score: 0.7,
+          source_reliability: 0.75,
+          recency_score: 0.5,
+          retrieval: { kind: "route_hit", score: 0.7, confidence: 0.75 },
+          usage_stats: {
+            last_used_at: "2026-05-02T00:00:00.000Z",
+            use_count: 5,
+            validated_count: 5,
+            negative_outcome_count: 0,
+          },
+          authority: "advisory_only",
+        },
+        {
+          source_type: "soil",
+          ref: "soil://negative",
+          summary: "Negative memory with higher base score.",
+          relevance_score: 0.75,
+          source_reliability: 0.78,
+          recency_score: 0.5,
+          retrieval: { kind: "route_hit", score: 0.75, confidence: 0.78 },
+          usage_stats: {
+            last_used_at: "2026-05-02T00:00:00.000Z",
+            use_count: 9,
+            validated_count: 0,
+            negative_outcome_count: 5,
+          },
+          authority: "advisory_only",
+        },
+      ],
+      guidance: "Use validated advisory memory first.",
+      uncertainty: [],
+      context_authority: "advisory_only",
+      confidence: 0.8,
+    });
+
+    const normalized = normalizeDreamReviewCheckpoint(parsed, request!, goal);
+
+    expect(normalized.relevant_memories.map((memory) => memory.ref)).toEqual([
+      "soil://validated",
+      "soil://negative",
+    ]);
+    expect(normalized.relevant_memories[0]).toMatchObject({
+      authority: "advisory_only",
+      ranking_trace: {
+        decision: "admitted",
+        reason: expect.stringContaining("usage_outcome=0.0500"),
+      },
+    });
+    expect(normalized.context_authority).toBe("advisory_only");
+  });
+
   it("carries active hypotheses and rejected approaches into the next checkpoint request", () => {
     const request = buildDreamReviewCheckpointRequest({
       goal: makeGoal(),

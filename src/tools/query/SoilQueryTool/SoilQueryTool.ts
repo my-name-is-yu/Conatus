@@ -59,6 +59,7 @@ export interface SoilQueryPageItem {
 }
 
 export interface SoilQueryHitItem {
+  recordId?: string;
   soilId: string;
   relativePath: string;
   title: string;
@@ -68,6 +69,12 @@ export interface SoilQueryHitItem {
   summary: string | null;
   score: number;
   snippet?: string;
+  usageStats?: {
+    last_used_at: string | null;
+    use_count: number;
+    validated_count: number;
+    negative_outcome_count: number;
+  };
 }
 
 export interface SoilQueryOutput {
@@ -182,10 +189,31 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function metadataUsageStats(metadata: Record<string, unknown>): SoilQueryHitItem["usageStats"] | undefined {
+  const value = metadata["usage_stats"];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const usage = value as Record<string, unknown>;
+  if (
+    (typeof usage["last_used_at"] !== "string" && usage["last_used_at"] !== null) ||
+    typeof usage["use_count"] !== "number" ||
+    typeof usage["validated_count"] !== "number" ||
+    typeof usage["negative_outcome_count"] !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    last_used_at: usage["last_used_at"],
+    use_count: usage["use_count"],
+    validated_count: usage["validated_count"],
+    negative_outcome_count: usage["negative_outcome_count"],
+  };
+}
+
 function toSqliteHitItem(candidate: SoilCandidate, page: SoilPage | undefined): SoilQueryHitItem {
   const title = metadataString(candidate.metadata_json, "title") ?? page?.soil_id ?? candidate.soil_id;
   const summary = metadataString(candidate.metadata_json, "summary");
   return {
+    recordId: candidate.record_id,
     soilId: page?.soil_id ?? candidate.soil_id,
     relativePath: page?.relative_path ?? `${candidate.soil_id}.md`,
     title,
@@ -195,6 +223,7 @@ function toSqliteHitItem(candidate: SoilCandidate, page: SoilPage | undefined): 
     summary,
     score: candidate.score,
     snippet: candidate.snippet ?? undefined,
+    usageStats: metadataUsageStats(candidate.metadata_json),
   };
 }
 

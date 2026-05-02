@@ -370,6 +370,89 @@ describe("Runtime Dream sidecar review", () => {
     });
   });
 
+  it("uses usage outcomes when sidecar re-ranks advisory memories", async () => {
+    await seedActiveRun("run:coreloop:sidecar-usage-rank");
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      id: "usage-aware-memories",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "dream_checkpoint",
+      scope: { run_id: "run:coreloop:sidecar-usage-rank", loop_index: 1, phase: "dream_review_checkpoint" },
+      dream_checkpoints: [{
+        trigger: "plateau",
+        summary: "Checkpoint with usage-aware Soil memories.",
+        current_goal: "Improve benchmark",
+        active_dimensions: ["balanced_accuracy"],
+        recent_strategy_families: [],
+        exhausted: [],
+        promising: [],
+        relevant_memories: [
+          {
+            source_type: "soil",
+            ref: "soil://validated",
+            summary: "Validated memory with slightly lower base score.",
+            relevance_score: 0.7,
+            source_reliability: 0.75,
+            recency_score: 0.5,
+            retrieval: { kind: "route_hit", score: 0.7, confidence: 0.75 },
+            usage_stats: {
+              last_used_at: "2026-05-02T00:00:00.000Z",
+              use_count: 5,
+              validated_count: 5,
+              negative_outcome_count: 0,
+            },
+            authority: "advisory_only",
+          },
+          {
+            source_type: "soil",
+            ref: "soil://negative",
+            summary: "Negative memory with higher base score.",
+            relevance_score: 0.75,
+            source_reliability: 0.78,
+            recency_score: 0.5,
+            retrieval: { kind: "route_hit", score: 0.75, confidence: 0.78 },
+            usage_stats: {
+              last_used_at: "2026-05-02T00:00:00.000Z",
+              use_count: 9,
+              validated_count: 0,
+              negative_outcome_count: 5,
+            },
+            authority: "advisory_only",
+          },
+        ],
+        active_hypotheses: [],
+        rejected_approaches: [],
+        next_strategy_candidates: [],
+        guidance: "Prefer validated memory.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.8,
+      }],
+      summary: "Usage-aware checkpoint saved.",
+    });
+
+    const review = await createRuntimeDreamSidecarReview({
+      stateManager,
+      runId: "run:coreloop:sidecar-usage-rank",
+    });
+
+    expect(review.advisory_memories.map((memory) => memory.ref).slice(0, 2)).toEqual([
+      "soil://validated",
+      "soil://negative",
+    ]);
+    expect(review.advisory_memories[0]).toMatchObject({
+      authority: "advisory_only",
+      usage_stats: expect.objectContaining({
+        validated_count: 5,
+        negative_outcome_count: 0,
+      }),
+      ranking_trace: {
+        decision: "admitted",
+        reason: expect.stringContaining("usage_outcome=0.0500"),
+      },
+    });
+  });
+
   it("summarizes repeated failed lineages and avoids suggesting them without retry evidence", async () => {
     await seedActiveRun("run:coreloop:failed-lineage");
     const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));

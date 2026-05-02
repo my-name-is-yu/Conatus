@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS soil_records (
   source_type TEXT NOT NULL,
   source_id TEXT NOT NULL,
   metadata_json TEXT NOT NULL DEFAULT '{}',
+  last_used_at TEXT,
+  use_count INTEGER NOT NULL DEFAULT 0 CHECK (use_count >= 0),
+  validated_count INTEGER NOT NULL DEFAULT 0 CHECK (validated_count >= 0),
+  negative_outcome_count INTEGER NOT NULL DEFAULT 0 CHECK (negative_outcome_count >= 0),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE (record_key, version)

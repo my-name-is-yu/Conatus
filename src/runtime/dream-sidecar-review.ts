@@ -98,6 +98,7 @@ export interface RuntimeDreamSidecarReview {
     ref?: string;
     summary: string;
     authority: "advisory_only";
+    usage_stats?: RuntimeEvidenceSummary["dream_checkpoints"][number]["relevant_memories"][number]["usage_stats"];
     ranking_trace?: {
       score: number;
       decision: "admitted" | "rejected";
@@ -589,6 +590,7 @@ function buildAdvisoryMemories(summary: RuntimeEvidenceSummary): RuntimeDreamSid
       ...(memory.ref ? { ref: memory.ref } : {}),
       summary: memory.summary,
       authority: "advisory_only" as const,
+      ...(memory.usage_stats ? { usage_stats: memory.usage_stats } : {}),
       ranking_trace: {
         score: memory.ranking_trace?.score ?? sidecarMemoryRankScore(memory),
         decision: "admitted" as const,
@@ -622,7 +624,8 @@ function sidecarMemoryRankScore(
     + (memory.source_reliability ?? memory.retrieval?.confidence ?? 0.5) * 0.25
     + (memory.prior_success_contribution ?? 0) * 0.2
     + (memory.recency_score ?? 0.5) * 0.1
-    + routeScore;
+    + routeScore
+    + sidecarMemoryUsageRankAdjustment(memory.usage_stats);
   return Math.max(0, Math.min(1, Number(score.toFixed(4))));
 }
 
@@ -639,7 +642,17 @@ function sidecarMemoryRankReason(
     `reliability=${memory.source_reliability ?? memory.retrieval?.confidence ?? "default"}`,
     `success=${memory.prior_success_contribution ?? 0}`,
     `recency=${memory.recency_score ?? "default"}`,
+    `usage_outcome=${sidecarMemoryUsageRankAdjustment(memory.usage_stats).toFixed(4)}`,
   ].join("; ");
+}
+
+function sidecarMemoryUsageRankAdjustment(
+  usage: RuntimeEvidenceSummary["dream_checkpoints"][number]["relevant_memories"][number]["usage_stats"]
+): number {
+  if (!usage) return 0;
+  const validatedBoost = Math.min(usage.validated_count, 10) * 0.01;
+  const negativePenalty = Math.min(usage.negative_outcome_count, 10) * 0.02;
+  return validatedBoost - negativePenalty;
 }
 
 function buildWarnings(

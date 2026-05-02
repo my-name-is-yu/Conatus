@@ -348,6 +348,14 @@ export const RuntimeEvidenceDreamCheckpointTriggerSchema = z.enum([
 ]);
 export type RuntimeEvidenceDreamCheckpointTrigger = z.infer<typeof RuntimeEvidenceDreamCheckpointTriggerSchema>;
 
+export const RuntimeEvidenceMemoryUsageStatsSchema = z.object({
+  last_used_at: z.string().datetime().nullable().default(null),
+  use_count: z.number().int().nonnegative().default(0),
+  validated_count: z.number().int().nonnegative().default(0),
+  negative_outcome_count: z.number().int().nonnegative().default(0),
+}).strict();
+export type RuntimeEvidenceMemoryUsageStats = z.infer<typeof RuntimeEvidenceMemoryUsageStatsSchema>;
+
 export const RuntimeEvidenceDreamCheckpointMemoryRefSchema = z.object({
   source_type: z.enum(["soil", "playbook", "runtime_evidence", "other"]),
   ref: z.string().min(1).optional(),
@@ -365,6 +373,7 @@ export const RuntimeEvidenceDreamCheckpointMemoryRefSchema = z.object({
     score: z.number().min(0).max(1).optional(),
     confidence: z.number().min(0).max(1).optional(),
   }).strict().optional(),
+  usage_stats: RuntimeEvidenceMemoryUsageStatsSchema.optional(),
   ranking_trace: z.object({
     score: z.number().min(0).max(1),
     decision: z.enum(["admitted", "rejected"]),

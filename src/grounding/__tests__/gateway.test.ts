@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StateManager } from "../../base/state/state-manager.js";
+import { SqliteSoilRepository } from "../../platform/soil/sqlite-repository.js";
 import { createGroundingGateway } from "../gateway.js";
 
 function makeStateManager(overrides: Partial<StateManager> = {}): StateManager {
@@ -103,6 +104,88 @@ describe("GroundingGateway", () => {
     expect(bundle.dynamicSections.some((section) => section.key === "soil_knowledge")).toBe(true);
     expect(bundle.dynamicSections.some((section) => section.key === "knowledge_query")).toBe(false);
     expect(knowledgeQuery).not.toHaveBeenCalled();
+  });
+
+  it("records usage for admitted SQLite Soil grounding hits and preserves usage stats in context", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-soil-"));
+    const homeDir = path.join(tmpRoot, "home");
+    const rootDir = path.join(homeDir, "soil");
+    vi.stubEnv("OPENAI_API_KEY", "");
+    const repository = await SqliteSoilRepository.create({ rootDir });
+    try {
+      await repository.applyMutation({
+        records: [{
+          record_id: "rec-grounding",
+          record_key: "fact.grounding",
+          version: 1,
+          record_type: "fact",
+          soil_id: "knowledge/grounding",
+          title: "Grounding fact",
+          summary: "Grounding search target",
+          canonical_text: "Grounding search target comes from SQLite Soil.",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: 0.9,
+          importance: 0.7,
+          source_reliability: 0.8,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "test",
+          source_id: "grounding-source",
+          metadata_json: {},
+          created_at: "2026-05-02T00:00:00.000Z",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        }],
+        chunks: [{
+          chunk_id: "chunk-grounding",
+          record_id: "rec-grounding",
+          soil_id: "knowledge/grounding",
+          chunk_index: 0,
+          chunk_kind: "paragraph",
+          heading_path_json: ["Knowledge"],
+          chunk_text: "Grounding search target comes from SQLite Soil.",
+          token_count: 7,
+          checksum: "grounding-chunk",
+          created_at: "2026-05-02T00:00:00.000Z",
+        }],
+      });
+      await repository.recordOutcome(["rec-grounding"], {
+        outcome: "validated",
+        occurred_at: "2026-05-02T00:01:00.000Z",
+      });
+      await repository.recordOutcome(["rec-grounding"], {
+        outcome: "negative",
+        occurred_at: "2026-05-02T00:02:00.000Z",
+      });
+    } finally {
+      repository.close();
+    }
+
+    const gateway = createGroundingGateway({ stateManager: makeStateManager() });
+    const bundle = await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+      userMessage: "Use the grounding search target",
+      query: "Grounding search target",
+      knowledgeQuery: vi.fn(),
+    });
+    const soilSection = bundle.dynamicSections.find((section) => section.key === "soil_knowledge");
+    expect(soilSection?.content).toContain("usage used=0 validated=1 negative=1");
+
+    const updatedRepository = await SqliteSoilRepository.create({ rootDir });
+    try {
+      const [record] = await updatedRepository.loadRecords({ record_ids: ["rec-grounding"] });
+      expect(record?.use_count).toBe(1);
+      expect(record?.last_used_at).not.toBeNull();
+    } finally {
+      updatedRepository.close();
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 
   it("does not reuse cached identity sections across runtime homes", async () => {

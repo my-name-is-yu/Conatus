@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { compileSoilContextFromRepository } from "../context-compiler.js";
+import type { SoilRecordInput } from "../contracts.js";
 import { SqliteSoilRepository } from "../sqlite-repository.js";
 
 describe("SqliteSoilRepository", () => {
@@ -1782,4 +1783,193 @@ describe("SqliteSoilRepository", () => {
       ["dream-rec-v2", true],
     ]);
   });
+
+  it("tracks usage and outcome counters on soil records", async () => {
+    await repo.applyMutation({
+      records: [soilRecord({
+        record_id: "usage-rec",
+        record_key: "preference.usage",
+        soil_id: "identity/preferences/usage",
+        title: "Usage preference",
+        canonical_text: "Prefer usage-aware ranking.",
+      })],
+    });
+
+    await repo.recordUsage(["usage-rec"], { used_at: "2026-05-02T00:01:00.000Z" });
+    await repo.recordUsage(["usage-rec"], { used_at: "2026-05-02T00:02:00.000Z" });
+    await repo.recordOutcome(["usage-rec"], {
+      outcome: "validated",
+      occurred_at: "2026-05-02T00:03:00.000Z",
+    });
+    await repo.recordOutcome(["usage-rec"], {
+      outcome: "negative",
+      occurred_at: "2026-05-02T00:04:00.000Z",
+    });
+
+    const [record] = await repo.loadRecords({ record_ids: ["usage-rec"] });
+    const direct = await repo.lookupDirect({ query: "usage-rec" });
+
+    expect(record).toMatchObject({
+      last_used_at: "2026-05-02T00:02:00.000Z",
+      use_count: 2,
+      validated_count: 1,
+      negative_outcome_count: 1,
+    });
+    expect(direct.candidates[0]?.metadata_json).toMatchObject({
+      usage_stats: {
+        last_used_at: "2026-05-02T00:02:00.000Z",
+        use_count: 2,
+        validated_count: 1,
+        negative_outcome_count: 1,
+      },
+    });
+  });
+
+  it("migrates existing sqlite records that do not have usage columns before readonly open", async () => {
+    const legacyPath = path.join(tmpDir, "legacy-soil.db");
+    const legacyDb = new Database(legacyPath);
+    legacyDb.exec(`
+      CREATE TABLE soil_records (
+        record_id TEXT PRIMARY KEY,
+        record_key TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        record_type TEXT NOT NULL,
+        soil_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT,
+        canonical_text TEXT NOT NULL,
+        goal_id TEXT,
+        task_id TEXT,
+        status TEXT NOT NULL,
+        confidence REAL,
+        importance REAL,
+        source_reliability REAL,
+        valid_from TEXT,
+        valid_to TEXT,
+        supersedes_record_id TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (record_key, version)
+      );
+      INSERT INTO soil_records (
+        record_id, record_key, version, record_type, soil_id, title, summary, canonical_text,
+        goal_id, task_id, status, confidence, importance, source_reliability, valid_from, valid_to,
+        supersedes_record_id, is_active, source_type, source_id, metadata_json, created_at, updated_at
+      ) VALUES (
+        'legacy-rec', 'preference.legacy', 1, 'preference', 'identity/preferences/legacy',
+        'Legacy preference', NULL, 'Legacy record without usage counters.', NULL, NULL,
+        'active', 0.9, 0.6, 0.8, NULL, NULL, NULL, 1, 'agent_memory', 'legacy-memory',
+        '{}', '2026-05-02T00:00:00.000Z', '2026-05-02T00:00:00.000Z'
+      );
+    `);
+    legacyDb.close();
+
+    const legacyRepo = await SqliteSoilRepository.openExisting({
+      rootDir: path.join(tmpDir, "legacy-soil"),
+      indexPath: legacyPath,
+    });
+    expect(legacyRepo).not.toBeNull();
+    try {
+      const [record] = await legacyRepo!.loadRecords({ record_ids: ["legacy-rec"] });
+
+      expect(record).toMatchObject({
+        record_id: "legacy-rec",
+        last_used_at: null,
+        use_count: 0,
+        validated_count: 0,
+        negative_outcome_count: 0,
+      });
+    } finally {
+      legacyRepo?.close();
+    }
+  });
+
+  it("records usage when repository context compilation admits soil memories", async () => {
+    await repo.applyMutation({
+      records: [
+        soilRecord({
+          record_id: "admitted-rec",
+          record_key: "preference.admitted",
+          soil_id: "identity/preferences/admitted",
+          title: "Admitted preference",
+          canonical_text: "This route memory is admitted.",
+        }),
+        soilRecord({
+          record_id: "fallback-rec",
+          record_key: "preference.fallback",
+          soil_id: "identity/preferences/fallback",
+          title: "Fallback preference",
+          canonical_text: "This fallback memory is admitted.",
+        }),
+      ],
+    });
+
+    await compileSoilContextFromRepository({
+      retrievalId: "retrieval-usage",
+      now: () => new Date("2026-05-02T01:00:00.000Z"),
+      targetPaths: ["src/runtime/planning.ts"],
+      routes: [{
+        route_id: "route-admitted",
+        path_globs: ["src/runtime/*"],
+        soil_ids: ["identity/preferences/admitted"],
+        reason: "Route memory should enter planning context.",
+        created_at: "2026-05-02T00:00:00.000Z",
+        updated_at: "2026-05-02T00:00:00.000Z",
+      }],
+      includeFallbackWhenRouteMatched: true,
+      fallbackCandidates: [{
+        chunk_id: "candidate-fallback",
+        record_id: "fallback-rec",
+        soil_id: "identity/preferences/fallback",
+        lane: "lexical",
+        rank: 1,
+        score: 0.7,
+        snippet: "This fallback memory is admitted.",
+        page_id: null,
+        metadata_json: {},
+      }],
+    }, repo);
+
+    const records = await repo.loadRecords({
+      record_ids: ["admitted-rec", "fallback-rec"],
+    });
+
+    expect(records.map((record) => [record.record_id, record.last_used_at, record.use_count])).toEqual([
+      ["admitted-rec", "2026-05-02T01:00:00.000Z", 1],
+      ["fallback-rec", "2026-05-02T01:00:00.000Z", 1],
+    ]);
+  });
 });
+
+function soilRecord(overrides: Partial<SoilRecordInput>): SoilRecordInput {
+  return {
+    record_id: "rec-default",
+    record_key: "preference.default",
+    version: 1,
+    record_type: "preference",
+    soil_id: "identity/preferences/default",
+    title: "Default preference",
+    summary: null,
+    canonical_text: "Default preference.",
+    goal_id: null,
+    task_id: null,
+    status: "active",
+    confidence: 0.9,
+    importance: 0.6,
+    source_reliability: 0.8,
+    valid_from: null,
+    valid_to: null,
+    supersedes_record_id: null,
+    is_active: true,
+    source_type: "agent_memory",
+    source_id: "memory-default",
+    metadata_json: {},
+    created_at: "2026-05-02T00:00:00.000Z",
+    updated_at: "2026-05-02T00:00:00.000Z",
+    ...overrides,
+  };
+}

@@ -116,6 +116,14 @@ export const DreamReviewCheckpointTriggerSchema = z.enum([
 ]);
 export type DreamReviewCheckpointTrigger = z.infer<typeof DreamReviewCheckpointTriggerSchema>;
 
+export const DreamReviewMemoryUsageStatsSchema = z.object({
+  last_used_at: z.string().datetime().nullable().default(null),
+  use_count: z.number().int().nonnegative().default(0),
+  validated_count: z.number().int().nonnegative().default(0),
+  negative_outcome_count: z.number().int().nonnegative().default(0),
+}).strict();
+export type DreamReviewMemoryUsageStats = z.infer<typeof DreamReviewMemoryUsageStatsSchema>;
+
 export const DreamReviewMemoryRefSchema = z.object({
   source_type: z.enum(["soil", "playbook", "runtime_evidence", "other"]),
   ref: z.string().min(1).optional(),
@@ -130,6 +138,7 @@ export const DreamReviewMemoryRefSchema = z.object({
     score: z.number().min(0).max(1).optional(),
     confidence: z.number().min(0).max(1).optional(),
   }).strict().optional(),
+  usage_stats: DreamReviewMemoryUsageStatsSchema.optional(),
   ranking_trace: z.object({
     score: z.number().min(0).max(1),
     decision: z.enum(["admitted", "rejected"]),

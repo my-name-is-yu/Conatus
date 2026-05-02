@@ -190,7 +190,8 @@ function memoryRankScore(memory: DreamReviewMemoryRef): number {
     + (memory.source_reliability ?? memory.retrieval?.confidence ?? 0.5) * 0.25
     + (memory.prior_success_contribution ?? 0) * 0.2
     + (memory.recency_score ?? 0.5) * 0.1
-    + routeScore;
+    + routeScore
+    + memoryUsageRankAdjustment(memory.usage_stats);
   return Math.max(0, Math.min(1, Number(score.toFixed(4))));
 }
 
@@ -202,7 +203,15 @@ function memoryRankReason(memory: DreamReviewMemoryRef): string {
     `reliability=${memory.source_reliability ?? memory.retrieval?.confidence ?? "default"}`,
     `success=${memory.prior_success_contribution ?? 0}`,
     `recency=${memory.recency_score ?? "default"}`,
+    `usage_outcome=${memoryUsageRankAdjustment(memory.usage_stats).toFixed(4)}`,
   ].join("; ");
+}
+
+function memoryUsageRankAdjustment(usage: DreamReviewMemoryRef["usage_stats"]): number {
+  if (!usage) return 0;
+  const validatedBoost = Math.min(usage.validated_count, 10) * 0.01;
+  const negativePenalty = Math.min(usage.negative_outcome_count, 10) * 0.02;
+  return validatedBoost - negativePenalty;
 }
 
 function decideRunControlPolicy(
