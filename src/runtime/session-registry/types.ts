@@ -104,6 +104,7 @@ export const BackgroundRunSchema = z.object({
   parent_session_id: z.string().nullable(),
   child_session_id: z.string().nullable(),
   process_session_id: z.string().nullable(),
+  goal_id: z.string().nullable().optional(),
   status: BackgroundRunStatusSchema,
   notify_policy: z.enum(["silent", "done_only", "state_changes"]),
   reply_target_source: BackgroundRunReplyTargetSourceSchema,

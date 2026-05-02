@@ -70,6 +70,13 @@ export function formatDaemonConnectionState(state: DaemonConnectionState | undef
   return `  [daemon ${state}]`;
 }
 
+function parseApprovalDecisionInput(input: string): boolean | null {
+  const normalized = input.trim().toLowerCase();
+  if (/^(confirm|approve|yes|y|ok|実行|承認|はい|お願い|進めて)$/.test(normalized)) return true;
+  if (/^(cancel|reject|no|n|stop|やめて|キャンセル|却下)$/.test(normalized)) return false;
+  return null;
+}
+
 function normalizeApprovalTask(data: Record<string, unknown>): Task {
   const rawTask = data.task;
   if (rawTask && typeof rawTask === "object") {
@@ -551,6 +558,23 @@ export function App({
 
   const handleInput = useCallback(
     async (input: string) => {
+      const approvalDecision = approvalRequestRef.current ? parseApprovalDecisionInput(input) : null;
+      if (approvalDecision !== null && approvalRequestRef.current) {
+        const request = approvalRequestRef.current;
+        setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
+        request.resolve(approvalDecision);
+        approvalRequestRef.current = null;
+        setApprovalRequest(null);
+        setMessages((prev) => [...prev, {
+          id: randomUUID(),
+          role: "pulseed" as const,
+          text: approvalDecision ? "Approval confirmed." : "Approval cancelled.",
+          timestamp: new Date(),
+          messageType: "info" as const,
+        }].slice(-MAX_MESSAGES));
+        return;
+      }
+
       if (isProcessing) {
         if (!chatRunner) return;
         setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));

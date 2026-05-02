@@ -4,6 +4,7 @@ import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.
 import type { ChatRunnerDeps } from "../chat-runner.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
+import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -191,6 +192,10 @@ describe("CrossPlatformChatSessionManager", () => {
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager,
       adapter,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        intent: "restart_daemon",
+        reason: "PulSeed を再起動して",
+      })),
       runtimeControlService,
       approvalFn: vi.fn().mockResolvedValue(true),
     }));
@@ -232,6 +237,112 @@ describe("CrossPlatformChatSessionManager", () => {
       identity_key: "owner",
       user_id: "user-1",
     });
+  });
+
+  it("routes gateway natural-language run pause to runtime control with current reply target", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const runtimeControlService = {
+      request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "pause queued",
+        operationId: "op-1",
+        state: "running",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        intent: "pause_run",
+        reason: "この実行を一時停止して",
+      })),
+      runtimeControlService,
+      runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
+    }));
+
+    const result = await manager.execute("この実行を一時停止して", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "interactive",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("pause queued");
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect(runtimeControlService.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: expect.objectContaining({ kind: "pause_run" }),
+        replyTarget: expect.objectContaining({
+          surface: "gateway",
+          platform: "telegram",
+          conversation_id: "telegram-chat-1",
+          identity_key: "owner",
+          user_id: "user-1",
+        }),
+        requestedBy: expect.objectContaining({
+          surface: "gateway",
+          platform: "telegram",
+          conversation_id: "telegram-chat-1",
+        }),
+      })
+    );
+  });
+
+  it("does not route broad finish text to runtime control without run context", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "Agent loop handles ordinary finish request",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const runtimeControlService = {
+      request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "runtime control should not run",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        intent: "none",
+        reason: "ordinary implementation finish request",
+      })),
+      runtimeControlService,
+      runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
+    }));
+
+    const result = await manager.execute("finish the implementation", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "interactive",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("Agent loop handles ordinary finish request");
+    expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect(runtimeControlService.request).not.toHaveBeenCalled();
   });
 
   it("routes long-running work through the native agent loop and leaves durable handoff to tools", async () => {

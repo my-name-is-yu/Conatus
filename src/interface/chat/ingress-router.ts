@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ChatEventHandler } from "./chat-events.js";
-import { recognizeRuntimeControlIntent, type RuntimeControlIntent } from "../../runtime/control/index.js";
+import type { RuntimeControlIntent } from "../../runtime/control/index.js";
 import { recognizeRunSpecIntent, type RunSpecIntent } from "../../runtime/run-spec/index.js";
 import type {
   RuntimeControlActor,
@@ -72,6 +72,7 @@ export interface IngressRouterCapabilities {
   hasAgentLoop: boolean;
   hasToolLoop: boolean;
   hasRuntimeControlService?: boolean;
+  runtimeControlIntent?: RuntimeControlIntent | null;
 }
 
 function selectRouteForText(
@@ -94,7 +95,7 @@ function selectRouteForText(
   const runSpecIntent = recognizeRunSpecIntent(text) ?? undefined;
 
   if (canUseRuntimeControlRoute) {
-    const intent = recognizeRuntimeControlIntent(text);
+    const intent = deps.runtimeControlIntent ?? null;
     if (
       intent !== null
       && (

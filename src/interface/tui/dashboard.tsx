@@ -233,8 +233,8 @@ export function buildOperatorConsoleModel(
     metrics: summarizeMetrics(summary),
     blockers: blockers.length > 0 ? blockers : ["No blockers detected."],
     controls: [
-      "inspect: available",
-      "pause/resume/finalize: unavailable until a typed TUI runtime API exists",
+      "inspect/pause/resume/finalize: available from natural-language chat when the selected run has a typed runtime bridge",
+      "finalize/external actions: approval-gated; submit/publish/secret/production/destructive actions are not executed automatically",
     ],
   };
 }

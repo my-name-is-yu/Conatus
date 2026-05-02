@@ -5,6 +5,10 @@ export const RuntimeControlOperationKindSchema = z.enum([
   "restart_gateway",
   "reload_config",
   "self_update",
+  "inspect_run",
+  "pause_run",
+  "resume_run",
+  "finalize_run",
 ]);
 export type RuntimeControlOperationKind = z.infer<typeof RuntimeControlOperationKindSchema>;
 
@@ -15,6 +19,7 @@ export const RuntimeControlOperationStateSchema = z.enum([
   "running",
   "restarting",
   "verified",
+  "blocked",
   "failed",
   "cancelled",
 ]);
@@ -54,6 +59,16 @@ export const RuntimeControlOperationSchema = z.object({
   requested_by: RuntimeControlActorSchema,
   reply_target: RuntimeControlReplyTargetSchema,
   reason: z.string(),
+  target: z.object({
+    run_id: z.string().min(1).optional(),
+    session_id: z.string().min(1).optional(),
+    goal_id: z.string().min(1).optional(),
+  }).strict().optional(),
+  risk: z.object({
+    requires_approval: z.boolean(),
+    irreversible: z.boolean(),
+    external_actions: z.array(z.string().min(1)),
+  }).strict().optional(),
   started_at: z.string().optional(),
   completed_at: z.string().optional(),
   approval_id: z.string().optional(),
@@ -73,5 +88,5 @@ export const RuntimeControlOperationSchema = z.object({
 export type RuntimeControlOperation = z.infer<typeof RuntimeControlOperationSchema>;
 
 export function isTerminalRuntimeControlState(state: RuntimeControlOperationState): boolean {
-  return state === "verified" || state === "failed" || state === "cancelled";
+  return state === "verified" || state === "failed" || state === "cancelled" || state === "blocked";
 }

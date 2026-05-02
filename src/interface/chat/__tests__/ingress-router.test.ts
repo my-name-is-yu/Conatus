@@ -50,12 +50,16 @@ describe("IngressRouter", () => {
           approvalMode: "interactive",
         },
       }),
-	      {
-	        hasAgentLoop: true,
-	        hasToolLoop: true,
-	        hasRuntimeControlService: true,
-	      }
-	    );
+	    {
+	      hasAgentLoop: true,
+	      hasToolLoop: true,
+	      hasRuntimeControlService: true,
+	      runtimeControlIntent: {
+	        kind: "restart_daemon",
+	        reason: "LLM classified daemon restart",
+	      },
+	    }
+	  );
 
 	    expect(route.kind).toBe("runtime_control");
 	    expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
@@ -76,6 +80,10 @@ describe("IngressRouter", () => {
 	        hasAgentLoop: true,
 	        hasToolLoop: true,
 	        hasRuntimeControlService: false,
+	        runtimeControlIntent: {
+	          kind: "restart_daemon",
+	          reason: "LLM classified daemon restart",
+	        },
 	      }
 	    );
 
@@ -96,6 +104,11 @@ describe("IngressRouter", () => {
       {
         hasAgentLoop: true,
         hasToolLoop: true,
+        hasRuntimeControlService: true,
+        runtimeControlIntent: {
+          kind: "restart_daemon",
+          reason: "LLM classified daemon restart",
+        },
       }
     );
 

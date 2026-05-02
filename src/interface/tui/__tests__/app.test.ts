@@ -510,6 +510,36 @@ describe("standalone slash command routing", () => {
     screen.unmount();
   });
 
+  it("routes natural-language runtime control through ChatRunner from the TUI freeform input", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/kaggle",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("この実行を一時停止して");
+    await flush();
+
+    expect(chatRunner.execute).toHaveBeenCalledWith("この実行を一時停止して", "/work/kaggle");
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
   it("routes input during processing to ChatRunner interrupt redirect", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();

@@ -3,6 +3,7 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ChatRunnerDeps } from "../../chat/chat-runner.js";
 import { SharedManagerTuiChatSurface } from "../chat-surface.js";
+import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -90,6 +91,10 @@ describe("SharedManagerTuiChatSurface", () => {
 	    };
 	    const surface = new SharedManagerTuiChatSurface(makeDeps({
 	      adapter,
+	      llmClient: createSingleMockLLMClient(JSON.stringify({
+	        intent: "restart_daemon",
+	        reason: "PulSeed を再起動して",
+	      })),
 	      runtimeControlService,
 	      approvalFn: vi.fn().mockResolvedValue(true),
 	    }));

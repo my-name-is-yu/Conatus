@@ -11,6 +11,7 @@ import {
   type ChatIngressRuntimeControl,
   type SelectedChatRoute,
 } from "./ingress-router.js";
+import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { buildAdapterRegistry, buildLLMClient } from "../../base/llm/provider-factory.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
@@ -521,10 +522,23 @@ export class CrossPlatformChatSessionManager {
       user_name: options.user_name,
     }));
 
-    const selectedRoute = this.ingressRouter.selectRoute(ingress, {
+    const capabilities = {
       hasAgentLoop: this.deps.chatAgentLoopRunner !== undefined,
       hasToolLoop: this.deps.llmClient !== undefined,
       hasRuntimeControlService: this.deps.runtimeControlService !== undefined,
+    };
+    const runtimeControlAllowed =
+      ingress.runtimeControl.allowed
+      && ingress.runtimeControl.approvalMode !== "disallowed"
+      && (
+        capabilities.hasRuntimeControlService
+        || (!capabilities.hasAgentLoop && !capabilities.hasToolLoop)
+      );
+    const selectedRoute = this.ingressRouter.selectRoute(ingress, {
+      ...capabilities,
+      runtimeControlIntent: runtimeControlAllowed
+        ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
+        : null,
     });
     session.lastRoute = selectedRoute;
 
@@ -659,6 +673,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     reviewAgentLoopRunner,
     runtimeControlService: new RuntimeControlService({
       runtimeRoot: path.join(stateManager.getBaseDir(), "runtime"),
+      stateManager,
       executor: createDaemonRuntimeControlExecutor({
         baseDir: stateManager.getBaseDir(),
       }),

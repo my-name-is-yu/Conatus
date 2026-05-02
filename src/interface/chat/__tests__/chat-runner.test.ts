@@ -20,6 +20,7 @@ import type { ChatEvent } from "../chat-events.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
+import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -1600,6 +1601,10 @@ describe("ChatRunner", () => {
         const approvalFn = vi.fn().mockResolvedValue(true);
         const runner = new ChatRunner(makeDeps({
           adapter,
+          llmClient: createSingleMockLLMClient(JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          })),
           stateManager,
           approvalFn,
           runtimeControlService,
@@ -1648,15 +1653,14 @@ describe("ChatRunner", () => {
       }
     });
 
-    it("does not route recognized runtime control text to the adapter when service is unavailable", async () => {
+    it("does not route natural-language runtime control when the LLM classifier is unavailable", async () => {
       const adapter = makeMockAdapter();
       const runner = new ChatRunner(makeDeps({ adapter }));
 
       const result = await runner.execute("PulSeed を再起動して", "/repo");
 
-      expect(result.success).toBe(false);
-      expect(result.output).toContain("Runtime control is not available");
-      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(adapter.execute).toHaveBeenCalledOnce();
     });
 
     it("does not claim restart started when no runtime control executor is configured", async () => {
@@ -1667,6 +1671,10 @@ describe("ChatRunner", () => {
         const runtimeControlService = new RuntimeControlService({ operationStore });
         const runner = new ChatRunner(makeDeps({
           adapter,
+          llmClient: createSingleMockLLMClient(JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          })),
           approvalFn: vi.fn().mockResolvedValue(true),
           runtimeControlService,
           runtimeReplyTarget: { surface: "cli" },
@@ -1701,6 +1709,10 @@ describe("ChatRunner", () => {
         });
         const runner = new ChatRunner(makeDeps({
           adapter,
+          llmClient: createSingleMockLLMClient(JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          })),
           approvalFn: vi.fn().mockResolvedValue(true),
           runtimeControlService,
           runtimeReplyTarget: { surface: "cli" },
@@ -1739,6 +1751,10 @@ describe("ChatRunner", () => {
         });
         const runner = new ChatRunner(makeDeps({
           adapter,
+          llmClient: createSingleMockLLMClient(JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          })),
           approvalFn: vi.fn().mockRejectedValue(new Error("approval store unavailable")),
           runtimeControlService,
           runtimeReplyTarget: { surface: "cli" },
@@ -1783,6 +1799,10 @@ describe("ChatRunner", () => {
         const runtimeControlApprovalFn = vi.fn().mockResolvedValue(true);
         const runner = new ChatRunner(makeDeps({
           adapter,
+          llmClient: createSingleMockLLMClient(JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          })),
           approvalFn,
           runtimeControlApprovalFn,
           runtimeControlService,
@@ -1795,6 +1815,204 @@ describe("ChatRunner", () => {
         expect(result.output).toBe("restart requested");
         expect(runtimeControlApprovalFn).toHaveBeenCalledOnce();
         expect(approvalFn).not.toHaveBeenCalled();
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("routes natural-language run pause to typed runtime control instead of the adapter", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-control-chat-pause-"));
+      try {
+        const adapter = makeMockAdapter();
+        const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+        const executor = vi.fn().mockResolvedValue({
+          ok: true,
+          state: "running",
+          message: "pause sent",
+        });
+        const runtimeControlService = new RuntimeControlService({
+          operationStore,
+          executor,
+          sessionRegistry: {
+            snapshot: vi.fn().mockResolvedValue({
+              schema_version: "runtime-session-registry-v1",
+              generated_at: "2026-05-02T00:00:00.000Z",
+              sessions: [],
+              background_runs: [{
+                schema_version: "background-run-v1",
+                id: "run:coreloop:chat",
+                kind: "coreloop_run",
+                parent_session_id: null,
+                child_session_id: "session:coreloop:worker-1",
+                process_session_id: null,
+                goal_id: "goal-1",
+                status: "running",
+                notify_policy: "done_only",
+                reply_target_source: "none",
+                pinned_reply_target: null,
+                title: "CoreLoop goal goal-1",
+                workspace: "/repo",
+                created_at: "2026-05-02T00:00:00.000Z",
+                started_at: "2026-05-02T00:00:00.000Z",
+                updated_at: "2026-05-02T00:00:00.000Z",
+                completed_at: null,
+                summary: null,
+                error: null,
+                artifacts: [],
+                source_refs: [],
+              }],
+              warnings: [],
+            }),
+          },
+        });
+        const runner = new ChatRunner(makeDeps({
+          adapter,
+          llmClient: createSingleMockLLMClient(JSON.stringify({
+            intent: "pause_run",
+            reason: "この実行を一時停止して",
+          })),
+          runtimeControlService,
+          runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
+        }));
+
+        const result = await runner.execute("この実行を一時停止して", "/repo");
+
+        expect(result).toMatchObject({ success: true, output: "pause sent" });
+        expect(adapter.execute).not.toHaveBeenCalled();
+        expect(executor).toHaveBeenCalledWith(expect.objectContaining({
+          kind: "pause_run",
+          target: expect.objectContaining({ run_id: "run:coreloop:chat", goal_id: "goal-1" }),
+        }), expect.anything());
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("routes natural-language run resume to typed runtime control or a blocked response", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-control-chat-resume-"));
+      try {
+        const adapter = makeMockAdapter();
+        const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+        const runtimeControlService = new RuntimeControlService({
+          operationStore,
+          sessionRegistry: {
+            snapshot: vi.fn().mockResolvedValue({
+              schema_version: "runtime-session-registry-v1",
+              generated_at: "2026-05-02T00:00:00.000Z",
+              sessions: [],
+              background_runs: [{
+                schema_version: "background-run-v1",
+                id: "run:process:abc",
+                kind: "process_run",
+                parent_session_id: null,
+                child_session_id: null,
+                process_session_id: "proc-1",
+                goal_id: null,
+                status: "running",
+                notify_policy: "done_only",
+                reply_target_source: "none",
+                pinned_reply_target: null,
+                title: "process",
+                workspace: "/repo",
+                created_at: "2026-05-02T00:00:00.000Z",
+                started_at: "2026-05-02T00:00:00.000Z",
+                updated_at: "2026-05-02T00:00:00.000Z",
+                completed_at: null,
+                summary: null,
+                error: null,
+                artifacts: [],
+                source_refs: [],
+              }],
+              warnings: [],
+            }),
+          },
+        });
+        const runner = new ChatRunner(makeDeps({
+          adapter,
+          llmClient: createSingleMockLLMClient(JSON.stringify({
+            intent: "resume_run",
+            reason: "再開して",
+          })),
+          runtimeControlService,
+          runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
+        }));
+
+        const result = await runner.execute("再開して", "/repo");
+
+        expect(result).toMatchObject({
+          success: false,
+          output: expect.stringContaining("no typed goal/runtime bridge"),
+        });
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("routes natural-language finalize to an approval-gated proposal without external execution", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-control-chat-finalize-"));
+      try {
+        const adapter = makeMockAdapter();
+        const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+        const executor = vi.fn();
+        const runtimeControlService = new RuntimeControlService({
+          operationStore,
+          executor,
+          operatorHandoffStore: { create: vi.fn().mockResolvedValue({ handoff_id: "handoff-1" }) },
+          sessionRegistry: {
+            snapshot: vi.fn().mockResolvedValue({
+              schema_version: "runtime-session-registry-v1",
+              generated_at: "2026-05-02T00:00:00.000Z",
+              sessions: [],
+              background_runs: [{
+                schema_version: "background-run-v1",
+                id: "run:coreloop:chat",
+                kind: "coreloop_run",
+                parent_session_id: null,
+                child_session_id: "session:coreloop:worker-1",
+                process_session_id: null,
+                goal_id: "goal-1",
+                status: "running",
+                notify_policy: "done_only",
+                reply_target_source: "none",
+                pinned_reply_target: null,
+                title: "CoreLoop goal goal-1",
+                workspace: "/repo",
+                created_at: "2026-05-02T00:00:00.000Z",
+                started_at: "2026-05-02T00:00:00.000Z",
+                updated_at: "2026-05-02T00:00:00.000Z",
+                completed_at: null,
+                summary: null,
+                error: null,
+                artifacts: [],
+                source_refs: [],
+              }],
+              warnings: [],
+            }),
+          },
+        });
+        const runtimeControlApprovalFn = vi.fn().mockResolvedValue(true);
+        const runner = new ChatRunner(makeDeps({
+          adapter,
+          llmClient: createSingleMockLLMClient(JSON.stringify({
+            intent: "finalize_run",
+            reason: "finalize current run",
+            irreversible: true,
+            externalActions: ["submit"],
+          })),
+          runtimeControlService,
+          runtimeControlApprovalFn,
+        }));
+
+        const result = await runner.execute("Finalize with the current best candidate, but do not submit externally.", "/repo");
+
+        expect(result).toMatchObject({
+          success: true,
+          output: expect.stringContaining("No external submit/publish/secret/production/destructive action was executed"),
+        });
+        expect(runtimeControlApprovalFn).toHaveBeenCalledWith(expect.stringContaining("finalize_run"));
+        expect(executor).not.toHaveBeenCalled();
         expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2158,6 +2376,44 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Agentloop direct answer");
+    });
+
+    it("leaves broad continue and finish prompts on the agent loop even when runtime control is wired", async () => {
+      const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "Agentloop keeps the conversational turn",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runtimeControlService = {
+        request: vi.fn().mockResolvedValue({
+          success: true,
+          message: "runtime control should not run",
+        }),
+      };
+      const runner = new ChatRunner(makeDeps({
+        adapter,
+        chatAgentLoopRunner,
+        llmClient: createMockLLMClient([
+          JSON.stringify({ intent: "none", reason: "ordinary continuation" }),
+          JSON.stringify({ intent: "none", reason: "ordinary implementation finish request" }),
+        ]),
+        runtimeControlService,
+      }));
+
+      const continueResult = await runner.execute("続けて", "/repo");
+      const finishResult = await runner.execute("finish the implementation", "/repo");
+
+      expect(continueResult.success).toBe(true);
+      expect(finishResult.success).toBe(true);
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledTimes(2);
+      expect(runtimeControlService.request).not.toHaveBeenCalled();
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("leaves long-running natural-language handoff to chatAgentLoopRunner tools", async () => {

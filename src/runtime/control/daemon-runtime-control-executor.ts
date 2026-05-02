@@ -20,7 +20,12 @@ export function createDaemonRuntimeControlExecutor(
   options: DaemonRuntimeControlExecutorOptions
 ): RuntimeControlExecutor {
   return async (operation): Promise<RuntimeControlExecutorResult> => {
-    if (operation.kind !== "restart_daemon" && operation.kind !== "restart_gateway") {
+    if (
+      operation.kind !== "restart_daemon"
+      && operation.kind !== "restart_gateway"
+      && operation.kind !== "pause_run"
+      && operation.kind !== "resume_run"
+    ) {
       return {
         ok: false,
         state: "failed",
@@ -43,6 +48,34 @@ export function createDaemonRuntimeControlExecutor(
       authToken: daemonInfo.authToken,
       baseDir: options.baseDir,
     });
+
+    if (operation.kind === "pause_run" || operation.kind === "resume_run") {
+      const goalId = operation.target?.goal_id;
+      if (!goalId) {
+        return {
+          ok: false,
+          state: "blocked",
+          message: `Runtime control operation ${operation.kind} is blocked because no goal bridge was resolved.`,
+        };
+      }
+      const response = operation.kind === "pause_run"
+        ? await client.pauseGoal(goalId)
+        : await client.resumeGoal(goalId);
+      if (!response.ok) {
+        return {
+          ok: false,
+          state: "failed",
+          message: `PulSeed daemon rejected ${operation.kind} for goal ${goalId}.`,
+        };
+      }
+      return {
+        ok: true,
+        state: "running",
+        message: operation.kind === "pause_run"
+          ? `Safe-pause request for ${operation.target?.run_id ?? goalId} was sent through the typed daemon API.`
+          : `Resume request for ${operation.target?.run_id ?? goalId} was sent through the typed daemon API.`,
+      };
+    }
 
     const response = await client.requestRuntimeControl({
       operationId: operation.operation_id,
