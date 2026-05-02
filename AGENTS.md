@@ -1,4 +1,14 @@
-# SeedPulse Codex Rules
+# PulSeed Codex Rules
+
+## Semantic Decision Design
+
+- For freeform user intent, natural-language chat, routing, target/session/run selection, status classification, safety/approval decisions, notification routing, failure recovery, RunSpec derivation, evidence Q&A, and dashboard/operator labels, do not ship keyword filters, regex lists, string `includes`, title matching, or language-specific phrase tables as the primary decision mechanism.
+- Prefer durable contracts: typed APIs, schemas, explicit state machines, structured model/LLM classification with confidence and unknown/clarification behavior, domain parsers, and production caller paths that preserve the semantic context.
+- Before adding new semantic decision logic, inspect the existing typed API, schema, store, router, recognizer, and caller path. Extend those contracts where possible instead of adding side-channel text matching.
+- Deterministic parsing is acceptable for exact protocol surfaces: slash/CLI command grammar, IDs, file paths, URLs, enum values, schema validation, feature flags, and wire/protocol tokens. Do not treat this exception as permission to classify freeform human intent with brittle text rules.
+- When replacing or touching an existing keyword/regex semantic shortcut, do not expand the shortcut with more phrases. Either replace it with a durable mechanism in scope, or record the blocker and create a focused follow-up issue.
+- Tests for semantic behavior must include cases that would fail a brittle keyword implementation: paraphrases, multilingual phrasing where relevant, ambiguous input, stale/previous-target rejection, and at least one production caller-path test that lets the real routing/interpretation layer choose the path.
+- Fresh review agents for SeedPulse semantic changes should explicitly look for keyword/regex/includes/title-matching bypasses, missing approval gates, stale target reuse, and tests that only prove precomputed lower-level inputs.
 
 ## Test Design
 
