@@ -8,6 +8,7 @@ import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from 
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
+  lastChatMessages: [] as Array<{ role: string; text: string; messageType?: string }>,
   lastApprovalProps: null as null | {
     task: { work_description: string; rationale: string; goal_id: string };
     onDecision: (approved: boolean) => void;
@@ -16,6 +17,7 @@ const testState = vi.hoisted(() => ({
   runtimeSessionSnapshots: [] as Array<Record<string, unknown>>,
   runtimeSessionSnapshotCalls: 0,
   summarizedRunIds: [] as string[],
+  runtimeEvidenceSummaries: {} as Record<string, unknown>,
 }));
 
 vi.mock("ink", async () => {
@@ -31,6 +33,7 @@ vi.mock("../chat.js", async () => {
   return {
     Chat: (props: Record<string, unknown>) => {
       testState.lastChatProps = props as any;
+      testState.lastChatMessages = (props.messages as Array<{ role: string; text: string; messageType?: string }>) ?? [];
       return null;
     },
   };
@@ -40,6 +43,7 @@ vi.mock("../fullscreen-chat.js", async () => {
   return {
     FullscreenChat: (props: Record<string, unknown>) => {
       testState.lastChatProps = props as any;
+      testState.lastChatMessages = (props.messages as Array<{ role: string; text: string; messageType?: string }>) ?? [];
       return null;
     },
   };
@@ -80,7 +84,7 @@ vi.mock("../../../runtime/store/evidence-ledger.js", () => ({
   RuntimeEvidenceLedger: class {
     summarizeRun = vi.fn(async (runId: string) => {
       testState.summarizedRunIds.push(runId);
-      return null;
+      return testState.runtimeEvidenceSummaries[runId] ?? null;
     });
   },
 }));
@@ -137,6 +141,89 @@ function createChatRunnerMock() {
   };
 }
 
+function createEvidenceSummary(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "runtime-evidence-summary-v1",
+    generated_at: "2026-05-02T00:00:00.000Z",
+    scope: { run_id: "run-evidence" },
+    total_entries: 1,
+    latest_strategy: null,
+    best_evidence: null,
+    metric_trends: [{
+      metric_key: "balanced_accuracy",
+      direction: "maximize",
+      trend: "breakthrough",
+      latest_value: 0.91,
+      latest_observed_at: "2026-05-02T00:00:00.000Z",
+      best_value: 0.91,
+      best_observed_at: "2026-05-02T00:00:00.000Z",
+      observation_count: 3,
+      recent_slope_per_observation: 0.03,
+      best_delta: 0.08,
+      last_meaningful_improvement_delta: 0.04,
+      last_breakthrough_delta: 0.08,
+      time_since_last_meaningful_improvement_ms: 0,
+      improvement_threshold: 0.01,
+      breakthrough_threshold: 0.05,
+      noise_band: 0.005,
+      confidence: 1,
+      source_refs: [],
+      summary: "balanced_accuracy breakthrough",
+    }],
+    evaluator_summary: {
+      local_best: null,
+      external_best: null,
+      gap: null,
+      budgets: [],
+      calibration: [],
+      approval_required_actions: [],
+      observations: [],
+    },
+    research_memos: [],
+    dream_checkpoints: [],
+    divergent_exploration: [],
+    candidate_lineages: [],
+    recommended_candidate_portfolio: [],
+    candidate_selection_summary: {
+      primary_metric: null,
+      raw_best: null,
+      robust_best: null,
+      ranked: [],
+      final_portfolio: { safe: null, aggressive: null, diverse: null },
+    },
+    near_miss_candidates: [],
+    artifact_retention: {
+      schema_version: "runtime-artifact-retention-summary-v1",
+      total_artifacts: 0,
+      total_size_bytes: 0,
+      unknown_size_count: 0,
+      protected_count: 0,
+      by_retention_class: {
+        final_deliverable: 0,
+        best_candidate: 0,
+        robust_candidate: 0,
+        near_miss: 0,
+        reproducibility_critical: 0,
+        evidence_report: 0,
+        low_value_smoke: 0,
+        cache_intermediate: 0,
+        duplicate_superseded: 0,
+        other: 0,
+      },
+      cleanup_plan: {
+        mode: "plan_only",
+        destructive_actions_default: "approval_required",
+        actions: [],
+      },
+    },
+    recent_failed_attempts: [],
+    failed_lineages: [],
+    recent_entries: [],
+    warnings: [],
+    ...overrides,
+  };
+}
+
 async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -156,6 +243,11 @@ describe("formatDaemonConnectionState", () => {
 describe("standalone slash command routing", () => {
   beforeEach(() => {
     testState.lastChatProps = null;
+    testState.lastChatMessages = [];
+    testState.runtimeSessionSnapshots = [];
+    testState.runtimeSessionSnapshotCalls = 0;
+    testState.summarizedRunIds = [];
+    testState.runtimeEvidenceSummaries = {};
   });
 
   afterEach(() => {
@@ -355,6 +447,69 @@ describe("standalone slash command routing", () => {
     screen.unmount();
   });
 
+  it("answers natural-language run progress questions from runtime evidence before ChatRunner", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    testState.runtimeSessionSnapshots = [{
+      schema_version: "runtime-session-registry-v1",
+      generated_at: "2026-05-02T00:00:00.000Z",
+      sessions: [],
+      background_runs: [{
+        schema_version: "background-run-v1",
+        id: "run-evidence",
+        kind: "coreloop_run",
+        parent_session_id: null,
+        child_session_id: null,
+        process_session_id: null,
+        status: "running",
+        notify_policy: "done_only",
+        reply_target_source: "none",
+        pinned_reply_target: null,
+        title: "Evidence run",
+        workspace: "/repo",
+        created_at: "2026-05-02T00:00:00.000Z",
+        started_at: "2026-05-02T00:00:00.000Z",
+        updated_at: "2026-05-02T00:00:00.000Z",
+        completed_at: null,
+        summary: "Kaggle run is executing",
+        error: null,
+        artifacts: [],
+        source_refs: [],
+      }],
+      warnings: [],
+    }];
+    testState.runtimeEvidenceSummaries = {
+      "run-evidence": createEvidenceSummary(),
+    };
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/kaggle",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("Progress?");
+    await flush();
+
+    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("Runtime evidence answer for run run-evidence");
+    expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("balanced_accuracy");
+
+    screen.unmount();
+  });
+
   it("routes input during processing to ChatRunner interrupt redirect", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
@@ -396,11 +551,13 @@ describe("standalone slash command routing", () => {
 describe("daemon-mode chat routing", () => {
   beforeEach(() => {
     testState.lastChatProps = null;
+    testState.lastChatMessages = [];
     testState.lastApprovalProps = null;
     testState.lastDashboardProps = null;
     testState.runtimeSessionSnapshots = [];
     testState.runtimeSessionSnapshotCalls = 0;
     testState.summarizedRunIds = [];
+    testState.runtimeEvidenceSummaries = {};
   });
 
   afterEach(() => {

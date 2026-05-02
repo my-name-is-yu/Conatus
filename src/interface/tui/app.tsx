@@ -50,6 +50,7 @@ import {
   handleRunSpecConfirmationInput,
   type RunSpec,
 } from "../../runtime/run-spec/index.js";
+import { answerRuntimeEvidenceQuestion } from "../../runtime/evidence-answer.js";
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
@@ -729,6 +730,22 @@ export function App({
             }].slice(-MAX_MESSAGES));
           }
         } else {
+          const evidenceAnswer = await answerRuntimeEvidenceQuestion({
+            text: input,
+            stateManager,
+          });
+          if (evidenceAnswer.kind === "answered" && evidenceAnswer.message) {
+            const message = evidenceAnswer.message;
+            setMessages((prev) => [...prev, {
+              id: randomUUID(),
+              role: "pulseed" as const,
+              text: message,
+              timestamp: new Date(),
+              messageType: evidenceAnswer.messageType ?? ("info" as const),
+            }].slice(-MAX_MESSAGES));
+            return;
+          }
+
           const freeformRoute = resolveFreeformInputRoute({
             isDaemonMode,
             daemonGoalId: daemonLoopState.goalId,
