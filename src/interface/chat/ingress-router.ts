@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ChatEventHandler } from "./chat-events.js";
 import type { RuntimeControlIntent } from "../../runtime/control/index.js";
-import { recognizeRunSpecIntent, type RunSpecIntent } from "../../runtime/run-spec/index.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -53,7 +52,6 @@ export type SelectedChatRoute =
   | {
       kind: "agent_loop" | "tool_loop" | "adapter";
       reason: "agent_loop_available" | "tool_loop_available" | "adapter_fallback";
-      runSpecIntent?: RunSpecIntent;
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
@@ -62,7 +60,6 @@ export type SelectedChatRoute =
       kind: "runtime_control";
       reason: "runtime_control_intent";
       intent: RuntimeControlIntent;
-      runSpecIntent?: RunSpecIntent;
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
@@ -76,7 +73,7 @@ export interface IngressRouterCapabilities {
 }
 
 function selectRouteForText(
-  text: string,
+  _text: string,
   runtimeControl: ChatIngressRuntimeControl,
   deps: IngressRouterCapabilities
 ): SelectedChatRoute {
@@ -92,7 +89,6 @@ function selectRouteForText(
   };
   const canUseRuntimeControlRoute =
     runtimeControl.allowed && runtimeControl.approvalMode !== "disallowed";
-  const runSpecIntent = recognizeRunSpecIntent(text) ?? undefined;
 
   if (canUseRuntimeControlRoute) {
     const intent = deps.runtimeControlIntent ?? null;
@@ -116,7 +112,6 @@ function selectRouteForText(
     return {
       kind: "agent_loop",
       reason: "agent_loop_available",
-      ...(runSpecIntent ? { runSpecIntent } : {}),
       ...baseTurnPolicy,
     };
   }
@@ -125,7 +120,6 @@ function selectRouteForText(
     return {
       kind: "tool_loop",
       reason: "tool_loop_available",
-      ...(runSpecIntent ? { runSpecIntent } : {}),
       ...baseTurnPolicy,
     };
   }
@@ -133,7 +127,6 @@ function selectRouteForText(
   return {
     kind: "adapter",
     reason: "adapter_fallback",
-    ...(runSpecIntent ? { runSpecIntent } : {}),
     ...baseTurnPolicy,
   };
 }

@@ -215,6 +215,10 @@ function buildRunSpecIngress(input: string, spec: RunSpec, effectiveCwd: string)
   };
 }
 
+function resolveRunSpecExecutionCwd(spec: RunSpec, fallbackCwd: string): string {
+  return spec.workspace?.path ?? fallbackCwd;
+}
+
 interface AppProps {
   // Daemon mode (thin client — events via SSE, commands via REST)
   daemonClient?: DaemonClient;
@@ -670,9 +674,10 @@ export function App({
             messageType: result.kind === "blocked" || result.kind === "unrecognized" ? ("warning" as const) : ("info" as const),
           }].slice(-MAX_MESSAGES));
           if (result.kind === "confirmed") {
+            const runSpecCwd = resolveRunSpecExecutionCwd(savedRunSpec, effectiveCwd);
             await chatRunner.executeIngressMessage(
-              buildRunSpecIngress(savedRunSpec.source_text, savedRunSpec, effectiveCwd),
-              effectiveCwd,
+              buildRunSpecIngress(savedRunSpec.source_text, savedRunSpec, runSpecCwd),
+              runSpecCwd,
             );
           }
           return;
@@ -796,10 +801,11 @@ export function App({
             }
           } else if (freeformRoute === "chat_runner" && chatRunner) {
             const effectiveCwd = cwd ?? process.cwd();
-            const runSpec = deriveRunSpecFromText(input, {
+            const runSpec = await deriveRunSpecFromText(input, {
               cwd: effectiveCwd,
               conversationId: chatRunner.getConversationId?.() ?? null,
               timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              llmClient,
             });
             if (runSpec) {
               const savedRunSpec = await createRunSpecStore(stateManager).save(runSpec);

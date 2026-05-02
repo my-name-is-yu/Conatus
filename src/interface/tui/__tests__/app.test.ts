@@ -5,7 +5,7 @@ import type { DaemonClient } from "../../../runtime/daemon/client.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { TuiChatSurface } from "../chat-surface.js";
 import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from "../app.js";
-import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
@@ -140,6 +140,59 @@ function createChatRunnerMock() {
     getConversationId: vi.fn(() => "tui-conversation-test"),
     onEvent: undefined,
   };
+}
+
+function nonEvidenceResponse(): string {
+  return JSON.stringify({
+    decision: "not_runtime_evidence_question",
+    topics: [],
+    confidence: 0.95,
+  });
+}
+
+function runSpecResponse(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    decision: "run_spec_request",
+    confidence: 0.92,
+    profile: "kaggle",
+    objective: "Run Kaggle competition until review time",
+    metric: {
+      name: "leaderboard_rank_percentile",
+      direction: "minimize",
+      target: null,
+      target_rank_percent: 15,
+      datasource: "kaggle_leaderboard",
+      confidence: "high",
+    },
+    progress_contract: {
+      kind: "rank_percentile",
+      dimension: "leaderboard_rank_percentile",
+      threshold: 15,
+      semantics: "Reach a leaderboard rank percentile at or below 15.",
+      confidence: "high",
+    },
+    deadline: {
+      raw: "tomorrow morning",
+      iso_at: "2026-05-03T00:00:00.000Z",
+      timezone: "Asia/Tokyo",
+      finalization_buffer_minutes: 60,
+      confidence: "medium",
+    },
+    budget: {
+      max_trials: null,
+      max_wall_clock_minutes: null,
+      resident_policy: "until_deadline",
+    },
+    approval_policy: {
+      submit: "approval_required",
+      publish: "unspecified",
+      secret: "approval_required",
+      external_action: "approval_required",
+      irreversible_action: "approval_required",
+    },
+    missing_fields: [],
+    ...overrides,
+  });
 }
 
 function createEvidenceSummary(overrides: Record<string, unknown> = {}) {
@@ -415,9 +468,14 @@ describe("standalone slash command routing", () => {
   it("persists a RunSpec draft and waits for confirmation before forwarding long-running runs", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
+    const llmClient = createMockLLMClient([
+      nonEvidenceResponse(),
+      runSpecResponse(),
+    ]);
 
     const screen = render(React.createElement(App, {
       stateManager: stateManager as unknown as StateManager,
+      llmClient,
       chatRunner: chatRunner as unknown as TuiChatSurface,
       noFlicker: false,
       controlStream: process.stdout,
@@ -457,12 +515,71 @@ describe("standalone slash command routing", () => {
     screen.unmount();
   });
 
-  it("does not start a long-running run when required RunSpec fields remain unresolved", async () => {
+  it("executes a confirmed RunSpec in the structured workspace rather than the stale TUI cwd", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
+    const llmClient = createMockLLMClient([
+      nonEvidenceResponse(),
+      runSpecResponse({
+        workspace: {
+          path: "/work/explicit-kaggle",
+          source: "user",
+          confidence: "high",
+        },
+      }),
+    ]);
 
     const screen = render(React.createElement(App, {
       stateManager: stateManager as unknown as StateManager,
+      llmClient,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/stale-tui-cwd",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("Run the Kaggle competition in /work/explicit-kaggle until tomorrow morning.");
+    await flush();
+    await testState.lastChatProps!.onSubmit("confirm");
+
+    expect(chatRunner.executeIngressMessage).toHaveBeenCalledOnce();
+    const calls = chatRunner.executeIngressMessage.mock.calls as unknown as Array<[
+      { cwd: string; metadata: Record<string, unknown> },
+      string,
+    ]>;
+    const [ingress, cwd] = calls[0]!;
+    expect(cwd).toBe("/work/explicit-kaggle");
+    expect(ingress.cwd).toBe("/work/explicit-kaggle");
+    expect(ingress.metadata).toMatchObject({
+      run_spec_profile: "kaggle",
+      run_spec_status: "confirmed",
+    });
+
+    screen.unmount();
+  });
+
+  it("does not start a long-running run when required RunSpec fields remain unresolved", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const llmClient = createMockLLMClient([
+      nonEvidenceResponse(),
+      runSpecResponse({
+        deadline: null,
+      }),
+    ]);
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      llmClient,
       chatRunner: chatRunner as unknown as TuiChatSurface,
       noFlicker: false,
       controlStream: process.stdout,
@@ -484,6 +601,46 @@ describe("standalone slash command routing", () => {
 
     expect(chatRunner.execute).not.toHaveBeenCalled();
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
+  it.each([
+    ["Japanese", "明日のレビューまでコンペの改善を進めて、提出は承認制にして"],
+    ["Spanish", "Sigue trabajando en la competición hasta la revisión y no envíes nada sin aprobación."],
+  ])("persists a RunSpec draft for %s caller-path phrasing", async (_label, requestText) => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const llmClient = createMockLLMClient([
+      nonEvidenceResponse(),
+      runSpecResponse(),
+    ]);
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      llmClient,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/kaggle",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit(requestText);
+    await flush();
+
+    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    expect(llmClient.callCount).toBe(2);
+    expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("Proposed long-running run");
 
     screen.unmount();
   });
@@ -561,12 +718,19 @@ describe("standalone slash command routing", () => {
   it("routes non-evidence multilingual chat through ChatRunner when classifier says not evidence", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
-    const llmClient = createSingleMockLLMClient(JSON.stringify({
-      decision: "not_runtime_evidence_question",
-      topics: [],
-      confidence: 0.96,
-      rationale: "asks for an explanation, not persisted runtime evidence",
-    }));
+    const llmClient = createMockLLMClient([
+      JSON.stringify({
+        decision: "not_runtime_evidence_question",
+        topics: [],
+        confidence: 0.96,
+        rationale: "asks for an explanation, not persisted runtime evidence",
+      }),
+      JSON.stringify({
+        decision: "not_run_spec_request",
+        confidence: 0.95,
+        missing_fields: [],
+      }),
+    ]);
 
     const screen = render(React.createElement(App, {
       stateManager: stateManager as unknown as StateManager,
@@ -589,7 +753,7 @@ describe("standalone slash command routing", () => {
     await testState.lastChatProps!.onSubmit("このタスクの進め方を説明して");
     await flush();
 
-    expect(llmClient.callCount).toBe(1);
+    expect(llmClient.callCount).toBe(2);
     expect(chatRunner.execute).toHaveBeenCalledWith("このタスクの進め方を説明して", "/work/kaggle");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
 
@@ -599,12 +763,19 @@ describe("standalone slash command routing", () => {
   it("routes natural-language runtime control through ChatRunner from the TUI freeform input", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
-    const llmClient = createSingleMockLLMClient(JSON.stringify({
-      decision: "not_runtime_evidence_question",
-      topics: [],
-      confidence: 0.97,
-      rationale: "runtime-control request, not evidence Q&A",
-    }));
+    const llmClient = createMockLLMClient([
+      JSON.stringify({
+        decision: "not_runtime_evidence_question",
+        topics: [],
+        confidence: 0.97,
+        rationale: "runtime-control request, not evidence Q&A",
+      }),
+      JSON.stringify({
+        decision: "not_run_spec_request",
+        confidence: 0.95,
+        missing_fields: [],
+      }),
+    ]);
 
     const screen = render(React.createElement(App, {
       stateManager: stateManager as unknown as StateManager,
@@ -629,7 +800,7 @@ describe("standalone slash command routing", () => {
 
     expect(chatRunner.execute).toHaveBeenCalledWith("この実行を一時停止して", "/work/kaggle");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
-    expect(llmClient.callCount).toBe(1);
+    expect(llmClient.callCount).toBe(2);
 
     screen.unmount();
   });

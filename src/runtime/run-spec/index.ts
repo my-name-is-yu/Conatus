@@ -1,4 +1,4 @@
-export { deriveRunSpecFromText, recognizeRunSpecIntent, type RunSpecIntent } from "./derive.js";
+export { deriveRunSpecFromText, understandRunSpecDraft, type RunSpecIntent } from "./derive.js";
 export { createRunSpecStore, RunSpecStore } from "./store.js";
 export {
   applyRunSpecRevision,

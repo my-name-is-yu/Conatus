@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 
 export const RunSpecProfileSchema = z.enum(["generic", "kaggle"]);
 export type RunSpecProfile = z.infer<typeof RunSpecProfileSchema>;
@@ -122,4 +123,5 @@ export interface RunSpecDerivationContext {
   conversationId?: string | null;
   now?: Date;
   timezone?: string;
+  llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
 }

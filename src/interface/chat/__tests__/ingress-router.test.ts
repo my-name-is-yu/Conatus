@@ -136,7 +136,7 @@ describe("IngressRouter", () => {
     expect(route.eventProjectionPolicy).toBe("turn_only");
   });
 
-  it("classifies Kaggle long-running requests as needing RunSpec derivation on the caller path", () => {
+  it("does not attach keyword-derived RunSpec intent on the sync ingress route", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
@@ -154,10 +154,7 @@ describe("IngressRouter", () => {
     );
 
     expect(route.kind).toBe("agent_loop");
-    expect(route.runSpecIntent).toMatchObject({
-      needsRunSpec: true,
-      profile: "kaggle",
-    });
+    expect(route).not.toHaveProperty("runSpecIntent");
   });
 
   it("does not classify Japanese threshold phrasing with regex-based daemon routing", () => {
