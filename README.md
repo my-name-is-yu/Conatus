@@ -98,20 +98,16 @@ PulSeed will guide provider and adapter setup when needed.
 
 ## Achievements
 
-PulSeed joined [Kaggle Playground Series S6E4](https://www.kaggle.com/competitions/playground-series-s6e4).
+PulSeed completed a 30-hour autonomous dogfood run on
+[Kaggle Playground Series S6E4](https://www.kaggle.com/competitions/playground-series-s6e4).
 
 | Area | Result |
 | --- | --- |
-| Long-running workflow | It has been running straight over 10 hours and made decent progress. |
-| Local OOF balanced accuracy | Improved from early 0.45-level baselines to `0.970413051791`. |
-| Exploration path | CatBoost-focused ensembles, probability adjustment, and post-OOF calibration. |
-| Current best local artifact | Preserved full OOF predictions and per-class recall. |
-
-Current best per-class recall:
-
-- High: `0.957351611214`
-- Low: `0.994598788377`
-- Medium: `0.959288755783`
+| Long-running workflow | Ran continuously for about 30 hours, with operator intervention only for deadline-bound submissions. |
+| Final Kaggle result | Finished with `0.97057` balanced accuracy, ranked `1,303 / 4,325` teams, approximately the top `30%`. |
+| Local validation | Improved OOF balanced accuracy from early 0.45-level baselines to a 0.970+ candidate set. |
+| Autonomous exploration | Generated, tested, and compared hypotheses across CatBoost variants, probability adjustment, class weighting, and post-OOF calibration. |
+| Evidence preserved | Kept logs, metrics, OOF predictions, submission candidates, and follow-up engineering issues from the run. |
 
 ## Docs and Community
 
