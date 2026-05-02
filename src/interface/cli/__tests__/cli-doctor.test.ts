@@ -471,16 +471,30 @@ describe("checkDaemon", () => {
   });
 
   it("fails when the watchdog is alive but the runtime child is dead", async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "pulseed.pid"),
-      JSON.stringify({
-        pid: 999999999,
-        runtime_pid: 999999999,
-        owner_pid: process.pid,
-        watchdog_pid: process.pid,
+    const watchdogPid = process.pid;
+    const runtimePid = 999999999;
+    await new PIDManager(tmpDir).writePID({
+      pid: runtimePid,
+      runtime_pid: runtimePid,
+      owner_pid: watchdogPid,
+      watchdog_pid: watchdogPid,
+    });
+    const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+      info: {
+        pid: runtimePid,
+        runtime_pid: runtimePid,
+        owner_pid: watchdogPid,
+        watchdog_pid: watchdogPid,
         started_at: new Date().toISOString(),
-      })
-    );
+      },
+      running: true,
+      runtimePid,
+      ownerPid: watchdogPid,
+      alivePids: [watchdogPid],
+      stalePids: [runtimePid],
+      verifiedPids: [watchdogPid],
+      unverifiedLegacyPids: [],
+    });
     fs.writeFileSync(
       path.join(tmpDir, "daemon-state.json"),
       JSON.stringify({
@@ -495,9 +509,13 @@ describe("checkDaemon", () => {
       })
     );
 
-    const result = await checkDaemon(tmpDir);
-    expect(result.status).toBe("fail");
-    expect(result.detail).toContain("restarting");
+    try {
+      const result = await checkDaemon(tmpDir);
+      expect(result.status).toBe("fail");
+      expect(result.detail).toContain("restarting");
+    } finally {
+      inspectSpy.mockRestore();
+    }
   });
 
   it("fails when daemon-state.json reports crashed", async () => {
