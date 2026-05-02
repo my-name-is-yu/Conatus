@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { AgentMemoryEntry } from "../../knowledge/types/agent-memory.js";
+import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../knowledge/types/agent-memory.js";
 import type { LearnedPattern } from "../../knowledge/types/learning.js";
 import type { DreamWorkflowRecord } from "../dream-event-workflows.js";
 import { buildDreamSoilMutationIntent } from "../dream-soil-mutation.js";
 
 function makeAgentMemoryEntry(overrides: Partial<AgentMemoryEntry> & Pick<AgentMemoryEntry, "id" | "key" | "value" | "created_at" | "updated_at">): AgentMemoryEntry {
-  return {
+  return AgentMemoryEntrySchema.parse({
     tags: [],
     memory_type: "fact",
     status: "raw",
     ...overrides,
-  };
+  });
 }
 
 function makeLearnedPattern(overrides: Partial<LearnedPattern> & Pick<LearnedPattern, "pattern_id" | "type" | "description" | "confidence" | "evidence_count" | "source_goal_ids" | "applicable_domains" | "created_at">): LearnedPattern {

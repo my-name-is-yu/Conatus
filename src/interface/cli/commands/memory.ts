@@ -1,6 +1,8 @@
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import {
   parseMemoryCorrectionRef,
   runUserMemoryOperation,
@@ -19,10 +21,20 @@ function hasOption(argv: string[], name: string): boolean {
 }
 
 function printUsage(): void {
-  getCliLogger().error("Usage: pulseed memory <correct|forget|retract|history> <kind:id> [--reason text] [--value text] [--replacement-ref kind:id] [--goal id] [--run id] [--task id]");
+  getCliLogger().error("Usage: pulseed memory <correct|forget|retract|history> <kind:id> ... | pulseed memory export [--consent-scope id] [--include-secret]");
 }
 
 export async function cmdMemory(stateManager: StateManager, argv: string[]): Promise<number> {
+  if (argv[0] === "export") {
+    const manager = new KnowledgeManager(stateManager, {} as ILLMClient);
+    const entries = await manager.exportAgentMemoryGovernance({
+      consent_scope: optionValue(argv, "--consent-scope"),
+      include_secret: hasOption(argv, "--include-secret"),
+    });
+    console.log(JSON.stringify({ entries }, null, 2));
+    return 0;
+  }
+
   const operation = argv[0] as UserMemoryOperation | undefined;
   const refValue = argv[1];
   if (!operation || !UserMemoryOperationSchema.safeParse(operation).success || !refValue) {

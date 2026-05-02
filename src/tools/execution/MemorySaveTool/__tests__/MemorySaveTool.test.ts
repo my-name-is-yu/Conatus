@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemorySaveTool } from "../MemorySaveTool.js";
 import type { KnowledgeManager } from "../../../../platform/knowledge/knowledge-manager.js";
 import type { ToolCallContext } from "../../../types.js";
-import type { AgentMemoryEntry } from "../../../../platform/knowledge/types/agent-memory.js";
+import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../../../platform/knowledge/types/agent-memory.js";
 
 const makeContext = (): ToolCallContext => ({
   cwd: "/tmp",
@@ -14,7 +14,7 @@ const makeContext = (): ToolCallContext => ({
 });
 
 function makeSavedEntry(key: string): AgentMemoryEntry {
-  return {
+  return AgentMemoryEntrySchema.parse({
     id: "entry-id-1",
     key,
     value: "some value",
@@ -24,7 +24,7 @@ function makeSavedEntry(key: string): AgentMemoryEntry {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     summary: "",
-  } as AgentMemoryEntry;
+  });
 }
 
 function makeMockKM(overrides: Partial<KnowledgeManager> = {}): KnowledgeManager {
@@ -140,6 +140,39 @@ describe("MemorySaveTool", () => {
           provenance: expect.objectContaining({
             source_type: "web",
             raw_refs: ["snapshot:1"],
+          }),
+        })
+      );
+    });
+
+    it("passes governance metadata to saveAgentMemory", async () => {
+      await tool.call({
+        key: "k",
+        value: "v",
+        memory_type: "fact",
+        governance: {
+          sensitivity: "private",
+          consent: {
+            scope_id: "chat_only",
+            allowed_contexts: ["chat"],
+            source_actor: "user",
+            collection_context: "chat",
+          },
+          retention: {
+            policy_id: "review",
+            retain_until: null,
+            review_after: null,
+            delete_requires_approval: true,
+          },
+          export_visibility: "listed",
+          owner_ref: "user",
+        },
+      }, makeContext());
+      expect(vi.mocked(km.saveAgentMemory)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          governance: expect.objectContaining({
+            sensitivity: "private",
+            consent: expect.objectContaining({ allowed_contexts: ["chat"] }),
           }),
         })
       );

@@ -8,7 +8,7 @@ import type {
   SharedKnowledgeEntry,
 } from "../../../base/types/knowledge.js";
 import type { DreamWorkflowRecord } from "../../dream/dream-event-workflows.js";
-import type { AgentMemoryStore } from "../../knowledge/types/agent-memory.js";
+import { AgentMemoryStoreSchema, type AgentMemoryStore } from "../../knowledge/types/agent-memory.js";
 import type { SoilMemoryHealthSnapshot } from "../health.js";
 import { readSoilMarkdownFile } from "../io.js";
 import {
@@ -97,7 +97,7 @@ describe("Soil content projections", () => {
   it("projects memory, decision, and soil system pages", async () => {
     const baseDir = makeTempDir("soil-memory-projection-");
     try {
-      const store: AgentMemoryStore = {
+      const store: AgentMemoryStore = AgentMemoryStoreSchema.parse({
         entries: [
           {
             id: "mem-1",
@@ -121,6 +121,23 @@ describe("Soil content projections", () => {
             status: "raw",
             created_at: "2026-04-11T08:00:00.000Z",
             updated_at: "2026-04-11T08:30:00.000Z",
+          },
+          {
+            id: "mem-secret",
+            key: "private-health-detail",
+            value: "Sensitive detail should not become planning context.",
+            tags: ["private"],
+            memory_type: "observation",
+            status: "raw",
+            governance: {
+              sensitivity: "secret",
+              consent: {
+                scope_id: "private_chat",
+                allowed_contexts: ["private_chat"],
+              },
+            },
+            created_at: "2026-04-11T08:20:00.000Z",
+            updated_at: "2026-04-11T08:25:00.000Z",
           },
           {
             id: "mem-quarantined",
@@ -152,7 +169,7 @@ describe("Soil content projections", () => {
         ],
         corrections: [],
         last_consolidated_at: "2026-04-11T09:15:00.000Z",
-      };
+      });
 
       const decisions: DecisionRecord[] = [
         {
@@ -181,6 +198,7 @@ describe("Soil content projections", () => {
       expect(memoryPage?.body).toContain("Last consolidated at: 2026-04-11T09:15:00.000Z");
       expect(memoryPage?.body).toContain("Quarantined entries: 1");
       expect(memoryPage?.body).not.toContain("poisoned-web-memory");
+      expect(memoryPage?.body).not.toContain("private-health-detail");
 
       const preferencesPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "memory", "preferences.md"));
       expect(preferencesPage?.body).toContain("Be concise and direct.");

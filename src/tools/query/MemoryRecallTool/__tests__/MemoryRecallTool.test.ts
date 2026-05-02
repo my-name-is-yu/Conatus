@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryRecallTool } from "../MemoryRecallTool.js";
 import type { KnowledgeManager } from "../../../../platform/knowledge/knowledge-manager.js";
 import type { ToolCallContext } from "../../../types.js";
-import type { AgentMemoryEntry } from "../../../../platform/knowledge/types/agent-memory.js";
+import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../../../platform/knowledge/types/agent-memory.js";
 
 const makeContext = (): ToolCallContext => ({
   cwd: "/tmp",
@@ -13,7 +13,7 @@ const makeContext = (): ToolCallContext => ({
 });
 
 function makeEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry {
-  return {
+  return AgentMemoryEntrySchema.parse({
     id: "mem-1",
     key: "user.language",
     value: "TypeScript",
@@ -24,7 +24,7 @@ function makeEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry 
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
-  };
+  });
 }
 
 function makeMockKnowledgeManager(
@@ -189,6 +189,37 @@ describe("MemoryRecallTool", () => {
       );
       const data = result.data as { entries: AgentMemoryEntry[]; totalFound: number };
       expect(data.entries).toHaveLength(2);
+    });
+
+    it("defaults planning recall to local consent and local sensitivity", async () => {
+      vi.mocked(km.recallAgentMemory).mockResolvedValue([]);
+
+      await tool.call({ query: "preference" }, makeContext());
+
+      expect(vi.mocked(km.recallAgentMemory)).toHaveBeenCalledWith(
+        "preference",
+        expect.objectContaining({
+          consent_scope: "local_planning",
+          max_sensitivity: "local",
+        })
+      );
+    });
+
+    it("passes explicit typed governance filters", async () => {
+      vi.mocked(km.recallAgentMemory).mockResolvedValue([]);
+
+      await tool.call(
+        { query: "preference", consent_scope: "private_chat", max_sensitivity: "private" },
+        makeContext()
+      );
+
+      expect(vi.mocked(km.recallAgentMemory)).toHaveBeenCalledWith(
+        "preference",
+        expect.objectContaining({
+          consent_scope: "private_chat",
+          max_sensitivity: "private",
+        })
+      );
     });
   });
 

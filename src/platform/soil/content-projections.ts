@@ -7,6 +7,7 @@ import type {
 } from "../../base/types/knowledge.js";
 import type { AgentMemoryEntry, AgentMemoryStore } from "../knowledge/types/agent-memory.js";
 import { AgentMemoryStoreSchema } from "../knowledge/types/agent-memory.js";
+import { isSensitivityAllowed } from "../corrections/memory-governance.js";
 import { readTextFileOrNull } from "./io.js";
 import { SoilPageFrontmatterSchema, type SoilPageFrontmatter } from "./types.js";
 import {
@@ -93,7 +94,11 @@ function memoryEntrySection(entry: AgentMemoryEntry): string {
 }
 
 function isPlanningEligibleMemoryEntry(entry: AgentMemoryEntry): boolean {
-  return entry.status === "raw" || entry.status === "compiled";
+  return (
+    (entry.status === "raw" || entry.status === "compiled") &&
+    entry.governance.consent.allowed_contexts.includes("local_planning") &&
+    isSensitivityAllowed(entry.governance.sensitivity, "local")
+  );
 }
 
 function decisionSection(record: DecisionRecord): string {

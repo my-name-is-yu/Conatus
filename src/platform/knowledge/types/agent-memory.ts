@@ -8,6 +8,7 @@ import {
   MemoryQuarantineStateSchema,
   MemoryVerificationStatusSchema,
 } from "../../corrections/memory-quarantine.js";
+import { MemoryGovernanceSchema } from "../../corrections/memory-governance.js";
 
 // --- AgentMemoryType ---
 
@@ -39,6 +40,7 @@ export const AgentMemoryEntrySchema = z.object({
   verification_status: MemoryVerificationStatusSchema.optional(),
   provenance: MemoryProvenanceSchema.optional(),
   quarantine_state: MemoryQuarantineStateSchema.optional(),
+  governance: MemoryGovernanceSchema.default({}),
   supersedes_memory_id: z.string().min(1).optional(),
   compiled_from: z.array(z.string()).optional(),
   created_at: z.string(),
