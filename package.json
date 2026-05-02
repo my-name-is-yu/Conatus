@@ -66,6 +66,7 @@
     "test:kaggle-training": "vitest run src/orchestrator/execution/agent-loop/__tests__/kaggle-training-benchmark.test.ts",
     "dogfood:agentloop:real": "npm run build && node dist/orchestrator/execution/agent-loop/agent-loop-real-dogfood.js",
     "test:runtime-long-run": "vitest run --config vitest.runtime-long-run.config.ts",
+    "test:memory-correction-eval": "vitest run --config vitest.runtime-long-run.config.ts tests/slow/memory-correction-retrieval-eval.test.ts",
     "test:changed": "node scripts/test-changed.mjs",
     "test:watch": "vitest --config vitest.unit.config.ts",
     "test:watch:integration": "vitest --config vitest.integration.config.ts",
