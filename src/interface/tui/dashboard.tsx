@@ -8,11 +8,15 @@ import type {
   RuntimeSession,
   RuntimeSessionRegistrySnapshot,
 } from "../../runtime/session-registry/types.js";
+import type { RuntimeEvidenceSummary } from "../../runtime/store/evidence-ledger.js";
+import type { RuntimeHealthSnapshot } from "../../runtime/store/runtime-schemas.js";
 
 interface DashboardProps {
   state: LoopState;
   maxIterations?: number;
   runtimeSessions?: RuntimeSessionRegistrySnapshot | null;
+  runtimeHealth?: RuntimeHealthSnapshot | null;
+  evidenceSummaries?: RuntimeEvidenceSummaryByRun;
 }
 
 const BAR_WIDTH = 20;
@@ -33,6 +37,22 @@ export interface WorkDashboardRow {
   workspace: string | null;
   attention: boolean;
   stale: boolean;
+}
+
+export type RuntimeEvidenceSummaryByRun = Record<string, RuntimeEvidenceSummary>;
+
+export interface OperatorConsoleModel {
+  selectedId: string;
+  selectedTitle: string;
+  lifecycle: string;
+  liveness: string;
+  usefulProgress: string;
+  currentMode: string;
+  latestEvents: string[];
+  artifacts: string[];
+  metrics: string[];
+  blockers: string[];
+  controls: string[];
 }
 
 function renderBar(progress: number): string {
@@ -86,6 +106,137 @@ function runAttention(run: BackgroundRun): boolean {
     || run.status === "lost"
     || run.status === "unknown"
     || /approval[-_ ]required|blocked|waiting/i.test(`${run.summary ?? ""} ${run.error ?? ""}`);
+}
+
+function runLifecycle(run: BackgroundRun | null, row: WorkDashboardRow): string {
+  if (row.stale) return "stale";
+  if (!run) return row.status;
+  if (/approval[-_ ]required/i.test(`${run.summary ?? ""} ${run.error ?? ""}`)) return "approval-required";
+  if (/blocked|waiting/i.test(`${run.summary ?? ""} ${run.error ?? ""}`)) return "blocked";
+  if (run.status === "succeeded") return "completed";
+  if (run.status === "failed" || run.status === "timed_out" || run.status === "lost" || run.status === "unknown") return "failed";
+  return run.status;
+}
+
+function summarizeLiveness(row: WorkDashboardRow, health: RuntimeHealthSnapshot | null | undefined): string {
+  const longRunning = health?.long_running;
+  if (!longRunning) {
+    if (row.stale) return "stale catalog heartbeat";
+    return row.group === "active" ? "catalog current" : "not active";
+  }
+  const process = longRunning.signals.process.status;
+  const logFreshness = longRunning.signals.log_freshness.status;
+  const selected = row.stale ? "stale catalog heartbeat" : row.group === "active" ? "catalog current" : "not active";
+  return `${selected}; daemon aggregate ${process}; logs ${logFreshness}; ${longRunning.summary}`;
+}
+
+function summarizeUsefulProgress(summary: RuntimeEvidenceSummary | undefined, health: RuntimeHealthSnapshot | null | undefined): string {
+  const trend = summary?.metric_trends[0];
+  if (trend) {
+    return `${trend.metric_key} ${trend.trend}; latest ${trend.latest_value}; best ${trend.best_value}`;
+  }
+  const metricProgress = health?.long_running?.signals.metric_progress;
+  if (metricProgress && metricProgress.status !== "unknown") {
+    const metric = metricProgress.metric_name ? `${metricProgress.metric_name} ` : "";
+    const values = typeof metricProgress.current_value === "number"
+      ? ` current ${metricProgress.current_value}`
+      : "";
+    return `no selected metric progress evidence; daemon aggregate ${metric}${metricProgress.status}${values}`.trim();
+  }
+  return "no selected metric progress evidence";
+}
+
+function summarizeMode(summary: RuntimeEvidenceSummary | undefined): string {
+  const phase = summary?.evaluator_summary.budgets.find((budget) => budget.phase)?.phase;
+  if (phase) return phase;
+  const strategyText = [
+    summary?.latest_strategy?.strategy,
+    summary?.latest_strategy?.summary,
+    summary?.latest_strategy?.decision_reason,
+  ].filter(Boolean).join(" ");
+  if (/final/i.test(strategyText)) return "finalization";
+  if (/consolidat|stabil|ensemble|portfolio/i.test(strategyText)) return "consolidation";
+  if (strategyText) return "exploration";
+  return "unknown";
+}
+
+function summarizeMetrics(summary: RuntimeEvidenceSummary | undefined): string[] {
+  if (!summary) return ["No metric evidence yet."];
+  const trends = summary.metric_trends.slice(0, 3).map((trend) =>
+    `${trend.metric_key}: latest ${trend.latest_value}, best ${trend.best_value}, ${trend.trend}`
+  );
+  if (trends.length > 0) return trends;
+  const bestMetric = summary.best_evidence?.metrics.find((metric) => typeof metric.value === "number");
+  return bestMetric ? [`${bestMetric.label}: ${bestMetric.value}`] : ["No metric evidence yet."];
+}
+
+function summarizeArtifacts(run: BackgroundRun | null, summary: RuntimeEvidenceSummary | undefined): string[] {
+  const artifacts = [
+    ...(run?.artifacts ?? []).map((artifact) => `${artifact.label}: ${artifact.path ?? artifact.url ?? artifact.kind}`),
+    ...(summary?.artifact_retention.cleanup_plan.actions ?? []).map((artifact) =>
+      `${artifact.label}: ${artifact.path ?? artifact.state_relative_path ?? artifact.url ?? artifact.kind}`
+    ),
+    ...(summary?.recent_entries ?? []).flatMap((entry) =>
+      entry.artifacts.map((artifact) => `${artifact.label}: ${artifact.path ?? artifact.state_relative_path ?? artifact.url ?? artifact.kind}`)
+    ),
+  ];
+  return [...new Set(artifacts)].slice(0, 4);
+}
+
+function summarizeEvents(run: BackgroundRun | null, summary: RuntimeEvidenceSummary | undefined): string[] {
+  const events = [
+    ...(run?.summary ? [run.summary] : []),
+    ...(run?.error ? [run.error] : []),
+    ...(summary?.recent_entries ?? []).map((entry) => entry.summary ?? `${entry.kind} ${entry.outcome}`),
+  ];
+  return events.filter(Boolean).slice(0, 4);
+}
+
+function summarizeBlockers(row: WorkDashboardRow, run: BackgroundRun | null, summary: RuntimeEvidenceSummary | undefined): string[] {
+  const blockers: string[] = [];
+  if (row.attention) blockers.push(row.status === "stale" ? "stale catalog state" : row.summary);
+  if (run?.error) blockers.push(run.error);
+  blockers.push(...(summary?.evaluator_summary.approval_required_actions ?? []).map((action) => action.label));
+  return [...new Set(blockers.filter(Boolean))].slice(0, 4);
+}
+
+function findRelatedRun(snapshot: RuntimeSessionRegistrySnapshot, row: WorkDashboardRow): BackgroundRun | null {
+  if (row.kind === "run") return snapshot.background_runs.find((run) => run.id === row.id) ?? null;
+  return snapshot.background_runs.find((run) =>
+    run.child_session_id === row.id || run.parent_session_id === row.id || run.process_session_id === row.id
+  ) ?? null;
+}
+
+export function buildOperatorConsoleModel(
+  snapshot: RuntimeSessionRegistrySnapshot | null | undefined,
+  health: RuntimeHealthSnapshot | null | undefined,
+  evidenceSummaries: RuntimeEvidenceSummaryByRun = {},
+  now: Date = new Date(),
+): OperatorConsoleModel | null {
+  const rows = buildWorkDashboardRows(snapshot, now);
+  if (!snapshot || rows.length === 0) return null;
+  const selected = rows.find((row) => row.attention) ?? rows.find((row) => row.group === "active") ?? rows[0]!;
+  const run = findRelatedRun(snapshot, selected);
+  const summary = run ? evidenceSummaries[run.id] : undefined;
+  const artifacts = summarizeArtifacts(run, summary);
+  const latestEvents = summarizeEvents(run, summary);
+  const blockers = summarizeBlockers(selected, run, summary);
+  return {
+    selectedId: selected.id,
+    selectedTitle: selected.title,
+    lifecycle: runLifecycle(run, selected),
+    liveness: summarizeLiveness(selected, health),
+    usefulProgress: summarizeUsefulProgress(summary, health),
+    currentMode: summarizeMode(summary),
+    latestEvents: latestEvents.length > 0 ? latestEvents : ["No recent events or logs found."],
+    artifacts: artifacts.length > 0 ? artifacts : ["No produced artifacts found."],
+    metrics: summarizeMetrics(summary),
+    blockers: blockers.length > 0 ? blockers : ["No blockers detected."],
+    controls: [
+      "inspect: available",
+      "pause/resume/finalize: unavailable until a typed TUI runtime API exists",
+    ],
+  };
 }
 
 function compact(value: string | null | undefined, fallback: string): string {
@@ -246,10 +397,56 @@ function WorkDashboard({ rows }: { rows: WorkDashboardRow[] }) {
   );
 }
 
-export function Dashboard({ state, runtimeSessions }: DashboardProps) {
+function OperatorConsole({ model }: { model: OperatorConsoleModel }) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold color={theme.brand}>Operator Console</Text>
+      <Text>
+        <Text color={theme.success}>{model.selectedTitle}</Text>
+        <Text dimColor>{"  "}{model.selectedId}</Text>
+      </Text>
+      <Text>
+        <Text dimColor>Lifecycle </Text>
+        <Text color={model.lifecycle === "failed" || model.lifecycle === "blocked" || model.lifecycle === "approval-required" ? theme.warning : theme.text}>
+          {model.lifecycle}
+        </Text>
+      </Text>
+      <Text>
+        <Text dimColor>Liveness </Text>
+        <Text>{model.liveness}</Text>
+      </Text>
+      <Text>
+        <Text dimColor>Useful progress </Text>
+        <Text>{model.usefulProgress}</Text>
+      </Text>
+      <Text>
+        <Text dimColor>Mode </Text>
+        <Text>{model.currentMode}</Text>
+      </Text>
+      <Text color={theme.warning}>Blockers</Text>
+      {model.blockers.slice(0, 3).map((line, index) => <Text key={`blocker-${index}`} dimColor>{"  "}{line}</Text>)}
+      <Text dimColor>Metrics</Text>
+      {model.metrics.slice(0, 3).map((line, index) => <Text key={`metric-${index}`} dimColor>{"  "}{line}</Text>)}
+      <Text dimColor>Recent events</Text>
+      {model.latestEvents.slice(0, 3).map((line, index) => <Text key={`event-${index}`} dimColor>{"  "}{line}</Text>)}
+      <Text dimColor>Artifacts</Text>
+      {model.artifacts.slice(0, 3).map((line, index) => <Text key={`artifact-${index}`} dimColor>{"  "}{line}</Text>)}
+      <Text dimColor>Controls</Text>
+      {model.controls.map((line, index) => <Text key={`control-${index}`} dimColor>{"  "}{line}</Text>)}
+    </Box>
+  );
+}
+
+export function Dashboard({ state, runtimeSessions, runtimeHealth, evidenceSummaries }: DashboardProps) {
   const workRows = buildWorkDashboardRows(runtimeSessions);
+  const operatorConsole = buildOperatorConsoleModel(runtimeSessions, runtimeHealth, evidenceSummaries);
   if (workRows.length > 0) {
-    return <WorkDashboard rows={workRows} />;
+    return (
+      <Box flexDirection="column" overflow="hidden">
+        <WorkDashboard rows={workRows} />
+        {operatorConsole && <OperatorConsole model={operatorConsole} />}
+      </Box>
+    );
   }
 
   if (state.status === "idle") {
