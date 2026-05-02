@@ -9,6 +9,7 @@ import { getCliLogger } from "../cli/cli-logger.js";
 import type { Task } from "../../base/types/task.js";
 import { createApprovalQueue, createChatToolApprovalTask } from "./entry-approval.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 
 export async function buildStandaloneTuiDeps() {
   const { buildLLMClient, buildAdapterRegistry } = await import("../../base/llm/provider-factory.js");
@@ -376,6 +377,7 @@ export async function buildDaemonModeChatSurface(
   daemonPort: number
 ): Promise<{
   chatRunner: TuiChatSurface | undefined;
+  llmClient: ILLMClient | undefined;
   setRequestApproval: (fn: (req: ApprovalRequest) => void) => void;
 }> {
   const { TrustManager } = await import("../../platform/traits/trust-manager.js");
@@ -414,6 +416,7 @@ export async function buildDaemonModeChatSurface(
     approvalQueue.enqueueApproval(createChatToolApprovalTask(description));
 
   let chatRunner: TuiChatSurface | undefined;
+  let llmClient: ILLMClient | undefined;
   const providerConfig = await loadProviderConfig();
   try {
     const { SharedManagerTuiChatSurface } = await import("./chat-surface.js");
@@ -427,7 +430,7 @@ export async function buildDaemonModeChatSurface(
     const { EthicsGate } = await import("../../platform/traits/ethics-gate.js");
     const { ObservationEngine } = await import("../../platform/observation/observation-engine.js");
     const { RuntimeControlService, createDaemonRuntimeControlExecutor } = await import("../../runtime/control/index.js");
-    const llmClient = await buildLLMClient();
+    llmClient = await buildLLMClient();
     const adapterRegistry = await buildAdapterRegistry(llmClient);
     const observationEngine = new ObservationEngine(stateManager, dataSourceRegistry.getAllSources(), llmClient);
     const ethicsGate = new EthicsGate(stateManager, llmClient);
@@ -490,6 +493,7 @@ export async function buildDaemonModeChatSurface(
 
   return {
     chatRunner,
+    llmClient,
     setRequestApproval: approvalQueue.setRequestApproval,
   };
 }

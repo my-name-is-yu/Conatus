@@ -5,11 +5,12 @@ import { describe, expect, it } from "vitest";
 import {
   answerRuntimeEvidenceQuestion,
   buildRuntimeEvidenceAnswer,
-  recognizeRuntimeEvidenceQuestion,
+  understandRuntimeEvidenceQuestion,
 } from "../evidence-answer.js";
 import type { BackgroundRun } from "../session-registry/types.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceSummary } from "../store/evidence-ledger.js";
+import { createSingleMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 
 const NOW = new Date("2026-05-02T00:30:00.000Z");
 
@@ -106,12 +107,69 @@ function summary(overrides: Partial<RuntimeEvidenceSummary> = {}): RuntimeEviden
   };
 }
 
-describe("recognizeRuntimeEvidenceQuestion", () => {
-  it("recognizes evidence questions without treating long-run start requests as questions", () => {
-    expect(recognizeRuntimeEvidenceQuestion("Progress?")).toContain("progress");
-    expect(recognizeRuntimeEvidenceQuestion("What strategy is it trying now?")).toContain("strategy");
-    expect(recognizeRuntimeEvidenceQuestion("Which artifact is best?")).toEqual(expect.arrayContaining(["metric", "artifact"]));
-    expect(recognizeRuntimeEvidenceQuestion("Run this Kaggle competition until tomorrow morning")).toEqual([]);
+describe("understandRuntimeEvidenceQuestion", () => {
+  it("uses structured query understanding for evidence topics", async () => {
+    const llmClient = createSingleMockLLMClient(JSON.stringify({
+      decision: "runtime_evidence_question",
+      topics: ["metric", "artifact"],
+      confidence: 0.92,
+      rationale: "asks which persisted artifact is best",
+    }));
+
+    const result = await understandRuntimeEvidenceQuestion("Which artifact is best?", llmClient);
+
+    expect(result.decision).toBe("runtime_evidence_question");
+    expect(result.topics).toEqual(["metric", "artifact"]);
+    expect(result.confidence).toBe(0.92);
+    expect(llmClient.callCount).toBe(1);
+  });
+
+  it("returns not_runtime_evidence_question for ordinary work instructions", async () => {
+    const llmClient = createSingleMockLLMClient(JSON.stringify({
+      decision: "not_runtime_evidence_question",
+      topics: [],
+      confidence: 0.95,
+      rationale: "asks to start new work, not to inspect persisted evidence",
+    }));
+
+    const result = await understandRuntimeEvidenceQuestion("Run this Kaggle competition until tomorrow morning", llmClient);
+
+    expect(result.decision).toBe("not_runtime_evidence_question");
+    expect(result.topics).toEqual([]);
+  });
+
+  it("handles multilingual evidence questions through the same structured classifier", async () => {
+    const llmClient = createSingleMockLLMClient(JSON.stringify({
+      decision: "runtime_evidence_question",
+      topics: ["progress", "strategy"],
+      confidence: 0.88,
+    }));
+
+    const result = await understandRuntimeEvidenceQuestion("今の実行はどこまで進んでいて、次の作戦は何？", llmClient);
+
+    expect(result.decision).toBe("runtime_evidence_question");
+    expect(result.topics).toEqual(["progress", "strategy"]);
+  });
+
+  it("does not classify low-confidence model output as evidence Q&A", async () => {
+    const llmClient = createSingleMockLLMClient(JSON.stringify({
+      decision: "runtime_evidence_question",
+      topics: ["progress"],
+      confidence: 0.42,
+      rationale: "ambiguous",
+    }));
+
+    const result = await understandRuntimeEvidenceQuestion("maybe tell me about it later", llmClient);
+
+    expect(result.decision).toBe("not_runtime_evidence_question");
+    expect(result.topics).toEqual([]);
+  });
+
+  it("does not use a keyword fallback when the classifier is unavailable", async () => {
+    const result = await understandRuntimeEvidenceQuestion("Progress?");
+
+    expect(result.decision).toBe("not_runtime_evidence_question");
+    expect(result.topics).toEqual([]);
   });
 });
 
@@ -330,6 +388,11 @@ describe("buildRuntimeEvidenceAnswer", () => {
     const result = await answerRuntimeEvidenceQuestion({
       text: "Progress?",
       stateManager,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "runtime_evidence_question",
+        topics: ["progress"],
+        confidence: 0.94,
+      })),
       now: NOW,
     });
 
@@ -339,6 +402,121 @@ describe("buildRuntimeEvidenceAnswer", () => {
     expect(result.message).toContain("Runtime evidence answer for run run-active");
     expect(result.message).toContain("Evidence missing");
     expect(result.message).not.toContain("score");
+  });
+
+  it("uses explicit classifier target run IDs when they match the catalog", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-evidence-target-run-"));
+    const stateManager = { getBaseDir: () => tmp };
+    const ledger = new RuntimeEvidenceLedger(path.join(tmp, "runtime"));
+    const runLedger = new BackgroundRunLedger(path.join(tmp, "runtime"));
+    await ledger.append({
+      kind: "metric",
+      scope: { run_id: "run-target" },
+      occurred_at: "2026-05-02T00:20:00.000Z",
+      metrics: [{ label: "score", value: 0.97, direction: "maximize", observed_at: "2026-05-02T00:20:00.000Z" }],
+      summary: "target run evidence",
+    });
+    await runLedger.create({
+      id: "run-active",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Active run",
+      workspace: "/repo",
+      created_at: "2026-05-02T00:00:00.000Z",
+      started_at: "2026-05-02T00:00:00.000Z",
+      updated_at: "2026-05-02T00:25:00.000Z",
+    });
+    for (let index = 0; index < 9; index += 1) {
+      await runLedger.create({
+        id: `run-recent-${index}`,
+        kind: "coreloop_run",
+        status: "running",
+        notify_policy: "silent",
+        title: `Recent run ${index}`,
+        workspace: "/repo",
+        created_at: `2026-05-02T00:${String(index + 1).padStart(2, "0")}:00.000Z`,
+        started_at: `2026-05-02T00:${String(index + 1).padStart(2, "0")}:00.000Z`,
+        updated_at: `2026-05-02T00:${String(index + 1).padStart(2, "0")}:00.000Z`,
+      });
+    }
+    await runLedger.create({
+      id: "run-target",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Target run",
+      workspace: "/repo",
+      created_at: "2026-05-01T00:00:00.000Z",
+      started_at: "2026-05-01T00:00:00.000Z",
+      updated_at: "2026-05-01T01:00:00.000Z",
+    });
+    await runLedger.terminal("run-target", {
+      status: "succeeded",
+      completed_at: "2026-05-01T01:00:00.000Z",
+      updated_at: "2026-05-01T01:00:00.000Z",
+      summary: "target run",
+    });
+
+    const result = await answerRuntimeEvidenceQuestion({
+      text: "What was the best metric for run-target?",
+      stateManager,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "runtime_evidence_question",
+        topics: ["metric"],
+        confidence: 0.93,
+        targetRunId: "run-target",
+      })),
+      now: NOW,
+    });
+
+    expect(result.kind).toBe("answered");
+    expect(result.targetRunId).toBe("run-target");
+    expect(result.message).toContain("score");
+    expect(result.message).toContain("0.97");
+  });
+
+  it("does not fall back to another run when an explicit classifier target is missing", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-evidence-missing-target-"));
+    const stateManager = { getBaseDir: () => tmp };
+    const ledger = new RuntimeEvidenceLedger(path.join(tmp, "runtime"));
+    const runLedger = new BackgroundRunLedger(path.join(tmp, "runtime"));
+    await ledger.append({
+      kind: "metric",
+      scope: { run_id: "run-active" },
+      occurred_at: "2026-05-02T00:20:00.000Z",
+      metrics: [{ label: "score", value: 0.12, direction: "maximize", observed_at: "2026-05-02T00:20:00.000Z" }],
+      summary: "active run evidence",
+    });
+    await runLedger.create({
+      id: "run-active",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Active run",
+      workspace: "/repo",
+      created_at: "2026-05-02T00:00:00.000Z",
+      started_at: "2026-05-02T00:00:00.000Z",
+      updated_at: "2026-05-02T00:25:00.000Z",
+    });
+
+    const result = await answerRuntimeEvidenceQuestion({
+      text: "What was the best metric for run-missing?",
+      stateManager,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "runtime_evidence_question",
+        topics: ["metric"],
+        confidence: 0.93,
+        targetRunId: "run-missing",
+      })),
+      now: NOW,
+    });
+
+    expect(result.kind).toBe("answered");
+    expect(result.targetRunId).toBe("run-missing");
+    expect(result.messageType).toBe("warning");
+    expect(result.message).toContain("requested run was not found");
+    expect(result.message).not.toContain("0.12");
   });
 
   it("redacts evaluator gap summaries in blocker output", () => {
