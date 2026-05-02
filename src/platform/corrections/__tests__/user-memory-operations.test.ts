@@ -5,11 +5,11 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { KnowledgeManager } from "../../knowledge/knowledge-manager.js";
 import { AGENT_MEMORY_PATH } from "../../knowledge/knowledge-manager-internals.js";
-import type { AgentMemoryEntry } from "../../knowledge/types/agent-memory.js";
+import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../knowledge/types/agent-memory.js";
 import { runUserMemoryOperation } from "../user-memory-operations.js";
 
 function memoryEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry {
-  return {
+  return AgentMemoryEntrySchema.parse({
     id: "memory-old",
     key: "favorite-editor",
     value: "The user prefers Atom.",
@@ -19,7 +19,7 @@ function memoryEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntr
     created_at: "2026-05-02T00:00:00.000Z",
     updated_at: "2026-05-02T00:00:00.000Z",
     ...overrides,
-  };
+  });
 }
 
 describe("user memory correction operations", () => {
@@ -75,5 +75,62 @@ describe("user memory correction operations", () => {
       correction_state: { status: "corrected", active: false, retained_for_audit: true },
     });
     expect(store.corrections).toHaveLength(1);
+  });
+
+  it("preserves governance when correcting sensitive user memory", async () => {
+    await stateManager.writeRaw(AGENT_MEMORY_PATH, {
+      entries: [
+        memoryEntry({
+          governance: {
+            sensitivity: "secret",
+            consent: {
+              scope_id: "private_chat",
+              allowed_contexts: ["private_chat"],
+              source_actor: "user",
+              collection_context: "chat",
+            },
+            retention: {
+              policy_id: "retain_until_retracted",
+              retain_until: null,
+              review_after: null,
+              delete_requires_approval: true,
+            },
+            export_visibility: "redacted",
+            owner_ref: "user",
+          },
+        }),
+      ],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+
+    await runUserMemoryOperation(stateManager, {
+      operation: "correct",
+      targetRef: { kind: "agent_memory", id: "memory-old" },
+      reason: "User corrected a sensitive detail.",
+      replacementValue: "Corrected sensitive detail.",
+      replacementKey: "sensitive-detail-current",
+      now: "2026-05-02T01:00:00.000Z",
+    });
+
+    const manager = new KnowledgeManager(stateManager, {} as ILLMClient);
+    expect(await manager.recallAgentMemory("sensitive-detail-current", {
+      exact: true,
+      consent_scope: "local_planning",
+      max_sensitivity: "local",
+    })).toEqual([]);
+    expect(await manager.recallAgentMemory("sensitive-detail-current", {
+      exact: true,
+      consent_scope: "private_chat",
+      max_sensitivity: "secret",
+    })).toEqual([
+      expect.objectContaining({
+        key: "sensitive-detail-current",
+        governance: expect.objectContaining({
+          sensitivity: "secret",
+          export_visibility: "redacted",
+        }),
+      }),
+    ]);
   });
 });

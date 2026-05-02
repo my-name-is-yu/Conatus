@@ -11,6 +11,7 @@ import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import type { AgentMemoryEntry } from "../../../platform/knowledge/types/agent-memory.js";
+import { MemorySensitivitySchema } from "../../../platform/corrections/memory-governance.js";
 
 export const MemoryRecallInputSchema = z.object({
   query: z
@@ -48,6 +49,15 @@ export const MemoryRecallInputSchema = z.object({
     .optional()
     .default("keyword")
     .describe("Search mode: keyword (substring match) or semantic (embedding-based similarity)"),
+  consent_scope: z
+    .string()
+    .optional()
+    .default("local_planning")
+    .describe("Typed consent context required for returned memories"),
+  max_sensitivity: MemorySensitivitySchema
+    .optional()
+    .default("local")
+    .describe("Maximum sensitivity allowed in returned memories"),
 });
 export type MemoryRecallInput = z.input<typeof MemoryRecallInputSchema>;
 
@@ -97,6 +107,8 @@ export class MemoryRecallTool
           limit: parsedInput.limit,
           include_archived: parsedInput.include_archived,
           semantic: parsedInput.mode === "semantic",
+          consent_scope: parsedInput.consent_scope,
+          max_sensitivity: parsedInput.max_sensitivity,
         }
       );
 

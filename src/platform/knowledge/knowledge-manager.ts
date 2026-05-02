@@ -55,6 +55,7 @@ import {
   autoConsolidateAgentMemory,
   consolidateAgentMemoryEntries,
   deleteAgentMemoryEntry,
+  exportAgentMemoryGovernance,
   getAgentMemoryStatsForHost,
   listAgentMemoryCorrectionHistory,
   listAgentMemoryEntries,
@@ -64,6 +65,7 @@ import {
 } from "./knowledge-manager-agent-memory.js";
 import type { MemoryQuarantineState } from "../corrections/memory-quarantine.js";
 import type { MemoryProvenance, MemoryVerificationStatus } from "../corrections/memory-quarantine.js";
+import type { MemoryGovernanceInput, MemorySensitivity } from "../corrections/memory-governance.js";
 import type {
   MemoryCorrectionEntry,
   MemoryCorrectionKind,
@@ -378,6 +380,7 @@ export class KnowledgeManager {
     memory_type?: AgentMemoryType;
     verification_status?: MemoryVerificationStatus;
     provenance?: MemoryProvenance;
+    governance?: MemoryGovernanceInput;
   }): Promise<AgentMemoryEntry> {
     return saveAgentMemoryEntry(this.agentMemoryHost(), entry);
   }
@@ -399,6 +402,8 @@ export class KnowledgeManager {
       limit?: number;
       include_archived?: boolean;
       semantic?: boolean;
+      consent_scope?: string;
+      max_sensitivity?: MemorySensitivity;
     }
   ): Promise<AgentMemoryEntry[]> {
     return recallAgentMemoryEntries(this.agentMemoryHost(), query, opts);
@@ -413,6 +418,8 @@ export class KnowledgeManager {
     memory_type?: AgentMemoryType;
     limit?: number;
     include_archived?: boolean;
+    consent_scope?: string;
+    max_sensitivity?: MemorySensitivity;
   }): Promise<AgentMemoryEntry[]> {
     return listAgentMemoryEntries(this.agentMemoryHost(), opts);
   }
@@ -438,6 +445,13 @@ export class KnowledgeManager {
 
   async listAgentMemoryCorrectionHistory(target?: MemoryCorrectionTargetRef): Promise<MemoryCorrectionEntry[]> {
     return listAgentMemoryCorrectionHistory(this.agentMemoryHost(), target);
+  }
+
+  async exportAgentMemoryGovernance(opts?: {
+    consent_scope?: string;
+    include_secret?: boolean;
+  }): Promise<Awaited<ReturnType<typeof exportAgentMemoryGovernance>>> {
+    return exportAgentMemoryGovernance(this.agentMemoryHost(), opts);
   }
 
   async quarantineAgentMemory(input: {

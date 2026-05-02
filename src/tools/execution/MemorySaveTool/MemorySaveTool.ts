@@ -12,6 +12,7 @@ import {
   MemoryProvenanceSchema,
   MemoryVerificationStatusSchema,
 } from "../../../platform/corrections/memory-quarantine.js";
+import { MemoryGovernanceSchema } from "../../../platform/corrections/memory-governance.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, READ_ONLY, PERMISSION_LEVEL, TOOL_NAME, ALIASES } from "./constants.js";
 
@@ -27,6 +28,7 @@ export const MemorySaveInputSchema = z.object({
   tags: z.array(z.string()).optional().describe("Tags for filtering and search"),
   verification_status: MemoryVerificationStatusSchema.optional(),
   provenance: MemoryProvenanceSchema.optional(),
+  governance: MemoryGovernanceSchema.optional(),
 });
 export type MemorySaveInput = z.infer<typeof MemorySaveInputSchema>;
 
@@ -63,6 +65,7 @@ export class MemorySaveTool implements ITool<MemorySaveInput, unknown> {
         tags: input.tags,
         verification_status: input.verification_status,
         provenance: input.provenance,
+        governance: input.governance,
       });
       return {
         success: true,

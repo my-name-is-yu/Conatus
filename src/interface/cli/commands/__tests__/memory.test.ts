@@ -28,6 +28,23 @@ describe("cmdMemory", () => {
         tags: [],
         memory_type: "fact",
         status: "raw",
+        governance: {
+          sensitivity: "local",
+          consent: {
+            scope_id: "local_planning",
+            allowed_contexts: ["local_planning"],
+            source_actor: "user",
+            collection_context: "test",
+          },
+          retention: {
+            policy_id: "retain_until_retracted",
+            retain_until: null,
+            review_after: null,
+            delete_requires_approval: true,
+          },
+          export_visibility: "listed",
+          owner_ref: "user",
+        },
         created_at: "2026-05-02T00:00:00.000Z",
         updated_at: "2026-05-02T00:00:00.000Z",
       }],
@@ -81,5 +98,20 @@ describe("cmdMemory", () => {
     const store = AgentMemoryStoreSchema.parse(await stateManager.readRaw(AGENT_MEMORY_PATH));
     expect(store.entries[0]!.status).toBe("raw");
     expect(store.corrections).toEqual([]);
+  });
+
+  it("exports governance metadata for remembered user data", async () => {
+    const exitCode = await cmdMemory(stateManager, ["export", "--consent-scope", "local_planning"]);
+
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(logs.at(-1) ?? "{}") as {
+      entries: Array<{ key: string; governance: { sensitivity: string } }>;
+    };
+    expect(output.entries).toEqual([
+      expect.objectContaining({
+        key: "temporary-fact",
+        governance: expect.objectContaining({ sensitivity: "local" }),
+      }),
+    ]);
   });
 });

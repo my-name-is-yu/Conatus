@@ -14,6 +14,13 @@ import {
 import { MemoryQuarantineStateSchema, type MemoryQuarantineState } from "../corrections/memory-quarantine.js";
 import type { MemoryProvenance, MemoryVerificationStatus } from "../corrections/memory-quarantine.js";
 import {
+  isSensitivityAllowed,
+  MemoryGovernanceSchema,
+  type MemoryGovernance,
+  type MemoryGovernanceInput,
+  type MemorySensitivity,
+} from "../corrections/memory-governance.js";
+import {
   AgentMemoryEntrySchema,
 } from "./types/agent-memory.js";
 import type { AgentMemoryEntry, AgentMemoryStatus, AgentMemoryStore, AgentMemoryType } from "./types/agent-memory.js";
@@ -50,6 +57,7 @@ export async function saveAgentMemoryEntry(
     memory_type?: AgentMemoryType;
     verification_status?: MemoryVerificationStatus;
     provenance?: MemoryProvenance;
+    governance?: MemoryGovernanceInput;
   }
 ): Promise<AgentMemoryEntry> {
   const store = await host.loadAgentMemoryStore();
@@ -67,6 +75,7 @@ export async function saveAgentMemoryEntry(
       memory_type: entry.memory_type ?? prev.memory_type,
       verification_status: entry.verification_status ?? prev.verification_status,
       provenance: entry.provenance ?? prev.provenance,
+      governance: entry.governance ? MemoryGovernanceSchema.parse(entry.governance) : prev.governance,
       status: prev.status,
       updated_at: now,
     });
@@ -81,6 +90,7 @@ export async function saveAgentMemoryEntry(
       memory_type: entry.memory_type ?? "fact",
       verification_status: entry.verification_status,
       provenance: entry.provenance,
+      governance: entry.governance ? MemoryGovernanceSchema.parse(entry.governance) : undefined,
       created_at: now,
       updated_at: now,
     });
@@ -101,13 +111,26 @@ export async function recallAgentMemoryEntries(
     limit?: number;
     include_archived?: boolean;
     semantic?: boolean;
+    consent_scope?: string;
+    max_sensitivity?: MemorySensitivity;
   }
 ): Promise<AgentMemoryEntry[]> {
   const store = await host.loadAgentMemoryStore();
-  const { exact = false, category, memory_type, limit = 10, include_archived = false, semantic = false } = opts ?? {};
+  const {
+    exact = false,
+    category,
+    memory_type,
+    limit = 10,
+    include_archived = false,
+    semantic = false,
+    consent_scope,
+    max_sensitivity,
+  } = opts ?? {};
 
   const candidates = store.entries.filter((e) => {
     if (!include_archived && !isAgentMemoryEntryActive(e)) return false;
+    if (consent_scope && !e.governance.consent.allowed_contexts.includes(consent_scope)) return false;
+    if (max_sensitivity && !isSensitivityAllowed(e.governance.sensitivity, max_sensitivity)) return false;
     const matchesCategory = category ? e.category === category : true;
     const matchesType = memory_type ? e.memory_type === memory_type : true;
     return matchesCategory && matchesType;
@@ -151,13 +174,17 @@ export async function listAgentMemoryEntries(
     memory_type?: AgentMemoryType;
     limit?: number;
     include_archived?: boolean;
+    consent_scope?: string;
+    max_sensitivity?: MemorySensitivity;
   }
 ): Promise<AgentMemoryEntry[]> {
   const store = await host.loadAgentMemoryStore();
-  const { category, memory_type, limit = 10, include_archived = false } = opts ?? {};
+  const { category, memory_type, limit = 10, include_archived = false, consent_scope, max_sensitivity } = opts ?? {};
 
   const results = store.entries.filter((e) => {
     if (!include_archived && !isAgentMemoryEntryActive(e)) return false;
+    if (consent_scope && !e.governance.consent.allowed_contexts.includes(consent_scope)) return false;
+    if (max_sensitivity && !isSensitivityAllowed(e.governance.sensitivity, max_sensitivity)) return false;
     const matchesCategory = category ? e.category === category : true;
     const matchesType = memory_type ? e.memory_type === memory_type : true;
     return matchesCategory && matchesType;
@@ -270,6 +297,9 @@ export async function applyAgentMemoryCorrection(
       tags: target.tags,
       category: target.category,
       memory_type: target.memory_type,
+      governance: target.governance,
+      provenance: target.provenance,
+      verification_status: target.verification_status,
       status: target.status === "compiled" ? "compiled" : "raw",
       supersedes_memory_id: target.id,
       created_at: now,
@@ -315,6 +345,35 @@ export async function listAgentMemoryCorrectionHistory(
   if (!target) return corrections;
   const targetKey = memoryCorrectionTargetKey(target);
   return corrections.filter((correction) => memoryCorrectionTargetKey(correction.target_ref) === targetKey);
+}
+
+export async function exportAgentMemoryGovernance(
+  host: AgentMemoryHost,
+  opts?: {
+    consent_scope?: string;
+    include_secret?: boolean;
+  }
+): Promise<Array<{
+  id: string;
+  key: string;
+  summary: string | null;
+  status: AgentMemoryEntry["status"];
+  governance: AgentMemoryEntry["governance"];
+  provenance: AgentMemoryEntry["provenance"] | null;
+}>> {
+  const store = await host.loadAgentMemoryStore();
+  return store.entries
+    .filter((entry) => opts?.include_secret || entry.governance.sensitivity !== "secret")
+    .filter((entry) => !opts?.consent_scope || entry.governance.consent.allowed_contexts.includes(opts.consent_scope))
+    .filter((entry) => entry.governance.export_visibility !== "hidden")
+    .map((entry) => ({
+      id: entry.id,
+      key: entry.governance.export_visibility === "redacted" ? "[redacted]" : entry.key,
+      summary: entry.governance.export_visibility === "redacted" ? null : entry.summary ?? entry.value,
+      status: entry.status,
+      governance: entry.governance,
+      provenance: entry.provenance ?? null,
+    }));
 }
 
 export async function consolidateAgentMemoryEntries(

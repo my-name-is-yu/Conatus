@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { lintAgentMemory } from "../knowledge-manager-lint.js";
 import type { KnowledgeManager } from "../knowledge-manager.js";
-import type { AgentMemoryEntry } from "../types/agent-memory.js";
+import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../types/agent-memory.js";
 
 // ─── Mock helpers ───
 
 function makeEntry(overrides: Partial<AgentMemoryEntry> & { id: string; key: string }): AgentMemoryEntry {
-  return {
+  return AgentMemoryEntrySchema.parse({
     id: overrides.id,
     key: overrides.key,
     value: overrides.value ?? "some value",
@@ -21,7 +21,7 @@ function makeEntry(overrides: Partial<AgentMemoryEntry> & { id: string; key: str
     compiled_from: overrides.compiled_from,
     created_at: overrides.created_at ?? "2026-01-01T00:00:00.000Z",
     updated_at: overrides.updated_at ?? "2026-01-01T00:00:00.000Z",
-  };
+  });
 }
 
 function makeKM(entries: AgentMemoryEntry[] = []): {

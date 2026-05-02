@@ -7,7 +7,7 @@ import type { IEmbeddingClient } from "../embedding-client.js";
 import { cosineSimilarity } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
-import type { AgentMemoryEntry } from "../types/agent-memory.js";
+import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../types/agent-memory.js";
 
 // ─── Helpers ───
 
@@ -28,7 +28,7 @@ function makeKM(embeddingClient?: IEmbeddingClient): KnowledgeManager {
 }
 
 function makeEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry {
-  return {
+  return AgentMemoryEntrySchema.parse({
     id: `mem-${Math.random().toString(36).slice(2)}`,
     key: "test.key",
     value: "test value",
@@ -39,7 +39,7 @@ function makeEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry 
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
-  };
+  });
 }
 
 async function seedMemory(km: KnowledgeManager, entries: AgentMemoryEntry[]): Promise<void> {
