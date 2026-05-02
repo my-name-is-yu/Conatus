@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "zod";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
 
 const ACTIVITY_PREVIEW_CHARS = 40;
 export const DIFF_ARTIFACT_MAX_LINES = 80;
@@ -13,6 +16,23 @@ export interface GitDiffArtifact {
 }
 
 export type ChatInterruptRedirectKind = "diff" | "review" | "summary" | "background" | "redirect";
+const MIN_INTERRUPT_CONFIDENCE = 0.7;
+
+const InterruptRedirectDecisionSchema = z.object({
+  kind: z.enum(["diff", "review", "summary", "background", "redirect", "unknown"]),
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().optional(),
+});
+
+export type ChatInterruptRedirectDecision = z.infer<typeof InterruptRedirectDecisionSchema>;
+
+export interface ChatInterruptRedirectContext {
+  llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
+  cwd: string;
+  activeTurnStartedAt: string;
+  recentEvents: string[];
+  sessionId?: string | null;
+}
 
 function runGit(cwd: string, args: string[], timeout = 5_000): Promise<string | null> {
   return new Promise((resolve) => {
@@ -106,21 +126,73 @@ export function previewActivityText(value: string, maxChars = ACTIVITY_PREVIEW_C
   return normalized.length > maxChars ? `${normalized.slice(0, maxChars)}...` : normalized;
 }
 
-export function classifyInterruptRedirect(input: string): ChatInterruptRedirectKind {
-  const normalized = input.trim().toLowerCase();
-  if (/\b(background|bg)\b|バックグラウンド|裏で|裏側|continue.*background/.test(normalized)) {
-    return "background";
-  }
-  if (/\b(review|read.?only|readonly)\b|レビュー|確認だけ|読むだけ/.test(normalized)) {
-    return "review";
-  }
-  if (/\b(diff|changes?|patch)\b|差分|変更.*見|変更内容/.test(normalized)) {
-    return "diff";
-  }
-  if (/\b(stop|pause|summary|summarize|interrupt)\b|止め|停止|中断|一旦|要約/.test(normalized)) {
+export async function classifyInterruptRedirect(
+  input: string,
+  context: ChatInterruptRedirectContext,
+): Promise<ChatInterruptRedirectKind> {
+  const exactCommand = parseExactInterruptRedirectCommand(input);
+  if (exactCommand) return exactCommand;
+
+  const trimmed = input.trim();
+  const llmClient = context.llmClient;
+  if (!trimmed || !llmClient) return "summary";
+
+  try {
+    const response = await llmClient.sendMessage(
+      [{ role: "user", content: trimmed }],
+      { system: getInterruptRedirectPrompt(context), max_tokens: 500, temperature: 0 },
+    );
+    const parsed = llmClient.parseJSON(response.content, InterruptRedirectDecisionSchema);
+    if (parsed.kind === "unknown" || parsed.confidence < MIN_INTERRUPT_CONFIDENCE) return "summary";
+    return parsed.kind;
+  } catch {
     return "summary";
   }
-  return "redirect";
+}
+
+function parseExactInterruptRedirectCommand(input: string): ChatInterruptRedirectKind | null {
+  const command = input.trim();
+  switch (command) {
+    case "/diff":
+      return "diff";
+    case "/review":
+      return "review";
+    case "/summary":
+    case "/interrupt":
+      return "summary";
+    case "/background":
+      return "background";
+    default:
+      return null;
+  }
+}
+
+function getInterruptRedirectPrompt(context: ChatInterruptRedirectContext): string {
+  return `${getInternalIdentityPrefix("assistant")} Classify the operator's message while an active chat turn is running.
+
+Return a typed interrupt redirect intent. Use the active turn context; do not infer a specialized route from vague text. If unclear, return unknown.
+
+Kinds:
+- background: operator explicitly wants the current active turn to continue in the background without aborting it.
+- review: operator wants to stop and switch to read-only review mode.
+- diff: operator wants to stop and inspect current working-tree changes.
+- summary: operator wants to stop/pause/interrupt and receive a short status summary.
+- redirect: operator wants to stop the current turn and redirect to a new instruction.
+- unknown: ambiguous or not enough evidence.
+
+Active turn:
+- cwd: ${context.cwd}
+- started_at: ${context.activeTurnStartedAt}
+- session_id: ${context.sessionId ?? "unknown"}
+- recent_events:
+${context.recentEvents.length > 0 ? context.recentEvents.slice(-8).map((event) => `  - ${event}`).join("\n") : "  - none"}
+
+Respond only as JSON:
+{
+  "kind": "diff" | "review" | "summary" | "background" | "redirect" | "unknown",
+  "confidence": 0.0-1.0,
+  "rationale": "short rationale"
+}`;
 }
 
 export function formatToolActivity(action: "Running" | "Finished" | "Failed", toolName: string, detail?: string): string {
