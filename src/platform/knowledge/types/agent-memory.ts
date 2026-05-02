@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { MemoryCorrectionTargetStateSchema } from "../../corrections/memory-correction-ledger.js";
+import {
+  MemoryCorrectionEntrySchema,
+  MemoryCorrectionTargetStateSchema,
+} from "../../corrections/memory-correction-ledger.js";
 
 // --- AgentMemoryType ---
 
@@ -39,6 +42,7 @@ export type AgentMemoryEntry = z.infer<typeof AgentMemoryEntrySchema>;
 
 export const AgentMemoryStoreSchema = z.object({
   entries: z.array(AgentMemoryEntrySchema),
+  corrections: z.array(MemoryCorrectionEntrySchema).default([]),
   last_consolidated_at: z.string().nullable().default(null),
 });
 export type AgentMemoryStore = z.infer<typeof AgentMemoryStoreSchema>;

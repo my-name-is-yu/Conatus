@@ -51,14 +51,21 @@ import {
 } from "./knowledge-manager-internals.js";
 import {
   archiveAgentMemoryEntries,
+  applyAgentMemoryCorrection,
   autoConsolidateAgentMemory,
   consolidateAgentMemoryEntries,
   deleteAgentMemoryEntry,
   getAgentMemoryStatsForHost,
+  listAgentMemoryCorrectionHistory,
   listAgentMemoryEntries,
   recallAgentMemoryEntries,
   saveAgentMemoryEntry,
 } from "./knowledge-manager-agent-memory.js";
+import type {
+  MemoryCorrectionEntry,
+  MemoryCorrectionKind,
+  MemoryCorrectionTargetRef,
+} from "../corrections/memory-correction-ledger.js";
 import {
   saveDomainKnowledgeEntry,
   saveSharedKnowledgeEntry,
@@ -411,6 +418,21 @@ export class KnowledgeManager {
    */
   async deleteAgentMemory(key: string): Promise<boolean> {
     return deleteAgentMemoryEntry(this.agentMemoryHost(), key);
+  }
+
+  async correctAgentMemory(input: {
+    targetId: string;
+    correctionKind: Extract<MemoryCorrectionKind, "corrected" | "forgotten" | "retracted">;
+    reason: string;
+    replacementValue?: string;
+    replacementKey?: string;
+    provenanceRef?: string;
+  }): Promise<Awaited<ReturnType<typeof applyAgentMemoryCorrection>>> {
+    return applyAgentMemoryCorrection(this.agentMemoryHost(), input);
+  }
+
+  async listAgentMemoryCorrectionHistory(target?: MemoryCorrectionTargetRef): Promise<MemoryCorrectionEntry[]> {
+    return listAgentMemoryCorrectionHistory(this.agentMemoryHost(), target);
   }
 
   // ─── consolidateAgentMemory ───

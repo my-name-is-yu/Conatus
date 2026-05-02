@@ -123,6 +123,7 @@ describe("Soil content projections", () => {
             updated_at: "2026-04-11T08:30:00.000Z",
           },
         ],
+        corrections: [],
         last_consolidated_at: "2026-04-11T09:15:00.000Z",
       };
 

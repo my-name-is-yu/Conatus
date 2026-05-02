@@ -91,6 +91,7 @@ export { RunAdapterTool } from "../execution/RunAdapterTool/RunAdapterTool.js";
 export { SpawnSessionTool } from "../execution/SpawnSessionTool/SpawnSessionTool.js";
 export { WriteKnowledgeTool } from "../execution/WriteKnowledgeTool/WriteKnowledgeTool.js";
 export { MemorySaveTool } from "../execution/MemorySaveTool/MemorySaveTool.js";
+export { MemoryCorrectionTool } from "../execution/MemoryCorrectionTool/MemoryCorrectionTool.js";
 export { MemoryConsolidateTool } from "../execution/MemoryConsolidateTool/MemoryConsolidateTool.js";
 export { MemoryLintTool } from "../execution/MemoryLintTool/MemoryLintTool.js";
 export { MemoryRecallTool } from "../query/MemoryRecallTool/MemoryRecallTool.js";

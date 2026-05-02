@@ -1,9 +1,20 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
+import {
+  MemoryCorrectionEntrySchema,
+  correctionStateForTarget,
+  memoryCorrectionTargetKey,
+  summarizeMemoryCorrectionState,
+  type MemoryCorrectionEntry,
+  type MemoryCorrectionEntryInput,
+  type MemoryCorrectionKind,
+  type MemoryCorrectionTargetRef,
+} from "../corrections/memory-correction-ledger.js";
 import {
   AgentMemoryEntrySchema,
 } from "./types/agent-memory.js";
-import type { AgentMemoryEntry, AgentMemoryStore, AgentMemoryType } from "./types/agent-memory.js";
+import type { AgentMemoryEntry, AgentMemoryStatus, AgentMemoryStore, AgentMemoryType } from "./types/agent-memory.js";
 import { cosineSimilarity } from "./embedding-client.js";
 import type { IEmbeddingClient } from "./embedding-client.js";
 
@@ -12,6 +23,19 @@ export interface AgentMemoryHost {
   embeddingClient?: IEmbeddingClient;
   loadAgentMemoryStore(): Promise<AgentMemoryStore>;
   saveAgentMemoryStore(store: AgentMemoryStore): Promise<void>;
+}
+
+const inactiveAgentMemoryStatuses = new Set<AgentMemoryStatus>([
+  "archived",
+  "corrected",
+  "superseded",
+  "retracted",
+  "forgotten",
+  "quarantined",
+]);
+
+function isAgentMemoryEntryActive(entry: AgentMemoryEntry): boolean {
+  return !inactiveAgentMemoryStatuses.has(entry.status);
 }
 
 export async function saveAgentMemoryEntry(
@@ -75,7 +99,7 @@ export async function recallAgentMemoryEntries(
   const { exact = false, category, memory_type, limit = 10, include_archived = false, semantic = false } = opts ?? {};
 
   const candidates = store.entries.filter((e) => {
-    if (!include_archived && e.status === "archived") return false;
+    if (!include_archived && !isAgentMemoryEntryActive(e)) return false;
     const matchesCategory = category ? e.category === category : true;
     const matchesType = memory_type ? e.memory_type === memory_type : true;
     return matchesCategory && matchesType;
@@ -125,7 +149,7 @@ export async function listAgentMemoryEntries(
   const { category, memory_type, limit = 10, include_archived = false } = opts ?? {};
 
   const results = store.entries.filter((e) => {
-    if (!include_archived && e.status === "archived") return false;
+    if (!include_archived && !isAgentMemoryEntryActive(e)) return false;
     const matchesCategory = category ? e.category === category : true;
     const matchesType = memory_type ? e.memory_type === memory_type : true;
     return matchesCategory && matchesType;
@@ -142,6 +166,104 @@ export async function deleteAgentMemoryEntry(host: AgentMemoryHost, key: string)
   store.entries.splice(idx, 1);
   await host.saveAgentMemoryStore(store);
   return true;
+}
+
+export interface AgentMemoryCorrectionInput {
+  targetId: string;
+  correctionKind: Extract<MemoryCorrectionKind, "corrected" | "forgotten" | "retracted">;
+  reason: string;
+  replacementValue?: string;
+  replacementKey?: string;
+  actor?: MemoryCorrectionEntry["actor"];
+  createdAt?: string;
+  provenanceRef?: string;
+}
+
+export interface AgentMemoryCorrectionResult {
+  correction: MemoryCorrectionEntry;
+  target: AgentMemoryEntry;
+  replacement: AgentMemoryEntry | null;
+}
+
+function agentMemoryRef(id: string): MemoryCorrectionTargetRef {
+  return { kind: "agent_memory", id };
+}
+
+function statusForAgentMemoryCorrection(kind: AgentMemoryCorrectionInput["correctionKind"]): AgentMemoryEntry["status"] {
+  if (kind === "corrected") return "corrected";
+  if (kind === "forgotten") return "forgotten";
+  return "retracted";
+}
+
+export async function applyAgentMemoryCorrection(
+  host: AgentMemoryHost,
+  input: AgentMemoryCorrectionInput
+): Promise<AgentMemoryCorrectionResult> {
+  const store = await host.loadAgentMemoryStore();
+  const targetIndex = store.entries.findIndex((entry) => entry.id === input.targetId);
+  if (targetIndex < 0) {
+    throw new Error(`agent memory not found: ${input.targetId}`);
+  }
+
+  const now = input.createdAt ?? new Date().toISOString();
+  const target = store.entries[targetIndex]!;
+  let replacement: AgentMemoryEntry | null = null;
+  if (input.correctionKind === "corrected") {
+    if (!input.replacementValue) {
+      throw new Error("replacementValue is required for corrected agent memory");
+    }
+    replacement = AgentMemoryEntrySchema.parse({
+      id: randomUUID(),
+      key: input.replacementKey ?? `${target.key}.corrected.${now.replace(/[^0-9]/g, "").slice(0, 14)}`,
+      value: input.replacementValue,
+      tags: target.tags,
+      category: target.category,
+      memory_type: target.memory_type,
+      status: target.status === "compiled" ? "compiled" : "raw",
+      supersedes_memory_id: target.id,
+      created_at: now,
+      updated_at: now,
+    });
+    store.entries.push(replacement);
+  }
+
+  const correction = MemoryCorrectionEntrySchema.parse({
+    correction_id: `agent-memory-correction-${randomUUID()}`,
+    target_ref: agentMemoryRef(target.id),
+    correction_kind: input.correctionKind,
+    replacement_ref: replacement ? agentMemoryRef(replacement.id) : null,
+    actor: input.actor ?? "user",
+    reason: input.reason,
+    created_at: now,
+    provenance: {
+      source: input.actor ?? "user",
+      ...(input.provenanceRef ? { source_ref: input.provenanceRef } : {}),
+      confidence: 1,
+    },
+  } satisfies MemoryCorrectionEntryInput);
+  store.corrections.push(correction);
+  const correctionState = summarizeMemoryCorrectionState(store.corrections);
+  const targetState = correctionStateForTarget(correctionState, agentMemoryRef(target.id));
+  const updatedTarget = AgentMemoryEntrySchema.parse({
+    ...target,
+    status: statusForAgentMemoryCorrection(input.correctionKind),
+    correction_state: targetState,
+    updated_at: now,
+  });
+  store.entries[targetIndex] = updatedTarget;
+  await host.saveAgentMemoryStore(store);
+  return { correction, target: updatedTarget, replacement };
+}
+
+export async function listAgentMemoryCorrectionHistory(
+  host: AgentMemoryHost,
+  target?: MemoryCorrectionTargetRef
+): Promise<MemoryCorrectionEntry[]> {
+  const store = await host.loadAgentMemoryStore();
+  const corrections = [...(store.corrections ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  if (!target) return corrections;
+  const targetKey = memoryCorrectionTargetKey(target);
+  return corrections.filter((correction) => memoryCorrectionTargetKey(correction.target_ref) === targetKey);
 }
 
 export async function consolidateAgentMemoryEntries(

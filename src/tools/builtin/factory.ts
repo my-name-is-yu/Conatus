@@ -50,6 +50,7 @@ import { TogglePluginTool } from "../mutation/TogglePluginTool/TogglePluginTool.
 import { UpdateConfigTool } from "../mutation/UpdateConfigTool/UpdateConfigTool.js";
 import { UpdateGoalTool } from "../mutation/UpdateGoalTool/UpdateGoalTool.js";
 import { MemoryConsolidateTool } from "../execution/MemoryConsolidateTool/MemoryConsolidateTool.js";
+import { MemoryCorrectionTool } from "../execution/MemoryCorrectionTool/MemoryCorrectionTool.js";
 import { MemoryLintTool } from "../execution/MemoryLintTool/MemoryLintTool.js";
 import { MemorySaveTool } from "../execution/MemorySaveTool/MemorySaveTool.js";
 import { ObserveGoalTool } from "../execution/ObserveGoalTool/ObserveGoalTool.js";
@@ -227,6 +228,7 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
       new ProgressHistoryTool(deps.stateManager),
       new TaskListTool(deps.stateManager),
       new TaskGetTool(deps.stateManager),
+      new MemoryCorrectionTool(deps.stateManager),
     );
     tools.push(...createCoreLoopControlTools(
       deps.coreLoopControl ?? createDaemonBackedCoreLoopControlToolset({ stateManager: deps.stateManager }),
