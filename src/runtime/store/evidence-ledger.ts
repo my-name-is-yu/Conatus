@@ -709,7 +709,16 @@ export interface RuntimeEvidenceSummaryIndex {
   canonical_log_size: number;
   canonical_log_mtime_ms: number;
   summary: RuntimeEvidenceSummary;
+  checkpoint?: RuntimeEvidenceSummaryCheckpoint;
 }
+
+interface RuntimeEvidenceSummaryCheckpoint {
+  schema_version: "runtime-evidence-summary-checkpoint-v1";
+  entries: RuntimeEvidenceEntry[];
+  warnings: RuntimeEvidenceReadWarning[];
+}
+
+const summaryIndexUpdateLocks = new Map<string, Promise<void>>();
 
 export interface RuntimeEvidenceLedgerPort {
   append(input: RuntimeEvidenceEntryInput): Promise<RuntimeEvidenceEntry[]>;
@@ -768,11 +777,12 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
     if (entry.scope.goal_id) targets.add(this.paths.evidenceGoalPath(entry.scope.goal_id));
     if (entry.scope.run_id) targets.add(this.paths.evidenceRunPath(entry.scope.run_id));
     await Promise.all([...targets].map(async (target) => {
-      await fsp.mkdir(path.dirname(target), { recursive: true });
-      await fsp.appendFile(target, `${JSON.stringify(entry)}\n`, "utf8");
-    }));
-    await Promise.all([...targets].map(async (target) => {
-      await rebuildSummaryIndex(target, this.paths);
+      await withSummaryIndexUpdateLock(target, async () => {
+        await fsp.mkdir(path.dirname(target), { recursive: true });
+        const preAppendCheckpoint = await readPreAppendCheckpoint(target);
+        await fsp.appendFile(target, `${JSON.stringify(entry)}\n`, "utf8");
+        await updateSummaryIndexAfterAppend(target, this.paths, [entry], preAppendCheckpoint);
+      });
     }));
     return [entry];
   }
@@ -842,7 +852,51 @@ async function rebuildSummaryIndex(canonicalPath: string, paths: RuntimeStorePat
   const read = await readEvidenceFile(canonicalPath);
   const manifests = await readReproducibilityManifests(paths, scope);
   const summary = summarizeEvidence(scope, read, manifests);
-  await writeSummaryIndex(canonicalPath, summary);
+  await writeSummaryIndex(canonicalPath, summary, manifests.length === 0 ? read : undefined);
+  return summary;
+}
+
+async function withSummaryIndexUpdateLock<T>(canonicalPath: string, action: () => Promise<T>): Promise<T> {
+  const previous = summaryIndexUpdateLocks.get(canonicalPath) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const next = previous.then(() => current, () => current);
+  summaryIndexUpdateLocks.set(canonicalPath, next);
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+    if (summaryIndexUpdateLocks.get(canonicalPath) === next) {
+      summaryIndexUpdateLocks.delete(canonicalPath);
+    }
+  }
+}
+
+async function updateSummaryIndexAfterAppend(
+  canonicalPath: string,
+  paths: RuntimeStorePaths,
+  appendedEntries: RuntimeEvidenceEntry[],
+  preAppendCheckpoint: RuntimeEvidenceReadResult | null
+): Promise<RuntimeEvidenceSummary> {
+  const scope = summaryScopeFromPath(canonicalPath);
+  const manifests = await readReproducibilityManifests(paths, scope);
+  if (manifests.length > 0) {
+    return rebuildSummaryIndex(canonicalPath, paths);
+  }
+
+  if (!preAppendCheckpoint) {
+    return rebuildSummaryIndex(canonicalPath, paths);
+  }
+
+  const read: RuntimeEvidenceReadResult = {
+    entries: [...preAppendCheckpoint.entries, ...appendedEntries],
+    warnings: preAppendCheckpoint.warnings,
+  };
+  const summary = summarizeEvidence(scope, read);
+  await writeSummaryIndex(canonicalPath, summary, read);
   return summary;
 }
 
@@ -897,6 +951,27 @@ async function readSummaryIndex(
   canonicalPath: string,
   expectedScope: RuntimeEvidenceSummary["scope"]
 ): Promise<RuntimeEvidenceSummaryIndex | null> {
+  return readSummaryIndexWithStat(canonicalPath, expectedScope);
+}
+
+async function readPreAppendCheckpoint(canonicalPath: string): Promise<RuntimeEvidenceReadResult | null> {
+  try {
+    const stat = await fsp.stat(canonicalPath);
+    if (stat.size === 0) return { entries: [], warnings: [] };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { entries: [], warnings: [] };
+    throw err;
+  }
+
+  const scope = summaryScopeFromPath(canonicalPath);
+  const index = await readSummaryIndexWithStat(canonicalPath, scope);
+  return index ? readCheckpointFromSummaryIndex(index) : null;
+}
+
+async function readSummaryIndexWithStat(
+  canonicalPath: string,
+  expectedScope: RuntimeEvidenceSummary["scope"]
+): Promise<RuntimeEvidenceSummaryIndex | null> {
   let text: string;
   try {
     text = await fsp.readFile(summaryIndexPath(canonicalPath), "utf8");
@@ -920,6 +995,35 @@ async function readSummaryIndex(
   }
 }
 
+function readCheckpointFromSummaryIndex(index: RuntimeEvidenceSummaryIndex): RuntimeEvidenceReadResult | null {
+  const checkpoint = index.checkpoint;
+  if (!checkpoint || checkpoint.schema_version !== "runtime-evidence-summary-checkpoint-v1") return null;
+  if (!Array.isArray(checkpoint.entries) || !Array.isArray(checkpoint.warnings)) return null;
+
+  const entries: RuntimeEvidenceEntry[] = [];
+  for (const entry of checkpoint.entries) {
+    const parsed = RuntimeEvidenceEntrySchema.safeParse(entry);
+    if (!parsed.success) return null;
+    entries.push(parsed.data);
+  }
+
+  const warnings: RuntimeEvidenceReadWarning[] = [];
+  for (const warning of checkpoint.warnings) {
+    if (
+      typeof warning !== "object"
+      || warning === null
+      || typeof (warning as RuntimeEvidenceReadWarning).file !== "string"
+      || typeof (warning as RuntimeEvidenceReadWarning).line !== "number"
+      || typeof (warning as RuntimeEvidenceReadWarning).message !== "string"
+    ) {
+      return null;
+    }
+    warnings.push(warning as RuntimeEvidenceReadWarning);
+  }
+
+  return { entries, warnings };
+}
+
 function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
   return summary.context_policy_version === "quarantine-filtered-planning-context-v2"
     && Array.isArray(summary.candidate_lineages)
@@ -938,7 +1042,8 @@ function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean
 
 async function writeSummaryIndex(
   canonicalPath: string,
-  summary: RuntimeEvidenceSummary
+  summary: RuntimeEvidenceSummary,
+  checkpointRead?: RuntimeEvidenceReadResult
 ): Promise<void> {
   const stat = await fsp.stat(canonicalPath);
   const index: RuntimeEvidenceSummaryIndex = {
@@ -948,6 +1053,15 @@ async function writeSummaryIndex(
     canonical_log_size: stat.size,
     canonical_log_mtime_ms: stat.mtimeMs,
     summary,
+    ...(checkpointRead
+      ? {
+          checkpoint: {
+            schema_version: "runtime-evidence-summary-checkpoint-v1",
+            entries: checkpointRead.entries,
+            warnings: checkpointRead.warnings,
+          },
+        }
+      : {}),
   };
   await fsp.mkdir(path.dirname(canonicalPath), { recursive: true });
   await fsp.writeFile(summaryIndexPath(canonicalPath), `${JSON.stringify(index)}\n`, "utf8");

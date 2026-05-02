@@ -526,6 +526,91 @@ describe("RuntimeEvidenceLedger", () => {
     }
   });
 
+  it("updates 100/500/1000 entry summary indexes on append without reading canonical JSONL", async () => {
+    const sizes = [100, 500, 1000];
+    for (const size of sizes) {
+      const runId = `run:append-scale-${size}`;
+      const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+      const entries = Array.from({ length: size }, (_, index) => ({
+        schema_version: "runtime-evidence-entry-v1",
+        id: `append-entry-${size}-${index}`,
+        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
+        kind: "metric",
+        scope: { run_id: runId, loop_index: index },
+        metrics: [{ label: "accuracy", value: index / size, direction: "maximize" }],
+        evaluators: [],
+        research: [],
+        dream_checkpoints: [],
+        divergent_exploration: [],
+        candidates: [],
+        artifacts: [],
+        raw_refs: [],
+        summary: `Append metric ${index}`,
+        outcome: index === size - 1 ? "improved" : "continued",
+      }));
+      await fsp.mkdir(path.dirname(ledger.runPath(runId)), { recursive: true });
+      await fsp.writeFile(
+        ledger.runPath(runId),
+        `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+        "utf8"
+      );
+      await ledger.rebuildSummaryIndexForRun(runId);
+
+      const canonicalPath = ledger.runPath(runId);
+      await fsp.chmod(canonicalPath, 0o200);
+      try {
+        await ledger.append({
+          id: `append-entry-${size}-new`,
+          occurred_at: "2026-04-30T00:30:00.000Z",
+          kind: "metric",
+          scope: { run_id: runId, loop_index: size },
+          metrics: [{ label: "accuracy", value: 2, direction: "maximize" }],
+          summary: "Incremental append metric.",
+          outcome: "improved",
+        });
+
+        const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
+        expect(summary.total_entries).toBe(size + 1);
+        expect(summary.best_evidence?.id).toBe(`append-entry-${size}-new`);
+      } finally {
+        await fsp.chmod(canonicalPath, 0o600);
+      }
+    }
+  });
+
+  it("serializes concurrent appends so the summary index cannot omit canonical rows", async () => {
+    const runId = "run:concurrent-index";
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "concurrent-base",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { run_id: runId, loop_index: 0 },
+      metrics: [{ label: "accuracy", value: 0, direction: "maximize" }],
+      summary: "Base metric.",
+      outcome: "continued",
+    });
+
+    await Promise.all(Array.from({ length: 40 }, (_, index) =>
+      ledger.append({
+        id: `concurrent-${index}`,
+        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 1, index)).toISOString(),
+        kind: "metric",
+        scope: { run_id: runId, loop_index: index + 1 },
+        metrics: [{ label: "accuracy", value: index + 1, direction: "maximize" }],
+        summary: `Concurrent metric ${index}.`,
+        outcome: index === 39 ? "improved" : "continued",
+      })
+    ));
+
+    const canonical = await ledger.readByRun(runId);
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
+
+    expect(canonical.entries).toHaveLength(41);
+    expect(summary.total_entries).toBe(canonical.entries.length);
+    expect(summary.best_evidence?.id).toBe("concurrent-39");
+  });
+
   it("stores metric provenance fields and summarizes trend history", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
