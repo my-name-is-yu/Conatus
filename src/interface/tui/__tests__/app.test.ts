@@ -371,6 +371,46 @@ describe("standalone slash command routing", () => {
     screen.unmount();
   });
 
+  it("keeps bare command-like natural text on the freeform caller path", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const intentRecognizer = {
+      recognize: vi.fn(async () => ({ intent: "loop_start", raw: "run" })),
+    };
+    const actionHandler = {
+      handle: vi.fn(async () => ({ messages: ["unexpected"] })),
+    };
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      intentRecognizer: intentRecognizer as any,
+      actionHandler: actionHandler as any,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("run");
+    await testState.lastChatProps!.onSubmit("estado actual del trabajo");
+
+    expect(chatRunner.execute).toHaveBeenNthCalledWith(1, "run", "~/workspace");
+    expect(chatRunner.execute).toHaveBeenNthCalledWith(2, "estado actual del trabajo", "~/workspace");
+    expect(intentRecognizer.recognize).not.toHaveBeenCalled();
+    expect(actionHandler.handle).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
   it("persists a RunSpec draft and waits for confirmation before forwarding long-running runs", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
