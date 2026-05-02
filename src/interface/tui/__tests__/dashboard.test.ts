@@ -105,7 +105,7 @@ function health(overrides: Partial<RuntimeHealthSnapshot["long_running"]> = {}):
 function evidenceSummary(overrides: Partial<RuntimeEvidenceSummary> = {}): RuntimeEvidenceSummary {
   return {
     schema_version: "runtime-evidence-summary-v1",
-    context_policy_version: "correction-filtered-planning-context-v1",
+    context_policy_version: "quarantine-filtered-planning-context-v2",
     generated_at: NOW.toISOString(),
     scope: { run_id: "run-1" },
     total_entries: 1,

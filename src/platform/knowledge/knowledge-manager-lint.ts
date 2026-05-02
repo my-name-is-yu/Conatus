@@ -11,13 +11,14 @@ const LINT_SYSTEM_PROMPT = `You are a memory quality auditor. Analyze the provid
 1. CONTRADICTIONS: entries that conflict with each other (e.g., different values for the same preference/fact)
 2. STALENESS: entries that appear outdated based on timestamps or content suggesting superseded information
 3. REDUNDANCY: entries with significantly overlapping content that should be merged
+4. QUARANTINE: entries whose provided provenance or verification metadata marks them unsafe for planning
 
 Return a JSON object with a "findings" array. Each finding has:
-- type: "contradiction" | "staleness" | "redundancy"
+- type: "contradiction" | "staleness" | "redundancy" | "quarantine"
 - entry_ids: array of entry IDs involved
 - description: brief explanation of the issue
 - confidence: 0-1 confidence score
-- suggested_action: "flag_review" | "auto_resolve_newest" | "mark_stale" | "merge"
+- suggested_action: "flag_review" | "auto_resolve_newest" | "mark_stale" | "merge" | "quarantine"
 
 If no issues found, return {"findings": []}.
 Return ONLY valid JSON, no markdown fences.`;
@@ -31,6 +32,9 @@ function buildUserPrompt(entries: AgentMemoryEntry[]): string {
     tags: e.tags,
     category: e.category,
     memory_type: e.memory_type,
+    verification_status: e.verification_status,
+    provenance: e.provenance,
+    quarantine_state: e.quarantine_state,
     updated_at: e.updated_at,
   }));
   return `Analyze these ${entries.length} compiled memory entries for contradictions, staleness, and redundancy:\n\n${JSON.stringify(formatted, null, 2)}`;
@@ -44,7 +48,76 @@ function actionMatchesAutoRepair(finding: z.infer<typeof LintFindingSchema>): bo
       return finding.suggested_action === "mark_stale";
     case "redundancy":
       return finding.suggested_action === "merge";
+    case "quarantine":
+      return finding.suggested_action === "quarantine";
   }
+}
+
+const quarantineRiskSignals = new Set([
+  "hallucinated",
+  "low_provenance",
+  "contradiction",
+  "prompt_injection_like",
+  "unverified_external",
+] as const);
+
+function quarantineFindingForEntry(entry: AgentMemoryEntry): z.infer<typeof LintFindingSchema> | null {
+  const provenance = entry.provenance;
+  const signals = new Set(provenance?.risk_signals ?? []);
+  const riskSignal = [...signals].find((signal) => quarantineRiskSignals.has(signal));
+  if (riskSignal) {
+    return {
+      type: "quarantine",
+      entry_ids: [entry.id],
+      description: `Memory provenance carries risk signal: ${riskSignal}`,
+      confidence: 0.9,
+      suggested_action: "quarantine",
+    };
+  }
+
+  const verificationStatus = entry.verification_status ?? provenance?.verification_status;
+  if (verificationStatus === "suspicious" || verificationStatus === "contradicted") {
+    return {
+      type: "quarantine",
+      entry_ids: [entry.id],
+      description: `Memory verification status is ${verificationStatus}`,
+      confidence: 0.85,
+      suggested_action: "quarantine",
+    };
+  }
+
+  if (verificationStatus === "unverified" && provenance && provenance.raw_refs.length === 0) {
+    return {
+      type: "quarantine",
+      entry_ids: [entry.id],
+      description: "Memory is explicitly unverified and has no raw provenance refs",
+      confidence: 0.8,
+      suggested_action: "quarantine",
+    };
+  }
+
+  if (
+    provenance
+    && (provenance.source_type === "web" || provenance.source_type === "external")
+    && provenance.reliability !== undefined
+    && provenance.reliability < 0.5
+  ) {
+    return {
+      type: "quarantine",
+      entry_ids: [entry.id],
+      description: "Memory comes from a low-reliability external source",
+      confidence: 0.75,
+      suggested_action: "quarantine",
+    };
+  }
+
+  return null;
+}
+
+function detectQuarantineCandidates(entries: AgentMemoryEntry[]): z.infer<typeof LintFindingSchema>[] {
+  return entries
+    .map((entry) => quarantineFindingForEntry(entry))
+    .filter((finding): finding is z.infer<typeof LintFindingSchema> => Boolean(finding));
 }
 
 export async function lintAgentMemory(opts: {
@@ -64,8 +137,27 @@ export async function lintAgentMemory(opts: {
     entries = entries.filter((e) => e.category && categories.includes(e.category));
   }
 
+  const quarantineFindings = detectQuarantineCandidates(entries);
   if (entries.length < 2) {
-    return { findings: [], repairs_applied: 0, entries_flagged: 0 };
+    let repairsApplied = 0;
+    if (autoRepair) {
+      for (const finding of quarantineFindings) {
+        if (finding.confidence >= minAutoRepairConfidence) {
+          repairsApplied += await km.quarantineAgentMemory({
+            targetIds: finding.entry_ids,
+            reason: finding.description,
+            source: "memory_lint",
+            confidence: finding.confidence,
+            inspectionRefs: finding.entry_ids.map((id) => `agent_memory:${id}`),
+          });
+        }
+      }
+    }
+    return {
+      findings: quarantineFindings,
+      repairs_applied: repairsApplied,
+      entries_flagged: new Set(quarantineFindings.flatMap((finding) => finding.entry_ids)).size,
+    };
   }
 
   // NOTE: Chunking processes entries independently per window. Contradictions/redundancies
@@ -73,7 +165,7 @@ export async function lintAgentMemory(opts: {
   // are well under 30, so this limit rarely applies.
   // 2. Chunk if needed (max 30 per call)
   const CHUNK_SIZE = 30;
-  const allFindings: z.infer<typeof LintFindingSchema>[] = [];
+  const allFindings: z.infer<typeof LintFindingSchema>[] = [...quarantineFindings];
 
   for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
     const chunk = entries.slice(i, i + CHUNK_SIZE);
@@ -157,6 +249,17 @@ export async function lintAgentMemory(opts: {
         const archiveIds = toArchive.map((e) => e.id);
         const archived = await km.archiveAgentMemory(archiveIds);
         repairsApplied += archived;
+        break;
+      }
+      case "quarantine": {
+        const quarantined = await km.quarantineAgentMemory({
+          targetIds: finding.entry_ids,
+          reason: finding.description,
+          source: "memory_lint",
+          confidence: finding.confidence,
+          inspectionRefs: finding.entry_ids.map((id) => `agent_memory:${id}`),
+        });
+        repairsApplied += quarantined;
         break;
       }
     }

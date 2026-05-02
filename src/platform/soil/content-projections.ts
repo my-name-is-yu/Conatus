@@ -92,6 +92,10 @@ function memoryEntrySection(entry: AgentMemoryEntry): string {
   return lines.join("\n");
 }
 
+function isPlanningEligibleMemoryEntry(entry: AgentMemoryEntry): boolean {
+  return entry.status === "raw" || entry.status === "compiled";
+}
+
 function decisionSection(record: DecisionRecord): string {
   const lines = [
     `## ${record.id}`,
@@ -202,14 +206,15 @@ function memoryCategoryEntries(store: AgentMemoryStore): {
   lessons: AgentMemoryEntry[];
   patterns: AgentMemoryEntry[];
 } {
-  const preferences = store.entries.filter((entry) => entry.memory_type === "preference");
-  const procedures = store.entries.filter((entry) => entry.memory_type === "procedure");
-  const lessons = store.entries.filter(
+  const entries = store.entries.filter(isPlanningEligibleMemoryEntry);
+  const preferences = entries.filter((entry) => entry.memory_type === "preference");
+  const procedures = entries.filter((entry) => entry.memory_type === "procedure");
+  const lessons = entries.filter(
     (entry) =>
       entry.status === "compiled" ||
       entry.tags.some((tag) => tag.toLowerCase().includes("lesson"))
   );
-  const patterns = store.entries.filter(
+  const patterns = entries.filter(
     (entry) =>
       entry.memory_type === "observation" ||
       entry.tags.some((tag) => tag.toLowerCase().includes("pattern"))
@@ -258,6 +263,8 @@ export async function projectAgentMemoryToSoil(input: SoilProjectionOptions & { 
   const sourceRefs = sourceRefsFromPaths("runtime_json", [{ sourcePath, sourceHash, reliability: "high" }]);
   const createdAt = sortByDate(store.entries, (entry) => entry.created_at).at(-1)?.created_at ?? generatedAt;
   const updatedAt = sortByDate(store.entries, (entry) => entry.updated_at).at(0)?.updated_at ?? generatedAt;
+  const planningEligibleEntries = store.entries.filter(isPlanningEligibleMemoryEntry);
+  const quarantinedEntries = store.entries.filter((entry) => entry.status === "quarantined");
   const categories = memoryCategoryEntries(store);
   const frontmatter = baseFrontmatter({
     soilId: "memory/index",
@@ -271,14 +278,15 @@ export async function projectAgentMemoryToSoil(input: SoilProjectionOptions & { 
     sourceTruth: "runtime_json",
     renderedFrom: "memory-store",
     domain: "agent-memory",
-    summary: `${store.entries.length} entries`,
+    summary: `${planningEligibleEntries.length} planning-eligible entries`,
     inputChecksums: { [sourcePath]: sourceHash },
   });
 
   const body = [
     "# Agent memory",
     "",
-    `- Entries: ${store.entries.length}`,
+    `- Entries: ${planningEligibleEntries.length}`,
+    `- Quarantined entries: ${quarantinedEntries.length}`,
     `- Last consolidated at: ${store.last_consolidated_at ?? "none"}`,
     "",
     "## Categories",
@@ -290,7 +298,7 @@ export async function projectAgentMemoryToSoil(input: SoilProjectionOptions & { 
     "",
     "## Entries",
     "",
-    ...sortByDate(store.entries, (entry) => entry.updated_at).map((entry) => memoryEntrySection(entry)),
+    ...sortByDate(planningEligibleEntries, (entry) => entry.updated_at).map((entry) => memoryEntrySection(entry)),
   ].join("\n");
 
   await writeProjectedPage(input, { frontmatter, body });

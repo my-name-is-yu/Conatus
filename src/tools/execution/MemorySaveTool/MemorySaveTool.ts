@@ -8,6 +8,10 @@ import type {
   ToolDescriptionContext,
 } from "../../types.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
+import {
+  MemoryProvenanceSchema,
+  MemoryVerificationStatusSchema,
+} from "../../../platform/corrections/memory-quarantine.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, READ_ONLY, PERMISSION_LEVEL, TOOL_NAME, ALIASES } from "./constants.js";
 
@@ -21,6 +25,8 @@ export const MemorySaveInputSchema = z.object({
     .default("fact")
     .describe("Type of memory entry"),
   tags: z.array(z.string()).optional().describe("Tags for filtering and search"),
+  verification_status: MemoryVerificationStatusSchema.optional(),
+  provenance: MemoryProvenanceSchema.optional(),
 });
 export type MemorySaveInput = z.infer<typeof MemorySaveInputSchema>;
 
@@ -55,6 +61,8 @@ export class MemorySaveTool implements ITool<MemorySaveInput, unknown> {
         category: input.category,
         memory_type: input.memory_type,
         tags: input.tags,
+        verification_status: input.verification_status,
+        provenance: input.provenance,
       });
       return {
         success: true,

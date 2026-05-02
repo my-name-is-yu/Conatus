@@ -15,6 +15,9 @@ function makeEntry(overrides: Partial<AgentMemoryEntry> & { id: string; key: str
     category: overrides.category,
     memory_type: overrides.memory_type ?? "fact",
     status: overrides.status ?? "compiled",
+    verification_status: overrides.verification_status,
+    provenance: overrides.provenance,
+    quarantine_state: overrides.quarantine_state,
     compiled_from: overrides.compiled_from,
     created_at: overrides.created_at ?? "2026-01-01T00:00:00.000Z",
     updated_at: overrides.updated_at ?? "2026-01-01T00:00:00.000Z",
@@ -27,6 +30,7 @@ function makeKM(entries: AgentMemoryEntry[] = []): {
   saveAgentMemory: ReturnType<typeof vi.fn>;
   archiveAgentMemory: ReturnType<typeof vi.fn>;
   deleteAgentMemory: ReturnType<typeof vi.fn>;
+  quarantineAgentMemory: ReturnType<typeof vi.fn>;
 } {
   const listAgentMemory = vi.fn().mockResolvedValue(entries);
   const saveAgentMemory = vi.fn().mockImplementation(async (entry: Partial<AgentMemoryEntry>) =>
@@ -34,13 +38,21 @@ function makeKM(entries: AgentMemoryEntry[] = []): {
   );
   const archiveAgentMemory = vi.fn().mockResolvedValue(1);
   const deleteAgentMemory = vi.fn().mockResolvedValue(true);
+  const quarantineAgentMemory = vi.fn().mockResolvedValue(1);
 
   return {
-    km: { listAgentMemory, saveAgentMemory, archiveAgentMemory, deleteAgentMemory } as unknown as KnowledgeManager,
+    km: {
+      listAgentMemory,
+      saveAgentMemory,
+      archiveAgentMemory,
+      deleteAgentMemory,
+      quarantineAgentMemory,
+    } as unknown as KnowledgeManager,
     listAgentMemory,
     saveAgentMemory,
     archiveAgentMemory,
     deleteAgentMemory,
+    quarantineAgentMemory,
   };
 }
 
@@ -364,6 +376,66 @@ describe("lintAgentMemory", () => {
 
       expect(result.findings).toHaveLength(0);
       expect(llmCall).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("quarantine candidates", () => {
+    it("flags explicitly unverified provenance without raw refs without deleting memory", async () => {
+      const suspicious = makeEntry({
+        id: "e1",
+        key: "unsupported-claim",
+        provenance: {
+          source_type: "unknown",
+          raw_refs: [],
+          verification_status: "unverified",
+          risk_signals: [],
+        },
+      });
+      const { km, deleteAgentMemory, archiveAgentMemory } = makeKM([suspicious]);
+      const llmCall = makeLlmCall(emptyFindings());
+
+      const result = await lintAgentMemory({ km, llmCall });
+
+      expect(result.findings).toEqual([
+        expect.objectContaining({
+          type: "quarantine",
+          entry_ids: ["e1"],
+          suggested_action: "quarantine",
+        }),
+      ]);
+      expect(result.entries_flagged).toBe(1);
+      expect(deleteAgentMemory).not.toHaveBeenCalled();
+      expect(archiveAgentMemory).not.toHaveBeenCalled();
+    });
+
+    it("auto-quarantines prompt-injection-like risk signals without physical deletion", async () => {
+      const injected = makeEntry({
+        id: "e1",
+        key: "captured-web-instruction",
+        provenance: {
+          source_type: "web",
+          source_ref: "https://example.invalid/page",
+          raw_refs: ["web-snapshot:1"],
+          verification_status: "suspicious",
+          risk_signals: ["prompt_injection_like"],
+          reliability: 0.2,
+        },
+      });
+      const { km, quarantineAgentMemory, deleteAgentMemory } = makeKM([injected]);
+      const llmCall = makeLlmCall(emptyFindings());
+
+      const result = await lintAgentMemory({ km, llmCall, autoRepair: true, minAutoRepairConfidence: 0.8 });
+
+      expect(result.repairs_applied).toBe(1);
+      expect(quarantineAgentMemory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetIds: ["e1"],
+          source: "memory_lint",
+          confidence: 0.9,
+          inspectionRefs: ["agent_memory:e1"],
+        })
+      );
+      expect(deleteAgentMemory).not.toHaveBeenCalled();
     });
   });
 });

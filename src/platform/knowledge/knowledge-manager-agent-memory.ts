@@ -11,6 +11,8 @@ import {
   type MemoryCorrectionKind,
   type MemoryCorrectionTargetRef,
 } from "../corrections/memory-correction-ledger.js";
+import { MemoryQuarantineStateSchema, type MemoryQuarantineState } from "../corrections/memory-quarantine.js";
+import type { MemoryProvenance, MemoryVerificationStatus } from "../corrections/memory-quarantine.js";
 import {
   AgentMemoryEntrySchema,
 } from "./types/agent-memory.js";
@@ -46,6 +48,8 @@ export async function saveAgentMemoryEntry(
     tags?: string[];
     category?: string;
     memory_type?: AgentMemoryType;
+    verification_status?: MemoryVerificationStatus;
+    provenance?: MemoryProvenance;
   }
 ): Promise<AgentMemoryEntry> {
   const store = await host.loadAgentMemoryStore();
@@ -61,6 +65,8 @@ export async function saveAgentMemoryEntry(
       tags: entry.tags ?? prev.tags,
       category: entry.category ?? prev.category,
       memory_type: entry.memory_type ?? prev.memory_type,
+      verification_status: entry.verification_status ?? prev.verification_status,
+      provenance: entry.provenance ?? prev.provenance,
       status: prev.status,
       updated_at: now,
     });
@@ -73,6 +79,8 @@ export async function saveAgentMemoryEntry(
       tags: entry.tags ?? [],
       category: entry.category,
       memory_type: entry.memory_type ?? "fact",
+      verification_status: entry.verification_status,
+      provenance: entry.provenance,
       created_at: now,
       updated_at: now,
     });
@@ -166,6 +174,49 @@ export async function deleteAgentMemoryEntry(host: AgentMemoryHost, key: string)
   store.entries.splice(idx, 1);
   await host.saveAgentMemoryStore(store);
   return true;
+}
+
+export interface AgentMemoryQuarantineInput {
+  targetIds: string[];
+  reason: string;
+  source?: MemoryQuarantineState["source"];
+  confidence: number;
+  inspectionRefs: string[];
+  createdAt?: string;
+}
+
+export async function quarantineAgentMemoryEntries(
+  host: AgentMemoryHost,
+  input: AgentMemoryQuarantineInput
+): Promise<number> {
+  const store = await host.loadAgentMemoryStore();
+  const targetIds = new Set(input.targetIds);
+  const now = input.createdAt ?? new Date().toISOString();
+  const quarantineState = MemoryQuarantineStateSchema.parse({
+    status: "quarantined",
+    active: false,
+    reason: input.reason,
+    source: input.source ?? "memory_lint",
+    confidence: input.confidence,
+    inspection_refs: input.inspectionRefs ?? [],
+    created_at: now,
+  });
+  let quarantined = 0;
+  store.entries = store.entries.map((entry) => {
+    if (!targetIds.has(entry.id) || entry.status === "quarantined") return entry;
+    quarantined++;
+    return AgentMemoryEntrySchema.parse({
+      ...entry,
+      status: "quarantined",
+      verification_status: entry.verification_status ?? "suspicious",
+      quarantine_state: quarantineState,
+      updated_at: now,
+    });
+  });
+  if (quarantined > 0) {
+    await host.saveAgentMemoryStore(store);
+  }
+  return quarantined;
 }
 
 export interface AgentMemoryCorrectionInput {

@@ -43,7 +43,7 @@ function run(overrides: Partial<BackgroundRun> = {}): BackgroundRun {
 function summary(overrides: Partial<RuntimeEvidenceSummary> = {}): RuntimeEvidenceSummary {
   return {
     schema_version: "runtime-evidence-summary-v1",
-    context_policy_version: "correction-filtered-planning-context-v1",
+    context_policy_version: "quarantine-filtered-planning-context-v2",
     generated_at: "2026-05-02T00:25:00.000Z",
     scope: { run_id: "run-1" },
     total_entries: 1,

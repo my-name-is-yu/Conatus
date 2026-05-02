@@ -119,6 +119,31 @@ describe("MemorySaveTool", () => {
         expect.objectContaining({ memory_type: "procedure" })
       );
     });
+
+    it("passes provenance and verification metadata to saveAgentMemory", async () => {
+      await tool.call({
+        key: "k",
+        value: "v",
+        memory_type: "fact",
+        verification_status: "unverified",
+        provenance: {
+          source_type: "web",
+          raw_refs: ["snapshot:1"],
+          reliability: 0.4,
+          verification_status: "unverified",
+          risk_signals: ["unverified_external"],
+        },
+      }, makeContext());
+      expect(vi.mocked(km.saveAgentMemory)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          verification_status: "unverified",
+          provenance: expect.objectContaining({
+            source_type: "web",
+            raw_refs: ["snapshot:1"],
+          }),
+        })
+      );
+    });
   });
 
   describe("error handling", () => {
