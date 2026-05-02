@@ -8,6 +8,7 @@ import {
   loadNotificationConfig,
   saveNotificationConfig,
 } from "../../../runtime/notification-routing.js";
+import { buildLLMClient } from "../../../base/llm/provider-factory.js";
 
 async function loadConfig(configPath: string): Promise<NotificationConfig> {
   return loadNotificationConfig(configPath);
@@ -290,7 +291,12 @@ async function cmdNotifyRoute(args: string[], configPath: string): Promise<numbe
   }
 
   try {
-    const update = await applyNaturalLanguageNotificationRouting(instruction, configPath);
+    const llmClient = await buildLLMClient();
+    const update = await applyNaturalLanguageNotificationRouting(instruction, configPath, { llmClient });
+    if (!update.applied) {
+      console.error(update.summary);
+      return 1;
+    }
     console.log(update.summary);
     return 0;
   } catch (err) {

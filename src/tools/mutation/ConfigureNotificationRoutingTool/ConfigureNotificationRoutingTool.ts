@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import { applyNaturalLanguageNotificationRouting } from "../../../runtime/notification-routing.js";
+import { buildLLMClient } from "../../../base/llm/provider-factory.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -8,6 +10,10 @@ export const ConfigureNotificationRoutingInputSchema = z.object({
   instruction: z.string().min(1, "instruction is required"),
 });
 export type ConfigureNotificationRoutingInput = z.infer<typeof ConfigureNotificationRoutingInputSchema>;
+
+export interface ConfigureNotificationRoutingToolDeps {
+  buildLLMClient?: () => Promise<Pick<ILLMClient, "sendMessage" | "parseJSON">>;
+}
 
 export class ConfigureNotificationRoutingTool implements ITool<ConfigureNotificationRoutingInput, unknown> {
   readonly metadata: ToolMetadata = {
@@ -24,6 +30,8 @@ export class ConfigureNotificationRoutingTool implements ITool<ConfigureNotifica
   };
   readonly inputSchema = ConfigureNotificationRoutingInputSchema;
 
+  constructor(private readonly deps: ConfigureNotificationRoutingToolDeps = {}) {}
+
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
   }
@@ -31,11 +39,13 @@ export class ConfigureNotificationRoutingTool implements ITool<ConfigureNotifica
   async call(input: ConfigureNotificationRoutingInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      const update = await applyNaturalLanguageNotificationRouting(input.instruction);
+      const llmClient = await (this.deps.buildLLMClient ?? buildLLMClient)();
+      const update = await applyNaturalLanguageNotificationRouting(input.instruction, undefined, { llmClient });
       return {
-        success: true,
+        success: update.applied,
         data: update,
         summary: update.summary,
+        error: update.applied ? undefined : update.summary,
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
