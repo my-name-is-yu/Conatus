@@ -1,5 +1,8 @@
 import * as path from "node:path";
+import { z } from "zod";
 import type { StateManager } from "../base/state/state-manager.js";
+import type { ILLMClient } from "../base/llm/llm-client.js";
+import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 import { createRuntimeSessionRegistry } from "./session-registry/index.js";
 import type {
   BackgroundRun,
@@ -23,12 +26,22 @@ export interface RuntimeEvidenceAnswerResult {
   messageType?: "info" | "warning";
   targetRunId?: string;
   topics?: RuntimeEvidenceQuestionTopic[];
+  confidence?: number;
 }
 
 export interface RuntimeEvidenceAnswerInput {
   text: string;
   stateManager: Pick<StateManager, "getBaseDir">;
+  llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
   now?: Date;
+}
+
+export interface RuntimeEvidenceQueryUnderstanding {
+  decision: "runtime_evidence_question" | "not_runtime_evidence_question";
+  topics: RuntimeEvidenceQuestionTopic[];
+  confidence: number;
+  targetRunId?: string;
+  rationale?: string;
 }
 
 interface RuntimeEvidenceAnswerModelInput {
@@ -42,28 +55,77 @@ interface RuntimeEvidenceAnswerModelInput {
 }
 
 const STALE_EVIDENCE_MS = 30 * 60 * 1000;
+const MIN_QUERY_CONFIDENCE = 0.7;
 
-export function recognizeRuntimeEvidenceQuestion(text: string): RuntimeEvidenceQuestionTopic[] {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) return [];
-  const questionish = /[?？]$/.test(normalized)
-    || /^(what|which|where|how|did|does|is|are|can|show|tell|status|progress|best|artifact|strategy|blocker|approval|report)\b/.test(normalized);
-  if (!questionish) return [];
+const RuntimeEvidenceQueryUnderstandingSchema = z.object({
+  decision: z.enum(["runtime_evidence_question", "not_runtime_evidence_question"]),
+  topics: z.array(z.enum(["progress", "metric", "artifact", "strategy", "blocker", "report"])).default([]),
+  confidence: z.number().min(0).max(1),
+  targetRunId: z.string().min(1).optional(),
+  rationale: z.string().optional(),
+});
 
-  const topics = new Set<RuntimeEvidenceQuestionTopic>();
-  if (/\b(progress|status|health|how far|where is|current state|running|alive|stalled|plateau|breakthrough)\b/.test(normalized)) topics.add("progress");
-  if (/\b(metric|score|best|beat|leaderboard|accuracy|recall|precision|loss|auc|f1|current best|cumulative best)\b/.test(normalized)) topics.add("metric");
-  if (/\b(artifact|output|candidate|submission|report file|file|produced|manifest)\b/.test(normalized)) topics.add("artifact");
-  if (/\b(strategy|hypothesis|trying|plan|next|dream|approach|experiment)\b/.test(normalized)) topics.add("strategy");
-  if (/\b(blocker|blocked|approval|approve|waiting|secret|submit|publish|finali[sz]e|ready)\b/.test(normalized)) topics.add("blocker");
-  if (/\b(report|postmortem|summary|writeup|what should be included)\b/.test(normalized)) topics.add("report");
-  if (topics.size === 0 && /^(progress|status|best|strategy|artifacts?)$/.test(normalized)) topics.add("progress");
-  return [...topics];
+function getQueryUnderstandingPrompt(): string {
+  return `${getInternalIdentityPrefix("assistant")} You classify whether an operator message is asking for persisted PulSeed runtime evidence.
+
+Runtime evidence questions ask about a current or recent background run using Runtime Session Catalog, Runtime Evidence Ledger, or Runtime Health. Supported evidence topics:
+- progress: current state, liveness, latest evidence, stale/lost/stalled status
+- metric: scores, best metric, leaderboard-like evidence, evaluator observations
+- artifact: outputs, candidates, reports, manifests, retained artifacts
+- strategy: hypotheses, approaches, experiment plan, Dream checkpoint guidance
+- blocker: blockers, approval gates, missing secrets, failed attempts, external publish/submit readiness
+- report: what should be included in a report/postmortem/writeup
+
+Return not_runtime_evidence_question for ordinary chat, requests to start/stop/pause/control a run, instructions to do new work, explanatory questions not asking for persisted runtime evidence, or ambiguous/low-confidence text.
+
+Respond only as JSON: { "decision": "runtime_evidence_question" | "not_runtime_evidence_question", "topics": ["progress"], "confidence": 0.0-1.0, "targetRunId": "optional exact run id if explicitly named", "rationale": "short" }`;
+}
+
+export async function understandRuntimeEvidenceQuestion(
+  text: string,
+  llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">,
+): Promise<RuntimeEvidenceQueryUnderstanding> {
+  const trimmed = text.trim();
+  if (!trimmed || !llmClient) {
+    return { decision: "not_runtime_evidence_question", topics: [], confidence: 0 };
+  }
+  try {
+    const response = await llmClient.sendMessage(
+      [{ role: "user", content: trimmed }],
+      { system: getQueryUnderstandingPrompt(), max_tokens: 384, temperature: 0 },
+    );
+    const parsed = llmClient.parseJSON(response.content, RuntimeEvidenceQueryUnderstandingSchema);
+    const topics = [...new Set(parsed.topics)];
+    if (
+      parsed.decision !== "runtime_evidence_question"
+      || parsed.confidence < MIN_QUERY_CONFIDENCE
+      || topics.length === 0
+    ) {
+      return {
+        decision: "not_runtime_evidence_question",
+        topics: [],
+        confidence: parsed.confidence,
+        targetRunId: parsed.targetRunId,
+        rationale: parsed.rationale,
+      };
+    }
+    return {
+      decision: "runtime_evidence_question",
+      topics,
+      confidence: parsed.confidence,
+      targetRunId: parsed.targetRunId,
+      rationale: parsed.rationale,
+    };
+  } catch {
+    return { decision: "not_runtime_evidence_question", topics: [], confidence: 0 };
+  }
 }
 
 export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswerInput): Promise<RuntimeEvidenceAnswerResult> {
-  const topics = recognizeRuntimeEvidenceQuestion(input.text);
-  if (topics.length === 0) return { kind: "not_runtime_evidence_question" };
+  const query = await understandRuntimeEvidenceQuestion(input.text, input.llmClient);
+  if (query.decision !== "runtime_evidence_question") {
+    return { kind: "not_runtime_evidence_question", confidence: query.confidence };
+  }
 
   const runtimeRoot = path.join(input.stateManager.getBaseDir(), "runtime");
   const registry = createRuntimeSessionRegistry({ stateManager: input.stateManager as StateManager });
@@ -75,23 +137,40 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
     healthStore.loadSnapshot().catch(() => null),
   ]);
   const candidates = selectCandidateRuns(snapshot);
-  const summaries = await Promise.all(candidates.slice(0, 8).map(async (run) => {
+  const targetRun = query.targetRunId
+    ? candidates.find((run) => run.id === query.targetRunId)
+    : undefined;
+  if (query.targetRunId && !targetRun) {
+    return {
+      kind: "answered",
+      message: [
+        `Runtime evidence answer for run ${query.targetRunId}.`,
+        "Evidence missing: the requested run was not found in the Runtime Session Catalog.",
+      ].join("\n"),
+      messageType: "warning",
+      targetRunId: query.targetRunId,
+      topics: query.topics,
+      confidence: query.confidence,
+    };
+  }
+  const runsToSummarize = selectRunsForEvidenceSummary(candidates, targetRun);
+  const summaries = await Promise.all(runsToSummarize.map(async (run) => {
     const summary = await ledger.summarizeRun(run.id).catch(() => null);
     return { run, summary };
   }));
-  const selected = summaries[0] ?? { run: null, summary: null };
+  const selected = selectUnderstoodRun(summaries, query.targetRunId);
   return buildRuntimeEvidenceAnswer({
     text: input.text,
-    topics,
+    topics: query.topics,
     snapshot,
     health,
     run: selected.run,
     summary: selected.summary,
     now: input.now,
-  });
+  }, query.confidence);
 }
 
-export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInput): RuntimeEvidenceAnswerResult {
+export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInput, confidence?: number): RuntimeEvidenceAnswerResult {
   const { topics, run, summary } = input;
   const target = run ? `run ${run.id}` : "runtime work";
   const lines: string[] = [`Runtime evidence answer for ${target}.`];
@@ -104,6 +183,7 @@ export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInpu
       message: lines.join("\n"),
       messageType: "warning",
       topics,
+      confidence,
     };
   }
 
@@ -127,6 +207,7 @@ export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInpu
       messageType: "warning",
       targetRunId: run.id,
       topics,
+      confidence,
     };
   }
 
@@ -148,7 +229,27 @@ export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInpu
     messageType: warningLines.length > 0 ? "warning" : "info",
     targetRunId: run.id,
     topics,
+    confidence,
   };
+}
+
+function selectRunsForEvidenceSummary(candidates: BackgroundRun[], targetRun: BackgroundRun | undefined): BackgroundRun[] {
+  const runs = candidates.slice(0, 8);
+  if (targetRun && !runs.some((run) => run.id === targetRun.id)) {
+    runs.push(targetRun);
+  }
+  return runs;
+}
+
+function selectUnderstoodRun(
+  summaries: Array<{ run: BackgroundRun; summary: RuntimeEvidenceSummary | null }>,
+  targetRunId: string | undefined,
+): { run: BackgroundRun | null; summary: RuntimeEvidenceSummary | null } {
+  if (targetRunId) {
+    const matched = summaries.find(({ run }) => run.id === targetRunId);
+    if (matched) return matched;
+  }
+  return summaries[0] ?? { run: null, summary: null };
 }
 
 function selectCandidateRuns(snapshot: RuntimeSessionRegistrySnapshot | null): BackgroundRun[] {

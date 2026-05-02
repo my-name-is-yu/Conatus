@@ -30,6 +30,7 @@ import type { ActionHandler } from "./actions.js";
 import type { IntentRecognizer } from "./intent-recognizer.js";
 import type { CoreLoop } from "../../orchestrator/loop/core-loop.js";
 import type { StateManager } from "../../base/state/state-manager.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Task } from "../../base/types/task.js";
 import type { TuiChatSurface } from "./chat-surface.js";
@@ -222,6 +223,7 @@ interface AppProps {
   trustManager?: TrustManager;
   actionHandler?: ActionHandler;
   intentRecognizer?: IntentRecognizer;
+  llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
   chatRunner?: TuiChatSurface;
   onApprovalReady?: (requestFn: (req: ApprovalRequest) => void) => void;
   // Shared
@@ -275,6 +277,7 @@ export function App({
   trustManager,
   actionHandler,
   intentRecognizer,
+  llmClient,
   chatRunner,
   onApprovalReady,
   cwd,
@@ -757,6 +760,7 @@ export function App({
           const evidenceAnswer = await answerRuntimeEvidenceQuestion({
             text: input,
             stateManager,
+            llmClient,
           });
           if (evidenceAnswer.kind === "answered" && evidenceAnswer.message) {
             const message = evidenceAnswer.message;
@@ -836,7 +840,7 @@ export function App({
         setIsProcessing(false);
       }
     },
-    [intentRecognizer, actionHandler, chatRunner, daemonClient, isDaemonMode, daemonLoopState.goalId, startLoop, stopLoop, isProcessing, cwd, stateManager, pendingRunSpec]
+    [intentRecognizer, actionHandler, llmClient, chatRunner, daemonClient, isDaemonMode, daemonLoopState.goalId, startLoop, stopLoop, isProcessing, cwd, stateManager, pendingRunSpec]
   );
 
   // goalCount: 1 when there is an active goal in the loop, 0 otherwise

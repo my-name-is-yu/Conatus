@@ -5,6 +5,7 @@ import type { DaemonClient } from "../../../runtime/daemon/client.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { TuiChatSurface } from "../chat-surface.js";
 import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from "../app.js";
+import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
@@ -490,6 +491,11 @@ describe("standalone slash command routing", () => {
   it("answers natural-language run progress questions from runtime evidence before ChatRunner", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
+    const llmClient = createSingleMockLLMClient(JSON.stringify({
+      decision: "runtime_evidence_question",
+      topics: ["progress", "metric"],
+      confidence: 0.93,
+    }));
     testState.runtimeSessionSnapshots = [{
       schema_version: "runtime-session-registry-v1",
       generated_at: "2026-05-02T00:00:00.000Z",
@@ -524,6 +530,7 @@ describe("standalone slash command routing", () => {
 
     const screen = render(React.createElement(App, {
       stateManager: stateManager as unknown as StateManager,
+      llmClient,
       chatRunner: chatRunner as unknown as TuiChatSurface,
       noFlicker: false,
       controlStream: process.stdout,
@@ -544,8 +551,47 @@ describe("standalone slash command routing", () => {
 
     expect(chatRunner.execute).not.toHaveBeenCalled();
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    expect(llmClient.callCount).toBe(1);
     expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("Runtime evidence answer for run run-evidence");
     expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("balanced_accuracy");
+
+    screen.unmount();
+  });
+
+  it("routes non-evidence multilingual chat through ChatRunner when classifier says not evidence", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const llmClient = createSingleMockLLMClient(JSON.stringify({
+      decision: "not_runtime_evidence_question",
+      topics: [],
+      confidence: 0.96,
+      rationale: "asks for an explanation, not persisted runtime evidence",
+    }));
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      llmClient,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/kaggle",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("このタスクの進め方を説明して");
+    await flush();
+
+    expect(llmClient.callCount).toBe(1);
+    expect(chatRunner.execute).toHaveBeenCalledWith("このタスクの進め方を説明して", "/work/kaggle");
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
 
     screen.unmount();
   });
@@ -553,9 +599,16 @@ describe("standalone slash command routing", () => {
   it("routes natural-language runtime control through ChatRunner from the TUI freeform input", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
+    const llmClient = createSingleMockLLMClient(JSON.stringify({
+      decision: "not_runtime_evidence_question",
+      topics: [],
+      confidence: 0.97,
+      rationale: "runtime-control request, not evidence Q&A",
+    }));
 
     const screen = render(React.createElement(App, {
       stateManager: stateManager as unknown as StateManager,
+      llmClient,
       chatRunner: chatRunner as unknown as TuiChatSurface,
       noFlicker: false,
       controlStream: process.stdout,
@@ -576,6 +629,7 @@ describe("standalone slash command routing", () => {
 
     expect(chatRunner.execute).toHaveBeenCalledWith("この実行を一時停止して", "/work/kaggle");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    expect(llmClient.callCount).toBe(1);
 
     screen.unmount();
   });
