@@ -4,7 +4,7 @@ import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import type { ChatEvent, ChatEventHandler } from "../../interface/chat/chat-events.js";
+import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { formatLifecycleFailureMessage } from "../../interface/chat/failure-recovery.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
@@ -106,9 +106,9 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
           if (this.config.denied_chat_ids.includes(chatId)) continue;
           if (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId)) continue;
           if (!this.config.allow_all && !this.config.allowed_user_ids.includes(fromId)) continue;
-          await this.processMessage(msg.text, fromId, chatId);
+          await this.processMessage(msg.text, fromId, chatId, msg.message_id);
         }
-      } catch (err) {
+      } catch {
         if (!this.running) break;
         const delay = BACKOFF_STEPS_MS[Math.min(backoffIndex, BACKOFF_STEPS_MS.length - 1)];
         backoffIndex++;
@@ -117,7 +117,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     }
   }
 
-  private async processMessage(text: string, fromUserId: number, chatId: number): Promise<void> {
+  private async processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void> {
     const normalized = text.trim().toLowerCase();
     if (normalized === "/sethome" || normalized.startsWith("/sethome@")) {
       await this.homeChatStore.set(chatId);
@@ -165,6 +165,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       identity_key: route.identityKey ?? this.config.identity_key,
       conversation_id: String(chatId),
       sender_id: String(fromUserId),
+      message_id: String(messageId),
       goal_id: route.goalId,
       cwd: process.cwd(),
       onEvent: (event) => eventAdapter.handle(event),
