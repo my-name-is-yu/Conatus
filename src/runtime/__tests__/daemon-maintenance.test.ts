@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
-import { ApprovalStore, OutboxStore, RuntimeHealthStore, createRuntimeStorePaths } from "../store/index.js";
+import { ApprovalStore, OutboxStore, RuntimeHealthStore, ProactiveInterventionStore, createRuntimeStorePaths } from "../store/index.js";
 import { ApprovalRecordSchema, OutboxRecordSchema } from "../store/runtime-schemas.js";
 import { runRuntimeStoreMaintenanceCycle } from "../daemon/maintenance.js";
 
@@ -143,6 +143,39 @@ describe("runRuntimeStoreMaintenanceCycle", () => {
     expect(report.health.repaired).toBe(true);
     expect(await healthStore.loadSnapshot()).not.toBeNull();
     expect(await healthStore.loadComponentsHealth()).not.toBeNull();
+  });
+
+  it("includes proactive intervention quality in runtime health details", async () => {
+    const interventionStore = new ProactiveInterventionStore(paths);
+    await interventionStore.appendIntervention({
+      activity: {
+        intervention_id: "health-proactive-1",
+        kind: "suggestion",
+        trigger: "proactive_tick",
+        summary: "Suggested a goal.",
+        recorded_at: "2026-05-02T00:00:00.000Z",
+      },
+    });
+    await interventionStore.appendFeedback({
+      interventionId: "health-proactive-1",
+      outcome: "corrected",
+      recordedAt: "2026-05-02T00:01:00.000Z",
+    });
+
+    await runRuntimeStoreMaintenanceCycle({
+      runtimeRoot,
+      approvalStore,
+      outboxStore,
+      runtimeHealthStore: healthStore,
+      logger: logger(),
+      now: 10_000,
+    });
+
+    const snapshot = await healthStore.loadSnapshot();
+    expect(snapshot?.details?.proactive_interventions).toMatchObject({
+      total_interventions: 1,
+      corrected_count: 1,
+    });
   });
 
   it("prunes stale claim artifacts from the runtime claims directory", async () => {

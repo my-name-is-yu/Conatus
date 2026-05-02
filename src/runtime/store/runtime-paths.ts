@@ -28,12 +28,14 @@ export interface RuntimeStorePaths {
   healthDir: string;
   guardrailsDir: string;
   guardrailBreakersDir: string;
+  proactiveInterventionsDir: string;
   reproducibilityManifestsDir: string;
   experimentQueuesDir: string;
   budgetsDir: string;
   operatorHandoffsDir: string;
   postmortemsDir: string;
   backpressureSnapshotPath: string;
+  proactiveInterventionLedgerPath: string;
   daemonHealthPath: string;
   componentsHealthPath: string;
   inboxBucketDir(dateKey: string): string;
@@ -110,6 +112,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const healthDir = path.join(rootDir, "health");
   const guardrailsDir = path.join(rootDir, "guardrails");
   const guardrailBreakersDir = path.join(guardrailsDir, "breakers");
+  const proactiveInterventionsDir = path.join(rootDir, "proactive-interventions");
   const reproducibilityManifestsDir = path.join(rootDir, "reproducibility-manifests");
   const experimentQueuesDir = path.join(rootDir, "experiment-queues");
   const budgetsDir = path.join(rootDir, "budgets");
@@ -141,12 +144,14 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     healthDir,
     guardrailsDir,
     guardrailBreakersDir,
+    proactiveInterventionsDir,
     reproducibilityManifestsDir,
     experimentQueuesDir,
     budgetsDir,
     operatorHandoffsDir,
     postmortemsDir,
     backpressureSnapshotPath: path.join(guardrailsDir, "backpressure.json"),
+    proactiveInterventionLedgerPath: path.join(proactiveInterventionsDir, "events.jsonl"),
     daemonHealthPath: path.join(healthDir, "daemon.json"),
     componentsHealthPath: path.join(healthDir, "components.json"),
     inboxBucketDir(dateKey: string) {
@@ -244,6 +249,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.healthDir,
       paths.guardrailsDir,
       paths.guardrailBreakersDir,
+      paths.proactiveInterventionsDir,
       paths.reproducibilityManifestsDir,
       paths.experimentQueuesDir,
       paths.budgetsDir,

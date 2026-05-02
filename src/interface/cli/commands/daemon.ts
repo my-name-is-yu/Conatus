@@ -22,7 +22,7 @@ import {
 import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
-import { RuntimeHealthStore } from "../../../runtime/store/index.js";
+import { ProactiveInterventionStore, RuntimeHealthStore } from "../../../runtime/store/index.js";
 import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
@@ -472,6 +472,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const cfg = await loadDaemonConfig(baseDir);
   const runtimeRoot = resolveDaemonRuntimeRoot(baseDir, cfg.runtime_root);
   const runtimeHealth = await new RuntimeHealthStore(runtimeRoot).loadSnapshot();
+  const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot).summarize();
   const supervisorState = await readSupervisorState(runtimeRoot);
   const taskKpis = await summarizeTaskOutcomeLedgers(baseDir);
   const safePauseGoals = Object.values(data.safe_pause_goals ?? {});
@@ -575,9 +576,24 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   if (data.resident_activity) {
     const residentAgo = formatRelativeTime(data.resident_activity.recorded_at);
     lines.push(`Resident:        ${data.resident_activity.kind} (${residentAgo})`);
+    if (data.resident_activity.intervention_id) {
+      lines.push(`Resident event:  ${data.resident_activity.intervention_id}`);
+    }
     lines.push(`Resident note:   ${data.resident_activity.summary}`);
     if (data.resident_activity.goal_id) {
       lines.push(`Resident goal:   ${data.resident_activity.goal_id}`);
+    }
+  }
+  if (proactiveSummary.total_interventions > 0) {
+    lines.push("");
+    lines.push("Proactive quality:");
+    lines.push(`  Interventions: ${proactiveSummary.total_interventions} (${proactiveSummary.pending_count} pending feedback)`);
+    lines.push(`  Accepted:      ${proactiveSummary.accepted_count} (${formatPercent(proactiveSummary.accepted_rate)})`);
+    lines.push(`  Ignored:       ${proactiveSummary.ignored_count} (${formatPercent(proactiveSummary.ignored_rate)})`);
+    lines.push(`  Corrected:     ${proactiveSummary.corrected_count} (${formatPercent(proactiveSummary.correction_rate)})`);
+    lines.push(`  Overreach:     ${proactiveSummary.overreach_count} (${formatPercent(proactiveSummary.overreach_rate)})`);
+    if (proactiveSummary.policy_adjustment_recommendation) {
+      lines.push(`  Policy:        ${proactiveSummary.policy_adjustment_recommendation.suggested_action} for ${proactiveSummary.policy_adjustment_recommendation.relationship_profile_key}`);
     }
   }
 

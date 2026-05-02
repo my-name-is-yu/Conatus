@@ -76,6 +76,7 @@ export const DaemonConfigSchema = z.preprocess(applyLegacyDaemonRunPolicy, Daemo
 export type DaemonConfig = z.infer<typeof DaemonConfigSchema>;
 
 export const ResidentActivitySchema = z.object({
+  intervention_id: z.string().optional(),
   kind: z.enum(["sleep", "suggestion", "negotiation", "curiosity", "dream", "observation", "skipped", "error"]),
   trigger: z.enum(["proactive_tick", "schedule", "external"]).default("proactive_tick"),
   summary: z.string(),

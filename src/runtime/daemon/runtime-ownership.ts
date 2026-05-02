@@ -2,6 +2,7 @@ import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import type { Logger } from "../logger.js";
+import { ProactiveInterventionStore } from "../store/index.js";
 import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
 import { summarizeTaskOutcomeLedgers } from "../../orchestrator/execution/task/task-outcome-ledger.js";
@@ -124,6 +125,7 @@ export class RuntimeOwnershipCoordinator {
       details.task_success_rate = taskOutcome.success_rate;
       details.task_outcome = taskOutcome;
     }
+    details.proactive_interventions = await new ProactiveInterventionStore(this.deps.runtimeRoot ?? undefined).summarize();
     return details;
   }
 

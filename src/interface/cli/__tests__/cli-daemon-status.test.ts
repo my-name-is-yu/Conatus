@@ -19,6 +19,7 @@ vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
 import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import { cmdDaemonStatus } from "../commands/daemon.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
+import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
 
 function mockPidInspectRunning(runtimePid: number, ownerPid = runtimePid) {
   return vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
@@ -531,6 +532,56 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Resident:        negotiation");
     expect(output).toContain("Resident note:   Resident discovery negotiated a new goal");
     expect(output).toContain("Resident goal:   resident-goal");
+  });
+
+  it("shows proactive quality summary when feedback history exists", async () => {
+    const state = {
+      pid: process.pid,
+      started_at: new Date(Date.now() - 60_000).toISOString(),
+      last_loop_at: null,
+      loop_count: 1,
+      active_goals: ["resident-goal"],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: new Date(Date.now() - 5_000).toISOString(),
+      resident_activity: {
+        intervention_id: "resident-feedback-status",
+        kind: "suggestion",
+        trigger: "proactive_tick",
+        summary: "Resident suggested a new goal.",
+        recorded_at: new Date(Date.now() - 5_000).toISOString(),
+        goal_id: "resident-goal",
+      } as const,
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    const store = new ProactiveInterventionStore(path.join(tmpDir, "runtime"));
+    await store.appendIntervention({
+      activity: state.resident_activity,
+    });
+    await store.appendFeedback({
+      interventionId: "resident-feedback-status",
+      outcome: "accepted",
+      recordedAt: new Date().toISOString(),
+    });
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Resident event:  resident-feedback-status");
+    expect(output).toContain("Proactive quality:");
+    expect(output).toContain("Accepted:      1");
   });
 
   it("shows dream resident activity without requiring a goal id", async () => {

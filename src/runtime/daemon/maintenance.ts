@@ -10,7 +10,7 @@ import { createEnvelope } from "../types/envelope.js";
 import type { Envelope } from "../types/envelope.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
 import type { Logger } from "../logger.js";
-import { ApprovalStore, OutboxStore, RuntimeHealthStore, createRuntimeStorePaths } from "../store/index.js";
+import { ApprovalStore, OutboxStore, RuntimeHealthStore, ProactiveInterventionStore, createRuntimeStorePaths } from "../store/index.js";
 
 export interface RuntimeMaintenanceLogger {
   debug(message: string, context?: Record<string, unknown>): void;
@@ -263,6 +263,21 @@ export async function runRuntimeStoreMaintenanceCycle(params: {
     now,
   });
   const health = await runtimeHealthStore.reconcile(now);
+  const proactiveInterventions = await new ProactiveInterventionStore(runtimePaths).summarize();
+  health.details = {
+    ...health.details,
+    proactive_interventions: proactiveInterventions,
+  };
+  try {
+    await runtimeHealthStore.saveSnapshot(health);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw err;
+    }
+    params.logger.warn("Skipped proactive intervention health detail update because runtime health storage disappeared", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   const claims = await pruneStaleFiles(
     runtimePaths.claimsDir,
     options.claimRetentionMs ?? 7 * 24 * 60 * 60 * 1000,

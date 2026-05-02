@@ -306,6 +306,18 @@ export { ApprovalStore } from "./approval-store.js";
 export type { ApprovalResolutionInput } from "./approval-store.js";
 export { OutboxStore } from "./outbox-store.js";
 export { RuntimeHealthStore } from "./health-store.js";
+export {
+  ProactiveInterventionStore,
+  ProactiveInterventionOutcomeSchema,
+  ProactiveOverreachIndicatorSchema,
+  summarizeProactiveInterventions,
+} from "./proactive-intervention-store.js";
+export type {
+  ProactiveInterventionEvent,
+  ProactiveInterventionOutcome,
+  ProactiveInterventionSummary,
+  ProactiveOverreachIndicator,
+} from "./proactive-intervention-store.js";
 export { RuntimeSafePauseStore } from "./safe-pause-store.js";
 export { RuntimeOperationStore } from "./runtime-operation-store.js";
 export {
