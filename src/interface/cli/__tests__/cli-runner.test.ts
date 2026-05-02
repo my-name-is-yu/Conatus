@@ -172,6 +172,7 @@ import { GoalRefiner } from "../../../orchestrator/goal/goal-refiner.js";
 import { getPulseedVersion } from "../../../base/utils/pulseed-meta.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import { DaemonClient } from "../../../runtime/daemon/client.js";
+import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
 import type { LoopResult } from "../../../orchestrator/loop/core-loop.js";
 import type { Goal } from "../../../base/types/goal.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -1457,6 +1458,44 @@ describe("profile command", () => {
     expect(showCode).toBe(0);
     expect(output).toContain("Ask before non-urgent notifications.");
     expect(output).not.toContain("Notify freely.");
+  });
+});
+
+describe("runtime proactive feedback commands", () => {
+  it("records typed proactive feedback through the production CLI entrypoint", async () => {
+    const store = new ProactiveInterventionStore(path.join(tmpDir, "runtime"));
+    await store.appendIntervention({
+      activity: {
+        intervention_id: "intervention-cli-feedback",
+        kind: "suggestion",
+        trigger: "proactive_tick",
+        summary: "Suggested a follow-up.",
+        recorded_at: "2026-05-02T00:00:00.000Z",
+      },
+    });
+
+    const feedbackCode = await runCLI(
+      "runtime",
+      "proactive-feedback",
+      "--intervention",
+      "intervention-cli-feedback",
+      "--outcome",
+      "overreach",
+      "--overreach-indicator",
+      "too_frequent",
+      "--reason",
+      "Too many suggestions"
+    );
+    expect(feedbackCode).toBe(0);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const qualityCode = await runCLI("runtime", "proactive-quality");
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    consoleSpy.mockRestore();
+
+    expect(qualityCode).toBe(0);
+    expect(output).toContain("Overreach:     1");
+    expect(output).toContain("reduce_frequency");
   });
 });
 

@@ -20,6 +20,12 @@ import {
   type RuntimePostmortemReport,
 } from "../../../runtime/store/postmortem-report.js";
 import {
+  ProactiveInterventionOutcomeSchema,
+  ProactiveInterventionStore,
+  ProactiveOverreachIndicatorSchema,
+  type ProactiveInterventionSummary,
+} from "../../../runtime/store/proactive-intervention-store.js";
+import {
   createRuntimeDreamSidecarReview,
   RuntimeDreamSidecarReviewError,
   type RuntimeDreamSidecarReview,
@@ -32,6 +38,7 @@ import type {
 } from "../../../runtime/session-registry/types.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
+import { resolveConfiguredDaemonRuntimeRoot } from "../../../runtime/daemon/runtime-root.js";
 
 const ID_WIDTH = 34;
 const KIND_WIDTH = 12;
@@ -50,6 +57,15 @@ type RuntimeDreamReviewValues = {
   id?: string;
   json?: boolean;
   requestGuidanceInjection?: boolean;
+};
+
+type RuntimeProactiveFeedbackValues = {
+  interventionId?: string;
+  outcome?: string;
+  reason?: string;
+  overreachIndicator?: string[];
+  followThroughSuccess?: boolean;
+  json?: boolean;
 };
 
 function formatCell(value: string | null | undefined, maxLen: number): string {
@@ -275,6 +291,25 @@ function printBudgetDetail(store: RuntimeBudgetStore, budget: RuntimeBudgetRecor
   }
 }
 
+function printProactiveSummary(summary: ProactiveInterventionSummary): void {
+  console.log("Proactive intervention quality:");
+  console.log(`  Interventions: ${summary.total_interventions}`);
+  console.log(`  Pending:       ${summary.pending_count}`);
+  console.log(`  Accepted:      ${summary.accepted_count}`);
+  console.log(`  Ignored:       ${summary.ignored_count}`);
+  console.log(`  Dismissed:     ${summary.dismissed_count}`);
+  console.log(`  Corrected:     ${summary.corrected_count}`);
+  console.log(`  Overreach:     ${summary.overreach_count}`);
+  if (summary.average_time_to_response_ms !== null) {
+    console.log(`  Avg response:  ${Math.round(summary.average_time_to_response_ms)}ms`);
+  }
+  if (summary.policy_adjustment_recommendation) {
+    console.log(
+      `  Policy:        ${summary.policy_adjustment_recommendation.suggested_action} for ${summary.policy_adjustment_recommendation.relationship_profile_key}`
+    );
+  }
+}
+
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -347,12 +382,49 @@ function parseDreamReviewArgs(args: string[]): RuntimeDreamReviewValues {
   }
 }
 
+function parseProactiveFeedbackArgs(args: string[]): RuntimeProactiveFeedbackValues {
+  try {
+    const { values } = parseArgs({
+      args,
+      options: {
+        intervention: { type: "string" },
+        outcome: { type: "string" },
+        reason: { type: "string" },
+        "overreach-indicator": { type: "string", multiple: true },
+        "follow-through-success": { type: "boolean" },
+        json: { type: "boolean" },
+      },
+      strict: false,
+    }) as {
+      values: {
+        intervention?: string;
+        outcome?: string;
+        reason?: string;
+        "overreach-indicator"?: string[];
+        "follow-through-success"?: boolean;
+        json?: boolean;
+      };
+    };
+    return {
+      interventionId: values.intervention,
+      outcome: values.outcome,
+      reason: values.reason,
+      overreachIndicator: values["overreach-indicator"],
+      followThroughSuccess: values["follow-through-success"],
+      json: values.json,
+    };
+  } catch (err) {
+    getCliLogger().error(formatOperationError("parse runtime proactive-feedback arguments", err));
+    return {};
+  }
+}
+
 export async function cmdRuntime(stateManager: StateManager, args: string[]): Promise<number> {
   const logger = getCliLogger();
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>");
+    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback");
     return 1;
   }
 
@@ -536,8 +608,57 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     }
   }
 
+  if (runtimeSubcommand === "proactive-quality") {
+    const values = parseListArgs(args.slice(1), "proactive-quality");
+    const store = new ProactiveInterventionStore(resolveConfiguredDaemonRuntimeRoot(stateManager.getBaseDir()));
+    const summary = await store.summarize();
+    values.json ? printJson(summary) : printProactiveSummary(summary);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "proactive-feedback") {
+    const values = parseProactiveFeedbackArgs(args.slice(1));
+    if (!values.interventionId || !values.outcome) {
+      logger.error("Error: --intervention <id> and --outcome <accepted|ignored|dismissed|corrected|overreach> are required.");
+      return 1;
+    }
+    const outcome = ProactiveInterventionOutcomeSchema.safeParse(values.outcome);
+    if (!outcome.success) {
+      logger.error(`Error: invalid proactive feedback outcome: ${values.outcome}`);
+      return 1;
+    }
+    const indicators = values.overreachIndicator ?? [];
+    const parsedIndicators = indicators.map((indicator) => ProactiveOverreachIndicatorSchema.safeParse(indicator));
+    const invalidIndicator = parsedIndicators.find((indicator) => !indicator.success);
+    if (invalidIndicator) {
+      logger.error(`Error: invalid overreach indicator. Valid: too_frequent, wrong_context, sensitive, unwanted_timing`);
+      return 1;
+    }
+    const overreachIndicators = parsedIndicators.flatMap((indicator) => indicator.success ? [indicator.data] : []);
+    const store = new ProactiveInterventionStore(resolveConfiguredDaemonRuntimeRoot(stateManager.getBaseDir()));
+    const event = await store.appendFeedback({
+      interventionId: values.interventionId,
+      outcome: outcome.data,
+      reason: values.reason,
+      overreachIndicators,
+      followThroughSuccess: values.followThroughSuccess,
+      channel: "cli",
+    });
+    const summary = await store.summarize();
+    if (values.json) {
+      printJson({ event, summary });
+    } else {
+      console.log(`Recorded proactive feedback: ${event.outcome} for ${event.intervention_id}`);
+      if (event.policy_adjustment_recommendation) {
+        console.log(`Policy recommendation: ${event.policy_adjustment_recommendation.suggested_action} for ${event.policy_adjustment_recommendation.relationship_profile_key}`);
+      }
+      printProactiveSummary(summary);
+    }
+    return 0;
+  }
+
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback");
   return 1;
 }
 

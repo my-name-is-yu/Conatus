@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { Goal } from "../../base/types/goal.js";
 import type { DaemonConfig, DaemonState, ResidentActivity } from "../../base/types/daemon.js";
 import { ResidentActivitySchema } from "../../base/types/daemon.js";
@@ -13,6 +14,8 @@ import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manage
 import type { Logger } from "../logger.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
+import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
+import { resolveDaemonRuntimeRoot } from "./runtime-root.js";
 
 export function resolveResidentWorkspaceDir(configuredPath?: string): string {
   const trimmed = configuredPath?.trim();
@@ -130,14 +133,28 @@ export async function loadKnownGoals(
 }
 
 export async function persistResidentActivity(
-  context: Pick<DaemonRunnerResidentContext, "state" | "saveDaemonState">,
+  context: Pick<DaemonRunnerResidentContext, "state" | "saveDaemonState"> &
+    Partial<Pick<DaemonRunnerResidentContext, "baseDir" | "config" | "logger">>,
   activity: Omit<ResidentActivity, "recorded_at"> & { recorded_at?: string },
 ): Promise<void> {
+  const interventionId = activity.intervention_id ?? `resident-${randomUUID()}`;
   const residentActivity = ResidentActivitySchema.parse({
     ...activity,
+    intervention_id: interventionId,
     recorded_at: activity.recorded_at ?? new Date().toISOString(),
   });
   context.state.last_resident_at = residentActivity.recorded_at;
   context.state.resident_activity = residentActivity;
+  if (context.baseDir && context.config) {
+    const runtimeRoot = resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root);
+    await new ProactiveInterventionStore(runtimeRoot)
+      .appendIntervention({ activity: residentActivity, channel: "daemon" })
+      .catch((err: unknown) => {
+        context.logger?.warn("Failed to append proactive intervention event", {
+          error: err instanceof Error ? err.message : String(err),
+          intervention_id: interventionId,
+        });
+      });
+  }
   await context.saveDaemonState();
 }
