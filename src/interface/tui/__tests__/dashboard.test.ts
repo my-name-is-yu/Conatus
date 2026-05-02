@@ -242,7 +242,7 @@ describe("buildWorkDashboardRows", () => {
     ]);
   });
 
-  it("marks waiting blocked and approval-required sessions as attention-needed", () => {
+  it("does not mark sessions as attention-needed from title keywords alone", () => {
     const rows = buildWorkDashboardRows(snapshot({
       sessions: [session({
         id: "session-waiting-approval",
@@ -255,7 +255,60 @@ describe("buildWorkDashboardRows", () => {
       {
         id: "session-waiting-approval",
         group: "active",
+        attention: false,
+      },
+    ]);
+  });
+
+  it("marks runs as attention-needed from structured approval evidence", () => {
+    const rows = buildWorkDashboardRows(snapshot({
+      background_runs: [run({
+        id: "run-approval",
+        summary: "提出前に人間の確認が必要です",
+      })],
+    }), NOW, {
+      "run-approval": evidenceSummary({
+        evaluator_summary: {
+          ...evidenceSummary().evaluator_summary,
+          approval_required_actions: [{
+            id: "submit-final",
+            label: "Approve final submission",
+            approval_required: true,
+            status: "approval_required",
+            entry_id: "entry-1",
+            evaluator_id: "kaggle",
+            signal: "external",
+            source: "submit",
+            candidate_id: "candidate-1",
+            observed_at: NOW.toISOString(),
+          }],
+        },
+      }),
+    });
+
+    expect(rows).toMatchObject([
+      {
+        id: "run-approval",
+        group: "active",
         attention: true,
+      },
+    ]);
+  });
+
+  it("does not derive run attention from non-English free-text summary or error", () => {
+    const rows = buildWorkDashboardRows(snapshot({
+      background_runs: [run({
+        id: "run-localized",
+        summary: "承認待ちです",
+        error: "ブロックされています",
+      })],
+    }), NOW);
+
+    expect(rows).toMatchObject([
+      {
+        id: "run-localized",
+        group: "active",
+        attention: false,
       },
     ]);
   });
@@ -298,7 +351,7 @@ describe("buildOperatorConsoleModel", () => {
     const model = buildOperatorConsoleModel(snapshot({
       background_runs: [run({
         id: "run-approval",
-        summary: "approval-required before submit",
+        summary: "提出前に確認が必要です",
       })],
     }), health({
       summary: "alive_but_waiting",
@@ -332,6 +385,83 @@ describe("buildOperatorConsoleModel", () => {
         "Approve final submission",
       ]),
     });
+  });
+
+  it("shows structured blocked state without using summary keywords", () => {
+    const model = buildOperatorConsoleModel(snapshot({
+      background_runs: [run({
+        id: "run-blocked",
+        summary: "外部評価の結果待ちです",
+      })],
+    }), null, {
+      "run-blocked": evidenceSummary({
+        evaluator_summary: {
+          ...evidenceSummary().evaluator_summary,
+          gap: {
+            kind: "pending_external",
+            summary: "external evaluator has not returned a confirmed result",
+          },
+        },
+      }),
+    }, NOW);
+
+    expect(model).toMatchObject({
+      lifecycle: "blocked",
+      blockers: expect.arrayContaining([
+        "external evaluator has not returned a confirmed result",
+      ]),
+    });
+  });
+
+  it("keeps non-English run summaries display-only when structured state is missing", () => {
+    const model = buildOperatorConsoleModel(snapshot({
+      background_runs: [run({
+        id: "run-localized",
+        summary: "承認待ちです",
+        error: "ブロックされています",
+      })],
+    }), null, {}, NOW);
+
+    expect(model).toMatchObject({
+      lifecycle: "running",
+      blockers: ["No blockers detected."],
+      latestEvents: expect.arrayContaining(["承認待ちです", "ブロックされています"]),
+    });
+  });
+
+  it("uses typed phase metadata instead of strategy text for mode labels", () => {
+    const model = buildOperatorConsoleModel(snapshot({
+      background_runs: [run({ id: "run-phase" })],
+    }), null, {
+      "run-phase": evidenceSummary({
+        latest_strategy: {
+          schema_version: "runtime-evidence-entry-v1",
+          id: "strategy-1",
+          occurred_at: NOW.toISOString(),
+          kind: "strategy",
+          scope: { run_id: "run-phase" },
+          strategy: "finalization candidate with final portfolio language",
+          metrics: [],
+          artifacts: [],
+          raw_refs: [],
+        },
+        evaluator_summary: {
+          ...evidenceSummary().evaluator_summary,
+          budgets: [{
+            evaluator_id: "kaggle",
+            source: "local",
+            remaining_attempts: 2,
+            approval_required: true,
+            phase: "exploration",
+            diversified_portfolio_required: false,
+            reserve_for_finalization: false,
+            observed_at: NOW.toISOString(),
+          }],
+        },
+      }),
+    }, NOW);
+
+    expect(model?.currentMode).toBe("exploration");
   });
 
   it("does not apply daemon aggregate health as selected-run lifecycle or progress", () => {
@@ -378,6 +508,23 @@ describe("buildOperatorConsoleModel", () => {
     expect(model).toMatchObject({
       lifecycle: "completed",
       usefulProgress: "selected_score stalled; latest 0.72; best 0.72",
+      blockers: ["No blockers detected."],
+    });
+  });
+
+  it("does not attribute daemon aggregate approval waits to an active selected run", () => {
+    const model = buildOperatorConsoleModel(snapshot({
+      background_runs: [run({ id: "run-active" })],
+    }), health({
+      summary: "alive_but_waiting",
+      signals: {
+        ...health().long_running!.signals,
+        blocker: { status: "approval_wait", reason: "unrelated run approval", checked_at: NOW.getTime() },
+      },
+    }), {}, NOW);
+
+    expect(model).toMatchObject({
+      lifecycle: "running",
       blockers: ["No blockers detected."],
     });
   });
