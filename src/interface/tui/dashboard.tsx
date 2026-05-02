@@ -88,31 +88,47 @@ function isRecent(updatedAt: string | null, now: Date): boolean {
 }
 
 function sessionAttention(session: RuntimeSession, stale: boolean): boolean {
-  const attentionText = [
-    session.title,
-    session.id,
-    session.reply_target ? JSON.stringify(session.reply_target) : null,
-    ...session.source_refs.flatMap((ref) => [ref.id, ref.relative_path]),
-  ].filter(Boolean).join(" ");
   return stale
     || session.status === "lost"
-    || session.status === "unknown"
-    || /approval[-_ ]required|blocked|waiting/i.test(attentionText);
+    || session.status === "unknown";
 }
 
-function runAttention(run: BackgroundRun): boolean {
+function summaryHasOpenApproval(summary: RuntimeEvidenceSummary | undefined): boolean {
+  return Boolean(summary?.evaluator_summary.approval_required_actions.some((action) =>
+    action.status === "approval_required" || action.status === "blocked"
+  ));
+}
+
+function summaryHasStructuredBlocker(summary: RuntimeEvidenceSummary | undefined): boolean {
+  if (!summary) return false;
+  return Boolean(
+    summary.evaluator_summary.gap && summary.evaluator_summary.gap.kind !== "none"
+  )
+    || summary.evaluator_summary.observations.some((observation) =>
+      observation.status === "blocked" || observation.validation?.status === "blocked"
+    )
+    || summary.recent_failed_attempts.length > 0
+    || summary.failed_lineages.length > 0;
+}
+
+function runAttention(run: BackgroundRun, summary?: RuntimeEvidenceSummary): boolean {
   return run.status === "failed"
     || run.status === "timed_out"
     || run.status === "lost"
     || run.status === "unknown"
-    || /approval[-_ ]required|blocked|waiting/i.test(`${run.summary ?? ""} ${run.error ?? ""}`);
+    || summaryHasOpenApproval(summary)
+    || summaryHasStructuredBlocker(summary);
 }
 
-function runLifecycle(run: BackgroundRun | null, row: WorkDashboardRow): string {
+function runLifecycle(
+  run: BackgroundRun | null,
+  row: WorkDashboardRow,
+  summary: RuntimeEvidenceSummary | undefined
+): string {
   if (row.stale) return "stale";
   if (!run) return row.status;
-  if (/approval[-_ ]required/i.test(`${run.summary ?? ""} ${run.error ?? ""}`)) return "approval-required";
-  if (/blocked|waiting/i.test(`${run.summary ?? ""} ${run.error ?? ""}`)) return "blocked";
+  if (summaryHasOpenApproval(summary)) return "approval-required";
+  if (summaryHasStructuredBlocker(summary)) return "blocked";
   if (run.status === "succeeded") return "completed";
   if (run.status === "failed" || run.status === "timed_out" || run.status === "lost" || run.status === "unknown") return "failed";
   return run.status;
@@ -149,14 +165,22 @@ function summarizeUsefulProgress(summary: RuntimeEvidenceSummary | undefined, he
 function summarizeMode(summary: RuntimeEvidenceSummary | undefined): string {
   const phase = summary?.evaluator_summary.budgets.find((budget) => budget.phase)?.phase;
   if (phase) return phase;
-  const strategyText = [
-    summary?.latest_strategy?.strategy,
-    summary?.latest_strategy?.summary,
-    summary?.latest_strategy?.decision_reason,
-  ].filter(Boolean).join(" ");
-  if (/final/i.test(strategyText)) return "finalization";
-  if (/consolidat|stabil|ensemble|portfolio/i.test(strategyText)) return "consolidation";
-  if (strategyText) return "exploration";
+  const portfolio = summary?.candidate_selection_summary.final_portfolio;
+  if (portfolio && (portfolio.safe || portfolio.aggressive || portfolio.diverse)) return "finalization";
+  if (
+    summary?.candidate_selection_summary.robust_best
+    || summary?.candidate_selection_summary.raw_best
+    || (summary?.recommended_candidate_portfolio.length ?? 0) > 0
+  ) {
+    return "consolidation";
+  }
+  if (
+    summary?.latest_strategy
+    || (summary?.dream_checkpoints.length ?? 0) > 0
+    || (summary?.divergent_exploration.length ?? 0) > 0
+  ) {
+    return "exploration";
+  }
   return "unknown";
 }
 
@@ -195,8 +219,16 @@ function summarizeEvents(run: BackgroundRun | null, summary: RuntimeEvidenceSumm
 function summarizeBlockers(row: WorkDashboardRow, run: BackgroundRun | null, summary: RuntimeEvidenceSummary | undefined): string[] {
   const blockers: string[] = [];
   if (row.attention) blockers.push(row.status === "stale" ? "stale catalog state" : row.summary);
-  if (run?.error) blockers.push(run.error);
+  if (
+    run?.error
+    && (row.attention || run.status === "failed" || run.status === "timed_out" || run.status === "lost" || run.status === "unknown")
+  ) {
+    blockers.push(run.error);
+  }
   blockers.push(...(summary?.evaluator_summary.approval_required_actions ?? []).map((action) => action.label));
+  if (summary?.evaluator_summary.gap && summary.evaluator_summary.gap.kind !== "none") {
+    blockers.push(summary.evaluator_summary.gap.summary);
+  }
   return [...new Set(blockers.filter(Boolean))].slice(0, 4);
 }
 
@@ -213,7 +245,7 @@ export function buildOperatorConsoleModel(
   evidenceSummaries: RuntimeEvidenceSummaryByRun = {},
   now: Date = new Date(),
 ): OperatorConsoleModel | null {
-  const rows = buildWorkDashboardRows(snapshot, now);
+  const rows = buildWorkDashboardRows(snapshot, now, evidenceSummaries);
   if (!snapshot || rows.length === 0) return null;
   const selected = rows.find((row) => row.attention) ?? rows.find((row) => row.group === "active") ?? rows[0]!;
   const run = findRelatedRun(snapshot, selected);
@@ -224,7 +256,7 @@ export function buildOperatorConsoleModel(
   return {
     selectedId: selected.id,
     selectedTitle: selected.title,
-    lifecycle: runLifecycle(run, selected),
+    lifecycle: runLifecycle(run, selected, summary),
     liveness: summarizeLiveness(selected, health),
     usefulProgress: summarizeUsefulProgress(summary, health),
     currentMode: summarizeMode(summary),
@@ -247,6 +279,7 @@ function compact(value: string | null | undefined, fallback: string): string {
 export function buildWorkDashboardRows(
   snapshot: RuntimeSessionRegistrySnapshot | null | undefined,
   now: Date = new Date(),
+  evidenceSummaries: RuntimeEvidenceSummaryByRun = {},
 ): WorkDashboardRow[] {
   if (!snapshot) return [];
   const rows: WorkDashboardRow[] = [];
@@ -287,7 +320,7 @@ export function buildWorkDashboardRows(
       summary: compact(run.error ?? run.summary, run.kind),
       updatedAt,
       workspace: run.workspace,
-      attention: runAttention(run) || stale,
+      attention: runAttention(run, evidenceSummaries[run.id]) || stale,
       stale,
     });
   }
@@ -438,7 +471,7 @@ function OperatorConsole({ model }: { model: OperatorConsoleModel }) {
 }
 
 export function Dashboard({ state, runtimeSessions, runtimeHealth, evidenceSummaries }: DashboardProps) {
-  const workRows = buildWorkDashboardRows(runtimeSessions);
+  const workRows = buildWorkDashboardRows(runtimeSessions, new Date(), evidenceSummaries);
   const operatorConsole = buildOperatorConsoleModel(runtimeSessions, runtimeHealth, evidenceSummaries);
   if (workRows.length > 0) {
     return (
