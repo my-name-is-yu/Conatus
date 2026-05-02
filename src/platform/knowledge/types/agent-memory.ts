@@ -3,6 +3,11 @@ import {
   MemoryCorrectionEntrySchema,
   MemoryCorrectionTargetStateSchema,
 } from "../../corrections/memory-correction-ledger.js";
+import {
+  MemoryProvenanceSchema,
+  MemoryQuarantineStateSchema,
+  MemoryVerificationStatusSchema,
+} from "../../corrections/memory-quarantine.js";
 
 // --- AgentMemoryType ---
 
@@ -31,6 +36,9 @@ export const AgentMemoryEntrySchema = z.object({
   memory_type: AgentMemoryTypeEnum.default("fact"),
   status: AgentMemoryStatusEnum.default("raw"),
   correction_state: MemoryCorrectionTargetStateSchema.optional(),
+  verification_status: MemoryVerificationStatusSchema.optional(),
+  provenance: MemoryProvenanceSchema.optional(),
+  quarantine_state: MemoryQuarantineStateSchema.optional(),
   supersedes_memory_id: z.string().min(1).optional(),
   compiled_from: z.array(z.string()).optional(),
   created_at: z.string(),
@@ -49,7 +57,7 @@ export type AgentMemoryStore = z.infer<typeof AgentMemoryStoreSchema>;
 
 // --- Active Linting schemas ---
 
-export const LintIssueTypeEnum = z.enum(["contradiction", "staleness", "redundancy"]);
+export const LintIssueTypeEnum = z.enum(["contradiction", "staleness", "redundancy", "quarantine"]);
 export type LintIssueType = z.infer<typeof LintIssueTypeEnum>;
 
 export const LintFindingSchema = z.object({
@@ -57,7 +65,7 @@ export const LintFindingSchema = z.object({
   entry_ids: z.array(z.string()).min(1),
   description: z.string(),
   confidence: z.number().min(0).max(1),
-  suggested_action: z.enum(["flag_review", "auto_resolve_newest", "mark_stale", "merge"]),
+  suggested_action: z.enum(["flag_review", "auto_resolve_newest", "mark_stale", "merge", "quarantine"]),
 });
 export type LintFinding = z.infer<typeof LintFindingSchema>;
 

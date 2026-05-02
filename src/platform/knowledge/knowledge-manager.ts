@@ -58,9 +58,12 @@ import {
   getAgentMemoryStatsForHost,
   listAgentMemoryCorrectionHistory,
   listAgentMemoryEntries,
+  quarantineAgentMemoryEntries,
   recallAgentMemoryEntries,
   saveAgentMemoryEntry,
 } from "./knowledge-manager-agent-memory.js";
+import type { MemoryQuarantineState } from "../corrections/memory-quarantine.js";
+import type { MemoryProvenance, MemoryVerificationStatus } from "../corrections/memory-quarantine.js";
 import type {
   MemoryCorrectionEntry,
   MemoryCorrectionKind,
@@ -373,6 +376,8 @@ export class KnowledgeManager {
     tags?: string[];
     category?: string;
     memory_type?: AgentMemoryType;
+    verification_status?: MemoryVerificationStatus;
+    provenance?: MemoryProvenance;
   }): Promise<AgentMemoryEntry> {
     return saveAgentMemoryEntry(this.agentMemoryHost(), entry);
   }
@@ -433,6 +438,17 @@ export class KnowledgeManager {
 
   async listAgentMemoryCorrectionHistory(target?: MemoryCorrectionTargetRef): Promise<MemoryCorrectionEntry[]> {
     return listAgentMemoryCorrectionHistory(this.agentMemoryHost(), target);
+  }
+
+  async quarantineAgentMemory(input: {
+    targetIds: string[];
+    reason: string;
+    source?: MemoryQuarantineState["source"];
+    confidence: number;
+    inspectionRefs: string[];
+    createdAt?: string;
+  }): Promise<number> {
+    return quarantineAgentMemoryEntries(this.agentMemoryHost(), input);
   }
 
   // ─── consolidateAgentMemory ───

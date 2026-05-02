@@ -276,7 +276,7 @@ describe("RuntimeEvidenceLedger", () => {
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:legacy-summary");
 
-    expect(summary.context_policy_version).toBe("correction-filtered-planning-context-v1");
+    expect(summary.context_policy_version).toBe("quarantine-filtered-planning-context-v2");
     expect(summary.best_evidence?.id).toBe("legacy-active-best");
   });
 

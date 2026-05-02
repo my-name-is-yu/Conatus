@@ -17,6 +17,12 @@ import {
   type MemoryCorrectionTargetState,
   type MemoryCorrectionTargetRef,
 } from "../../platform/corrections/memory-correction-ledger.js";
+import {
+  MemoryProvenanceSchema,
+  MemoryQuarantineStateSchema,
+  MemoryVerificationStatusSchema,
+  type MemoryProvenance,
+} from "../../platform/corrections/memory-quarantine.js";
 import { summarizeEvidenceMetricTrends, type MetricTrendContext } from "./metric-history.js";
 import {
   summarizeEvidenceEvaluatorResults,
@@ -349,6 +355,9 @@ export const RuntimeEvidenceDreamCheckpointMemoryRefSchema = z.object({
   authority: z.literal("advisory_only").default("advisory_only"),
   relevance_score: z.number().min(0).max(1).optional(),
   source_reliability: z.number().min(0).max(1).optional(),
+  verification_status: MemoryVerificationStatusSchema.optional(),
+  provenance: MemoryProvenanceSchema.optional(),
+  quarantine_state: MemoryQuarantineStateSchema.optional(),
   recency_score: z.number().min(0).max(1).optional(),
   prior_success_contribution: z.number().min(0).max(1).optional(),
   retrieval: z.object({
@@ -509,6 +518,9 @@ export const RuntimeEvidenceEntrySchema = z.object({
   divergent_exploration: z.array(RuntimeEvidenceDivergentHypothesisSchema).optional(),
   correction: MemoryCorrectionEntrySchema.optional(),
   correction_state: MemoryCorrectionTargetStateSchema.optional(),
+  verification_status: MemoryVerificationStatusSchema.optional(),
+  provenance: MemoryProvenanceSchema.optional(),
+  quarantine_state: MemoryQuarantineStateSchema.optional(),
   candidates: z.array(RuntimeEvidenceCandidateRecordSchema).optional(),
   artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
   result: z.object({
@@ -663,7 +675,7 @@ export interface RuntimeNearMissCandidateContext {
 
 export interface RuntimeEvidenceSummary {
   schema_version: "runtime-evidence-summary-v1";
-  context_policy_version: "correction-filtered-planning-context-v1";
+  context_policy_version: "quarantine-filtered-planning-context-v2";
   generated_at: string;
   scope: {
     goal_id?: string;
@@ -909,7 +921,7 @@ async function readSummaryIndex(
 }
 
 function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
-  return summary.context_policy_version === "correction-filtered-planning-context-v1"
+  return summary.context_policy_version === "quarantine-filtered-planning-context-v2"
     && Array.isArray(summary.candidate_lineages)
     && Array.isArray(summary.corrections)
     && typeof summary.correction_state === "object"
@@ -999,7 +1011,7 @@ function summarizeEvidence(
   );
   return {
     schema_version: "runtime-evidence-summary-v1",
-    context_policy_version: "correction-filtered-planning-context-v1",
+    context_policy_version: "quarantine-filtered-planning-context-v2",
     generated_at: new Date().toISOString(),
     scope,
     total_entries: entries.length,
@@ -1042,6 +1054,9 @@ function isRuntimeEvidenceEntryActive(
   correctionState: Record<string, MemoryCorrectionTargetState>
 ): boolean {
   if (entry.kind === "correction") return false;
+  if (entry.quarantine_state?.status === "quarantined") return false;
+  if (entry.verification_status === "suspicious" || entry.verification_status === "contradicted") return false;
+  if (isSuspiciousProvenance(entry.provenance)) return false;
   return runtimeEvidenceCorrectionRefs(entry).every((ref) =>
     correctionStateForTarget(correctionState, ref).active
   );
@@ -1079,9 +1094,10 @@ function filterRetractedDreamCheckpointMemories(
   return checkpoints
     .map((checkpoint) => {
       const relevant_memories = checkpoint.relevant_memories.filter((memory) =>
-        !memory.ref || dreamMemoryCorrectionRefs(memory.ref, checkpoint, scope).every((ref) =>
+        isDreamCheckpointMemoryRefAdmissible(memory)
+        && (!memory.ref || dreamMemoryCorrectionRefs(memory.ref, checkpoint, scope).every((ref) =>
           correctionStateForTarget(correctionState, ref).active
-        )
+        ))
       );
       return {
         checkpoint,
@@ -1099,6 +1115,36 @@ function filterRetractedDreamCheckpointMemories(
       relevant_memories,
       planning_context_status,
     }));
+}
+
+function isDreamCheckpointMemoryRefAdmissible(
+  memory: RuntimeDreamCheckpointContext["relevant_memories"][number]
+): boolean {
+  if (memory.quarantine_state?.status === "quarantined") return false;
+  if (memory.verification_status === "suspicious" || memory.verification_status === "contradicted") return false;
+  if (isSuspiciousProvenance(memory.provenance)) return false;
+  if (
+    memory.provenance
+    && (memory.provenance.source_type === "web" || memory.provenance.source_type === "external")
+    && memory.provenance.reliability !== undefined
+    && memory.provenance.reliability < 0.5
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isSuspiciousProvenance(provenance: MemoryProvenance | undefined): boolean {
+  if (!provenance) return false;
+  if (provenance.verification_status === "suspicious" || provenance.verification_status === "contradicted") {
+    return true;
+  }
+  const riskSignals = new Set(provenance.risk_signals);
+  return riskSignals.has("hallucinated")
+    || riskSignals.has("low_provenance")
+    || riskSignals.has("contradiction")
+    || riskSignals.has("prompt_injection_like")
+    || riskSignals.has("unverified_external");
 }
 
 function dreamMemoryCorrectionRefs(
