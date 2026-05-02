@@ -2089,13 +2089,55 @@ function chooseBestMetricEvidence(entriesNewestFirst: RuntimeEvidenceEntry[]): R
 }
 
 function resolvePrimaryMetricKey(entriesNewestFirst: RuntimeEvidenceEntry[]): ComparableMetricKey | null {
-  for (const entry of entriesNewestFirst) {
-    const metric = findFirstDirectedNumericMetric(entry);
-    if (metric?.direction === "maximize" || metric?.direction === "minimize") {
-      return { label: metric.label, direction: metric.direction };
-    }
-  }
-  return null;
+  const oldestFirst = [...entriesNewestFirst].reverse();
+  const byMetric = new Map<string, {
+    key: ComparableMetricKey;
+    entry_count: number;
+    explicit_primary_count: number;
+    position_sum: number;
+    latest_index: number;
+  }>();
+
+  oldestFirst.forEach((entry, entryIndex) => {
+    const seenForEntry = new Set<string>();
+    entry.metrics.forEach((metric, metricIndex) => {
+      const comparable = toComparableMetric(metric);
+      if (!comparable) return;
+      const key = { label: metric.label, direction: comparable.direction };
+      const mapKey = `${key.label}:${key.direction}`;
+      if (seenForEntry.has(mapKey)) return;
+      seenForEntry.add(mapKey);
+      const existing = byMetric.get(mapKey);
+      const explicitPrimary = entry.task?.primary_dimension === metric.label ? 1 : 0;
+      if (!existing) {
+        byMetric.set(mapKey, {
+          key,
+          entry_count: 1,
+          explicit_primary_count: explicitPrimary,
+          position_sum: metricIndex,
+          latest_index: entryIndex,
+        });
+        return;
+      }
+      existing.entry_count += 1;
+      existing.explicit_primary_count += explicitPrimary;
+      existing.position_sum += metricIndex;
+      existing.latest_index = entryIndex;
+    });
+  });
+
+  // Primary evidence metric inference is intentionally structural: exact
+  // task.primary_dimension matches win, then broadest repeated metric coverage,
+  // then stable first-position metric ordering, then recency as the final tie.
+  return [...byMetric.values()].sort((a, b) => {
+    const explicitDelta = b.explicit_primary_count - a.explicit_primary_count;
+    if (explicitDelta !== 0) return explicitDelta;
+    const coverageDelta = b.entry_count - a.entry_count;
+    if (coverageDelta !== 0) return coverageDelta;
+    const positionDelta = a.position_sum / a.entry_count - b.position_sum / b.entry_count;
+    if (positionDelta !== 0) return positionDelta;
+    return b.latest_index - a.latest_index;
+  })[0]?.key ?? null;
 }
 
 function findComparableMetric(
@@ -2108,13 +2150,6 @@ function findComparableMetric(
       const comparable = toComparableMetric(metric);
       if (comparable) return comparable;
     }
-  }
-  return null;
-}
-
-function findFirstDirectedNumericMetric(entry: RuntimeEvidenceEntry): RuntimeEvidenceMetric | null {
-  for (const metric of entry.metrics) {
-    if (toComparableMetric(metric)) return metric;
   }
   return null;
 }

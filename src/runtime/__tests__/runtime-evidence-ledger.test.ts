@@ -772,6 +772,201 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.best_evidence?.id).toBe("best-primary");
   });
 
+  it("keeps the repeated objective metric primary when the newest entry only reports a secondary metric", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "objective-baseline",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-mixed-primary" },
+      metrics: [{ label: "balanced_accuracy", value: 0.81, direction: "maximize" }],
+      summary: "Baseline objective metric.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      id: "objective-best",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-mixed-primary" },
+      metrics: [{ label: "balanced_accuracy", value: 0.88, direction: "maximize" }],
+      summary: "Best objective metric.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "newest-secondary-only",
+      occurred_at: "2026-04-30T00:20:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-mixed-primary" },
+      metrics: [{ label: "latency_ms", value: 90, direction: "minimize" }],
+      summary: "Newest entry reports only a secondary metric.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-mixed-primary");
+
+    expect(summary.best_evidence?.id).toBe("objective-best");
+  });
+
+  it("uses exact task primary_dimension as the explicit primary metric contract", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "latency-repeat-a",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-explicit-primary" },
+      metrics: [{ label: "latency_ms", value: 120, direction: "minimize" }],
+      summary: "Latency-only baseline.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      id: "explicit-objective-best",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-explicit-primary" },
+      task: { primary_dimension: "balanced_accuracy" },
+      metrics: [
+        { label: "balanced_accuracy", value: 0.86, direction: "maximize" },
+        { label: "latency_ms", value: 140, direction: "minimize" },
+      ],
+      summary: "Explicit objective metric beats repeated latency.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "latency-repeat-b",
+      occurred_at: "2026-04-30T00:20:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-explicit-primary" },
+      metrics: [{ label: "latency_ms", value: 80, direction: "minimize" }],
+      summary: "Latency improved but is not the primary dimension.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-explicit-primary");
+
+    expect(summary.best_evidence?.id).toBe("explicit-objective-best");
+  });
+
+  it("ignores candidate-level metric disagreement when selecting entry-level best evidence", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    const candidateBase = {
+      lineage: {
+        strategy_family: "catboost",
+        feature_lineage: [],
+        model_lineage: [],
+        config_lineage: [],
+        seed_lineage: [],
+        fold_lineage: [],
+        postprocess_lineage: [],
+      },
+      artifacts: [],
+      similarity: [],
+      disposition: "retained" as const,
+    };
+    await ledger.append({
+      id: "entry-objective-best",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-entry-candidate-disagree" },
+      metrics: [{ label: "balanced_accuracy", value: 0.9, direction: "maximize" }],
+      candidates: [{
+        ...candidateBase,
+        candidate_id: "candidate-low",
+        metrics: [{ label: "balanced_accuracy", value: 0.1, direction: "maximize" }],
+      }],
+      summary: "Entry metric is best even though candidate metric is low.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "candidate-only-best",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-entry-candidate-disagree" },
+      metrics: [{ label: "balanced_accuracy", value: 0.8, direction: "maximize" }],
+      candidates: [{
+        ...candidateBase,
+        candidate_id: "candidate-high",
+        metrics: [{ label: "balanced_accuracy", value: 0.99, direction: "maximize" }],
+      }],
+      summary: "Candidate metric is higher but entry metric is worse.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-entry-candidate-disagree");
+
+    expect(summary.best_evidence?.id).toBe("entry-objective-best");
+  });
+
+  it("preserves fallback selection when metrics are neutral or non-numeric", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "neutral-metric",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-neutral-metrics" },
+      metrics: [
+        { label: "notes", value: "stable", direction: "neutral" },
+        { label: "ready", value: true },
+      ],
+      summary: "Neutral and non-numeric metrics are audit context only.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      id: "verification-fallback",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "verification",
+      scope: { goal_id: "goal-neutral-metrics" },
+      verification: { verdict: "pass", confidence: 0.9, summary: "contract test passed" },
+      summary: "Verification should remain the fallback best evidence.",
+      outcome: "continued",
+    });
+
+    const summary = await ledger.summarizeGoal("goal-neutral-metrics");
+
+    expect(summary.best_evidence?.id).toBe("verification-fallback");
+  });
+
+  it("uses verification, artifact, and confidence only as tie-breakers after metric value", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "higher-value",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-metric-tie-breakers" },
+      metrics: [{ label: "accuracy", value: 0.91, direction: "maximize", confidence: 0.4 }],
+      summary: "Higher metric value without tie-breaker support.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      id: "lower-value-verified",
+      occurred_at: "2026-04-30T00:10:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-metric-tie-breakers" },
+      metrics: [{ label: "accuracy", value: 0.9, direction: "maximize", confidence: 1 }],
+      verification: { verdict: "pass", confidence: 1, summary: "verified lower value" },
+      artifacts: [{ label: "metrics", state_relative_path: "runs/lower/metrics.json", kind: "metrics" }],
+      summary: "Lower metric value with stronger tie-breakers.",
+      outcome: "improved",
+    });
+
+    let summary = await ledger.summarizeGoal("goal-metric-tie-breakers");
+    expect(summary.best_evidence?.id).toBe("higher-value");
+
+    await ledger.append({
+      id: "tied-value-verified",
+      occurred_at: "2026-04-30T00:20:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-metric-tie-breakers" },
+      metrics: [{ label: "accuracy", value: 0.91, direction: "maximize", confidence: 0.9 }],
+      verification: { verdict: "pass", confidence: 0.9, summary: "verified tied value" },
+      artifacts: [{ label: "metrics", state_relative_path: "runs/tied/metrics.json", kind: "metrics" }],
+      summary: "Tied metric value with stronger supporting evidence.",
+      outcome: "continued",
+    });
+
+    summary = await ledger.summarizeGoal("goal-metric-tie-breakers");
+    expect(summary.best_evidence?.id).toBe("tied-value-verified");
+  });
+
   it("preserves compatible fallback selection for non-metric evidence", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
