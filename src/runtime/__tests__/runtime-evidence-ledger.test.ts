@@ -42,6 +42,121 @@ describe("RuntimeEvidenceLedger", () => {
     expect(byRun.entries.map((entry) => entry.kind)).toEqual(["strategy", "verification"]);
   });
 
+  it("records runtime evidence corrections and exposes target correction state in summaries", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "runtime-evidence-old",
+      occurred_at: "2026-05-02T00:00:00.000Z",
+      kind: "observation",
+      scope: { goal_id: "goal-correction", run_id: "run:correction" },
+      summary: "Incorrect observation kept for audit.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      id: "runtime-evidence-new",
+      occurred_at: "2026-05-02T00:01:00.000Z",
+      kind: "observation",
+      scope: { goal_id: "goal-correction", run_id: "run:correction" },
+      summary: "Corrected observation.",
+      outcome: "continued",
+    });
+    await ledger.appendCorrection({
+      correction_id: "corr-runtime-evidence",
+      scope: { goal_id: "goal-correction", run_id: "run:correction" },
+      target_ref: { kind: "runtime_evidence", id: "runtime-evidence-old", scope: { run_id: "run:correction" } },
+      correction_kind: "superseded",
+      replacement_ref: { kind: "runtime_evidence", id: "runtime-evidence-new", scope: { run_id: "run:correction" } },
+      actor: "runtime_verification",
+      reason: "Verification superseded stale runtime evidence.",
+      created_at: "2026-05-02T00:02:00.000Z",
+      provenance: { source: "runtime_verification", evidence_ref: "runtime-evidence-new", confidence: 0.95 },
+    });
+
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:correction");
+
+    expect(summary.total_entries).toBe(3);
+    expect(summary.corrections[0]).toMatchObject({
+      correction_id: "corr-runtime-evidence",
+      target_ref: { kind: "runtime_evidence", id: "runtime-evidence-old" },
+      replacement_ref: { kind: "runtime_evidence", id: "runtime-evidence-new" },
+    });
+    expect(summary.correction_state[JSON.stringify([
+      "runtime_evidence",
+      "runtime-evidence-old",
+      null,
+      "run:correction",
+      null,
+    ])]).toMatchObject({
+      status: "superseded",
+      active: false,
+      retained_for_audit: true,
+    });
+    expect((await ledger.readByRun("run:correction")).entries.map((entry) => entry.id)).toContain("runtime-evidence-old");
+  });
+
+  it("records Dream checkpoint memory-ref corrections in runtime summaries", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "dream-checkpoint-entry",
+      occurred_at: "2026-05-02T00:00:00.000Z",
+      kind: "dream_checkpoint",
+      scope: { goal_id: "goal-dream", run_id: "run:dream" },
+      dream_checkpoints: [{
+        trigger: "iteration",
+        summary: "Checkpoint referenced a stale Soil memory.",
+        current_goal: "goal-dream",
+        active_dimensions: [],
+        best_evidence_so_far: "dream-checkpoint-entry",
+        recent_strategy_families: [],
+        exhausted: [],
+        promising: [],
+        relevant_memories: [{
+          source_type: "soil",
+          ref: "soil://memory/stale",
+          summary: "Stale memory ref.",
+          authority: "advisory_only",
+          source_reliability: 0.9,
+          retrieval: { kind: "checkpoint", confidence: 0.9 },
+        }],
+        active_hypotheses: [],
+        rejected_approaches: [],
+        next_strategy_candidates: [],
+        guidance: "Use stale memory.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.7,
+      }],
+      summary: "Dream checkpoint with stale memory.",
+      outcome: "continued",
+    });
+    await ledger.appendCorrection({
+      correction_id: "corr-dream-checkpoint",
+      scope: { goal_id: "goal-dream", run_id: "run:dream" },
+      target_ref: { kind: "dream_checkpoint", id: "soil://memory/stale", scope: { run_id: "run:dream" } },
+      correction_kind: "retracted",
+      replacement_ref: null,
+      actor: "dream_lint",
+      reason: "Dream lint retracted the stale memory ref.",
+      created_at: "2026-05-02T00:01:00.000Z",
+      provenance: { source: "dream_lint", evidence_ref: "dream-checkpoint-entry", confidence: 0.8 },
+    });
+
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:dream");
+
+    expect(summary.dream_checkpoints[0]?.relevant_memories[0]?.ref).toBe("soil://memory/stale");
+    expect(summary.correction_state[JSON.stringify([
+      "dream_checkpoint",
+      "soil://memory/stale",
+      null,
+      "run:dream",
+      null,
+    ])]).toMatchObject({
+      status: "retracted",
+      active: false,
+      latest_correction_id: "corr-dream-checkpoint",
+    });
+  });
+
   it("tolerates malformed JSONL rows and summarizes recent evidence", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({

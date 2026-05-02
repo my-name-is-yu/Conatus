@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MemoryCorrectionTargetStateSchema } from "../corrections/memory-correction-ledger.js";
 import { LearnedPatternSchema } from "../knowledge/types/learning.js";
 import { ScheduleTriggerSchema } from "../../runtime/types/schedule.js";
 
@@ -364,6 +365,7 @@ export const DreamActivationArtifactSchema = z.object({
   summary: z.string().min(1),
   payload: z.record(z.string(), z.unknown()).default({}),
   evidence_refs: z.array(z.string()).default([]),
+  correction_state: MemoryCorrectionTargetStateSchema.optional(),
   confidence: z.number().min(0).max(1),
   valid_from: z.string(),
   valid_to: z.string().nullable().default(null),

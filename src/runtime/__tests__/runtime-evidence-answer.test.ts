@@ -61,6 +61,8 @@ function summary(overrides: Partial<RuntimeEvidenceSummary> = {}): RuntimeEviden
     research_memos: [],
     dream_checkpoints: [],
     divergent_exploration: [],
+    corrections: [],
+    correction_state: {},
     candidate_lineages: [],
     recommended_candidate_portfolio: [],
     candidate_selection_summary: {

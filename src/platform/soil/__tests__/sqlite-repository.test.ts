@@ -243,6 +243,144 @@ describe("SqliteSoilRepository", () => {
     expect(pages.get("rec-1")?.[0]?.relative_path).toBe("identity/preferences.md");
   });
 
+  it("records auditable corrections for Soil records without deleting the original", async () => {
+    await repo.applyMutation({
+      records: [
+        {
+          record_id: "soil-old",
+          record_key: "preference.editor",
+          version: 1,
+          record_type: "preference",
+          soil_id: "memory/preferences/editor-old",
+          title: "Editor preference",
+          summary: "User prefers Vim.",
+          canonical_text: "User prefers Vim.",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: 0.8,
+          importance: null,
+          source_reliability: 0.8,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "agent_memory",
+          source_id: "memory-old",
+          metadata_json: {},
+          created_at: "2026-05-02T00:00:00.000Z",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        },
+        {
+          record_id: "soil-new",
+          record_key: "preference.editor.corrected",
+          version: 1,
+          record_type: "preference",
+          soil_id: "memory/preferences/editor-new",
+          title: "Editor preference corrected",
+          summary: "User prefers VS Code.",
+          canonical_text: "User prefers VS Code.",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: 1,
+          importance: null,
+          source_reliability: 1,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "manual_tool",
+          source_id: "correction",
+          metadata_json: {},
+          created_at: "2026-05-02T00:01:00.000Z",
+          updated_at: "2026-05-02T00:01:00.000Z",
+        },
+      ],
+      corrections: [{
+        correction_id: "corr-soil",
+        target_ref: { kind: "soil_record", id: "soil-old" },
+        correction_kind: "corrected",
+        replacement_ref: { kind: "soil_record", id: "soil-new" },
+        actor: "manual_tool",
+        reason: "Corrected editor preference.",
+        created_at: "2026-05-02T00:02:00.000Z",
+        provenance: { source: "manual_tool", source_ref: "memory-correct", confidence: 1 },
+      }],
+    });
+
+    const records = await repo.loadRecords({ active_only: false, record_ids: ["soil-old", "soil-new"] });
+    const corrections = await repo.loadCorrections(["soil-old"]);
+
+    expect(records.find((record) => record.record_id === "soil-old")).toMatchObject({
+      status: "corrected",
+      is_active: false,
+    });
+    expect(records.find((record) => record.record_id === "soil-new")?.supersedes_record_id).toBe("soil-old");
+    expect(corrections[0]).toMatchObject({
+      correction_id: "corr-soil",
+      target_ref: { kind: "soil_record", id: "soil-old" },
+      replacement_ref: { kind: "soil_record", id: "soil-new" },
+      audit: { retained_for_audit: true },
+    });
+  });
+
+  it("stores non-active Soil correction audit entries without invalidating the target", async () => {
+    await repo.applyMutation({
+      records: [
+        {
+          record_id: "soil-disputed",
+          record_key: "preference.shell",
+          version: 1,
+          record_type: "preference",
+          soil_id: "memory/preferences/shell",
+          title: "Shell preference",
+          summary: "User prefers zsh.",
+          canonical_text: "User prefers zsh.",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: 0.8,
+          importance: null,
+          source_reliability: 0.8,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "agent_memory",
+          source_id: "memory-shell",
+          metadata_json: {},
+          created_at: "2026-05-02T00:00:00.000Z",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        },
+      ],
+      corrections: [{
+        correction_id: "corr-soil-disputed",
+        target_ref: { kind: "soil_record", id: "soil-disputed" },
+        correction_kind: "retracted",
+        replacement_ref: null,
+        actor: "manual_tool",
+        reason: "Operator opened a dispute but did not activate the correction.",
+        created_at: "2026-05-02T00:03:00.000Z",
+        provenance: { source: "manual_tool", source_ref: "memory-history", confidence: 0.4 },
+        audit: { status: "disputed", retained_for_audit: true, destructive_delete_approved_at: null },
+      }],
+    });
+
+    const records = await repo.loadRecords({ active_only: false, record_ids: ["soil-disputed"] });
+    const corrections = await repo.loadCorrections(["soil-disputed"]);
+
+    expect(records[0]).toMatchObject({
+      status: "active",
+      is_active: true,
+      updated_at: "2026-05-02T00:00:00.000Z",
+    });
+    expect(corrections[0]).toMatchObject({
+      correction_id: "corr-soil-disputed",
+      audit: { status: "disputed" },
+    });
+  });
+
   it("deactivates older active versions for the same record_key", async () => {
     await repo.applyMutation({
       records: [
