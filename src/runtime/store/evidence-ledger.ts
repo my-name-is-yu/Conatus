@@ -8,12 +8,14 @@ import {
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
 import {
+  correctionStateForTarget,
   MemoryCorrectionEntrySchema,
   MemoryCorrectionTargetStateSchema,
   summarizeMemoryCorrectionState,
   type MemoryCorrectionEntry,
   type MemoryCorrectionEntryInput,
   type MemoryCorrectionTargetState,
+  type MemoryCorrectionTargetRef,
 } from "../../platform/corrections/memory-correction-ledger.js";
 import { summarizeEvidenceMetricTrends, type MetricTrendContext } from "./metric-history.js";
 import {
@@ -363,6 +365,7 @@ export const RuntimeEvidenceDreamCheckpointMemoryRefSchema = z.object({
 export type RuntimeEvidenceDreamCheckpointMemoryRef = z.infer<typeof RuntimeEvidenceDreamCheckpointMemoryRefSchema>;
 
 export const RuntimeEvidenceDreamCheckpointStrategyCandidateSchema = z.object({
+  candidate_ref: z.string().min(1).optional(),
   title: z.string().min(1),
   rationale: z.string().min(1),
   target_dimensions: z.array(z.string().min(1)).default([]),
@@ -388,6 +391,7 @@ export type RuntimeEvidenceDreamCheckpointActiveHypothesis = z.infer<typeof Runt
 export const RuntimeEvidenceDreamCheckpointRejectedApproachSchema = z.object({
   approach: z.string().min(1),
   rejection_reason: z.string().min(1),
+  candidate_ref: z.string().min(1).optional(),
   evidence_ref: z.string().min(1).optional(),
   revisit_condition: z.string().min(1).optional(),
   confidence: z.number().min(0).max(1).default(0.5),
@@ -659,6 +663,7 @@ export interface RuntimeNearMissCandidateContext {
 
 export interface RuntimeEvidenceSummary {
   schema_version: "runtime-evidence-summary-v1";
+  context_policy_version: "correction-filtered-planning-context-v1";
   generated_at: string;
   scope: {
     goal_id?: string;
@@ -904,7 +909,8 @@ async function readSummaryIndex(
 }
 
 function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
-  return Array.isArray(summary.candidate_lineages)
+  return summary.context_policy_version === "correction-filtered-planning-context-v1"
+    && Array.isArray(summary.candidate_lineages)
     && Array.isArray(summary.corrections)
     && typeof summary.correction_state === "object"
     && summary.correction_state !== null
@@ -983,10 +989,17 @@ function summarizeEvidence(
   const entries = [...read.entries].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
   const corrections = entries.flatMap((entry) => entry.correction ? [entry.correction] : []);
   const correctionState = summarizeMemoryCorrectionState(corrections);
-  const newestFirst = [...entries].reverse();
-  const evaluatorSummary = summarizeEvidenceEvaluatorResults(entries);
+  const activeEntries = entries.filter((entry) => isRuntimeEvidenceEntryActive(entry, correctionState));
+  const newestFirst = [...activeEntries].reverse();
+  const evaluatorSummary = summarizeEvidenceEvaluatorResults(activeEntries);
+  const activeDreamCheckpoints = filterRetractedDreamCheckpointMemories(
+    summarizeEvidenceDreamCheckpoints(activeEntries),
+    correctionState,
+    scope
+  );
   return {
     schema_version: "runtime-evidence-summary-v1",
+    context_policy_version: "correction-filtered-planning-context-v1",
     generated_at: new Date().toISOString(),
     scope,
     total_entries: entries.length,
@@ -994,21 +1007,21 @@ function summarizeEvidence(
       entry.kind === "strategy" || Boolean(entry.strategy) || Boolean(entry.decision_reason)
     ) ?? null,
     best_evidence: chooseBestEvidence(newestFirst),
-    metric_trends: summarizeEvidenceMetricTrends(entries),
+    metric_trends: summarizeEvidenceMetricTrends(activeEntries),
     evaluator_summary: evaluatorSummary,
-    research_memos: summarizeEvidenceResearchMemos(entries),
-    dream_checkpoints: summarizeEvidenceDreamCheckpoints(entries),
-    divergent_exploration: entries
+    research_memos: summarizeEvidenceResearchMemos(activeEntries),
+    dream_checkpoints: activeDreamCheckpoints,
+    divergent_exploration: activeEntries
       .flatMap((entry) => entry.divergent_exploration ?? [])
       .slice(-10)
       .reverse(),
     corrections,
     correction_state: correctionState,
-    candidate_lineages: summarizeCandidateLineages(entries),
-    recommended_candidate_portfolio: selectDiversifiedCandidatePortfolio(entries),
-    candidate_selection_summary: summarizeCandidateSelection(entries, evaluatorSummary),
-    near_miss_candidates: summarizeNearMissCandidates(entries),
-    artifact_retention: summarizeArtifactRetention(entries, { manifests }),
+    candidate_lineages: summarizeCandidateLineages(activeEntries),
+    recommended_candidate_portfolio: selectDiversifiedCandidatePortfolio(activeEntries),
+    candidate_selection_summary: summarizeCandidateSelection(activeEntries, evaluatorSummary),
+    near_miss_candidates: summarizeNearMissCandidates(activeEntries),
+    artifact_retention: summarizeArtifactRetention(activeEntries, { manifests }),
     recent_failed_attempts: newestFirst
       .filter((entry) =>
         entry.outcome === "failed"
@@ -1018,10 +1031,87 @@ function summarizeEvidence(
         || entry.verification?.verdict === "fail"
       )
       .slice(0, 5),
-    failed_lineages: summarizeFailedLineages(entries),
+    failed_lineages: summarizeFailedLineages(activeEntries),
     recent_entries: newestFirst.slice(0, 10),
     warnings: read.warnings,
   };
+}
+
+function isRuntimeEvidenceEntryActive(
+  entry: RuntimeEvidenceEntry,
+  correctionState: Record<string, MemoryCorrectionTargetState>
+): boolean {
+  if (entry.kind === "correction") return false;
+  return runtimeEvidenceCorrectionRefs(entry).every((ref) =>
+    correctionStateForTarget(correctionState, ref).active
+  );
+}
+
+function runtimeEvidenceCorrectionRefs(entry: RuntimeEvidenceEntry): MemoryCorrectionTargetRef[] {
+  const refs: MemoryCorrectionTargetRef[] = [
+    { kind: "runtime_evidence", id: entry.id },
+  ];
+  if (entry.scope.run_id) {
+    refs.push({ kind: "runtime_evidence", id: entry.id, scope: { run_id: entry.scope.run_id } });
+  }
+  if (entry.scope.goal_id) {
+    refs.push({ kind: "runtime_evidence", id: entry.id, scope: { goal_id: entry.scope.goal_id } });
+  }
+  if (entry.scope.goal_id || entry.scope.run_id || entry.scope.task_id) {
+    refs.push({
+      kind: "runtime_evidence",
+      id: entry.id,
+      scope: {
+        ...(entry.scope.goal_id ? { goal_id: entry.scope.goal_id } : {}),
+        ...(entry.scope.run_id ? { run_id: entry.scope.run_id } : {}),
+        ...(entry.scope.task_id ? { task_id: entry.scope.task_id } : {}),
+      },
+    });
+  }
+  return refs;
+}
+
+function filterRetractedDreamCheckpointMemories(
+  checkpoints: RuntimeDreamCheckpointContext[],
+  correctionState: Record<string, MemoryCorrectionTargetState>,
+  scope: RuntimeEvidenceSummary["scope"]
+): RuntimeDreamCheckpointContext[] {
+  return checkpoints
+    .map((checkpoint) => {
+      const relevant_memories = checkpoint.relevant_memories.filter((memory) =>
+        !memory.ref || dreamMemoryCorrectionRefs(memory.ref, checkpoint, scope).every((ref) =>
+          correctionStateForTarget(correctionState, ref).active
+        )
+      );
+      return {
+        checkpoint,
+        relevant_memories,
+        planning_context_status: relevant_memories.length === checkpoint.relevant_memories.length
+          ? "active" as const
+          : "partially_retracted" as const,
+      };
+    })
+    .filter(({ checkpoint, relevant_memories }) =>
+      checkpoint.relevant_memories.length === 0 || relevant_memories.length > 0
+    )
+    .map(({ checkpoint, relevant_memories, planning_context_status }) => ({
+      ...checkpoint,
+      relevant_memories,
+      planning_context_status,
+    }));
+}
+
+function dreamMemoryCorrectionRefs(
+  ref: string,
+  checkpoint: RuntimeDreamCheckpointContext,
+  scope: RuntimeEvidenceSummary["scope"]
+): MemoryCorrectionTargetRef[] {
+  const refs: MemoryCorrectionTargetRef[] = [{ kind: "dream_checkpoint", id: ref }];
+  if (checkpoint.run_id) refs.push({ kind: "dream_checkpoint", id: ref, scope: { run_id: checkpoint.run_id } });
+  if (checkpoint.goal_id) refs.push({ kind: "dream_checkpoint", id: ref, scope: { goal_id: checkpoint.goal_id } });
+  if (scope.run_id) refs.push({ kind: "dream_checkpoint", id: ref, scope: { run_id: scope.run_id } });
+  if (scope.goal_id) refs.push({ kind: "dream_checkpoint", id: ref, scope: { goal_id: scope.goal_id } });
+  return refs;
 }
 
 interface CandidateEvidenceContext {

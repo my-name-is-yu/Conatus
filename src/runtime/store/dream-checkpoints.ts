@@ -6,8 +6,11 @@ import type {
 export interface RuntimeDreamCheckpointContext extends RuntimeEvidenceDreamCheckpoint {
   entry_id: string;
   occurred_at: string;
+  goal_id?: string;
+  run_id?: string;
   loop_index?: number;
   phase?: string;
+  planning_context_status?: "active" | "partially_retracted";
 }
 
 export function summarizeEvidenceDreamCheckpoints(
@@ -20,6 +23,8 @@ export function summarizeEvidenceDreamCheckpoints(
         ...checkpoint,
         entry_id: entry.id,
         occurred_at: entry.occurred_at,
+        ...(entry.scope.goal_id ? { goal_id: entry.scope.goal_id } : {}),
+        ...(entry.scope.run_id ? { run_id: entry.scope.run_id } : {}),
         ...(entry.scope.loop_index !== undefined ? { loop_index: entry.scope.loop_index } : {}),
         ...(entry.scope.phase ? { phase: entry.scope.phase } : {}),
       });

@@ -10,9 +10,24 @@ import {
   type SoilContextRoute,
   type SoilContextRouteInput,
   type SoilMemoryLifecycleState,
+  type SoilRecord,
+  type SoilRecordStatus,
+  type SoilSearchRepository,
   type SoilRetrievalDecision,
   type SoilRetrievalTrace,
 } from "./contracts.js";
+
+export interface SoilRouteTargetState {
+  recordId?: string;
+  soilId?: string;
+  isActive: boolean;
+  status?: SoilRecordStatus;
+  lifecycleState?: SoilMemoryLifecycleState;
+}
+
+export interface SoilContextCompilerRepository {
+  loadRecords: SoilSearchRepository["loadRecords"];
+}
 
 export interface SoilContextCompilerInput {
   routes?: SoilContextRouteInput[];
@@ -26,6 +41,7 @@ export interface SoilContextCompilerInput {
   includeFallbackWhenRouteMatched?: boolean;
   minFallbackScore?: number;
   maxFallbackAdmitted?: number;
+  routeTargetStates?: SoilRouteTargetState[];
   staleRouteAfterMs?: number;
   now?: () => Date;
   retrievalId?: string;
@@ -51,6 +67,17 @@ export interface SoilCompiledContext {
 const DEFAULT_MIN_FALLBACK_SCORE = 0.2;
 const DEFAULT_MAX_FALLBACK_ADMITTED = 3;
 const DEFAULT_STALE_ROUTE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+const EXCLUDED_ROUTE_RECORD_STATUSES = new Set<SoilRecordStatus>([
+  "archived",
+  "deleted",
+  "expired",
+  "rejected",
+  "superseded",
+  "corrected",
+  "retracted",
+  "forgotten",
+  "quarantined",
+]);
 
 function nowIso(now?: () => Date): string {
   return (now?.() ?? new Date()).toISOString();
@@ -122,6 +149,78 @@ function fallbackRejectionReason(candidate: SoilCandidate, minScore: number): st
   return null;
 }
 
+function routeTargetStateKey(kind: "record" | "soil", id: string): string {
+  return JSON.stringify([kind, id]);
+}
+
+function routeTargetStateIndex(states: SoilRouteTargetState[] = []): Map<string, SoilRouteTargetState> {
+  const index = new Map<string, SoilRouteTargetState>();
+  for (const state of states) {
+    if (state.recordId) index.set(routeTargetStateKey("record", state.recordId), state);
+    if (state.soilId) index.set(routeTargetStateKey("soil", state.soilId), state);
+  }
+  return index;
+}
+
+function routeIdsForStateLookup(routes: SoilContextRouteInput[] = []): {
+  recordIds: string[];
+  soilIds: string[];
+} {
+  const recordIds = new Set<string>();
+  const soilIds = new Set<string>();
+  for (const route of routes) {
+    for (const recordId of route.record_ids ?? []) recordIds.add(recordId);
+    for (const soilId of route.soil_ids ?? []) soilIds.add(soilId);
+  }
+  return { recordIds: [...recordIds], soilIds: [...soilIds] };
+}
+
+function routeTargetStatesForRecords(records: SoilRecord[]): SoilRouteTargetState[] {
+  const states: SoilRouteTargetState[] = records.map((record) => ({
+    recordId: record.record_id,
+    soilId: record.soil_id,
+    isActive: record.is_active,
+    status: record.status,
+    lifecycleState: record.is_active ? "active" : "tombstoned",
+  }));
+  const recordsBySoilId = new Map<string, SoilRecord[]>();
+  for (const record of records) {
+    const recordsForSoil = recordsBySoilId.get(record.soil_id) ?? [];
+    recordsForSoil.push(record);
+    recordsBySoilId.set(record.soil_id, recordsForSoil);
+  }
+  for (const [soilId, recordsForSoil] of recordsBySoilId) {
+    const activeRecord = recordsForSoil.find((record) =>
+      record.is_active && routeTargetRejectionReason({
+        soilId,
+        isActive: true,
+        status: record.status,
+        lifecycleState: "active",
+      }) === null
+    );
+    const representative = activeRecord ?? recordsForSoil[0];
+    states.push({
+      soilId,
+      isActive: Boolean(activeRecord),
+      status: representative?.status,
+      lifecycleState: activeRecord ? "active" : "tombstoned",
+    });
+  }
+  return states;
+}
+
+function routeTargetRejectionReason(state: SoilRouteTargetState | undefined): string | null {
+  if (!state) return "route target state is unknown and excluded from default context";
+  if (!state.isActive) return "route target is inactive and excluded from default context";
+  if (state.lifecycleState && state.lifecycleState !== "active") {
+    return `route target lifecycle state ${state.lifecycleState} is excluded from default context`;
+  }
+  if (state.status && EXCLUDED_ROUTE_RECORD_STATUSES.has(state.status)) {
+    return `route target record status ${state.status} is excluded from default context`;
+  }
+  return null;
+}
+
 function dedupeItems(items: SoilCompiledContextItem[]): SoilCompiledContextItem[] {
   const seen = new Set<string>();
   const deduped: SoilCompiledContextItem[] = [];
@@ -183,7 +282,8 @@ function selectMatchingRoutes(input: SoilContextCompilerInput): RouteSelectionRe
 function compileRouteItems(
   routes: SoilContextRoute[],
   timestamp: string,
-  staleAfterMs: number
+  staleAfterMs: number,
+  targetStates: Map<string, SoilRouteTargetState>
 ): {
   warnings: string[];
   decisions: SoilRetrievalDecision[];
@@ -199,6 +299,20 @@ function compileRouteItems(
       warnings.push(staleWarning);
     }
     for (const soilId of route.soil_ids) {
+      const rejectionReason = routeTargetRejectionReason(targetStates.get(routeTargetStateKey("soil", soilId)));
+      if (rejectionReason) {
+        warnings.push(`Route ${route.route_id} target ${soilId} was rejected: ${rejectionReason}.`);
+        decisions.push({
+          candidate_id: `route:${route.route_id}:soil:${soilId}`,
+          decision: "rejected",
+          reason: rejectionReason,
+          score: null,
+          soil_id: soilId,
+          record_id: null,
+          route_id: route.route_id,
+        });
+        continue;
+      }
       decisions.push({
         candidate_id: `route:${route.route_id}:soil:${soilId}`,
         decision: "routed",
@@ -218,6 +332,20 @@ function compileRouteItems(
       });
     }
     for (const recordId of route.record_ids) {
+      const rejectionReason = routeTargetRejectionReason(targetStates.get(routeTargetStateKey("record", recordId)));
+      if (rejectionReason) {
+        warnings.push(`Route ${route.route_id} target ${recordId} was rejected: ${rejectionReason}.`);
+        decisions.push({
+          candidate_id: `route:${route.route_id}:record:${recordId}`,
+          decision: "rejected",
+          reason: rejectionReason,
+          score: null,
+          soil_id: null,
+          record_id: recordId,
+          route_id: route.route_id,
+        });
+        continue;
+      }
       decisions.push({
         candidate_id: `route:${route.route_id}:record:${recordId}`,
         decision: "routed",
@@ -359,7 +487,8 @@ export function compileSoilContext(input: SoilContextCompilerInput): SoilCompile
   const routeCompilation = compileRouteItems(
     routeSelection.routes,
     timestamp,
-    input.staleRouteAfterMs ?? DEFAULT_STALE_ROUTE_AFTER_MS
+    input.staleRouteAfterMs ?? DEFAULT_STALE_ROUTE_AFTER_MS,
+    routeTargetStateIndex(input.routeTargetStates)
   );
   const fallbackCandidates = fallbackCandidatesFor(input, routeSelection.routes);
 
@@ -404,4 +533,30 @@ export function compileSoilContext(input: SoilContextCompilerInput): SoilCompile
     compileMissObservations,
     warnings,
   };
+}
+
+export async function compileSoilContextFromRepository(
+  input: SoilContextCompilerInput,
+  repository: SoilContextCompilerRepository
+): Promise<SoilCompiledContext> {
+  const { recordIds, soilIds } = routeIdsForStateLookup(input.routes);
+  const recordsById = recordIds.length > 0
+    ? await repository.loadRecords({
+        active_only: false,
+        record_ids: recordIds,
+      })
+    : [];
+  const recordsBySoilId = soilIds.length > 0
+    ? await repository.loadRecords({
+        active_only: false,
+        soil_ids: soilIds,
+      })
+    : [];
+  return compileSoilContext({
+    ...input,
+    routeTargetStates: [
+      ...(input.routeTargetStates ?? []),
+      ...routeTargetStatesForRecords([...recordsById, ...recordsBySoilId]),
+    ],
+  });
 }

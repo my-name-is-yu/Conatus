@@ -64,6 +64,9 @@ describe("Soil context evaluation", () => {
                 metadata_json: {},
               },
             ],
+            routeTargetStates: [
+              { soilId: "context-routes", isActive: true, status: "active", lifecycleState: "active" },
+            ],
             routes: [
               {
                 route_id: "route-soil",
@@ -141,4 +144,3 @@ describe("Soil context evaluation", () => {
     });
   });
 });
-

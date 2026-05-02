@@ -30,6 +30,10 @@ describe("Soil context compiler", () => {
       fallbackCandidates: [
         candidate({ chunk_id: "fallback-1", record_id: "record-fallback", soil_id: "knowledge/fallback" }),
       ],
+      routeTargetStates: [
+        { soilId: "context-routes", isActive: true, status: "active", lifecycleState: "active" },
+        { recordId: "record-route", isActive: true, status: "active", lifecycleState: "active" },
+      ],
       routes: [
         {
           route_id: "route-soil-platform",
@@ -161,6 +165,9 @@ describe("Soil context compiler", () => {
       fallbackCandidates: [
         candidate({ chunk_id: "fallback-1", record_id: "record-fallback", soil_id: "knowledge/fallback" }),
       ],
+      routeTargetStates: [
+        { soilId: "context-routes", isActive: true, status: "active", lifecycleState: "active" },
+      ],
       routes: [
         {
           route_id: "route-soil-platform",
@@ -229,6 +236,9 @@ describe("Soil context compiler", () => {
       now: () => new Date("2026-04-13T00:00:00.000Z"),
       targetPaths: ["src/platform/soil/context-compiler.ts"],
       staleRouteAfterMs: 24 * 60 * 60 * 1000,
+      routeTargetStates: [
+        { soilId: "context-routes", isActive: true, status: "active", lifecycleState: "active" },
+      ],
       routes: [
         {
           route_id: "route-soil-platform",
@@ -247,5 +257,41 @@ describe("Soil context compiler", () => {
       "Route route-soil-platform has not been evaluated since 2026-04-01T00:00:00.000Z.",
     ]);
     expect(compiled.trace.warnings).toEqual(compiled.warnings);
+  });
+
+  it("rejects route-provided inactive targets instead of admitting them into context", () => {
+    const compiled = compileSoilContext({
+      retrievalId: "retrieval-tombstoned-route",
+      now: () => new Date("2026-05-02T00:00:00.000Z"),
+      targetPaths: ["src/platform/soil/context-compiler.ts"],
+      routeTargetStates: [
+        {
+          recordId: "record-tombstoned",
+          isActive: false,
+          status: "retracted",
+          lifecycleState: "tombstoned",
+        },
+      ],
+      routes: [
+        {
+          route_id: "route-tombstoned",
+          path_globs: ["src/platform/soil/*"],
+          record_ids: ["record-tombstoned"],
+          reason: "Route points at old memory.",
+          created_at: "2026-05-02T00:00:00.000Z",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(compiled.items).toEqual([]);
+    expect(compiled.warnings).toEqual([
+      "Route route-tombstoned target record-tombstoned was rejected: route target is inactive and excluded from default context.",
+    ]);
+    expect(compiled.trace.decisions).toContainEqual(expect.objectContaining({
+      candidate_id: "route:route-tombstoned:record:record-tombstoned",
+      decision: "rejected",
+      reason: "route target is inactive and excluded from default context",
+    }));
   });
 });

@@ -198,6 +198,7 @@ export type SoilPageFilter = z.infer<typeof SoilPageFilterSchema>;
 
 export const SoilRecordFilterSchema = z.object({
   record_ids: z.array(z.string().min(1)).optional(),
+  soil_ids: z.array(z.string().min(1)).optional(),
   record_keys: z.array(z.string().min(1)).optional(),
   record_types: z.array(SoilRecordTypeSchema).optional(),
   statuses: z.array(SoilRecordStatusSchema).optional(),
