@@ -18,7 +18,7 @@ Automatically generate Zod schemas from natural-language observation dimension n
 
 ### Plugin Marketplace / Registry
 
-A discoverable registry of community plugins (data sources, notifiers, adapters). The plugin architecture (M12) and npm scope `@pulseed-plugins/` are already established. A registry UI or CLI command (`pulseed plugin search`) would make the ecosystem navigable.
+A richer discoverable registry of community plugins (data sources, notifiers, adapters). The plugin architecture (M12), npm scope `@pulseed-plugins/`, and basic package search command (`pulseed plugin search <keyword>`) are already established. A curated registry UI or index would make the ecosystem easier to navigate than raw npm search.
 
 ### Circuit Breaker
 

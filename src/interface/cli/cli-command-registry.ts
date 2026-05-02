@@ -413,7 +413,7 @@ export async function dispatchCommand(
     const pluginSubcommand = argv[1];
 
     if (!pluginSubcommand) {
-      logger.error("Error: plugin subcommand required. Available: plugin list, plugin install, plugin remove");
+      logger.error("Error: plugin subcommand required. Available: plugin list, plugin install, plugin remove, plugin update, plugin search");
       return 1;
     }
 

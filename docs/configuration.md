@@ -249,6 +249,11 @@ Common scriptable commands:
 | `pulseed schedule history <id>` | Show recent schedule execution history |
 | `pulseed skills list` | List discovered skills |
 | `pulseed skills install <path>` | Install a local skill file |
+| `pulseed plugin list` | List installed plugins |
+| `pulseed plugin install <path|package>` | Install a plugin from a local path or npm package |
+| `pulseed plugin update <name>` | Update an installed npm-backed plugin |
+| `pulseed plugin search <keyword>` | Search `@pulseed-plugins` packages |
+| `pulseed plugin remove <name>` | Remove an installed plugin |
 | `pulseed playbook list` | List stored verified playbooks |
 | `pulseed playbook show <id>` | Show one playbook as JSON |
 | `pulseed playbook promote <id>` | Mark a playbook as promoted |

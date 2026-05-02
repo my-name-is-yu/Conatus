@@ -270,6 +270,16 @@ describe("cmdPluginRemove", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("accepts the manifest name when removing a sanitized npm plugin directory", async () => {
+    const pluginDir = path.join(pluginsDir, "pulseed-plugins__removable");
+    writePluginManifest(pluginDir, { name: "@pulseed-plugins/removable" });
+
+    const exitCode = await cmdPluginRemove(pluginsDir, ["@pulseed-plugins/removable"]);
+
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(pluginDir)).toBe(false);
+  });
+
   it("returns 1 when name argument is missing", async () => {
     const exitCode = await cmdPluginRemove(pluginsDir, []);
 
@@ -372,9 +382,15 @@ describe("cmdPluginInstall — npm flow", () => {
     );
 
     expect(exitCode).toBe(0);
+    expect(fs.existsSync(path.join(pluginsDir, "mock-npm-plugin", "plugin.yaml"))).toBe(true);
     const allOutput = consoleLogs.join("\n");
     expect(allOutput).toMatch(/installed from npm/i);
     expect(allOutput).toContain("mock-npm-plugin");
+
+    consoleLogs = [];
+    const listExitCode = await cmdPluginList(pluginsDir);
+    expect(listExitCode).toBe(0);
+    expect(consoleLogs.join("\n")).toContain("mock-npm-plugin");
   });
 
   it("returns 1 when plugin requires higher PulSeed version", async () => {
@@ -423,32 +439,96 @@ describe("cmdPluginUpdate", () => {
     expect(exitCode).toBe(1);
   });
 
-  it("runs npm update --prefix <dir> and returns 0", async () => {
+  it("reinstalls the npm package, refreshes the runtime copy, and returns 0", async () => {
     const pluginDir = path.join(pluginsDir, "my-npm-plugin");
     fs.mkdirSync(pluginDir, { recursive: true });
+    writePluginManifest(pluginDir, { name: "my-npm-plugin", version: "1.0.0" });
 
     let capturedArgs: string[] = [];
     const mockExecFile = vi.fn().mockImplementation(async (_cmd: string, args: string[]) => {
       capturedArgs = args;
+      const prefixIndex = args.indexOf("--prefix");
+      if (prefixIndex !== -1) {
+        const prefixDir = args[prefixIndex + 1];
+        const pkgName = args[args.length - 1];
+        const nodeModulesDir = path.join(prefixDir, "node_modules", pkgName);
+        fs.mkdirSync(nodeModulesDir, { recursive: true });
+        writePluginManifest(nodeModulesDir, { name: "my-npm-plugin", version: "1.2.0" });
+      }
       return { stdout: "", stderr: "" };
     });
 
     const exitCode = await cmdPluginUpdate(pluginsDir, ["my-npm-plugin"], mockExecFile as never);
 
     expect(exitCode).toBe(0);
-    expect(mockExecFile).toHaveBeenCalledWith("npm", expect.arrayContaining(["update", "--prefix"]));
+    expect(mockExecFile).toHaveBeenCalledWith("npm", expect.arrayContaining(["install", "--prefix", "my-npm-plugin"]));
     expect(capturedArgs).toContain("--prefix");
     expect(capturedArgs).toContain(pluginDir);
+    expect(fs.readFileSync(path.join(pluginDir, "plugin.yaml"), "utf-8")).toContain("1.2.0");
     const allOutput = consoleLogs.join("\n");
     expect(allOutput).toContain("my-npm-plugin");
     expect(allOutput).toMatch(/updated/i);
   });
 
-  it("returns 1 when npm update fails", async () => {
-    const pluginDir = path.join(pluginsDir, "broken-plugin");
-    fs.mkdirSync(pluginDir, { recursive: true });
+  it("removes stale runtime-root files when an npm plugin changes manifest format", async () => {
+    const pluginDir = path.join(pluginsDir, "format-switch-plugin");
+    writePluginManifest(pluginDir, { name: "format-switch-plugin", version: "1.0.0" });
 
-    const mockExecFile = vi.fn().mockRejectedValue(new Error("npm update failed"));
+    const mockExecFile = vi.fn().mockImplementation(async (_cmd: string, args: string[]) => {
+      const prefixIndex = args.indexOf("--prefix");
+      if (prefixIndex !== -1) {
+        const prefixDir = args[prefixIndex + 1];
+        const pkgName = args[args.length - 1];
+        const nodeModulesDir = path.join(prefixDir, "node_modules", pkgName);
+        fs.mkdirSync(nodeModulesDir, { recursive: true });
+        fs.writeFileSync(path.join(nodeModulesDir, "plugin.json"), JSON.stringify({
+          name: "format-switch-plugin",
+          version: "2.0.0",
+          type: "notifier",
+          capabilities: ["notify"],
+          description: "Updated manifest format",
+          permissions: {},
+        }), "utf-8");
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    const exitCode = await cmdPluginUpdate(pluginsDir, ["format-switch-plugin"], mockExecFile as never);
+
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(path.join(pluginDir, "plugin.yaml"))).toBe(false);
+    expect(fs.readFileSync(path.join(pluginDir, "plugin.json"), "utf-8")).toContain("2.0.0");
+  });
+
+  it("accepts the manifest name when updating a sanitized npm plugin directory", async () => {
+    const pluginDir = path.join(pluginsDir, "pulseed-plugins__scoped");
+    writePluginManifest(pluginDir, { name: "@pulseed-plugins/scoped" });
+
+    let capturedArgs: string[] = [];
+    const mockExecFile = vi.fn().mockImplementation(async (_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      const prefixIndex = args.indexOf("--prefix");
+      if (prefixIndex !== -1) {
+        const prefixDir = args[prefixIndex + 1];
+        const pkgName = args[args.length - 1];
+        const nodeModulesDir = path.join(prefixDir, "node_modules", pkgName);
+        fs.mkdirSync(nodeModulesDir, { recursive: true });
+        writePluginManifest(nodeModulesDir, { name: "@pulseed-plugins/scoped" });
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    const exitCode = await cmdPluginUpdate(pluginsDir, ["@pulseed-plugins/scoped"], mockExecFile as never);
+
+    expect(exitCode).toBe(0);
+    expect(capturedArgs).toContain(pluginDir);
+  });
+
+  it("returns 1 when npm install fails during update", async () => {
+    const pluginDir = path.join(pluginsDir, "broken-plugin");
+    writePluginManifest(pluginDir, { name: "broken-plugin" });
+
+    const mockExecFile = vi.fn().mockRejectedValue(new Error("npm install failed"));
 
     const exitCode = await cmdPluginUpdate(pluginsDir, ["broken-plugin"], mockExecFile as never);
 
