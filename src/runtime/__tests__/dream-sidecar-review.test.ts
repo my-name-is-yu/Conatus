@@ -109,6 +109,86 @@ describe("Runtime Dream sidecar review", () => {
     }));
   });
 
+  it("does not surface Dream checkpoint moves or memories backed by retracted memory refs", async () => {
+    await seedActiveRun("run:coreloop:retracted-memory");
+    const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await ledger.append({
+      id: "checkpoint-retracted-memory",
+      occurred_at: "2026-05-02T00:00:00.000Z",
+      kind: "dream_checkpoint",
+      scope: { run_id: "run:coreloop:retracted-memory", loop_index: 1, phase: "dream_review_checkpoint" },
+      dream_checkpoints: [{
+        trigger: "iteration",
+        summary: "Checkpoint relied on a stale memory ref.",
+        current_goal: "Avoid stale memory",
+        active_dimensions: ["accuracy"],
+        recent_strategy_families: ["stale-memory-plan"],
+        exhausted: [],
+        promising: ["Use stale memory plan"],
+        relevant_memories: [{
+          source_type: "soil",
+          ref: "soil://memory/retracted",
+          summary: "Retracted memory.",
+          authority: "advisory_only",
+          relevance_score: 0.95,
+          source_reliability: 0.95,
+        }, {
+          source_type: "soil",
+          ref: "soil://memory/active",
+          summary: "Active memory.",
+          authority: "advisory_only",
+          relevance_score: 0.8,
+          source_reliability: 0.8,
+        }],
+        active_hypotheses: [],
+        rejected_approaches: [],
+        next_strategy_candidates: [{
+          title: "Use stale memory plan",
+          rationale: "This move is only justified by the retracted memory.",
+          target_dimensions: ["accuracy"],
+        }],
+        guidance: "Follow stale memory.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.9,
+      }],
+      raw_refs: [{ kind: "dream_soil_memory", id: "soil://memory/retracted" }],
+      summary: "Checkpoint with retracted memory.",
+      outcome: "continued",
+    });
+    await ledger.appendCorrection({
+      correction_id: "corr-sidecar-retracted-memory",
+      scope: { run_id: "run:coreloop:retracted-memory" },
+      target_ref: {
+        kind: "dream_checkpoint",
+        id: "soil://memory/retracted",
+        scope: { run_id: "run:coreloop:retracted-memory" },
+      },
+      correction_kind: "retracted",
+      replacement_ref: null,
+      actor: "dream_lint",
+      reason: "Memory ref was retracted before sidecar review.",
+      created_at: "2026-05-02T00:01:00.000Z",
+      provenance: { source: "dream_lint", evidence_ref: "checkpoint-retracted-memory", confidence: 1 },
+    });
+
+    const review = await createRuntimeDreamSidecarReview({
+      stateManager,
+      runId: "run:coreloop:retracted-memory",
+    });
+
+    expect(review.advisory_memories).not.toContainEqual(expect.objectContaining({
+      ref: "soil://memory/retracted",
+    }));
+    expect(review.advisory_memories).toContainEqual(expect.objectContaining({
+      ref: "soil://memory/active",
+    }));
+    expect(review.suggested_next_moves).not.toContainEqual(expect.objectContaining({
+      title: "Use stale memory plan",
+      source: "dream_checkpoint",
+    }));
+  });
+
   it("does not blindly re-suggest a rejected Dream approach", async () => {
     await seedActiveRun("run:coreloop:rejected");
     const ledger = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
@@ -134,12 +214,14 @@ describe("Runtime Dream sidecar review", () => {
         rejected_approaches: [{
           approach: "閾値スイープの再実行",
           rejection_reason: "3回のスイープが指標ノイズ内に収まった.",
+          candidate_ref: "candidate:threshold-sweep-repeat",
           evidence_ref: "lineage:threshold-sweep",
           revisit_condition: "new calibration evidence appears",
           confidence: 0.9,
         }],
         next_strategy_candidates: [
           {
+            candidate_ref: "candidate:threshold-sweep-repeat",
             title: "閾値スイープの再実行",
             rationale: "同じ探索をもう一度行う.",
             target_dimensions: ["balanced_accuracy"],
@@ -328,6 +410,11 @@ describe("Runtime Dream sidecar review", () => {
             title: "threshold_sweep retry",
             rationale: "Try the same threshold_sweep again.",
             target_dimensions: ["balanced_accuracy"],
+            failed_lineage_warning: {
+              fingerprint: "threshold sweep|balanced accuracy|threshold sweep",
+              count: 3,
+              reason: "Repeated failed lineage.",
+            },
           },
           {
             title: "Feature ablation",
@@ -426,7 +513,7 @@ describe("Runtime Dream sidecar review", () => {
               rationale: "Retry the close-to-best candidate with a wider local validation pass.",
               target_dimensions: ["balanced_accuracy"],
             },
-            evidence_refs: [],
+            evidence_refs: ["threshold sweep|repeat threshold sweep improves balanced accuracy|balanced accuracy|threshold sweep"],
             summary: "Close but from a repeatedly failed lineage.",
           },
           disposition: "retained",

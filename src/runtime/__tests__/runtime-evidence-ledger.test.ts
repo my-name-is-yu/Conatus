@@ -143,7 +143,7 @@ describe("RuntimeEvidenceLedger", () => {
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:dream");
 
-    expect(summary.dream_checkpoints[0]?.relevant_memories[0]?.ref).toBe("soil://memory/stale");
+    expect(summary.dream_checkpoints).toEqual([]);
     expect(summary.correction_state[JSON.stringify([
       "dream_checkpoint",
       "soil://memory/stale",
@@ -155,6 +155,129 @@ describe("RuntimeEvidenceLedger", () => {
       active: false,
       latest_correction_id: "corr-dream-checkpoint",
     });
+    const goalSummary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeGoal("goal-dream");
+    expect(goalSummary.dream_checkpoints).toEqual([]);
+  });
+
+  it("excludes retracted runtime evidence from best evidence, trends, failures, and recent entries", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "retracted-best",
+      occurred_at: "2026-05-02T00:00:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:retracted-summary" },
+      metrics: [{ label: "accuracy", value: 0.99, direction: "maximize" }],
+      verification: { verdict: "pass", confidence: 0.99, summary: "later retracted" },
+      summary: "Retracted high metric.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "active-best",
+      occurred_at: "2026-05-02T00:01:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:retracted-summary" },
+      metrics: [{ label: "accuracy", value: 0.72, direction: "maximize" }],
+      summary: "Active lower metric.",
+      outcome: "continued",
+    });
+    await ledger.append({
+      id: "retracted-failure",
+      occurred_at: "2026-05-02T00:02:00.000Z",
+      kind: "failure",
+      scope: { run_id: "run:retracted-summary" },
+      strategy: "bad-lineage",
+      verification: { verdict: "fail", summary: "invalid failure" },
+      summary: "Retracted failure.",
+      outcome: "failed",
+    });
+    await ledger.appendCorrection({
+      correction_id: "corr-retracted-best",
+      scope: { run_id: "run:retracted-summary" },
+      target_ref: { kind: "runtime_evidence", id: "retracted-best", scope: { run_id: "run:retracted-summary" } },
+      correction_kind: "retracted",
+      replacement_ref: { kind: "runtime_evidence", id: "active-best", scope: { run_id: "run:retracted-summary" } },
+      actor: "runtime_verification",
+      reason: "Metric artifact was invalid.",
+      created_at: "2026-05-02T00:03:00.000Z",
+      provenance: { source: "runtime_verification", confidence: 1 },
+    });
+    await ledger.appendCorrection({
+      correction_id: "corr-retracted-failure",
+      scope: { run_id: "run:retracted-summary" },
+      target_ref: { kind: "runtime_evidence", id: "retracted-failure", scope: { run_id: "run:retracted-summary" } },
+      correction_kind: "retracted",
+      replacement_ref: null,
+      actor: "runtime_verification",
+      reason: "Failure belonged to an invalid run.",
+      created_at: "2026-05-02T00:04:00.000Z",
+      provenance: { source: "runtime_verification", confidence: 1 },
+    });
+
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:retracted-summary");
+
+    expect(summary.total_entries).toBe(5);
+    expect(summary.best_evidence?.id).toBe("active-best");
+    expect(summary.metric_trends[0]?.best_value).toBe(0.72);
+    expect(summary.recent_entries.map((entry) => entry.id)).toEqual(["active-best"]);
+    expect(summary.recent_failed_attempts).toEqual([]);
+    expect(summary.failed_lineages).toEqual([]);
+  });
+
+  it("ignores legacy summary indexes that predate correction-filtered planning context", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "legacy-retracted-best",
+      occurred_at: "2026-05-02T00:00:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:legacy-summary" },
+      metrics: [{ label: "accuracy", value: 0.99, direction: "maximize" }],
+      verification: { verdict: "pass", confidence: 0.99, summary: "legacy stale cache" },
+      summary: "Retracted high metric.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "legacy-active-best",
+      occurred_at: "2026-05-02T00:01:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:legacy-summary" },
+      metrics: [{ label: "accuracy", value: 0.7, direction: "maximize" }],
+      summary: "Active metric.",
+      outcome: "continued",
+    });
+    await ledger.appendCorrection({
+      correction_id: "corr-legacy-retracted-best",
+      scope: { run_id: "run:legacy-summary" },
+      target_ref: { kind: "runtime_evidence", id: "legacy-retracted-best", scope: { run_id: "run:legacy-summary" } },
+      correction_kind: "retracted",
+      replacement_ref: { kind: "runtime_evidence", id: "legacy-active-best", scope: { run_id: "run:legacy-summary" } },
+      actor: "runtime_verification",
+      reason: "Legacy cache should not re-admit this metric.",
+      created_at: "2026-05-02T00:02:00.000Z",
+      provenance: { source: "runtime_verification", confidence: 1 },
+    });
+
+    const canonicalPath = path.join(runtimeRoot, "evidence-ledger", "runs", `${encodeURIComponent("run:legacy-summary")}.jsonl`);
+    const stat = await fsp.stat(canonicalPath);
+    const entries = (await ledger.readByRun("run:legacy-summary")).entries;
+    const staleSummary = await ledger.rebuildSummaryIndexForRun("run:legacy-summary");
+    const legacySummary = {
+      ...staleSummary,
+      best_evidence: entries.find((entry) => entry.id === "legacy-retracted-best") ?? null,
+    } as Record<string, unknown>;
+    delete legacySummary.context_policy_version;
+    await fsp.writeFile(`${canonicalPath}.summary.json`, JSON.stringify({
+      schema_version: "runtime-evidence-summary-index-v1",
+      generated_at: "2026-05-02T00:03:00.000Z",
+      canonical_log_path: canonicalPath,
+      canonical_log_size: stat.size,
+      canonical_log_mtime_ms: stat.mtimeMs,
+      summary: legacySummary,
+    }));
+
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:legacy-summary");
+
+    expect(summary.context_policy_version).toBe("correction-filtered-planning-context-v1");
+    expect(summary.best_evidence?.id).toBe("legacy-active-best");
   });
 
   it("tolerates malformed JSONL rows and summarizes recent evidence", async () => {

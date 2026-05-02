@@ -23,6 +23,7 @@ function hasExplicitMetadataFilter(request: SoilSearchRequest): boolean {
   const pageFilter = request.page_filter;
   return Boolean(
     recordFilter.record_ids?.length ||
+      recordFilter.soil_ids?.length ||
       recordFilter.record_keys?.length ||
       recordFilter.record_types?.length ||
       recordFilter.statuses?.length ||
@@ -51,6 +52,10 @@ export function buildRecordFilterSql(request: SoilSearchRequest, params: unknown
   if (filter.record_ids?.length) {
     clauses.push(`r.record_id IN (${filter.record_ids.map(() => "?").join(", ")})`);
     params.push(...filter.record_ids);
+  }
+  if (filter.soil_ids?.length) {
+    clauses.push(`r.soil_id IN (${filter.soil_ids.map(() => "?").join(", ")})`);
+    params.push(...filter.soil_ids);
   }
   if (filter.record_keys?.length) {
     clauses.push(`r.record_key IN (${filter.record_keys.map(() => "?").join(", ")})`);
@@ -170,6 +175,17 @@ export function lookupDirectCandidates(db: SqliteDatabase, input: SoilSearchRequ
   const pageParams: unknown[] = [request.query, request.query, request.query];
   const pageWhere = ["(soil_id = ? OR relative_path = ? OR page_id = ?)"];
   pageWhere.push(...buildPageFilterSql(request, pageParams));
+  if (request.record_filter.active_only) {
+    pageWhere.push(`
+      EXISTS (
+        SELECT 1
+        FROM soil_page_members active_spm
+        JOIN soil_records active_record ON active_record.record_id = active_spm.record_id
+        WHERE active_spm.page_id = p.page_id
+          AND active_record.is_active = 1
+      )
+    `);
+  }
   pageParams.push(request.limit);
   const pageMatches = db.prepare(`
     SELECT page_id, soil_id
@@ -224,8 +240,10 @@ export function lookupDirectCandidates(db: SqliteDatabase, input: SoilSearchRequ
       .prepare(`
         SELECT spm.page_id, spm.record_id, sc.chunk_id, sc.chunk_text
         FROM soil_page_members spm
+        JOIN soil_records r ON r.record_id = spm.record_id
         LEFT JOIN soil_chunks sc ON sc.record_id = spm.record_id
         WHERE spm.page_id IN (${pageIds.map(() => "?").join(", ")})
+          ${request.record_filter.active_only ? "AND r.is_active = 1" : ""}
         ORDER BY spm.page_id, spm.ordinal, sc.chunk_index
       `)
       .all(...pageIds) as Array<{

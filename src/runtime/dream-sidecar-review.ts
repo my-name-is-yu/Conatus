@@ -376,21 +376,23 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
   const rejectedApproaches = collectRejectedApproaches(summary);
   const failedLineages = summary.failed_lineages.filter((lineage) => lineage.count >= 2);
   for (const checkpoint of rankCheckpointsByMemory(summary).slice(0, 2)) {
-    for (const candidate of checkpoint.next_strategy_candidates) {
-      if (isRejectedDreamCandidate(candidate, rejectedApproaches)) continue;
-      if (!candidate.retry_reason && isFailedLineageMove(candidate.title, candidate.rationale, failedLineages)) continue;
-      moves.push({
-        title: candidate.title,
-        rationale: candidate.rationale,
-        source: "dream_checkpoint",
-      });
-    }
-    if (checkpoint.guidance && moves.length === 0) {
-      moves.push({
-        title: "Apply latest Dream checkpoint guidance",
-        rationale: checkpoint.guidance,
-        source: "dream_checkpoint",
-      });
+    if (checkpoint.planning_context_status !== "partially_retracted") {
+      for (const candidate of checkpoint.next_strategy_candidates) {
+        if (isRejectedDreamCandidate(candidate, rejectedApproaches)) continue;
+        if (!candidate.retry_reason && isFailedLineageCandidate(candidate, failedLineages)) continue;
+        moves.push({
+          title: candidate.title,
+          rationale: candidate.rationale,
+          source: "dream_checkpoint",
+        });
+      }
+      if (checkpoint.guidance && moves.length === 0) {
+        moves.push({
+          title: "Apply latest Dream checkpoint guidance",
+          rationale: checkpoint.guidance,
+          source: "dream_checkpoint",
+        });
+      }
     }
   }
   for (const nearMiss of summary.near_miss_candidates.slice(0, 3)) {
@@ -398,8 +400,8 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
     const rationale = nearMiss.follow_up?.rationale
       ?? nearMiss.summary
       ?? `Candidate ${nearMiss.candidate_id} did not beat raw best but was retained for ${nearMiss.reason_to_keep.join(", ")}.`;
-    if (isRejectedMove(title, rationale, rejectedApproaches)) continue;
-    if (isFailedLineageMove(`${nearMiss.strategy_family} ${title}`, rationale, failedLineages)) continue;
+    if (isRejectedRef([nearMiss.candidate_id, ...nearMiss.evidence_refs], rejectedApproaches)) continue;
+    if (isFailedLineageRef(nearMiss.evidence_refs, failedLineages)) continue;
     moves.push({
       title,
       rationale,
@@ -408,8 +410,6 @@ function buildSuggestedNextMoves(summary: RuntimeEvidenceSummary): RuntimeDreamS
   }
   for (const memo of summary.research_memos.slice(0, 2)) {
     for (const finding of memo.findings.slice(0, 2)) {
-      if (isRejectedMove(finding.proposed_experiment, finding.applicability, rejectedApproaches)) continue;
-      if (isFailedLineageMove(finding.proposed_experiment, finding.applicability, failedLineages)) continue;
       moves.push({
         title: finding.proposed_experiment,
         rationale: finding.applicability,
@@ -447,24 +447,23 @@ function checkpointMemoryScore(checkpoint: RuntimeEvidenceSummary["dream_checkpo
   ));
 }
 
-function isFailedLineageMove(
-  title: string,
-  rationale: string,
+function isFailedLineageCandidate(
+  candidate: RuntimeEvidenceDreamCheckpointStrategyCandidate,
   failedLineages: RuntimeFailedLineageContext[]
 ): boolean {
-  if (failedLineages.length === 0) return false;
-  const moveText = normalizeRejectedMoveText(`${title} ${rationale}`);
-  if (!moveText) return false;
-  return failedLineages.some((lineage) => {
-    const lineageTexts = [
-      lineage.strategy_family,
-      lineage.hypothesis,
-      lineage.task_action,
-    ].map((value) => normalizeRejectedMoveText(value ?? "")).filter(Boolean);
-    return lineageTexts.some((lineageText) =>
-      moveText.includes(lineageText) || lineageText.includes(moveText)
-    );
-  });
+  const warning = candidate.failed_lineage_warning;
+  if (!warning || warning.count < 2) return false;
+  return failedLineages.length === 0 || failedLineages.some((lineage) =>
+    lineage.fingerprint === warning.fingerprint
+  ) || warning.count >= 2;
+}
+
+function isFailedLineageRef(
+  refs: string[],
+  failedLineages: RuntimeFailedLineageContext[]
+): boolean {
+  const refSet = new Set(refs);
+  return failedLineages.some((lineage) => refSet.has(lineage.fingerprint));
 }
 
 function lineageLabel(lineage: RuntimeFailedLineageContext): string {
@@ -480,7 +479,7 @@ function collectRejectedApproaches(summary: RuntimeEvidenceSummary): RuntimeEvid
   const rejectedApproaches: RuntimeEvidenceDreamCheckpointRejectedApproach[] = [];
   for (const checkpoint of summary.dream_checkpoints) {
     for (const rejected of checkpoint.rejected_approaches ?? []) {
-      const key = normalizeRejectedMoveText(rejected.approach);
+      const key = rejected.candidate_ref ?? rejected.evidence_ref;
       if (!key || seen.has(key)) continue;
       seen.add(key);
       rejectedApproaches.push(rejected);
@@ -493,29 +492,22 @@ function isRejectedDreamCandidate(
   candidate: RuntimeEvidenceDreamCheckpointStrategyCandidate,
   rejectedApproaches: RuntimeEvidenceDreamCheckpointRejectedApproach[]
 ): boolean {
-  return isRejectedMove(candidate.title, candidate.rationale, rejectedApproaches);
+  return isRejectedRef([
+    ...(candidate.candidate_ref ? [candidate.candidate_ref] : []),
+  ], rejectedApproaches);
 }
 
-function isRejectedMove(
-  title: string,
-  rationale: string,
+function isRejectedRef(
+  refs: string[],
   rejectedApproaches: RuntimeEvidenceDreamCheckpointRejectedApproach[]
 ): boolean {
   if (rejectedApproaches.length === 0) return false;
-  const moveText = normalizeRejectedMoveText(`${title} ${rationale}`);
-  if (!moveText) return false;
-  return rejectedApproaches.some((rejected) => {
-    const approachText = normalizeRejectedMoveText(rejected.approach);
-    if (!approachText) return false;
-    const matchesApproach = moveText.includes(approachText) || approachText.includes(moveText);
-    if (!matchesApproach) return false;
-    const revisitText = normalizeRejectedMoveText(rejected.revisit_condition ?? "");
-    return !revisitText || !moveText.includes(revisitText);
-  });
-}
-
-function normalizeRejectedMoveText(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, " ").trim();
+  const refSet = new Set(refs);
+  if (refSet.size === 0) return false;
+  return rejectedApproaches.some((rejected) =>
+    Boolean(rejected.candidate_ref && refSet.has(rejected.candidate_ref))
+    || Boolean(rejected.evidence_ref && refSet.has(rejected.evidence_ref))
+  );
 }
 
 function buildOperatorDecisions(summary: RuntimeEvidenceSummary): RuntimeDreamSidecarReview["operator_decisions"] {

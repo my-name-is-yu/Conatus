@@ -2,6 +2,7 @@ import * as path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { compileSoilContextFromRepository } from "../context-compiler.js";
 import { SqliteSoilRepository } from "../sqlite-repository.js";
 
 describe("SqliteSoilRepository", () => {
@@ -323,6 +324,163 @@ describe("SqliteSoilRepository", () => {
       replacement_ref: { kind: "soil_record", id: "soil-new" },
       audit: { retained_for_audit: true },
     });
+  });
+
+  it("excludes corrected records from default direct, lexical, dense, and hybrid retrieval", async () => {
+    await repo.applyMutation({
+      records: [
+        {
+          record_id: "retrieval-old",
+          record_key: "preference.retrieval.old",
+          version: 1,
+          record_type: "preference",
+          soil_id: "memory/preferences/retrieval-old",
+          title: "Retrieval preference old",
+          summary: "Stale retrieval preference.",
+          canonical_text: "Use the retired retrieval memory.",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: 0.8,
+          importance: null,
+          source_reliability: 0.8,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "agent_memory",
+          source_id: "retrieval-old",
+          metadata_json: {},
+          created_at: "2026-05-02T00:00:00.000Z",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        },
+        {
+          record_id: "retrieval-new",
+          record_key: "preference.retrieval.new",
+          version: 1,
+          record_type: "preference",
+          soil_id: "memory/preferences/retrieval-new",
+          title: "Retrieval preference new",
+          summary: "Active retrieval preference.",
+          canonical_text: "Use the active retrieval memory.",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: 1,
+          importance: null,
+          source_reliability: 1,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "manual_tool",
+          source_id: "retrieval-new",
+          metadata_json: {},
+          created_at: "2026-05-02T00:01:00.000Z",
+          updated_at: "2026-05-02T00:01:00.000Z",
+        },
+      ],
+      chunks: [
+        {
+          chunk_id: "retrieval-old-chunk",
+          record_id: "retrieval-old",
+          soil_id: "memory/preferences/retrieval-old",
+          chunk_index: 0,
+          chunk_kind: "paragraph",
+          heading_path_json: [],
+          chunk_text: "Use the retired retrieval memory.",
+          token_count: 5,
+          checksum: "retrieval-old",
+          created_at: "2026-05-02T00:00:00.000Z",
+        },
+        {
+          chunk_id: "retrieval-new-chunk",
+          record_id: "retrieval-new",
+          soil_id: "memory/preferences/retrieval-new",
+          chunk_index: 0,
+          chunk_kind: "paragraph",
+          heading_path_json: [],
+          chunk_text: "Use the active retrieval memory.",
+          token_count: 5,
+          checksum: "retrieval-new",
+          created_at: "2026-05-02T00:01:00.000Z",
+        },
+      ],
+      embeddings: [
+        {
+          chunk_id: "retrieval-old-chunk",
+          model: "test-model",
+          embedding_version: 1,
+          encoding: "json",
+          embedding: [1, 0, 0],
+          embedded_at: "2026-05-02T00:00:00.000Z",
+        },
+        {
+          chunk_id: "retrieval-new-chunk",
+          model: "test-model",
+          embedding_version: 1,
+          encoding: "json",
+          embedding: [1, 0, 0],
+          embedded_at: "2026-05-02T00:01:00.000Z",
+        },
+      ],
+      corrections: [{
+        correction_id: "corr-retrieval-old",
+        target_ref: { kind: "soil_record", id: "retrieval-old" },
+        correction_kind: "retracted",
+        replacement_ref: { kind: "soil_record", id: "retrieval-new" },
+        actor: "manual_tool",
+        reason: "Retracted stale retrieval memory.",
+        created_at: "2026-05-02T00:02:00.000Z",
+        provenance: { source: "manual_tool", source_ref: "memory-retract", confidence: 1 },
+      }],
+    });
+
+    const direct = await repo.lookupDirect({ query: "memory/preferences/retrieval-old" });
+    const lexical = await repo.searchLexical({ query: "retired retrieval memory" });
+    const dense = await repo.searchDense({ query: "retrieval", query_embedding: [1, 0, 0] });
+    const hybrid = await repo.searchHybrid({ query: "retired retrieval memory", query_embedding: [1, 0, 0] });
+
+    expect(direct.candidates.map((item) => item.record_id)).not.toContain("retrieval-old");
+    expect(lexical.map((item) => item.record_id)).not.toContain("retrieval-old");
+    expect(dense.map((item) => item.record_id)).not.toContain("retrieval-old");
+    expect(hybrid.map((item) => item.record_id)).not.toContain("retrieval-old");
+    expect(dense.map((item) => item.record_id)).toContain("retrieval-new");
+
+    const compiled = await compileSoilContextFromRepository({
+      retrievalId: "retrieval-route-retracted",
+      now: () => new Date("2026-05-02T00:03:00.000Z"),
+      targetPaths: ["src/runtime/planning.ts"],
+      routeTargetStates: [
+        { recordId: "retrieval-old", isActive: true, status: "active", lifecycleState: "active" },
+      ],
+      routes: [{
+        route_id: "route-retracted-record",
+        path_globs: ["src/runtime/*"],
+        record_ids: ["retrieval-old"],
+        soil_ids: ["memory/preferences/retrieval-new"],
+        reason: "Route points at mixed active and retracted memory.",
+        created_at: "2026-05-02T00:00:00.000Z",
+        updated_at: "2026-05-02T00:00:00.000Z",
+      }],
+    }, repo);
+
+    expect(compiled.items).toEqual([
+      expect.objectContaining({
+        source: "route",
+        soilId: "memory/preferences/retrieval-new",
+      }),
+    ]);
+    expect(compiled.trace.decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidate_id: "route:route-retracted-record:record:retrieval-old",
+        decision: "rejected",
+      }),
+      expect.objectContaining({
+        candidate_id: "route:route-retracted-record:soil:memory/preferences/retrieval-new",
+        decision: "routed",
+      }),
+    ]));
   });
 
   it("stores non-active Soil correction audit entries without invalidating the target", async () => {
