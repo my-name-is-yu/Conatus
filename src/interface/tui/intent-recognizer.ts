@@ -21,49 +21,30 @@ export interface RecognizedIntent {
   params?: Record<string, string>; // e.g., { description: "write a README" }
   response?: string; // conversational response text for "chat" intent
   raw: string; // original user input
+  source?: "command" | "classifier" | "unavailable";
+  confidence?: number;
 }
 
-// ─── Keyword table ───
+// ─── Exact command grammar ───
 
-interface KeywordRule {
-  pattern: RegExp;
-  intent: IntentType;
-}
-
-const KEYWORD_RULES: KeywordRule[] = [
-  {
-    pattern: /^\/?\?(help)?$/i,
-    intent: "help",
-  },
-  {
-    pattern: /^\/(stop|quit|exit)/i,
-    intent: "loop_stop",
-  },
-  {
-    pattern: /^\/(run|start)(\s+.*)?$/i,
-    intent: "loop_start",
-  },
-  {
-    pattern: /^\/status$/i,
-    intent: "status",
-  },
-  {
-    pattern: /^\/report$/i,
-    intent: "report",
-  },
-  {
-    pattern: /^\/(goals?\s*(list)?)$/i,
-    intent: "goal_list",
-  },
-  {
-    pattern: /^\/help$/i,
-    intent: "help",
-  },
-  {
-    pattern: /^\/(dashboard|d)$/i,
-    intent: "dashboard",
-  },
-];
+const COMMAND_ALIASES: Record<string, IntentType> = {
+  "?": "help",
+  "/?": "help",
+  "/help": "help",
+  "/stop": "loop_stop",
+  "/quit": "loop_stop",
+  "/exit": "loop_stop",
+  "/run": "loop_start",
+  "/start": "loop_start",
+  "/status": "status",
+  "/report": "report",
+  "/goals": "goal_list",
+  "/goal": "goal_list",
+  "/goals list": "goal_list",
+  "/goal list": "goal_list",
+  "/dashboard": "dashboard",
+  "/d": "dashboard",
+};
 
 // ─── LLM response schema ───
 
@@ -75,12 +56,15 @@ const LLMIntentSchema = z.object({
     "chat",
     "unknown",
   ]),
+  confidence: z.number().min(0).max(1),
   response: z.string().optional(),
   params: z.object({
     description: z.string().optional(),
     goalId: z.string().optional(),
   }).optional(),
 });
+
+const MIN_CLASSIFIER_CONFIDENCE = 0.7;
 
 function getSystemPrompt(): string {
   return `${getInternalIdentityPrefix("assistant")} PulSeed is an AI agent orchestrator that manages goals with measurable dimensions.
@@ -90,56 +74,66 @@ Available actions you can trigger:
 - loop_start: When the user wants to start executing a goal.
 - loop_stop: When the user wants to stop execution.
 
-For any other input, respond conversationally. Explain PulSeed's state, answer questions, or suggest what to do.
+For any other input, respond conversationally. Explain PulSeed's state, answer questions, or suggest what to do. If the user's intent is ambiguous or too low-confidence to act on, return unknown.
 
-Respond in JSON: { "intent": "chat" | "goal_create" | "loop_start" | "loop_stop", "response": "your response text", "params": { "description": "..." } }`;
+Respond in JSON: { "intent": "chat" | "goal_create" | "loop_start" | "loop_stop" | "unknown", "confidence": 0.0-1.0, "response": "your response text", "params": { "description": "..." } }`;
 }
 
 // ─── IntentRecognizer ───
 
 /**
- * Hybrid intent recognizer: tries keyword regex first (free), falls back to LLM.
+ * TUI intent recognizer.
+ *
+ * Exact slash/symbol commands are parsed as command grammar. Freeform
+ * natural-language input is classified through the structured LLM contract.
  */
 export class IntentRecognizer {
   constructor(private llmClient?: ILLMClient) {}
 
   async recognize(input: string): Promise<RecognizedIntent> {
-    // 1. Try keyword match first (cost: $0, instant)
-    const keywordResult = this.keywordMatch(input);
-    if (keywordResult) return keywordResult;
+    const commandResult = this.parseExactCommand(input);
+    if (commandResult) return commandResult;
 
-    // 2. LLM fallback if available
-    if (this.llmClient) return this.llmFallback(input);
+    if (this.llmClient) return this.classifyNaturalLanguage(input);
 
-    // 3. No match, no LLM
-    return { intent: "unknown", raw: input };
+    return { intent: "unknown", raw: input, source: "unavailable" };
   }
 
-  private keywordMatch(input: string): RecognizedIntent | null {
+  private parseExactCommand(input: string): RecognizedIntent | null {
     const trimmed = input.trim();
-    for (const rule of KEYWORD_RULES) {
-      if (rule.pattern.test(trimmed)) {
-        // For loop_start, extract optional goal argument (number or name)
-        if (rule.intent === "loop_start") {
-          const match = trimmed.match(/^\/(run|start)\s+(.+)$/i);
-          const goalArg = match ? match[2].trim() : undefined;
-          const params: Record<string, string> = goalArg ? { goalArg } : {};
-          return {
-            intent: rule.intent,
-            params: Object.keys(params).length > 0 ? params : undefined,
-            raw: input,
-          };
-        }
-        return { intent: rule.intent, raw: input };
-      }
+    const normalized = trimmed.toLowerCase().replace(/\s+/g, " ");
+    const [commandToken, ...argTokens] = normalized.split(" ");
+    if (!commandToken) return null;
+    const command = COMMAND_ALIASES[normalized] ?? COMMAND_ALIASES[commandToken];
+    if (!command) return null;
+
+    if (command === "loop_start" && (commandToken === "/run" || commandToken === "/start")) {
+      const originalTokens = trimmed.split(/\s+/);
+      const goalArg = originalTokens.slice(1).join(" ").trim();
+      return {
+        intent: command,
+        params: goalArg ? { goalArg } : undefined,
+        raw: input,
+        source: "command",
+        confidence: 1,
+      };
     }
-    return null;
+
+    if (argTokens.length > 0 && !COMMAND_ALIASES[normalized]) {
+      return null;
+    }
+
+    return {
+      intent: command,
+      raw: input,
+      source: "command",
+      confidence: 1,
+    };
   }
 
-  private async llmFallback(input: string): Promise<RecognizedIntent> {
-    // llmFallback is only called when this.llmClient is defined (see recognize())
+  private async classifyNaturalLanguage(input: string): Promise<RecognizedIntent> {
     const llmClient = this.llmClient;
-    if (!llmClient) return { intent: "unknown", raw: input };
+    if (!llmClient) return { intent: "unknown", raw: input, source: "unavailable" };
     try {
       const llmResponse = await llmClient.sendMessage(
         [{ role: "user", content: input }],
@@ -148,10 +142,19 @@ export class IntentRecognizer {
 
       const parsed = llmClient.parseJSON(llmResponse.content, LLMIntentSchema);
 
+      if (parsed.intent === "unknown" || parsed.confidence < MIN_CLASSIFIER_CONFIDENCE) {
+        return {
+          intent: "unknown",
+          raw: input,
+          source: "classifier",
+          confidence: parsed.confidence,
+          response: parsed.response,
+        };
+      }
+
       const params: Record<string, string> = {};
       if (parsed.params?.description) params["description"] = parsed.params.description;
       if (parsed.params?.goalId) params["goalId"] = parsed.params.goalId;
-      // For chat intent, also expose response text via params for legacy compatibility
       if (parsed.response) params["response"] = parsed.response;
 
       return {
@@ -159,11 +162,13 @@ export class IntentRecognizer {
         params: Object.keys(params).length > 0 ? params : undefined,
         response: parsed.response,
         raw: input,
+        source: "classifier",
+        confidence: parsed.confidence,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[IntentRecognizer] LLM fallback failed: ${msg}`);
-      return { intent: "unknown", raw: input };
+      console.error(`[IntentRecognizer] natural-language classifier failed: ${msg}`);
+      return { intent: "unknown", raw: input, source: "unavailable" };
     }
   }
 }
