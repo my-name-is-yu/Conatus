@@ -1,4 +1,9 @@
-import type { RunSpec, RunSpecDeadline, RunSpecMissingField } from "./types.js";
+import {
+  classifyConfirmationDecision,
+  type ConfirmationDecision,
+} from "../confirmation-decision.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import type { RunSpec, RunSpecMissingField } from "./types.js";
 import { RunSpecSchema } from "./types.js";
 
 export type RunSpecConfirmationResult =
@@ -11,6 +16,7 @@ export type RunSpecConfirmationResult =
 export interface RunSpecConfirmationContext {
   now?: Date;
   timezone?: string;
+  llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
 }
 
 export function formatRunSpecSetupProposal(spec: RunSpec): string {
@@ -39,20 +45,25 @@ export function formatRunSpecSetupProposal(spec: RunSpec): string {
   return lines.join("\n");
 }
 
-export function handleRunSpecConfirmationInput(
+export async function handleRunSpecConfirmationInput(
   spec: RunSpec,
   input: string,
   context: RunSpecConfirmationContext = {},
-): RunSpecConfirmationResult {
-  const trimmed = input.trim();
+): Promise<RunSpecConfirmationResult> {
   const now = context.now ?? new Date();
+  const decision = await classifyConfirmationDecision(input, {
+    kind: "run_spec_confirmation",
+    llmClient: context.llmClient,
+    allowedDecisions: ["approve", "cancel", "revise", "unknown"],
+    subject: formatRunSpecConfirmationContext(spec),
+  });
 
-  if (/^(cancel|abort|stop|やめる|キャンセル)$/i.test(trimmed)) {
+  if (decision.decision === "cancel") {
     const cancelled = updateSpec(spec, { status: "cancelled", updated_at: now.toISOString() });
     return { kind: "cancelled", spec: cancelled, message: `RunSpec cancelled: ${cancelled.id}` };
   }
 
-  if (/^(confirm|start|start run|approve|ok|yes|開始|承認)$/i.test(trimmed)) {
+  if (decision.decision === "approve") {
     const required = requiredMissingFields(spec);
     if (required.length > 0) {
       return {
@@ -65,11 +76,21 @@ export function handleRunSpecConfirmationInput(
     return { kind: "confirmed", spec: confirmed, message: `RunSpec confirmed: ${confirmed.id}` };
   }
 
-  const revised = applyRunSpecRevision(spec, trimmed, {
-    now,
-    timezone: context.timezone,
-  });
-  if (revised) {
+  if (decision.decision === "revise") {
+    const revised = applyRunSpecRevision(spec, decision, {
+      now,
+      timezone: context.timezone,
+    });
+    if (!revised) {
+      return {
+        kind: "unrecognized",
+        spec,
+        message: [
+          "RunSpec revision needs structured workspace, deadline, or metric direction details.",
+          formatMissingFieldsMessage(requiredMissingFields(spec)),
+        ].filter(Boolean).join("\n"),
+      };
+    }
     return {
       kind: "revised",
       spec: revised,
@@ -82,7 +103,7 @@ export function handleRunSpecConfirmationInput(
     spec,
     message: [
       "RunSpec is awaiting confirmation.",
-      "Use confirm, cancel, or revise with a workspace, deadline, or metric direction.",
+      decision.clarification ?? "Please approve, cancel, or revise the pending RunSpec.",
       formatMissingFieldsMessage(requiredMissingFields(spec)),
     ].filter(Boolean).join("\n"),
   };
@@ -94,20 +115,21 @@ export function requiredMissingFields(spec: RunSpec): RunSpecMissingField[] {
 
 export function applyRunSpecRevision(
   spec: RunSpec,
-  input: string,
+  decision: ConfirmationDecision,
   context: RunSpecConfirmationContext = {},
 ): RunSpec | null {
   const now = context.now ?? new Date();
+  const revision = decision.revision;
+  if (!revision) return null;
   const updates: Partial<RunSpec> = {
     updated_at: now.toISOString(),
   };
   let changed = false;
   let missingFields = [...spec.missing_fields];
 
-  const workspace = parseWorkspace(input);
-  if (workspace) {
+  if (revision.workspace_path) {
     updates.workspace = {
-      path: workspace,
+      path: revision.workspace_path,
       source: "user",
       confidence: "high",
     };
@@ -115,23 +137,27 @@ export function applyRunSpecRevision(
     changed = true;
   }
 
-  const deadline = parseDeadline(input, now, context.timezone);
-  if (deadline) {
-    updates.deadline = deadline;
+  if (revision.deadline) {
+    updates.deadline = {
+      raw: revision.deadline.raw,
+      iso_at: revision.deadline.iso_at ?? null,
+      timezone: revision.deadline.timezone ?? context.timezone ?? null,
+      finalization_buffer_minutes: revision.deadline.finalization_buffer_minutes ?? null,
+      confidence: revision.deadline.confidence ?? "medium",
+    };
     updates.budget = {
       ...spec.budget,
-      max_wall_clock_minutes: deadline.iso_at ? minutesUntil(now, new Date(deadline.iso_at)) : spec.budget.max_wall_clock_minutes,
+      max_wall_clock_minutes: updates.deadline.iso_at ? minutesUntil(now, new Date(updates.deadline.iso_at)) : spec.budget.max_wall_clock_minutes,
       resident_policy: "until_deadline",
     };
     missingFields = removeMissing(missingFields, "deadline");
     changed = true;
   }
 
-  const metricDirection = parseMetricDirection(input);
-  if (metricDirection && spec.metric) {
+  if (revision.metric_direction && spec.metric) {
     updates.metric = {
       ...spec.metric,
-      direction: metricDirection,
+      direction: revision.metric_direction,
       confidence: "high",
     };
     missingFields = removeMissing(missingFields, "metric.direction");
@@ -145,6 +171,26 @@ export function applyRunSpecRevision(
   });
 }
 
+function formatRunSpecConfirmationContext(spec: RunSpec): string {
+  const required = requiredMissingFields(spec);
+  return [
+    `RunSpec ID: ${spec.id}`,
+    `Status: ${spec.status}`,
+    `Profile: ${spec.profile}`,
+    `Objective: ${spec.objective}`,
+    `Workspace: ${spec.workspace?.path ?? "unresolved"}`,
+    `Deadline: ${spec.deadline?.raw ?? "unresolved"}`,
+    `Metric: ${spec.metric ? `${spec.metric.name} (${spec.metric.direction})` : "unresolved"}`,
+    `Progress: ${spec.progress_contract.semantics}`,
+    `Submit policy: ${spec.approval_policy.submit}`,
+    `Publish policy: ${spec.approval_policy.publish}`,
+    `External actions: ${spec.approval_policy.external_action}`,
+    `Secret policy: ${spec.approval_policy.secret}`,
+    `Irreversible actions: ${spec.approval_policy.irreversible_action}`,
+    required.length > 0 ? `Required missing fields: ${required.map((field) => field.field).join(", ")}` : "Required missing fields: none",
+  ].join("\n");
+}
+
 function updateSpec(spec: RunSpec, updates: Partial<RunSpec>): RunSpec {
   return RunSpecSchema.parse({
     ...spec,
@@ -154,44 +200,6 @@ function updateSpec(spec: RunSpec, updates: Partial<RunSpec>): RunSpec {
 
 function removeMissing(fields: RunSpecMissingField[], field: string): RunSpecMissingField[] {
   return fields.filter((entry) => entry.field !== field);
-}
-
-function parseWorkspace(input: string): string | null {
-  return input.match(/(?:workspace|cwd|directory|dir|repo|path)\s+((?:~|\/)[^\s,]+)/i)?.[1]
-    ?? input.match(/(?:ワークスペース|ディレクトリ|リポジトリ)\s*((?:~|\/)[^\s,]+)/i)?.[1]
-    ?? null;
-}
-
-function parseMetricDirection(input: string): "maximize" | "minimize" | null {
-  if (/\b(maximi[sz]e|higher|increase)\b|最大|上げ|高く/i.test(input)) return "maximize";
-  if (/\b(minimi[sz]e|lower|decrease|reduce)\b|最小|下げ|低く/i.test(input)) return "minimize";
-  return null;
-}
-
-function parseDeadline(input: string, now: Date, timezone: string | undefined): RunSpecDeadline | null {
-  const lower = input.toLowerCase();
-  if (lower.includes("tomorrow morning") || /明日.*(朝|午前)/.test(input)) {
-    const at = new Date(now);
-    at.setDate(at.getDate() + 1);
-    at.setHours(9, 0, 0, 0);
-    return {
-      raw: lower.includes("tomorrow morning") ? "tomorrow morning" : "明日朝",
-      iso_at: at.toISOString(),
-      timezone: timezone ?? null,
-      finalization_buffer_minutes: 60,
-      confidence: "medium",
-    };
-  }
-  const hoursMatch = input.match(/\b(?:for|within|deadline)\s+(\d+)\s*(hours?|hrs?)\b/i);
-  if (!hoursMatch) return null;
-  const at = new Date(now.getTime() + Number(hoursMatch[1]) * 60 * 60 * 1000);
-  return {
-    raw: hoursMatch[0],
-    iso_at: at.toISOString(),
-    timezone: timezone ?? null,
-    finalization_buffer_minutes: 30,
-    confidence: "medium",
-  };
 }
 
 function formatMissingFieldsMessage(fields: RunSpecMissingField[]): string {
