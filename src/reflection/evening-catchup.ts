@@ -56,7 +56,10 @@ export async function runEveningCatchup(deps: {
       // No morning report available
     }
 
-    const prompt = `${getInternalIdentityPrefix("evening catch-up assistant")} Review today's goal progress.
+    const prompt = `${getInternalIdentityPrefix("evening catch-up assistant", {
+      baseDir,
+      profileScope: "local_planning",
+    })} Review today's goal progress.
 
 Current goal state:
 ${JSON.stringify(goalSummaries, null, 2)}

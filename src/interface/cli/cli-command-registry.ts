@@ -37,6 +37,7 @@ import { cmdSuggest, cmdImprove } from "./commands/suggest.js";
 import { cmdSetup } from "./commands/setup.js";
 import { cmdKnowledgeList, cmdKnowledgeSearch, cmdKnowledgeStats } from "./commands/knowledge.js";
 import { cmdMemory } from "./commands/memory.js";
+import { cmdProfile } from "./commands/profile.js";
 import { cmdTaskList, cmdTaskShow } from "./commands/task-read.js";
 import { cmdDoctor } from "./commands/doctor.js";
 import { cmdLogs } from "./commands/logs.js";
@@ -518,6 +519,10 @@ export async function dispatchCommand(
 
   if (subcommand === "memory") {
     return await cmdMemory(stateManager, argv.slice(1));
+  }
+
+  if (subcommand === "profile") {
+    return await cmdProfile(stateManager, argv.slice(1));
   }
 
   if (subcommand === "task") {

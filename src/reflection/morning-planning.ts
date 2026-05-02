@@ -48,7 +48,10 @@ export async function runMorningPlanning(deps: {
   let concerns: string[] = [];
 
   if (goalSummaries.length > 0) {
-    const prompt = `${getInternalIdentityPrefix("morning planner")} Review these active goals and create a daily plan.
+    const prompt = `${getInternalIdentityPrefix("morning planner", {
+      baseDir,
+      profileScope: "local_planning",
+    })} Review these active goals and create a daily plan.
 
 Goals:
 ${JSON.stringify(goalSummaries, null, 2)}

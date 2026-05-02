@@ -315,7 +315,10 @@ export async function runProactiveMaintenance(params: {
       ? state.active_goals.map((id) => `- ${id}`).join("\n")
       : "(no active goals)";
 
-    const prompt = `${getInternalIdentityPrefix("proactive engine")} Given the current state of all goals:\n${goalSummaries}\n\nDecide what action to take:\n- "suggest_goal": A new goal should be created (provide title + description)\n- "investigate": Something needs investigation (provide what and why)\n- "preemptive_check": Run a pre-emptive observation (provide goal_id)\n- "sleep": Nothing needs attention right now\n\nRespond with JSON: { "action": "...", "details": { ... } }`;
+    const prompt = `${getInternalIdentityPrefix("proactive engine", {
+      baseDir: config.runtime_root,
+      profileScope: "resident_behavior",
+    })} Given the current state of all goals:\n${goalSummaries}\n\nDecide what action to take:\n- "suggest_goal": A new goal should be created (provide title + description)\n- "investigate": Something needs investigation (provide what and why)\n- "preemptive_check": Run a pre-emptive observation (provide goal_id)\n- "sleep": Nothing needs attention right now\n\nRespond with JSON: { "action": "...", "details": { ... } }`;
 
     const response = await llmClient.sendMessage(
       [{ role: "user", content: prompt }],
