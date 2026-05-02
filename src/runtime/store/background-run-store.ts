@@ -63,6 +63,7 @@ export interface BackgroundRunCreateInput {
   parent_session_id?: string | null;
   child_session_id?: string | null;
   process_session_id?: string | null;
+  goal_id?: string | null;
   status?: Extract<BackgroundRunStatus, "queued" | "running">;
   title?: string | null;
   workspace?: string | null;
@@ -134,6 +135,7 @@ export class BackgroundRunLedger {
       parent_session_id: input.parent_session_id ?? null,
       child_session_id: input.child_session_id ?? null,
       process_session_id: input.process_session_id ?? null,
+      goal_id: input.goal_id ?? null,
       status: input.status ?? "queued",
       notify_policy: input.notify_policy ?? "done_only",
       reply_target_source: input.reply_target_source ?? (input.pinned_reply_target ? "pinned_run" : "none"),

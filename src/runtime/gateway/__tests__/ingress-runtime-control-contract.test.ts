@@ -12,6 +12,7 @@ import type { Envelope } from "../../types/envelope.js";
 import { createEnvelope } from "../../types/envelope.js";
 import type { ChannelAdapter, EnvelopeHandler, ReplyChannel } from "../channel-adapter.js";
 import { IngressGateway } from "../ingress-gateway.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -96,6 +97,10 @@ describe("IngressGateway runtime-control contract", () => {
         },
       });
       const manager = new CrossPlatformChatSessionManager(makeDeps({
+        llmClient: createMockLLMClient([
+          JSON.stringify({ intent: "restart_gateway", reason: "gateway を再起動して" }),
+          JSON.stringify({ intent: "restart_daemon", reason: "PulSeed を再起動して" }),
+        ]),
         runtimeControlService,
       }));
 

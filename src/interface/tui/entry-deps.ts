@@ -308,6 +308,7 @@ export async function buildStandaloneTuiDeps() {
     const { RuntimeControlService, createDaemonRuntimeControlExecutor } = await import("../../runtime/control/index.js");
     const runtimeControlService = new RuntimeControlService({
       runtimeRoot: path.join(stateManager.getBaseDir(), "runtime"),
+      stateManager,
       executor: createDaemonRuntimeControlExecutor({ baseDir: stateManager.getBaseDir() }),
     });
     const chatAgentLoopRunner = shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
@@ -464,6 +465,7 @@ export async function buildDaemonModeChatSurface(
       : undefined;
     const runtimeControlService = new RuntimeControlService({
       runtimeRoot: path.join(stateManager.getBaseDir(), "runtime"),
+      stateManager,
       executor: createDaemonRuntimeControlExecutor({ baseDir: stateManager.getBaseDir() }),
     });
     chatRunner = new SharedManagerTuiChatSurface({

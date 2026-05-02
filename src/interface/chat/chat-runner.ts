@@ -27,6 +27,7 @@ import type { ChatEvent } from "./chat-events.js";
 import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
+import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -405,7 +406,7 @@ export class ChatRunner {
 
     const selectedRoute = resumeOnly
       ? null
-      : (options.selectedRoute ?? this.resolveRouteFromInput(input, runtimeControlContext));
+      : (options.selectedRoute ?? await this.resolveRouteFromInput(input, runtimeControlContext));
     this.lastSelectedRoute = selectedRoute;
     this.eventBridge.emitIntent(input, selectedRoute, eventContext);
 
@@ -581,14 +582,28 @@ export class ChatRunner {
     return policy;
   }
 
-  private resolveRouteFromIngress(ingress: ChatIngressMessage): SelectedChatRoute {
-    return standaloneIngressRouter.selectRoute(ingress, getRouteCapabilities(this.deps));
+  private async resolveRouteFromIngress(ingress: ChatIngressMessage): Promise<SelectedChatRoute> {
+    const capabilities = getRouteCapabilities(this.deps);
+    const runtimeControlAllowed =
+      ingress.runtimeControl.allowed
+      && ingress.runtimeControl.approvalMode !== "disallowed"
+      && (
+        capabilities.hasRuntimeControlService
+        || (!capabilities.hasAgentLoop && !capabilities.hasToolLoop)
+      );
+    const runtimeControlIntent = runtimeControlAllowed
+      ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
+      : null;
+    return standaloneIngressRouter.selectRoute(ingress, {
+      ...capabilities,
+      runtimeControlIntent,
+    });
   }
 
-  private resolveRouteFromInput(
+  private async resolveRouteFromInput(
     input: string,
     runtimeControlContext: RuntimeControlChatContext | null
-  ): SelectedChatRoute {
+  ): Promise<SelectedChatRoute> {
     return this.resolveRouteFromIngress(
       buildStandaloneIngressMessageFromContext(input, runtimeControlContext, this.deps)
     );

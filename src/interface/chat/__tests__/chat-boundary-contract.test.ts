@@ -24,6 +24,7 @@ import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.
 import { ChatRunner } from "../chat-runner.js";
 import { SharedManagerTuiChatSurface } from "../../tui/chat-surface.js";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -216,6 +217,20 @@ describe("chat boundary contracts", () => {
     const manager = new CrossPlatformChatSessionManager({
       stateManager,
       adapter: makeMockAdapter(),
+      chatAgentLoopRunner: {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "ordinary chat",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 1,
+          stopped_reason: "completed",
+        }),
+      } as never,
+      llmClient: createMockLLMClient([
+        JSON.stringify({ intent: "none", reason: "ordinary greeting" }),
+        JSON.stringify({ intent: "restart_daemon", reason: "PulSeed を再起動して" }),
+      ]),
       runtimeControlService,
       approvalFn: vi.fn().mockResolvedValue(true),
     });

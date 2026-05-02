@@ -273,6 +273,7 @@ async function createCoreLoopBackgroundRun(goal: Goal, deps: TendDeps) {
   const input: BackgroundRunCreateInput = {
     id: `run:coreloop:${randomUUID()}`,
     kind: "coreloop_run",
+    goal_id: goal.id,
     parent_session_id: parentSessionId,
     notify_policy: pinnedReplyTarget ? "done_only" : "silent",
     reply_target_source: pinnedReplyTarget ? "pinned_run" : "none",
