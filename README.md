@@ -19,6 +19,11 @@ PulSeed is a lifelong personal agent for goals that take time.
 Tell it what matters, and it remembers the goal, watches what changes,
 delegates work to agents, verifies progress, and keeps moving your life forward.
 
+Its current technical wedge is long-running goal orchestration, but that is not
+the final category. PulSeed is being built toward a lifelong companion agent
+with durable personal context, presence, proactive dialogue, and safe
+delegation. See [Positioning](docs/positioning.md).
+
 The primary entry point is `pulseed`. The normal flow is natural language, not a
 menu of subcommands.
 
@@ -57,6 +62,7 @@ PulSeed will guide provider and adapter setup when needed.
 ## Links
 
 - [Get Started](docs/getting-started.md)
+- [Positioning](docs/positioning.md)
 - [Docs Index](docs/index.md)
 - [Runtime](docs/runtime.md)
 - [Configuration](docs/configuration.md)

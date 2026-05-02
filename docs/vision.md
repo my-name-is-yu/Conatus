@@ -8,6 +8,14 @@ PulSeed is a lifelong personal agent that remembers your goals, watches the worl
 
 Tell PulSeed your goal, and it will stay with it for days, months, or years. PulSeed is not an "assistant waiting for instructions." It remembers what matters, observes what changes, and keeps moving toward the life or outcome you want.
 
+PulSeed's current strongest technical wedge is long-running goal orchestration:
+holding goals, delegating bounded work to agents, verifying progress, and
+keeping a local runtime alive across time. That is one capability inside the
+larger product direction, not the final category. The north star is a lifelong
+companion agent with durable personal context, presence, proactive dialogue,
+safe intervention, and life-scale goal pursuit. See [Positioning](positioning.md)
+for the short canonical framing.
+
 ---
 
 ## 2. The Problem It Solves

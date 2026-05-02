@@ -6,23 +6,26 @@ It defines the reading order, the source-of-truth policy, and the boundaries bet
 ## Reading order
 
 1. [README](../README.md)
-2. [Getting Started](getting-started.md)
-3. [Runtime](runtime.md)
-4. [Mechanism](mechanism.md)
-5. [Configuration](configuration.md)
-6. [Architecture Map](architecture-map.md)
-7. [Module Map](module-map.md)
-8. [Vision](vision.md)
-9. [Use Cases](usecase.md)
-10. [Roadmap](roadmap.md)
-11. [Status](status.md)
-12. [Design Index](design/index.md)
+2. [Positioning](positioning.md)
+3. [Getting Started](getting-started.md)
+4. [Runtime](runtime.md)
+5. [Mechanism](mechanism.md)
+6. [Configuration](configuration.md)
+7. [Architecture Map](architecture-map.md)
+8. [Module Map](module-map.md)
+9. [Vision](vision.md)
+10. [Use Cases](usecase.md)
+11. [Roadmap](roadmap.md)
+12. [Status](status.md)
+13. [Design Index](design/index.md)
 
 ## Source of truth
 
 When public docs overlap, prefer the most specific page for the topic:
 
 - `README.md` for project entry, short overview, and first link out
+- `positioning.md` for the canonical short explanation of product category,
+  current wedge, and north star
 - `getting-started.md` for installation and first run
 - `runtime.md` for runtime surfaces and operational commands
 - `mechanism.md` for the conceptual execution model
@@ -41,6 +44,7 @@ If code and docs disagree, treat code and tests as the higher-priority source.
 Start here:
 
 - `README.md`
+- `positioning.md`
 - `getting-started.md`
 
 ### Concepts
@@ -68,6 +72,7 @@ Lookup material:
 
 Product direction and narrative examples:
 
+- `positioning.md`
 - `vision.md`
 - `usecase.md`
 - `roadmap.md`
