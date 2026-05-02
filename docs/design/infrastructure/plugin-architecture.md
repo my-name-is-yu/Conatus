@@ -744,7 +744,7 @@ CoreLoop (unchanged)
 - `NotifierRegistry` (`src/notifier-registry.ts`)
 - `PluginLoader` (`src/plugin-loader.ts`) — discovery, loading, validation, registration
 - `NotifierRegistry` integration into `NotificationDispatcher`
-- CLI: `pulseed plugin list`, `pulseed plugin install <path>`, `pulseed plugin remove <name>`
+- CLI: `pulseed plugin list`, `pulseed plugin install <path|package>`, `pulseed plugin update <name>`, `pulseed plugin search <keyword>`, `pulseed plugin remove <name>`
 - Phase 1 `plugin_config` field support in goal definitions
 
 **Completion criteria**:
@@ -782,7 +782,7 @@ CoreLoop (unchanged)
 
 | Phase | Details |
 |-------|---------|
-| Plugin marketplace | Search and install community plugins with `pulseed plugin search <keyword>` |
+| Plugin marketplace | Add a curated registry UI or index on top of the existing `pulseed plugin search <keyword>` npm search command |
 | Version management | Enforce `min_pulseed_version` / `max_pulseed_version`, migration support for breaking changes |
 | Worker Thread isolation | Isolate from the same process to improve crash resilience |
 | Plugin signing | Tamper detection via code signing |

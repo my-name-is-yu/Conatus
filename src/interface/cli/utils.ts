@@ -84,7 +84,9 @@ Usage:
   pulseed playbook disable <id>        Disable a playbook from retrieval
   pulseed playbook delete <id>         Delete a stored playbook
   pulseed plugin list                  List installed plugins
-  pulseed plugin install <path>        Install a plugin from a local directory
+  pulseed plugin install <path|package> Install a plugin from a local path or npm package
+  pulseed plugin update <name>         Update an installed npm-backed plugin
+  pulseed plugin search <keyword>      Search @pulseed-plugins packages
   pulseed plugin remove <name>         Remove an installed plugin
   pulseed logs                          View daemon logs (last 50 lines)
   pulseed logs --follow                Tail daemon logs in real-time

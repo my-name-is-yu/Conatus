@@ -12,6 +12,7 @@ import { getPluginsDir } from "../../../base/utils/paths.js";
 import { parseSemver, compareSemver, satisfiesRange } from "../../../runtime/plugin-loader.js";
 
 const execFile = promisify(cp.execFile);
+const NPM_SOURCE_METADATA = ".pulseed-plugin-source.json";
 
 function defaultPluginsDir(): string {
   return getPluginsDir();
@@ -111,13 +112,89 @@ function isNpmPackage(arg: string): boolean {
 }
 
 /** Read and validate plugin manifest from an npm-installed package directory. */
-async function readNpmManifest(pluginDir: string, packageName: string) {
+function getNpmPackageRoot(pluginDir: string, packageName: string): string {
   // Resolve the package dir inside node_modules
   const pkgName = packageName.startsWith("@")
     ? packageName.split("/").slice(0, 2).join("/")
     : packageName.split("/")[0];
-  const nodeModulesDir = path.join(pluginDir, "node_modules", pkgName);
-  return readManifest(nodeModulesDir);
+  return path.join(pluginDir, "node_modules", pkgName);
+}
+
+/** Read and validate plugin manifest from an npm-installed package directory. */
+async function readNpmManifest(pluginDir: string, packageName: string) {
+  return readManifest(getNpmPackageRoot(pluginDir, packageName));
+}
+
+async function copyPackageRootToPluginDir(packageRoot: string, pluginDir: string): Promise<void> {
+  const existingEntries = await fsp.readdir(pluginDir, { withFileTypes: true });
+  for (const entry of existingEntries) {
+    if (entry.name === "node_modules" || entry.name === NPM_SOURCE_METADATA) continue;
+    await fsp.rm(path.join(pluginDir, entry.name), { recursive: true, force: true });
+  }
+
+  const entries = await fsp.readdir(packageRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === "node_modules") continue;
+    const source = path.join(packageRoot, entry.name);
+    const destination = path.join(pluginDir, entry.name);
+    await fsp.cp(source, destination, { recursive: true });
+  }
+}
+
+async function writeNpmSourceMetadata(pluginDir: string, packageName: string): Promise<void> {
+  await fsp.writeFile(
+    path.join(pluginDir, NPM_SOURCE_METADATA),
+    `${JSON.stringify({ type: "npm", packageName }, null, 2)}\n`,
+    "utf-8",
+  );
+}
+
+async function readNpmSourceMetadata(pluginDir: string): Promise<{ packageName: string } | null> {
+  try {
+    const raw = await fsp.readFile(path.join(pluginDir, NPM_SOURCE_METADATA), "utf-8");
+    const parsed = JSON.parse(raw) as { type?: unknown; packageName?: unknown };
+    if (parsed.type === "npm" && typeof parsed.packageName === "string" && parsed.packageName.length > 0) {
+      return { packageName: parsed.packageName };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function findPluginDirByName(pluginsDir: string, name: string): Promise<string | null> {
+  const direct = path.join(pluginsDir, name);
+  if (await pathExists(direct)) return direct;
+
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(pluginsDir);
+  } catch {
+    return null;
+  }
+
+  for (const entry of entries) {
+    const candidate = path.join(pluginsDir, entry);
+    let stat: Awaited<ReturnType<typeof fsp.stat>>;
+    try {
+      stat = await fsp.stat(candidate);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+
+    let manifest: Awaited<ReturnType<typeof readManifest>>;
+    try {
+      manifest = await readManifest(candidate);
+    } catch {
+      continue;
+    }
+    if (manifest?.success && manifest.data.name === name) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 /** Check PulSeed version compatibility, log a warning if incompatible, return false to abort. */
@@ -173,6 +250,9 @@ export async function cmdPluginInstall(
     }
 
     try {
+      if (force) {
+        await fsp.rm(pluginDir, { recursive: true, force: true });
+      }
       await fsp.mkdir(pluginDir, { recursive: true });
     } catch (err) {
       logger.error(formatOperationError("create plugin directory", err));
@@ -203,6 +283,20 @@ export async function cmdPluginInstall(
 
     if (manifest.permissions.shell) {
       logger.warn(`Plugin "${manifest.name}" requests shell execution permission.`);
+    }
+
+    try {
+      await copyPackageRootToPluginDir(getNpmPackageRoot(pluginDir, packageName), pluginDir);
+      await writeNpmSourceMetadata(pluginDir, packageName);
+    } catch (err) {
+      logger.error(formatOperationError("prepare npm plugin for runtime discovery", err));
+      return 1;
+    }
+
+    const verify = await readManifest(pluginDir);
+    if (!verify || !verify.success) {
+      logger.error(`Error: plugin install failed — manifest unreadable after preparing npm package.`);
+      return 1;
     }
 
     console.log(`Plugin "${manifest.name}" v${manifest.version} installed from npm.`);
@@ -275,21 +369,52 @@ export async function cmdPluginUpdate(
     return 1;
   }
 
-  const pluginDir = path.join(dir, name);
-  if (!(await pathExists(pluginDir))) {
+  const pluginDir = await findPluginDirByName(dir, name);
+  if (!pluginDir) {
     logger.error(`Error: plugin "${name}" not found.`);
     return 1;
   }
 
+  const metadata = await readNpmSourceMetadata(pluginDir);
+  const manifest = await readManifest(pluginDir);
+  const packageName = metadata?.packageName ?? (manifest?.success ? manifest.data.name : name);
   const execFn = _execFileFn ?? execFile;
   try {
-    await execFn("npm", ["update", "--prefix", pluginDir]);
+    await execFn("npm", ["install", "--prefix", pluginDir, packageName]);
   } catch (err) {
-    logger.error(formatOperationError("npm update", err));
+    logger.error(formatOperationError("npm install", err));
     return 1;
   }
 
-  console.log(`Plugin "${name}" updated.`);
+  const result = await readNpmManifest(pluginDir, packageName);
+  if (!result) {
+    logger.error(`Error: plugin manifest not found after npm install of "${packageName}".`);
+    return 1;
+  }
+  if (!result.success) {
+    logger.error(`Error: invalid plugin manifest — ${result.error.message}`);
+    return 1;
+  }
+
+  const updatedManifest = result.data;
+  const pulseedVer = getPulseedVersion();
+  if (!checkVersionCompat(updatedManifest, pulseedVer)) return 1;
+
+  try {
+    await copyPackageRootToPluginDir(getNpmPackageRoot(pluginDir, packageName), pluginDir);
+    await writeNpmSourceMetadata(pluginDir, packageName);
+  } catch (err) {
+    logger.error(formatOperationError("prepare npm plugin for runtime discovery", err));
+    return 1;
+  }
+
+  const verify = await readManifest(pluginDir);
+  if (!verify || !verify.success) {
+    logger.error(`Error: plugin update failed — manifest unreadable after preparing npm package.`);
+    return 1;
+  }
+
+  console.log(`Plugin "${updatedManifest.name}" updated.`);
   return 0;
 }
 
@@ -350,9 +475,8 @@ export async function cmdPluginRemove(pluginsDir: string | undefined, argv: stri
     return 1;
   }
 
-  const pluginDir = path.join(dir, name);
-
-  if (!(await pathExists(pluginDir))) {
+  const pluginDir = await findPluginDirByName(dir, name);
+  if (!pluginDir) {
     logger.error(`Error: plugin "${name}" not found.`);
     return 1;
   }
