@@ -1,8 +1,10 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import type { Logger } from "../../runtime/logger.js";
+import { AgentMemoryEntrySchema, AgentMemoryStoreSchema, type AgentMemoryEntry } from "../knowledge/types/agent-memory.js";
 import { upsertDreamActivationArtifacts, loadDreamActivationArtifacts } from "./dream-activation-artifacts.js";
 import { consolidateDreamEventWorkflows, loadDreamWorkflowRecords } from "./dream-event-workflows.js";
 import type { DreamSoilSyncService } from "./dream-soil-sync.js";
@@ -84,6 +86,7 @@ interface DreamConsolidationPassInput {
 interface DreamConsolidationPassResult {
   metrics: Record<string, number>;
   warnings?: string[];
+  evidenceRefs?: string[];
   activationArtifacts?: DreamActivationArtifact[];
 }
 
@@ -197,6 +200,7 @@ export class DreamConsolidator {
         category,
         status: "skipped",
         metrics: {},
+        evidence_refs: [],
         warnings: ["category disabled"],
         errors: [],
       });
@@ -216,6 +220,7 @@ export class DreamConsolidator {
         category,
         status: "completed",
         metrics: result.metrics,
+        evidence_refs: result.evidenceRefs ?? [],
         warnings: result.warnings ?? [],
         errors: [],
       });
@@ -226,6 +231,7 @@ export class DreamConsolidator {
         category,
         status: "failed",
         metrics: {},
+        evidence_refs: [],
         warnings: [],
         errors: [message],
       });
@@ -257,18 +263,8 @@ export class DreamConsolidator {
     tier: DreamTier
   ): Promise<DreamConsolidationPassResult> {
     const collectors: Record<DreamConsolidationCategory, CategoryCollector> = {
-      memory: async (tier) => ({ metrics: {
-          goalsConsidered: await countGoalDirs(this.deps.baseDir, tier),
-          latentFactsExtracted: 0,
-          lessonsDistilled: 0,
-          archivalItemsCollected: 0,
-        } }),
-      agentMemory: async () => ({ metrics: {
-          agentMemoryEntriesScanned: await countAgentMemoryEntries(this.deps.baseDir),
-          ...(await this.collectDreamSoilSyncMetrics()),
-          autoAppliedConsolidations: 0,
-          duplicatesMerged: 0,
-        } }),
+      memory: (tier) => this.collectMemoryResult(tier),
+      agentMemory: () => this.collectAgentMemoryResult(),
       crossGoalTransfer: () => this.collectCrossGoalTransferResult(),
       decisionHistory: () => this.collectDecisionHistoryResult(),
       stallHistory: () => this.collectStallHistoryResult(),
@@ -352,6 +348,173 @@ export class DreamConsolidator {
 
   private activationArtifactIf(enabled: boolean, input: ActivationArtifactInput): DreamActivationArtifact[] {
     return enabled ? [this.buildActivationArtifact(input)] : [];
+  }
+
+  private async collectMemoryResult(tier: DreamTier): Promise<DreamConsolidationPassResult> {
+    const goalsConsidered = await countGoalDirs(this.deps.baseDir, tier);
+    const extracted = await this.collectRuntimeEvidenceExtractionRefs();
+    const reportPatterns = await this.collectDreamReportPatternRefs();
+    const evidenceRefs = [...new Set([...extracted.evidenceRefs, ...reportPatterns.evidenceRefs])].slice(0, 50);
+    const latentFactsExtracted = extracted.latentFacts + reportPatterns.patterns;
+    const lessonsDistilled = extracted.lessons + reportPatterns.patterns;
+    const activationArtifacts = this.activationArtifactIf(evidenceRefs.length > 0, {
+      type: "semantic_context_pack",
+      source: "memory",
+      summary: `${latentFactsExtracted} latent fact(s) and ${lessonsDistilled} lesson(s) extracted from Dream/runtime evidence`,
+      payload: {
+        latent_facts_extracted: latentFactsExtracted,
+        lessons_distilled: lessonsDistilled,
+      },
+      evidenceRefs,
+      confidence: 0.68,
+    });
+    return {
+      metrics: {
+        goalsConsidered,
+        latentFactsExtracted,
+        lessonsDistilled,
+        archivalItemsCollected: 0,
+        activationArtifactsEmitted: activationArtifacts.length,
+      },
+      evidenceRefs,
+      warnings: evidenceRefs.length === 0 ? ["no runtime evidence or Dream report source data available"] : [],
+      activationArtifacts,
+    };
+  }
+
+  private async collectRuntimeEvidenceExtractionRefs(): Promise<{
+    latentFacts: number;
+    lessons: number;
+    evidenceRefs: string[];
+  }> {
+    const roots = [
+      path.join(this.deps.baseDir, "runtime", "evidence-ledger"),
+      path.join(this.deps.baseDir, "evidence-ledger"),
+    ];
+    const files = (await Promise.all(roots.map((root) => listFilesRecursive(root, (filePath) => filePath.endsWith(".jsonl"))))).flat();
+    const refs = new Set<string>();
+    let latentFacts = 0;
+    let lessons = 0;
+    for (const filePath of files) {
+      const text = await fsp.readFile(filePath, "utf8");
+      const lines = text.split(/\r?\n/);
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line?.trim()) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (!isRecord(parsed)) continue;
+        const ref = sourceLineRef(this.deps.baseDir, filePath, index + 1);
+        if (isLatentFactEvidenceEntry(parsed)) {
+          latentFacts += 1;
+          refs.add(ref);
+        }
+        if (isLessonEvidenceEntry(parsed)) {
+          lessons += 1;
+          refs.add(ref);
+        }
+      }
+    }
+    return { latentFacts, lessons, evidenceRefs: [...refs] };
+  }
+
+  private async collectDreamReportPatternRefs(): Promise<{
+    patterns: number;
+    evidenceRefs: string[];
+  }> {
+    const reportsDir = path.join(this.deps.baseDir, "dream", "reports");
+    const files = await listFilesRecursive(reportsDir, (filePath) => filePath.endsWith(".json"));
+    const refs = new Set<string>();
+    let patterns = 0;
+    for (const filePath of files) {
+      const report = await readJsonFileOrNull(filePath);
+      if (!isRecord(report) || !Array.isArray(report["learnedPatterns"])) continue;
+      report["learnedPatterns"].forEach((pattern, index) => {
+        patterns += 1;
+        if (isRecord(pattern) && Array.isArray(pattern["evidence_refs"])) {
+          for (const ref of pattern["evidence_refs"]) {
+            if (typeof ref === "string" && ref.trim()) refs.add(ref);
+          }
+        } else {
+          refs.add(`${path.relative(this.deps.baseDir, filePath)}#learnedPatterns[${index}]`);
+        }
+      });
+    }
+    return { patterns, evidenceRefs: [...refs] };
+  }
+
+  private async loadAgentMemoryStore() {
+    const raw = await readJsonFileOrNull(path.join(this.deps.baseDir, "memory", "agent-memory", "entries.json"));
+    if (!raw) {
+      return AgentMemoryStoreSchema.parse({ entries: [], corrections: [], last_consolidated_at: null });
+    }
+    const parsed = AgentMemoryStoreSchema.safeParse(raw);
+    if (parsed.success) return parsed.data;
+    if (isRecord(raw) && Array.isArray(raw["entries"])) {
+      return AgentMemoryStoreSchema.parse({
+        entries: raw["entries"]
+          .map((entry) => AgentMemoryEntrySchema.safeParse(entry))
+          .filter((entry): entry is { success: true; data: AgentMemoryEntry } => entry.success)
+          .map((entry) => entry.data),
+        corrections: [],
+        last_consolidated_at: null,
+      });
+    }
+    return AgentMemoryStoreSchema.parse({ entries: [], corrections: [], last_consolidated_at: null });
+  }
+
+  private async collectAgentMemoryResult(): Promise<DreamConsolidationPassResult> {
+    const store = await this.loadAgentMemoryStore();
+    const syncMetrics = await this.collectDreamSoilSyncMetrics();
+    const duplicateGroups = duplicateAgentMemoryGroups(store.entries);
+    const supersededRecords = store.entries.filter((entry) => entry.status === "superseded");
+    const compiledRecords = store.entries.filter((entry) =>
+      entry.status === "compiled" && (entry.compiled_from?.length ?? 0) > 0
+    );
+    const duplicateMergeGroups = duplicateGroups.filter((group) =>
+      compiledRecords.some((entry) => {
+        const compiledFrom = new Set(entry.compiled_from ?? []);
+        return group.entries.filter((duplicate) => compiledFrom.has(duplicate.id)).length >= 2;
+      })
+    );
+    const evidenceRefs = [
+      ...compiledRecords.map((entry) => agentMemoryEvidenceRef(entry)),
+      ...supersededRecords.map((entry) => agentMemoryEvidenceRef(entry)),
+      ...duplicateGroups.flatMap((group) => group.entries.map((entry) => agentMemoryEvidenceRef(entry))),
+    ];
+    const uniqueEvidenceRefs = [...new Set(evidenceRefs)].slice(0, 50);
+    const autoAppliedConsolidations = compiledRecords.length;
+    const duplicatesMerged = duplicateMergeGroups.length;
+    const activationArtifacts = this.activationArtifactIf(uniqueEvidenceRefs.length > 0, {
+      type: "knowledge_gap_pack",
+      source: "agentMemory",
+      summary: `${autoAppliedConsolidations} applied consolidation(s), ${duplicatesMerged} duplicate group(s) merged`,
+      payload: {
+        duplicate_groups_detected: duplicateGroups.length,
+        superseded_records: supersededRecords.map((entry) => entry.id),
+        compiled_records: compiledRecords.map((entry) => entry.id),
+      },
+      evidenceRefs: uniqueEvidenceRefs,
+      confidence: duplicatesMerged > 0 || autoAppliedConsolidations > 0 ? 0.78 : 0.6,
+    });
+    return {
+      metrics: {
+        agentMemoryEntriesScanned: store.entries.length,
+        ...syncMetrics,
+        autoAppliedConsolidations,
+        duplicatesMerged,
+        duplicateMemoryGroupsDetected: duplicateGroups.length,
+        supersededMemoryRecords: supersededRecords.length,
+        activationArtifactsEmitted: activationArtifacts.length,
+      },
+      evidenceRefs: uniqueEvidenceRefs,
+      warnings: store.entries.length === 0 ? ["no agent memory source data available"] : [],
+      activationArtifacts,
+    };
   }
 
   private async collectStallHistoryResult(): Promise<DreamConsolidationPassResult> {
@@ -722,4 +885,80 @@ export class DreamConsolidator {
     return this.eventWorkflowMetricsPromise;
   }
 
+}
+
+async function listFilesRecursive(root: string, include: (filePath: string) => boolean): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    const filePath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listFilesRecursive(filePath, include));
+      continue;
+    }
+    if (entry.isFile() && include(filePath)) files.push(filePath);
+  }
+  return files;
+}
+
+function sourceLineRef(baseDir: string, filePath: string, line: number): string {
+  return `${path.relative(baseDir, filePath)}#L${line}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isLatentFactEvidenceEntry(entry: Record<string, unknown>): boolean {
+  return nonEmptyString(entry["summary"])
+    || nonEmptyArray(entry["metrics"])
+    || nonEmptyArray(entry["research"])
+    || nonEmptyArray(entry["dream_checkpoints"]);
+}
+
+function isLessonEvidenceEntry(entry: Record<string, unknown>): boolean {
+  return entry["outcome"] === "improved"
+    || entry["outcome"] === "failed"
+    || entry["outcome"] === "regressed"
+    || isRecord(entry["verification"])
+    || nonEmptyArray(entry["dream_checkpoints"])
+    || nonEmptyArray(entry["divergent_exploration"]);
+}
+
+function nonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function nonEmptyArray(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function agentMemoryEvidenceRef(entry: AgentMemoryEntry): string {
+  return `memory/agent-memory/entries.json#${entry.id}`;
+}
+
+function duplicateAgentMemoryGroups(entries: AgentMemoryEntry[]): Array<{ key: string; entries: AgentMemoryEntry[] }> {
+  const byFingerprint = new Map<string, AgentMemoryEntry[]>();
+  for (const entry of entries) {
+    if (entry.status === "forgotten" || entry.status === "retracted" || entry.status === "quarantined") continue;
+    const fingerprint = [
+      normalizeMemoryText(entry.key),
+      normalizeMemoryText(entry.value),
+      entry.memory_type,
+    ].join("\u0000");
+    byFingerprint.set(fingerprint, [...(byFingerprint.get(fingerprint) ?? []), entry]);
+  }
+  return [...byFingerprint.entries()]
+    .filter(([, group]) => group.length > 1)
+    .map(([key, group]) => ({ key, entries: group }));
+}
+
+function normalizeMemoryText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().trim();
 }

@@ -335,6 +335,7 @@ export const ConsolidationCategoryResultSchema = z.object({
   category: z.string(),
   status: z.enum(["completed", "skipped", "failed"]),
   metrics: z.record(z.string(), z.number()).default({}),
+  evidence_refs: z.array(z.string()).default([]),
   warnings: z.array(z.string()).default([]),
   errors: z.array(z.string()).default([]),
 });

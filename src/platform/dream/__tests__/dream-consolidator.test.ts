@@ -294,7 +294,177 @@ describe("DreamConsolidator", () => {
     });
     expect(report.operational?.consolidation.artifacts_created).toBe(1);
   });
+
+  it("extracts latent fact and lesson metrics with audit evidence refs", async () => {
+    tmpDir = makeTempDir("dream-consolidator-memory-metrics-");
+    await fs.mkdir(path.join(tmpDir, "runtime", "evidence-ledger", "runs"), { recursive: true });
+    await fs.mkdir(path.join(tmpDir, "dream", "reports"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, "runtime", "evidence-ledger", "runs", "run-a.jsonl"),
+      [
+        JSON.stringify({
+          id: "runtime-fact-1",
+          kind: "metric",
+          summary: "Balanced accuracy improved after feature pruning.",
+          outcome: "improved",
+          metrics: [{ label: "balanced_accuracy", value: 0.91, direction: "maximize" }],
+        }),
+        JSON.stringify({
+          id: "runtime-fact-2",
+          kind: "dream_checkpoint",
+          summary: "Avoid repeating threshold-only sweeps.",
+          dream_checkpoints: [{ guidance: "Switch strategy family." }],
+        }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(tmpDir, "dream", "reports", "report.json"),
+      JSON.stringify({
+        learnedPatterns: [{
+          pattern_id: "pattern-1",
+          evidence_refs: ["dream/events/goal-a.jsonl#L7"],
+        }],
+      }),
+      "utf8"
+    );
+
+    const report = await new DreamConsolidator({ baseDir: tmpDir }).run({ tier: "light" });
+    const memory = report.categories.find((category) => category.category === "memory");
+    const artifacts = JSON.parse(
+      await fs.readFile(path.join(tmpDir, "dream", "activation-artifacts.json"), "utf8")
+    ) as { artifacts?: Array<{ source?: string; evidence_refs?: string[] }> };
+
+    expect(memory?.metrics.latentFactsExtracted).toBe(3);
+    expect(memory?.metrics.lessonsDistilled).toBe(3);
+    expect(memory?.evidence_refs).toEqual(expect.arrayContaining([
+      "runtime/evidence-ledger/runs/run-a.jsonl#L1",
+      "runtime/evidence-ledger/runs/run-a.jsonl#L2",
+      "dream/events/goal-a.jsonl#L7",
+    ]));
+    expect(artifacts.artifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: "memory",
+        evidence_refs: expect.arrayContaining(["runtime/evidence-ledger/runs/run-a.jsonl#L1"]),
+      }),
+    ]));
+  });
+
+  it("detects duplicate and superseded agent memory records with evidence refs", async () => {
+    tmpDir = makeTempDir("dream-consolidator-agent-memory-metrics-");
+    await fs.mkdir(path.join(tmpDir, "memory", "agent-memory"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, "memory", "agent-memory", "entries.json"),
+      JSON.stringify({
+        entries: [
+          agentMemoryEntry("memory-1", { key: "style.direct", value: "Prefer direct status updates." }),
+          agentMemoryEntry("memory-2", { key: "style.direct", value: "Prefer direct status updates." }),
+          agentMemoryEntry("memory-3", {
+            key: "style.direct.compiled",
+            value: "Prefer direct status updates.",
+            status: "compiled",
+            compiled_from: ["memory-1", "memory-2"],
+          }),
+          agentMemoryEntry("memory-4", {
+            key: "style.direct.old",
+            value: "Old duplicate.",
+            status: "superseded",
+            supersedes_memory_id: "memory-1",
+          }),
+          agentMemoryEntry("memory-5", {
+            key: "style.corrected",
+            value: "Corrected preference.",
+            status: "corrected",
+            supersedes_memory_id: "memory-6",
+          }),
+          agentMemoryEntry("memory-6", {
+            key: "style.retracted",
+            value: "Retracted preference.",
+            status: "retracted",
+          }),
+        ],
+        corrections: [],
+        last_consolidated_at: null,
+      }),
+      "utf8"
+    );
+
+    const report = await new DreamConsolidator({ baseDir: tmpDir }).run({ tier: "light" });
+    const agentMemory = report.categories.find((category) => category.category === "agentMemory");
+
+    expect(agentMemory?.metrics.agentMemoryEntriesScanned).toBe(6);
+    expect(agentMemory?.metrics.autoAppliedConsolidations).toBe(1);
+    expect(agentMemory?.metrics.duplicatesMerged).toBe(1);
+    expect(agentMemory?.metrics.duplicateMemoryGroupsDetected).toBe(1);
+    expect(agentMemory?.metrics.supersededMemoryRecords).toBe(1);
+    expect(agentMemory?.evidence_refs).toEqual(expect.arrayContaining([
+      "memory/agent-memory/entries.json#memory-1",
+      "memory/agent-memory/entries.json#memory-2",
+      "memory/agent-memory/entries.json#memory-3",
+      "memory/agent-memory/entries.json#memory-4",
+    ]));
+  });
+
+  it("does not count non-agent Soil sync writes as agent-memory consolidations", async () => {
+    tmpDir = makeTempDir("dream-consolidator-non-agent-sync-");
+    await seedDreamFiles(tmpDir);
+    const syncService = {
+      syncFromCurrentDreamState: vi.fn().mockResolvedValue({
+        agentMemoryEntries: 0,
+        learnedPatterns: 1,
+        workflowRecords: 1,
+        verifiedPlaybooks: 0,
+        previousRecords: 0,
+        recordsWritten: 2,
+        recordsSuperseded: 1,
+        chunksWritten: 2,
+        tombstonesWritten: 1,
+        recordsWithChangedSearchMaterial: 2,
+        queueReindexRecordIds: 1,
+      }),
+    };
+
+    const report = await new DreamConsolidator({ baseDir: tmpDir, syncService }).run({ tier: "light" });
+    const agentMemory = report.categories.find((category) => category.category === "agentMemory");
+
+    expect(agentMemory?.metrics.soilSyncRecordsWritten).toBe(2);
+    expect(agentMemory?.metrics.soilSyncTombstonesWritten).toBe(1);
+    expect(agentMemory?.metrics.autoAppliedConsolidations).toBe(0);
+    expect(agentMemory?.metrics.duplicatesMerged).toBe(0);
+  });
+
+  it("keeps extraction and dedupe metrics zero when no source data exists", async () => {
+    tmpDir = makeTempDir("dream-consolidator-no-source-metrics-");
+
+    const report = await new DreamConsolidator({ baseDir: tmpDir }).run({ tier: "light" });
+    const memory = report.categories.find((category) => category.category === "memory");
+    const agentMemory = report.categories.find((category) => category.category === "agentMemory");
+
+    expect(memory?.metrics.latentFactsExtracted).toBe(0);
+    expect(memory?.metrics.lessonsDistilled).toBe(0);
+    expect(memory?.warnings).toContain("no runtime evidence or Dream report source data available");
+    expect(agentMemory?.metrics.autoAppliedConsolidations).toBe(0);
+    expect(agentMemory?.metrics.duplicatesMerged).toBe(0);
+    expect(agentMemory?.warnings).toContain("no agent memory source data available");
+  });
 });
+
+function agentMemoryEntry(
+  id: string,
+  overrides: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    id,
+    key: id,
+    value: `Value ${id}`,
+    tags: [],
+    memory_type: "fact",
+    status: "raw",
+    created_at: "2026-05-02T00:00:00.000Z",
+    updated_at: "2026-05-02T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 async function seedDreamFiles(baseDir: string): Promise<void> {
   await fs.mkdir(path.join(baseDir, "goals", "goal-1"), { recursive: true });
