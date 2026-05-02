@@ -2,23 +2,70 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { deriveRunSpecFromText, recognizeRunSpecIntent } from "../derive.js";
+import { deriveRunSpecFromText, understandRunSpecDraft } from "../derive.js";
 import { createRunSpecStore } from "../store.js";
 import {
   formatRunSpecSetupProposal,
   handleRunSpecConfirmationInput,
 } from "../confirmation.js";
+import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 const NOW = new Date("2026-05-02T00:00:00.000Z");
 
+function llmDraft(overrides: Record<string, unknown> = {}) {
+  return createSingleMockLLMClient(JSON.stringify({
+    decision: "run_spec_request",
+    confidence: 0.92,
+    profile: "kaggle",
+    objective: "Run Kaggle competition until review time",
+    metric: {
+      name: "leaderboard_rank_percentile",
+      direction: "minimize",
+      target: null,
+      target_rank_percent: 15,
+      datasource: "kaggle_leaderboard",
+      confidence: "high",
+    },
+    progress_contract: {
+      kind: "rank_percentile",
+      dimension: "leaderboard_rank_percentile",
+      threshold: 15,
+      semantics: "Reach a leaderboard rank percentile at or below 15.",
+      confidence: "high",
+    },
+    deadline: {
+      raw: "tomorrow morning",
+      iso_at: "2026-05-03T00:00:00.000Z",
+      timezone: "Asia/Tokyo",
+      finalization_buffer_minutes: 60,
+      confidence: "medium",
+    },
+    budget: {
+      max_trials: null,
+      max_wall_clock_minutes: null,
+      resident_policy: "until_deadline",
+    },
+    approval_policy: {
+      submit: "approval_required",
+      publish: "unspecified",
+      secret: "approval_required",
+      external_action: "approval_required",
+      irreversible_action: "approval_required",
+    },
+    missing_fields: [],
+    ...overrides,
+  }));
+}
+
 describe("RunSpec derivation", () => {
-  it("derives a Kaggle RunSpec with separate metric and progress semantics", () => {
-    const spec = deriveRunSpecFromText(
+  it("derives a Kaggle RunSpec with separate metric and progress semantics", async () => {
+    const spec = await deriveRunSpecFromText(
       "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
       {
         cwd: "/work/kaggle/playground",
         now: NOW,
         timezone: "Asia/Tokyo",
+        llmClient: llmDraft(),
       },
     );
 
@@ -43,12 +90,31 @@ describe("RunSpec derivation", () => {
     expect(spec!.missing_fields).toEqual([]);
   });
 
-  it("derives a generic long-running RunSpec", () => {
-    const spec = deriveRunSpecFromText(
-      "Keep this background optimization running until tomorrow morning and maximize accuracy 0.91.",
+  it("derives a generic long-running RunSpec", async () => {
+    const spec = await deriveRunSpecFromText(
+      "Please keep optimizing the model while I am away and stop at the review checkpoint.",
       {
         cwd: "/repo/app",
         now: NOW,
+        llmClient: llmDraft({
+          profile: "generic",
+          objective: "Optimize the model until review time",
+          metric: {
+            name: "accuracy",
+            direction: "maximize",
+            target: 0.91,
+            target_rank_percent: null,
+            datasource: null,
+            confidence: "medium",
+          },
+          progress_contract: {
+            kind: "metric_target",
+            dimension: "accuracy",
+            threshold: 0.91,
+            semantics: "Reach accuracy of at least 0.91.",
+            confidence: "high",
+          },
+        }),
       },
     );
 
@@ -66,12 +132,30 @@ describe("RunSpec derivation", () => {
     });
   });
 
-  it("preserves ambiguous metric direction as a required missing field", () => {
-    const spec = deriveRunSpecFromText(
-      "Run this long-running task until tomorrow morning and reach score 0.98.",
+  it("preserves ambiguous metric direction as a required missing field", async () => {
+    const spec = await deriveRunSpecFromText(
+      "Please continue the benchmark work through tomorrow and get score 0.98 if possible.",
       {
         cwd: "/repo/app",
         now: NOW,
+        llmClient: llmDraft({
+          profile: "generic",
+          metric: {
+            name: "score",
+            direction: "unknown",
+            target: 0.98,
+            target_rank_percent: null,
+            datasource: null,
+            confidence: "medium",
+          },
+          progress_contract: {
+            kind: "metric_target",
+            dimension: "score",
+            threshold: 0.98,
+            semantics: "Reach score 0.98.",
+            confidence: "medium",
+          },
+        }),
       },
     );
 
@@ -92,9 +176,27 @@ describe("RunSpec derivation", () => {
     });
   });
 
-  it("does not guess missing workspace and deadline", () => {
-    const spec = deriveRunSpecFromText("Run a long-running Kaggle experiment for top 20%.", {
+  it("does not guess missing workspace and deadline", async () => {
+    const spec = await deriveRunSpecFromText("Please take over the competition work and target the top cohort.", {
       now: NOW,
+      llmClient: llmDraft({
+        metric: {
+          name: "leaderboard_rank_percentile",
+          direction: "minimize",
+          target: null,
+          target_rank_percent: 20,
+          datasource: "kaggle_leaderboard",
+          confidence: "medium",
+        },
+        progress_contract: {
+          kind: "rank_percentile",
+          dimension: "leaderboard_rank_percentile",
+          threshold: 20,
+          semantics: "Reach top 20 percent leaderboard rank.",
+          confidence: "medium",
+        },
+        deadline: null,
+      }),
     });
 
     expect(spec).not.toBeNull();
@@ -103,17 +205,77 @@ describe("RunSpec derivation", () => {
     expect(spec!.missing_fields.map((field) => field.field)).toEqual(["workspace", "deadline"]);
   });
 
-  it("does not treat explanatory long-running questions as run requests", () => {
-    expect(recognizeRunSpecIntent("Why do long-running tasks fail?")).toBeNull();
+  it("does not treat explanatory long-running questions as run requests", async () => {
+    const spec = await deriveRunSpecFromText("Why do long-running tasks fail?", {
+      now: NOW,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "not_run_spec_request",
+        confidence: 0.96,
+        missing_fields: [],
+      })),
+    });
+
+    expect(spec).toBeNull();
+  });
+
+  it("supports Japanese request phrasing through the same structured draft path", async () => {
+    const spec = await deriveRunSpecFromText("明日のレビューまでコンペの改善を進めて、提出は承認制にして", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      llmClient: llmDraft({
+        objective: "明日のレビューまでコンペ改善を進める",
+      }),
+    });
+
+    expect(spec).not.toBeNull();
+    expect(spec!.profile).toBe("kaggle");
+    expect(spec!.approval_policy.submit).toBe("approval_required");
+  });
+
+  it("supports third-language request phrasing through the same structured draft path", async () => {
+    const spec = await deriveRunSpecFromText("Sigue trabajando en la competición hasta la revisión y no envíes nada sin aprobación.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      llmClient: llmDraft({
+        objective: "Continue competition work until review",
+      }),
+    });
+
+    expect(spec).not.toBeNull();
+    expect(spec!.profile).toBe("kaggle");
+    expect(spec!.workspace?.path).toBe("/repo/kaggle");
+  });
+
+  it("does not use a keyword fallback when the model is unavailable", async () => {
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+    });
+
+    expect(spec).toBeNull();
+  });
+
+  it("returns null for low-confidence draft decisions", async () => {
+    const draft = await understandRunSpecDraft("maybe do something overnight?", {
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "run_spec_request",
+        confidence: 0.41,
+        profile: "generic",
+        missing_fields: [],
+      })),
+    });
+
+    expect(draft).toBeNull();
   });
 });
 
 describe("RunSpecStore", () => {
   it("persists and reloads a RunSpec under the state root", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
-    const spec = deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
       cwd: "/repo/kaggle",
       now: NOW,
+      llmClient: llmDraft(),
     });
     expect(spec).not.toBeNull();
 
@@ -129,9 +291,10 @@ describe("RunSpecStore", () => {
 
   it("rejects path-like ids before RunSpec store file I/O", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
-    const spec = deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
       cwd: "/repo/kaggle",
       now: NOW,
+      llmClient: llmDraft(),
     });
     expect(spec).not.toBeNull();
     const store = createRunSpecStore({ getBaseDir: () => baseDir });
@@ -142,12 +305,13 @@ describe("RunSpecStore", () => {
 });
 
 describe("RunSpec confirmation", () => {
-  it("confirms a complete RunSpec", () => {
-    const spec = deriveRunSpecFromText(
+  it("confirms a complete RunSpec", async () => {
+    const spec = await deriveRunSpecFromText(
       "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
       {
         cwd: "/repo/kaggle",
         now: NOW,
+        llmClient: llmDraft(),
       },
     );
     expect(spec).not.toBeNull();
@@ -158,9 +322,27 @@ describe("RunSpec confirmation", () => {
     expect(result.spec.status).toBe("confirmed");
   });
 
-  it("revises missing required fields before confirmation", () => {
-    const spec = deriveRunSpecFromText("Run a long-running Kaggle experiment for top 20%.", {
+  it("revises missing required fields before confirmation", async () => {
+    const spec = await deriveRunSpecFromText("Run a long-running Kaggle experiment for top 20%.", {
       now: NOW,
+      llmClient: llmDraft({
+        metric: {
+          name: "leaderboard_rank_percentile",
+          direction: "minimize",
+          target: null,
+          target_rank_percent: 20,
+          datasource: "kaggle_leaderboard",
+          confidence: "medium",
+        },
+        progress_contract: {
+          kind: "rank_percentile",
+          dimension: "leaderboard_rank_percentile",
+          threshold: 20,
+          semantics: "Reach top 20 percent leaderboard rank.",
+          confidence: "medium",
+        },
+        deadline: null,
+      }),
     });
     expect(spec).not.toBeNull();
 
@@ -176,10 +358,11 @@ describe("RunSpec confirmation", () => {
     expect(confirmed.kind).toBe("confirmed");
   });
 
-  it("cancels a pending RunSpec", () => {
-    const spec = deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+  it("cancels a pending RunSpec", async () => {
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
       cwd: "/repo/kaggle",
       now: NOW,
+      llmClient: llmDraft(),
     });
     expect(spec).not.toBeNull();
 
@@ -189,9 +372,27 @@ describe("RunSpec confirmation", () => {
     expect(result.spec.status).toBe("cancelled");
   });
 
-  it("blocks confirmation while required fields remain unresolved", () => {
-    const spec = deriveRunSpecFromText("Run a long-running Kaggle experiment for top 20%.", {
+  it("blocks confirmation while required fields remain unresolved", async () => {
+    const spec = await deriveRunSpecFromText("Run a long-running Kaggle experiment for top 20%.", {
       now: NOW,
+      llmClient: llmDraft({
+        metric: {
+          name: "leaderboard_rank_percentile",
+          direction: "minimize",
+          target: null,
+          target_rank_percent: 20,
+          datasource: "kaggle_leaderboard",
+          confidence: "medium",
+        },
+        progress_contract: {
+          kind: "rank_percentile",
+          dimension: "leaderboard_rank_percentile",
+          threshold: 20,
+          semantics: "Reach top 20 percent leaderboard rank.",
+          confidence: "medium",
+        },
+        deadline: null,
+      }),
     });
     expect(spec).not.toBeNull();
 
@@ -202,12 +403,13 @@ describe("RunSpec confirmation", () => {
     expect(result.message).toContain("What deadline or review time");
   });
 
-  it("shows risky external actions as approval-gated in the proposal", () => {
-    const spec = deriveRunSpecFromText(
+  it("shows risky external actions as approval-gated in the proposal", async () => {
+    const spec = await deriveRunSpecFromText(
       "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
       {
         cwd: "/repo/kaggle",
         now: NOW,
+        llmClient: llmDraft(),
       },
     );
     expect(spec).not.toBeNull();
