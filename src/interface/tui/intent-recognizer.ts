@@ -67,7 +67,7 @@ const LLMIntentSchema = z.object({
 const MIN_CLASSIFIER_CONFIDENCE = 0.7;
 
 function getSystemPrompt(): string {
-  return `${getInternalIdentityPrefix("assistant")} PulSeed is an AI agent orchestrator that manages goals with measurable dimensions.
+  return `${getInternalIdentityPrefix("assistant")} PulSeed is a lifelong personal agent that manages goals with measurable dimensions.
 
 Available actions you can trigger:
 - goal_create: When the user clearly wants to create a new goal. Extract the description.

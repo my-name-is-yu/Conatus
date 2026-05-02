@@ -21,7 +21,7 @@ export function formatOperationError(operation: string, err: unknown): string {
 
 export function printUsage(): void {
   console.log(`
-PulSeed — AI agent orchestrator
+	PulSeed — lifelong personal agent
 
 Usage:
   pulseed                                               Launch interactive TUI (default)

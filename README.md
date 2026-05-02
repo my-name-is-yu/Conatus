@@ -4,7 +4,7 @@
 
 # PulSeed
 
-Keep a goal moving until it is actually done.
+PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward.
 
 [![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=for-the-badge)](https://pulseed.dev)
 [![npm](https://img.shields.io/npm/v/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
@@ -15,9 +15,9 @@ Keep a goal moving until it is actually done.
 
 </div>
 
-PulSeed is an AI orchestrator for work that does not finish in one chat turn.
-Tell it the outcome you want, and it keeps observing, delegating, verifying, and
-looping until the goal is reached or the plan needs to change.
+PulSeed is a lifelong personal agent for goals that take time.
+Tell it what matters, and it remembers the goal, watches what changes,
+delegates work to agents, verifies progress, and keeps moving your life forward.
 
 The primary entry point is `pulseed`. The normal flow is natural language, not a
 menu of subcommands.
@@ -66,7 +66,7 @@ PulSeed will guide provider and adapter setup when needed.
 
 ## Why PulSeed?
 
-- Goal-first orchestration for long-running work
+- Lifelong personal-agent orchestration for goals that take time
 - Honest goal negotiation when a target is not realistic as stated
 - Bounded agent execution with verification around delegated work
 - Verified playbook memory that turns successful runs into reusable planning hints

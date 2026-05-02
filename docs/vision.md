@@ -4,9 +4,9 @@
 
 ## 1. In a Nutshell
 
-An AI partner that autonomously and persistently pursues your goals.
+PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward.
 
-Tell PulSeed your goal, and it will keep chasing it — for days, months, or years. PulSeed is not an "assistant waiting for instructions." It takes ownership of your objectives and keeps moving toward them.
+Tell PulSeed your goal, and it will stay with it for days, months, or years. PulSeed is not an "assistant waiting for instructions." It remembers what matters, observes what changes, and keeps moving toward the life or outcome you want.
 
 ---
 
@@ -18,7 +18,7 @@ AI assistants answer questions. Agents execute tasks. Automation tools run workf
 
 Monitoring the health of a chronically ill dog. Doubling revenue. Getting a new business off the ground. These goals don't end with a single instruction. Situations change, new problems emerge, and strategies need to be revised. Right now, humans have to make those judgments and issue new instructions every time.
 
-What's missing isn't AI intelligence. It's **something that carries your goals as its own and pursues them autonomously**.
+What's missing isn't AI intelligence. It's **a lifelong personal agent that carries your goals over time and keeps helping you move forward**.
 
 ---
 
@@ -54,7 +54,7 @@ If existing tools are insufficient, PulSeed instructs agents to build them. Heal
 
 ### The Human Role Changes
 
-From "implement this" and "look into that" to "I want things to be in this state." From task instructor to goal setter. From one-time requester to one half of a long-term partnership.
+From "implement this" and "look into that" to "I want things to be in this state." From task instructor to goal setter. From one-time requester to one half of a lifelong partnership.
 
 ---
 

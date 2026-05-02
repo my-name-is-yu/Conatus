@@ -2,7 +2,7 @@
 
 ## Overview
 
-PulSeed is an AI agent orchestrator that gives existing agents the drive to persist. The brand sits at the intersection of a professional developer tool and a warm, approachable character-driven product — think GitHub's Mona Lisa, or Rust's Ferris. Playful mascot, serious infrastructure.
+PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward. The brand sits at the intersection of a professional developer tool and a warm, approachable character-driven product — think GitHub's Mona Lisa, or Rust's Ferris. Playful mascot, serious infrastructure.
 
 ---
 
@@ -163,16 +163,16 @@ The palette is designed to work in both modes without redesign:
 |---------|------|-------|
 | CLI success | `Goal reached. Seedy is proud.` | `LGTM bro!!!` |
 | CLI error | `Task failed after 3 retries. Check the adapter logs.` | `Uh oh, something broke :( :( :(` |
-| Docs intro | `PulSeed gives your agents the drive to persist.` | `PulSeed is AMAZING and will change everything!` |
+| Docs intro | `PulSeed is a lifelong personal agent for goals that take time.` | `PulSeed is AMAZING and will change everything!` |
 | Stall warning | `Agent appears stalled. Escalating to next strategy.` | `Hmm, not sure what's happening here` |
 
 ### Key Brand Line
 
-> **"PulSeed gives your agents the drive to persist."**
+> **"PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward."**
 
 Secondary lines:
-- "Your agents think. Seedy makes sure they keep going."
-- "Orchestrate with intent. Persist with purpose."
+- "A personal agent for goals that take time."
+- "Remember the goal. Watch the world. Keep moving forward."
 
 ---
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-PulSeed — AI agent orchestrator that gives existing agents the drive to persist. PulSeed sits above agents and drives them: selecting goals, spawning agent sessions, observing results, and judging completion. PulSeed doesn't think — it makes agents think.
+PulSeed — a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward. PulSeed sits above agents and directs them: selecting goals, spawning agent sessions, observing results, and judging completion.
 
 ## Status
 

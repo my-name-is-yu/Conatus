@@ -26,7 +26,7 @@ const mockReadFile = vi.mocked(fsp.readFile);
 const packageJsonContents = JSON.stringify({
   name: "pulseed",
   version: "0.4.3",
-  description: "AI agent orchestrator that gives existing agents the drive to persist — set a goal, and PulSeed observes, delegates, verifies, and loops until done.",
+  description: "PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward.",
 });
 
 // Minimal Goal shape used in tests
