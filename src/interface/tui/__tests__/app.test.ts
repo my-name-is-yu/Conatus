@@ -15,6 +15,7 @@ const testState = vi.hoisted(() => ({
   lastDashboardProps: null as null | Record<string, unknown>,
   runtimeSessionSnapshots: [] as Array<Record<string, unknown>>,
   runtimeSessionSnapshotCalls: 0,
+  summarizedRunIds: [] as string[],
 }));
 
 vi.mock("ink", async () => {
@@ -44,13 +45,17 @@ vi.mock("../fullscreen-chat.js", async () => {
   };
 });
 
-vi.mock("../dashboard.js", () => ({
-  Dashboard: (props: Record<string, unknown>) => {
-    testState.lastDashboardProps = props;
-    return null;
-  },
-  statusLabel: (status: string) => status,
-}));
+vi.mock("../dashboard.js", async () => {
+  const actual = await vi.importActual<typeof import("../dashboard.js")>("../dashboard.js");
+  return {
+    ...actual,
+    Dashboard: (props: Record<string, unknown>) => {
+      testState.lastDashboardProps = props;
+      return null;
+    },
+    statusLabel: (status: string) => status,
+  };
+});
 
 vi.mock("../../../runtime/session-registry/index.js", () => ({
   createRuntimeSessionRegistry: () => ({
@@ -63,6 +68,21 @@ vi.mock("../../../runtime/session-registry/index.js", () => ({
       return testState.runtimeSessionSnapshots[index] ?? null;
     }),
   }),
+}));
+
+vi.mock("../../../runtime/store/health-store.js", () => ({
+  RuntimeHealthStore: class {
+    loadSnapshot = vi.fn(async () => null);
+  },
+}));
+
+vi.mock("../../../runtime/store/evidence-ledger.js", () => ({
+  RuntimeEvidenceLedger: class {
+    summarizeRun = vi.fn(async (runId: string) => {
+      testState.summarizedRunIds.push(runId);
+      return null;
+    });
+  },
 }));
 
 vi.mock("../help-overlay.js", () => ({ HelpOverlay: () => null }));
@@ -380,6 +400,7 @@ describe("daemon-mode chat routing", () => {
     testState.lastDashboardProps = null;
     testState.runtimeSessionSnapshots = [];
     testState.runtimeSessionSnapshotCalls = 0;
+    testState.summarizedRunIds = [];
   });
 
   afterEach(() => {
@@ -613,6 +634,93 @@ describe("daemon-mode chat routing", () => {
       generated_at: "2026-05-02T00:00:05.000Z",
       background_runs: [expect.objectContaining({ id: "run-refresh" })],
     });
+
+    screen.unmount();
+    vi.useRealTimers();
+  });
+
+  it("loads evidence summaries for dashboard-selected runs instead of raw snapshot head", async () => {
+    vi.useFakeTimers();
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const now = new Date().toISOString();
+    const completedRuns = Array.from({ length: 9 }, (_, index) => ({
+      schema_version: "background-run-v1",
+      id: `run-completed-${index}`,
+      kind: "coreloop_run",
+      parent_session_id: null,
+      child_session_id: null,
+      process_session_id: null,
+      status: "succeeded",
+      notify_policy: "done_only",
+      reply_target_source: "none",
+      pinned_reply_target: null,
+      title: `Completed ${index}`,
+      workspace: "/repo",
+      created_at: now,
+      started_at: now,
+      updated_at: now,
+      completed_at: now,
+      summary: null,
+      error: null,
+      artifacts: [],
+      source_refs: [],
+    }));
+    testState.runtimeSessionSnapshots = [{
+      schema_version: "runtime-session-registry-v1",
+      generated_at: now,
+      sessions: [],
+      background_runs: [
+        ...completedRuns,
+        {
+          schema_version: "background-run-v1",
+          id: "run-active-selected",
+          kind: "coreloop_run",
+          parent_session_id: null,
+          child_session_id: null,
+          process_session_id: null,
+          status: "running",
+          notify_policy: "done_only",
+          reply_target_source: "none",
+          pinned_reply_target: null,
+          title: "Active selected run",
+          workspace: "/repo",
+          created_at: now,
+          started_at: now,
+          updated_at: now,
+          completed_at: null,
+          summary: null,
+          error: null,
+          artifacts: [],
+          source_refs: [],
+        },
+      ],
+      warnings: [],
+    }];
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await vi.runOnlyPendingTimersAsync();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/dashboard");
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(testState.summarizedRunIds).toContain("run-active-selected");
 
     screen.unmount();
     vi.useRealTimers();

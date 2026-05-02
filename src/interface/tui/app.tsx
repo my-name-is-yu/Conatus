@@ -11,9 +11,10 @@
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { randomUUID } from "node:crypto";
+import * as path from "node:path";
 import { Box, Text, useInput, useStdout } from "ink";
 import { theme } from "./theme.js";
-import { Dashboard, statusLabel } from "./dashboard.js";
+import { buildWorkDashboardRows, Dashboard, statusLabel } from "./dashboard.js";
 import { Chat, type ChatMessage } from "./chat.js";
 import { FullscreenChat } from "./fullscreen-chat.js";
 import { HelpOverlay } from "./help-overlay.js";
@@ -39,6 +40,9 @@ import { applyChatEventToMessages } from "../chat/chat-event-state.js";
 import { setActiveCursorEscape } from "./cursor-tracker.js";
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
 import type { RuntimeSessionRegistrySnapshot } from "../../runtime/session-registry/types.js";
+import { RuntimeEvidenceLedger, type RuntimeEvidenceSummary } from "../../runtime/store/evidence-ledger.js";
+import { RuntimeHealthStore } from "../../runtime/store/health-store.js";
+import type { RuntimeHealthSnapshot } from "../../runtime/store/runtime-schemas.js";
 import {
   createRunSpecStore,
   deriveRunSpecFromText,
@@ -278,6 +282,8 @@ export function App({
   const termRows = stdout?.rows ?? 24;
   const [showSidebar, setShowSidebar] = useState(false);
   const [runtimeSessionSnapshot, setRuntimeSessionSnapshot] = useState<RuntimeSessionRegistrySnapshot | null>(null);
+  const [runtimeHealthSnapshot, setRuntimeHealthSnapshot] = useState<RuntimeHealthSnapshot | null>(null);
+  const [runtimeEvidenceSummaries, setRuntimeEvidenceSummaries] = useState<Record<string, RuntimeEvidenceSummary>>({});
 
   // ── Loop state ──
   // In standalone mode, useLoop() manages state via CoreLoop.
@@ -421,10 +427,40 @@ export function App({
     const refreshRuntimeSessions = async () => {
       try {
         const registry = createRuntimeSessionRegistry({ stateManager });
+        const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+        const healthStore = new RuntimeHealthStore(runtimeRoot);
+        const evidenceLedger = new RuntimeEvidenceLedger(runtimeRoot);
         const snapshot = await registry.snapshot();
-        if (!cancelled) setRuntimeSessionSnapshot(snapshot);
+        const dashboardRunIds = new Set<string>();
+        const rows = buildWorkDashboardRows(snapshot);
+        for (const row of rows.slice(0, 12)) {
+          if (row.kind === "run") {
+            dashboardRunIds.add(row.id);
+            continue;
+          }
+          const relatedRun = snapshot.background_runs.find((run) =>
+            run.child_session_id === row.id || run.parent_session_id === row.id || run.process_session_id === row.id
+          );
+          if (relatedRun) dashboardRunIds.add(relatedRun.id);
+        }
+        const [health, summaries] = await Promise.all([
+          healthStore.loadSnapshot().catch(() => null),
+          Promise.all([...dashboardRunIds].map(async (runId) => {
+            const summary = await evidenceLedger.summarizeRun(runId).catch(() => null);
+            return [runId, summary] as const;
+          })),
+        ]);
+        if (!cancelled) {
+          setRuntimeSessionSnapshot(snapshot);
+          setRuntimeHealthSnapshot(health);
+          setRuntimeEvidenceSummaries(Object.fromEntries(summaries.filter((entry): entry is readonly [string, RuntimeEvidenceSummary] => entry[1] !== null)));
+        }
       } catch {
-        if (!cancelled) setRuntimeSessionSnapshot(null);
+        if (!cancelled) {
+          setRuntimeSessionSnapshot(null);
+          setRuntimeHealthSnapshot(null);
+          setRuntimeEvidenceSummaries({});
+        }
       }
     };
 
@@ -816,7 +852,12 @@ export function App({
             paddingX={1}
             overflow="hidden"
           >
-            <Dashboard state={loopState} runtimeSessions={runtimeSessionSnapshot} />
+            <Dashboard
+              state={loopState}
+              runtimeSessions={runtimeSessionSnapshot}
+              runtimeHealth={runtimeHealthSnapshot}
+              evidenceSummaries={runtimeEvidenceSummaries}
+            />
           </Box>
         )}
 
