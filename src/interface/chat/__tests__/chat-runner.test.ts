@@ -2161,12 +2161,49 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(false);
       expect(result.output).toContain("Recovery");
-      expect(result.output).toContain("Type: Runtime interruption");
+      expect(result.output).toContain("Type: Unclassified failure");
       const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
       expect(writeRawMock).toHaveBeenCalledTimes(1);
       const onlyWrite = writeRawMock.mock.calls[0][1] as { messages: Array<{ role: string; content: string }> };
       expect(onlyWrite.messages).toHaveLength(1);
       expect(capturedEvents).toContainEqual({ type: "lifecycle_error", partialText: "Partial answer" });
+    });
+
+    it("uses confidence-aware fallback on the production lifecycle-error path when structured evidence is absent", async () => {
+      const stateManager = makeMockStateManager();
+      const capturedEvents: Array<{ type: string; recoveryKind?: string }> = [];
+      const llmClient = {
+        supportsToolCalling: () => true,
+        sendMessageStream: vi.fn().mockImplementation(async (_messages, _options, handlers) => {
+          handlers.onTextDelta?.("Partial answer");
+          throw new Error("provider returned overloaded");
+        }),
+        sendMessage: vi.fn().mockResolvedValue({
+          content: JSON.stringify({ kind: "adapter", confidence: 0.92, rationale: "provider unavailable" }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn((content: string, schema: z.ZodSchema<unknown>) => schema.parse(JSON.parse(content))),
+      } as unknown as ILLMClient;
+
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient,
+        onEvent: (event) => {
+          if (event.type === "lifecycle_error") {
+            capturedEvents.push({ type: event.type, recoveryKind: event.recovery.kind });
+            return;
+          }
+          capturedEvents.push({ type: event.type });
+        },
+      }));
+
+      const result = await runner.execute("Break the provider", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Type: Adapter failure");
+      expect(capturedEvents).toContainEqual({ type: "lifecycle_error", recoveryKind: "adapter" });
+      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
     });
   });
 
@@ -2415,6 +2452,91 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Agentloop direct answer");
+    });
+
+    it("classifies native agent-loop lifecycle failures from structured runner and tool metadata", async () => {
+      const seenEvents: ChatEvent[] = [];
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockImplementation(async (input: {
+          eventSink?: { emit(event: unknown): Promise<void> | void };
+        }) => {
+          await input.eventSink?.emit({
+            type: "tool_call_finished",
+            callId: "call-denied",
+            toolName: "shell_command",
+            success: false,
+            disposition: "approval_denied",
+            outputPreview: "プロバイダ固有の拒否文言",
+            durationMs: 1,
+          });
+          return {
+            success: false,
+            output: "localized failure text without keywords",
+            error: null,
+            exit_code: null,
+            elapsed_ms: 42,
+            stopped_reason: "error",
+            agentLoop: {
+              traceId: "trace-1",
+              sessionId: "session-1",
+              turnId: "turn-1",
+              stopReason: "consecutive_tool_errors",
+              modelTurns: 1,
+              toolCalls: 1,
+              compactions: 0,
+            },
+          };
+        }),
+      } as unknown as ChatAgentLoopRunner;
+
+      const runner = new ChatRunner(makeDeps({
+        chatAgentLoopRunner,
+        onEvent: (event) => { seenEvents.push(event); },
+      }));
+      const result = await runner.execute("Do something requiring tools", "/repo");
+
+      expect(result.success).toBe(false);
+      const lifecycleError = seenEvents.find((event): event is Extract<ChatEvent, { type: "lifecycle_error" }> =>
+        event.type === "lifecycle_error"
+      );
+      expect(lifecycleError?.recovery.kind).toBe("permission");
+      expect(result.output).toContain("Type: Permission failure");
+    });
+
+    it("uses native runner stop reason instead of provider text for runtime interruption recovery", async () => {
+      const seenEvents: ChatEvent[] = [];
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: false,
+          output: "モデルからの非英語エラー",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "timeout",
+          agentLoop: {
+            traceId: "trace-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            stopReason: "timeout",
+            modelTurns: 1,
+            toolCalls: 0,
+            compactions: 0,
+          },
+        }),
+      } as unknown as ChatAgentLoopRunner;
+
+      const runner = new ChatRunner(makeDeps({
+        chatAgentLoopRunner,
+        onEvent: (event) => { seenEvents.push(event); },
+      }));
+      const result = await runner.execute("Please inspect the repo", "/repo");
+
+      expect(result.success).toBe(false);
+      const lifecycleError = seenEvents.find((event): event is Extract<ChatEvent, { type: "lifecycle_error" }> =>
+        event.type === "lifecycle_error"
+      );
+      expect(lifecycleError?.recovery.kind).toBe("runtime_interruption");
+      expect(result.output).toContain("Type: Runtime interruption");
     });
 
     it("leaves broad continue and finish prompts on the agent loop even when runtime control is wired", async () => {
