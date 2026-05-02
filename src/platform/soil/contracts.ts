@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MemoryCorrectionEntrySchema } from "../corrections/memory-correction-ledger.js";
 import { SoilKindSchema, SoilRouteSchema, SoilStatusSchema } from "./types.js";
 
 export const SoilRecordTypeSchema = z.enum([
@@ -29,6 +30,10 @@ export const SoilRecordStatusSchema = z.enum([
   "deleted",
   "unreachable",
   "replaced",
+  "corrected",
+  "retracted",
+  "forgotten",
+  "quarantined",
 ]);
 export type SoilRecordStatus = z.infer<typeof SoilRecordStatusSchema>;
 
@@ -171,6 +176,15 @@ export const SoilTombstoneSchema = z.object({
   deleted_at: z.string().datetime(),
 });
 export type SoilTombstone = z.infer<typeof SoilTombstoneSchema>;
+
+export const SoilCorrectionEntrySchema = MemoryCorrectionEntrySchema.refine(
+  (entry) => entry.target_ref.kind === "soil_record",
+  {
+    message: "soil correction entries must target a soil_record",
+    path: ["target_ref", "kind"],
+  }
+);
+export type SoilCorrectionEntry = z.infer<typeof SoilCorrectionEntrySchema>;
 
 export const SoilPageFilterSchema = z.object({
   page_ids: z.array(z.string().min(1)).optional(),
@@ -336,6 +350,7 @@ export const SoilMutationSchema = z.object({
   embeddings: z.array(SoilEmbeddingSchema).default([]),
   edges: z.array(SoilEdgeSchema).default([]),
   tombstones: z.array(SoilTombstoneSchema).default([]),
+  corrections: z.array(SoilCorrectionEntrySchema).default([]),
 });
 export type SoilMutation = z.infer<typeof SoilMutationSchema>;
 export type SoilMutationInput = z.input<typeof SoilMutationSchema>;
@@ -343,6 +358,7 @@ export type SoilMutationInput = z.input<typeof SoilMutationSchema>;
 export interface SoilWriteRepository {
   applyMutation(mutation: SoilMutationInput): Promise<void>;
   queueReindex(recordIds: string[], reason: string): Promise<void>;
+  loadCorrections?(recordIds?: string[]): Promise<SoilCorrectionEntry[]>;
 }
 
 export interface SoilSearchRepository {

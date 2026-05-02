@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MemoryCorrectionTargetStateSchema } from "../../corrections/memory-correction-ledger.js";
 
 // --- AgentMemoryType ---
 
@@ -12,7 +13,7 @@ export type AgentMemoryType = z.infer<typeof AgentMemoryTypeEnum>;
 
 // --- AgentMemoryStatus ---
 
-export const AgentMemoryStatusEnum = z.enum(["raw", "compiled", "archived"]);
+export const AgentMemoryStatusEnum = z.enum(["raw", "compiled", "archived", "corrected", "superseded", "retracted", "forgotten", "quarantined"]);
 export type AgentMemoryStatus = z.infer<typeof AgentMemoryStatusEnum>;
 
 // --- AgentMemoryEntry ---
@@ -26,6 +27,8 @@ export const AgentMemoryEntrySchema = z.object({
   category: z.string().optional(),
   memory_type: AgentMemoryTypeEnum.default("fact"),
   status: AgentMemoryStatusEnum.default("raw"),
+  correction_state: MemoryCorrectionTargetStateSchema.optional(),
+  supersedes_memory_id: z.string().min(1).optional(),
   compiled_from: z.array(z.string()).optional(),
   created_at: z.string(),
   updated_at: z.string(),

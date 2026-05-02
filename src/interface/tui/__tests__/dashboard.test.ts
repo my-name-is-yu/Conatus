@@ -123,6 +123,8 @@ function evidenceSummary(overrides: Partial<RuntimeEvidenceSummary> = {}): Runti
     research_memos: [],
     dream_checkpoints: [],
     divergent_exploration: [],
+    corrections: [],
+    correction_state: {},
     candidate_lineages: [],
     recommended_candidate_portfolio: [],
     candidate_selection_summary: {

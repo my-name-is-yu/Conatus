@@ -7,6 +7,14 @@ import {
   ensureRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
+import {
+  MemoryCorrectionEntrySchema,
+  MemoryCorrectionTargetStateSchema,
+  summarizeMemoryCorrectionState,
+  type MemoryCorrectionEntry,
+  type MemoryCorrectionEntryInput,
+  type MemoryCorrectionTargetState,
+} from "../../platform/corrections/memory-correction-ledger.js";
 import { summarizeEvidenceMetricTrends, type MetricTrendContext } from "./metric-history.js";
 import {
   summarizeEvidenceEvaluatorResults,
@@ -51,6 +59,7 @@ export const RuntimeEvidenceEntryKindSchema = z.enum([
   "dream_checkpoint",
   "artifact",
   "failure",
+  "correction",
   "other",
 ]);
 export type RuntimeEvidenceEntryKind = z.infer<typeof RuntimeEvidenceEntryKindSchema>;
@@ -494,6 +503,8 @@ export const RuntimeEvidenceEntrySchema = z.object({
   research: z.array(RuntimeEvidenceResearchMemoSchema).optional(),
   dream_checkpoints: z.array(RuntimeEvidenceDreamCheckpointSchema).optional(),
   divergent_exploration: z.array(RuntimeEvidenceDivergentHypothesisSchema).optional(),
+  correction: MemoryCorrectionEntrySchema.optional(),
+  correction_state: MemoryCorrectionTargetStateSchema.optional(),
   candidates: z.array(RuntimeEvidenceCandidateRecordSchema).optional(),
   artifacts: z.array(RuntimeEvidenceArtifactRefSchema).default([]),
   result: z.object({
@@ -661,6 +672,8 @@ export interface RuntimeEvidenceSummary {
   research_memos: RuntimeResearchMemoContext[];
   dream_checkpoints: RuntimeDreamCheckpointContext[];
   divergent_exploration: RuntimeEvidenceDivergentHypothesis[];
+  corrections: MemoryCorrectionEntry[];
+  correction_state: Record<string, MemoryCorrectionTargetState>;
   candidate_lineages: RuntimeCandidateLineageContext[];
   recommended_candidate_portfolio: RuntimeCandidatePortfolioSlot[];
   candidate_selection_summary: RuntimeCandidateSelectionSummary;
@@ -683,6 +696,10 @@ export interface RuntimeEvidenceSummaryIndex {
 
 export interface RuntimeEvidenceLedgerPort {
   append(input: RuntimeEvidenceEntryInput): Promise<RuntimeEvidenceEntry[]>;
+  appendCorrection?(input: MemoryCorrectionEntryInput & {
+    scope: RuntimeEvidenceEntry["scope"];
+    evidence_id?: string;
+  }): Promise<MemoryCorrectionEntry>;
   readByGoal?(goalId: string): Promise<RuntimeEvidenceReadResult>;
   readByRun?(runId: string): Promise<RuntimeEvidenceReadResult>;
   summarizeGoal?(goalId: string): Promise<RuntimeEvidenceSummary>;
@@ -741,6 +758,27 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
       await rebuildSummaryIndex(target, this.paths);
     }));
     return [entry];
+  }
+
+  async appendCorrection(input: MemoryCorrectionEntryInput & {
+    scope: RuntimeEvidenceEntry["scope"];
+    evidence_id?: string;
+  }): Promise<MemoryCorrectionEntry> {
+    const { scope, evidence_id, ...correctionInput } = input;
+    const correction = MemoryCorrectionEntrySchema.parse(correctionInput);
+    await this.append({
+      id: evidence_id ?? correction.correction_id,
+      occurred_at: correction.created_at,
+      kind: "correction",
+      scope,
+      correction,
+      summary: correction.reason,
+      raw_refs: [{
+        kind: correction.target_ref.kind,
+        id: correction.target_ref.id,
+      }],
+    });
+    return correction;
   }
 
   async readByGoal(goalId: string): Promise<RuntimeEvidenceReadResult> {
@@ -867,6 +905,9 @@ async function readSummaryIndex(
 
 function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
   return Array.isArray(summary.candidate_lineages)
+    && Array.isArray(summary.corrections)
+    && typeof summary.correction_state === "object"
+    && summary.correction_state !== null
     && Array.isArray(summary.recommended_candidate_portfolio)
     && Array.isArray(summary.near_miss_candidates)
     && typeof summary.artifact_retention === "object"
@@ -940,6 +981,8 @@ function summarizeEvidence(
   manifests: RuntimeReproducibilityManifest[] = []
 ): RuntimeEvidenceSummary {
   const entries = [...read.entries].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+  const corrections = entries.flatMap((entry) => entry.correction ? [entry.correction] : []);
+  const correctionState = summarizeMemoryCorrectionState(corrections);
   const newestFirst = [...entries].reverse();
   const evaluatorSummary = summarizeEvidenceEvaluatorResults(entries);
   return {
@@ -959,6 +1002,8 @@ function summarizeEvidence(
       .flatMap((entry) => entry.divergent_exploration ?? [])
       .slice(-10)
       .reverse(),
+    corrections,
+    correction_state: correctionState,
     candidate_lineages: summarizeCandidateLineages(entries),
     recommended_candidate_portfolio: selectDiversifiedCandidatePortfolio(entries),
     candidate_selection_summary: summarizeCandidateSelection(entries, evaluatorSummary),

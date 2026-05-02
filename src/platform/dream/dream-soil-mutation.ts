@@ -97,6 +97,16 @@ function soilRecordStatusForAgentMemoryStatus(status: AgentMemoryStatus): SoilRe
       return "confirmed";
     case "archived":
       return "archived";
+    case "corrected":
+      return "corrected";
+    case "superseded":
+      return "superseded";
+    case "retracted":
+      return "retracted";
+    case "forgotten":
+      return "forgotten";
+    case "quarantined":
+      return "quarantined";
   }
 }
 

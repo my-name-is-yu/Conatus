@@ -115,6 +115,21 @@ CREATE TABLE IF NOT EXISTS soil_tombstones (
 CREATE INDEX IF NOT EXISTS soil_tombstones_lookup_idx
   ON soil_tombstones(record_key, version, deleted_at);
 
+CREATE TABLE IF NOT EXISTS soil_corrections (
+  correction_id TEXT PRIMARY KEY,
+  target_ref_json TEXT NOT NULL,
+  correction_kind TEXT NOT NULL,
+  replacement_ref_json TEXT,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  provenance_json TEXT NOT NULL,
+  audit_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS soil_corrections_target_idx
+  ON soil_corrections(correction_kind, created_at);
+
 CREATE TABLE IF NOT EXISTS soil_reindex_jobs (
   job_id TEXT PRIMARY KEY,
   scope TEXT NOT NULL,

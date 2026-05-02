@@ -7,6 +7,7 @@ import {
   SoilRecordFilterSchema,
   SoilSearchRequestSchema,
   type SoilCandidate,
+  type SoilCorrectionEntry,
   type SoilMutationInput,
   type SoilPage,
   type SoilPageMember,
@@ -99,6 +100,40 @@ export class SqliteSoilRepository implements SoilRepository {
       JSON.stringify({ record_ids: ids }),
       new Date().toISOString()
     );
+  }
+
+  async loadCorrections(recordIds: string[] = []): Promise<SoilCorrectionEntry[]> {
+    const ids = unique(recordIds);
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM soil_corrections
+      ${ids.length > 0 ? `WHERE json_extract(target_ref_json, '$.id') IN (${ids.map(() => "?").join(", ")})` : ""}
+      ORDER BY created_at, correction_id
+    `).all(...ids) as Array<{
+      correction_id: string;
+      target_ref_json: string;
+      correction_kind: SoilCorrectionEntry["correction_kind"];
+      replacement_ref_json: string | null;
+      actor: SoilCorrectionEntry["actor"];
+      reason: string;
+      created_at: string;
+      provenance_json: string;
+      audit_json: string;
+    }>;
+    return rows.map((row) => ({
+      schema_version: "memory-correction-entry-v1",
+      correction_id: row.correction_id,
+      target_ref: JSON.parse(row.target_ref_json) as SoilCorrectionEntry["target_ref"],
+      correction_kind: row.correction_kind,
+      replacement_ref: row.replacement_ref_json
+        ? JSON.parse(row.replacement_ref_json) as SoilCorrectionEntry["replacement_ref"]
+        : null,
+      actor: row.actor,
+      reason: row.reason,
+      created_at: row.created_at,
+      provenance: JSON.parse(row.provenance_json) as SoilCorrectionEntry["provenance"],
+      audit: JSON.parse(row.audit_json) as SoilCorrectionEntry["audit"],
+    }));
   }
 
   async upsertPages(pages: SoilPage[]): Promise<void> {

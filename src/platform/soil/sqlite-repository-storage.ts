@@ -4,6 +4,7 @@ import {
   SoilEmbeddingSchema,
   SoilMutationSchema,
   SoilPageMemberSchema,
+  SoilCorrectionEntrySchema,
   type SoilMutationInput,
   type SoilPageMember,
 } from "./contracts.js";
@@ -203,6 +204,55 @@ export function applySoilMutation(db: SqliteDatabase, input: SoilMutationInput):
         for (const row of rows) {
           contentMutatedRecordIds.add(row.record_id);
         }
+      }
+    }
+
+    for (const correction of mutation.corrections) {
+      const parsed = SoilCorrectionEntrySchema.parse(correction);
+      db.prepare(`
+        INSERT INTO soil_corrections (
+          correction_id, target_ref_json, correction_kind, replacement_ref_json,
+          actor, reason, created_at, provenance_json, audit_json
+        ) VALUES (
+          @correction_id, @target_ref_json, @correction_kind, @replacement_ref_json,
+          @actor, @reason, @created_at, @provenance_json, @audit_json
+        )
+        ON CONFLICT(correction_id) DO UPDATE SET
+          target_ref_json = excluded.target_ref_json,
+          correction_kind = excluded.correction_kind,
+          replacement_ref_json = excluded.replacement_ref_json,
+          actor = excluded.actor,
+          reason = excluded.reason,
+          created_at = excluded.created_at,
+          provenance_json = excluded.provenance_json,
+          audit_json = excluded.audit_json
+      `).run({
+        correction_id: parsed.correction_id,
+        target_ref_json: serializeJson(parsed.target_ref),
+        correction_kind: parsed.correction_kind,
+        replacement_ref_json: parsed.replacement_ref ? serializeJson(parsed.replacement_ref) : null,
+        actor: parsed.actor,
+        reason: parsed.reason,
+        created_at: parsed.created_at,
+        provenance_json: serializeJson(parsed.provenance),
+        audit_json: serializeJson(parsed.audit),
+      });
+      if (parsed.audit.status !== "active") {
+        continue;
+      }
+      db.prepare(`
+        UPDATE soil_records
+        SET status = ?, is_active = 0, updated_at = ?
+        WHERE record_id = ?
+      `).run(parsed.correction_kind, parsed.created_at, parsed.target_ref.id);
+      contentMutatedRecordIds.add(parsed.target_ref.id);
+      if (parsed.replacement_ref?.kind === "soil_record") {
+        db.prepare(`
+          UPDATE soil_records
+          SET supersedes_record_id = COALESCE(supersedes_record_id, ?)
+          WHERE record_id = ?
+        `).run(parsed.target_ref.id, parsed.replacement_ref.id);
+        contentMutatedRecordIds.add(parsed.replacement_ref.id);
       }
     }
 
