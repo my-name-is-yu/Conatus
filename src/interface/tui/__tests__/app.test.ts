@@ -195,6 +195,14 @@ function runSpecResponse(overrides: Record<string, unknown> = {}): string {
   });
 }
 
+function confirmationResponse(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    decision: "approve",
+    confidence: 0.94,
+    ...overrides,
+  });
+}
+
 function createEvidenceSummary(overrides: Record<string, unknown> = {}) {
   return {
     schema_version: "runtime-evidence-summary-v1",
@@ -471,6 +479,7 @@ describe("standalone slash command routing", () => {
     const llmClient = createMockLLMClient([
       nonEvidenceResponse(),
       runSpecResponse(),
+      confirmationResponse(),
     ]);
 
     const screen = render(React.createElement(App, {
@@ -527,6 +536,7 @@ describe("standalone slash command routing", () => {
           confidence: "high",
         },
       }),
+      confirmationResponse(),
     ]);
 
     const screen = render(React.createElement(App, {
@@ -575,6 +585,7 @@ describe("standalone slash command routing", () => {
       runSpecResponse({
         deadline: null,
       }),
+      confirmationResponse(),
     ]);
 
     const screen = render(React.createElement(App, {
@@ -933,6 +944,199 @@ describe("daemon-mode chat routing", () => {
     testState.lastApprovalProps?.onDecision(true);
 
     expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-1", true);
+    screen.unmount();
+  });
+
+  it("classifies multilingual freeform approval text inside a pending approval context", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const llmClient = createSingleMockLLMClient(confirmationResponse({
+      decision: "approve",
+      confidence: 0.94,
+    }));
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      llmClient,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    daemonClient.handlers.get("operator_handoff_required")?.({
+      handoff_id: "handoff-approval",
+      goal_id: "goal-a",
+      title: "Submit handoff",
+      summary: "External submission requires approval.",
+      recommended_action: "Submit the result.",
+      triggers: ["approval_required"],
+      created_at: "2026-05-01T00:00:00.000Z",
+    });
+    await flush();
+
+    await testState.lastChatProps!.onSubmit("proceda con la entrega");
+
+    expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-approval", true);
+    expect(chatRunner.execute).not.toHaveBeenCalled();
+    screen.unmount();
+  });
+
+  it("classifies multilingual freeform cancellation inside a pending approval context", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const llmClient = createSingleMockLLMClient(confirmationResponse({
+      decision: "cancel",
+      confidence: 0.93,
+    }));
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      llmClient,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    daemonClient.handlers.get("operator_handoff_required")?.({
+      handoff_id: "handoff-cancel",
+      goal_id: "goal-a",
+      title: "Publish handoff",
+      summary: "External publish requires approval.",
+      recommended_action: "Publish the result.",
+      triggers: ["approval_required"],
+      created_at: "2026-05-01T00:00:00.000Z",
+    });
+    await flush();
+
+    await testState.lastChatProps!.onSubmit("annule cette publication");
+
+    expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-cancel", false);
+    expect(chatRunner.execute).not.toHaveBeenCalled();
+    screen.unmount();
+  });
+
+  it("keeps ambiguous approval text pending and does not execute chat or approval", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const llmClient = createSingleMockLLMClient(confirmationResponse({
+      decision: "unknown",
+      confidence: 0.45,
+      clarification: "Please explicitly approve or cancel.",
+    }));
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      llmClient,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    daemonClient.handlers.get("operator_handoff_required")?.({
+      handoff_id: "handoff-ambiguous",
+      goal_id: "goal-a",
+      title: "Secret handoff",
+      summary: "Secret handling requires approval.",
+      recommended_action: "Use the configured secret.",
+      triggers: ["approval_required"],
+      created_at: "2026-05-01T00:00:00.000Z",
+    });
+    await flush();
+
+    await testState.lastChatProps!.onSubmit("sounds fine maybe");
+
+    expect(daemonClient.approve).not.toHaveBeenCalled();
+    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    expect(testState.lastApprovalProps?.task.work_description).toBe("Secret handoff");
+    screen.unmount();
+  });
+
+  it("ignores stale async freeform approval classification after the overlay button resolves", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    let releaseClassification!: () => void;
+    const llmClient = {
+      sendMessage: vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          releaseClassification = resolve;
+        });
+        return {
+          content: confirmationResponse({ decision: "cancel", confidence: 0.93 }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn" as const,
+        };
+      }),
+      parseJSON: createSingleMockLLMClient(confirmationResponse()).parseJSON,
+    };
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      llmClient,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    daemonClient.handlers.get("operator_handoff_required")?.({
+      handoff_id: "handoff-stale",
+      goal_id: "goal-a",
+      title: "Publish handoff",
+      summary: "External publish requires approval.",
+      recommended_action: "Publish the result.",
+      triggers: ["approval_required"],
+      created_at: "2026-05-01T00:00:00.000Z",
+    });
+    await flush();
+
+    const pendingSubmit = testState.lastChatProps!.onSubmit("please decide");
+    await vi.waitFor(() => expect(llmClient.sendMessage).toHaveBeenCalledOnce());
+    testState.lastApprovalProps?.onDecision(true);
+    releaseClassification();
+    await pendingSubmit;
+
+    expect(daemonClient.approve).toHaveBeenCalledTimes(1);
+    expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-stale", true);
     screen.unmount();
   });
 

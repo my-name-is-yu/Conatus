@@ -52,6 +52,7 @@ import {
   type RunSpec,
 } from "../../runtime/run-spec/index.js";
 import { answerRuntimeEvidenceQuestion } from "../../runtime/evidence-answer.js";
+import { classifyConfirmationDecision } from "../../runtime/confirmation-decision.js";
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
@@ -69,13 +70,6 @@ export type DaemonConnectionState = "connected" | "connecting" | "disconnected";
 export function formatDaemonConnectionState(state: DaemonConnectionState | undefined): string | undefined {
   if (!state) return undefined;
   return `  [daemon ${state}]`;
-}
-
-function parseApprovalDecisionInput(input: string): boolean | null {
-  const normalized = input.trim().toLowerCase();
-  if (/^(confirm|approve|yes|y|ok|実行|承認|はい|お願い|進めて)$/.test(normalized)) return true;
-  if (/^(cancel|reject|no|n|stop|やめて|キャンセル|却下)$/.test(normalized)) return false;
-  return null;
 }
 
 function normalizeApprovalTask(data: Record<string, unknown>): Task {
@@ -120,6 +114,17 @@ function normalizeApprovalTask(data: Record<string, unknown>): Task {
     heartbeat_at: null,
     created_at: String(data.created_at ?? new Date().toISOString()),
   };
+}
+
+function formatApprovalDecisionContext(task: Task): string {
+  return [
+    `Work: ${task.work_description}`,
+    `Rationale: ${task.rationale}`,
+    `Approach: ${task.approach}`,
+    `Constraints: ${task.constraints.join(", ")}`,
+    `Reversibility: ${task.reversibility}`,
+    `Category: ${task.task_category}`,
+  ].join("\n");
 }
 
 export type FreeformInputRoute = "daemon_goal_chat" | "chat_runner" | "unavailable";
@@ -565,19 +570,38 @@ export function App({
 
   const handleInput = useCallback(
     async (input: string) => {
-      const approvalDecision = approvalRequestRef.current ? parseApprovalDecisionInput(input) : null;
-      if (approvalDecision !== null && approvalRequestRef.current) {
+      if (approvalRequestRef.current) {
         const request = approvalRequestRef.current;
         setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
-        request.resolve(approvalDecision);
-        approvalRequestRef.current = null;
-        setApprovalRequest(null);
+        const approvalDecision = await classifyConfirmationDecision(input, {
+          kind: "approval",
+          llmClient,
+          allowedDecisions: ["approve", "cancel", "unknown"],
+          subject: formatApprovalDecisionContext(request.task),
+        });
+        if (approvalRequestRef.current !== request) {
+          return;
+        }
+        if (approvalDecision.decision === "approve" || approvalDecision.decision === "cancel") {
+          const approved = approvalDecision.decision === "approve";
+          request.resolve(approved);
+          approvalRequestRef.current = null;
+          setApprovalRequest(null);
+          setMessages((prev) => [...prev, {
+            id: randomUUID(),
+            role: "pulseed" as const,
+            text: approved ? "Approval confirmed." : "Approval cancelled.",
+            timestamp: new Date(),
+            messageType: "info" as const,
+          }].slice(-MAX_MESSAGES));
+          return;
+        }
         setMessages((prev) => [...prev, {
           id: randomUUID(),
           role: "pulseed" as const,
-          text: approvalDecision ? "Approval confirmed." : "Approval cancelled.",
+          text: approvalDecision.clarification ?? "Approval is still pending. Please approve or cancel explicitly.",
           timestamp: new Date(),
-          messageType: "info" as const,
+          messageType: "warning" as const,
         }].slice(-MAX_MESSAGES));
         return;
       }
@@ -655,8 +679,9 @@ export function App({
 
         if (pendingRunSpec && chatRunner) {
           const effectiveCwd = cwd ?? process.cwd();
-          const result = handleRunSpecConfirmationInput(pendingRunSpec, input, {
+          const result = await handleRunSpecConfirmationInput(pendingRunSpec, input, {
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            llmClient,
           });
           const savedRunSpec = await createRunSpecStore(stateManager).save(result.spec);
           if (result.kind === "cancelled") {
@@ -723,8 +748,9 @@ export function App({
             startLoop(result.startLoop.goalId);
           }
           if (result.stopLoop) {
-            if (approvalRequestRef.current) {
-              approvalRequestRef.current.resolve(false);
+            const pendingApproval = approvalRequestRef.current as ApprovalRequest | null;
+            if (pendingApproval) {
+              pendingApproval.resolve(false);
               approvalRequestRef.current = null;
               setApprovalRequest(null);
             }

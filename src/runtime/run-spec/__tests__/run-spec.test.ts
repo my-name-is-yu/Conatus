@@ -57,6 +57,14 @@ function llmDraft(overrides: Record<string, unknown> = {}) {
   }));
 }
 
+function confirmationDecision(overrides: Record<string, unknown> = {}) {
+  return createSingleMockLLMClient(JSON.stringify({
+    decision: "approve",
+    confidence: 0.94,
+    ...overrides,
+  }));
+}
+
 describe("RunSpec derivation", () => {
   it("derives a Kaggle RunSpec with separate metric and progress semantics", async () => {
     const spec = await deriveRunSpecFromText(
@@ -316,7 +324,10 @@ describe("RunSpec confirmation", () => {
     );
     expect(spec).not.toBeNull();
 
-    const result = handleRunSpecConfirmationInput(spec!, "confirm", { now: NOW });
+    const result = await handleRunSpecConfirmationInput(spec!, "Bitte starten", {
+      now: NOW,
+      llmClient: confirmationDecision(),
+    });
 
     expect(result.kind).toBe("confirmed");
     expect(result.spec.status).toBe("confirmed");
@@ -346,19 +357,35 @@ describe("RunSpec confirmation", () => {
     });
     expect(spec).not.toBeNull();
 
-    const revisedWorkspace = handleRunSpecConfirmationInput(spec!, "workspace /repo/kaggle", { now: NOW });
+    const revisedWorkspace = await handleRunSpecConfirmationInput(spec!, "Use /repo/kaggle and review tomorrow morning", {
+      now: NOW,
+      llmClient: confirmationDecision({
+        decision: "revise",
+        confidence: 0.91,
+        revision: {
+          workspace_path: "/repo/kaggle",
+          deadline: {
+            raw: "tomorrow morning",
+            iso_at: "2026-05-03T09:00:00.000Z",
+            timezone: "Asia/Tokyo",
+            finalization_buffer_minutes: 60,
+            confidence: "medium",
+          },
+        },
+      }),
+    });
     expect(revisedWorkspace.kind).toBe("revised");
     expect(revisedWorkspace.spec.workspace).toMatchObject({ path: "/repo/kaggle", source: "user" });
+    expect(revisedWorkspace.spec.deadline).toMatchObject({ raw: "tomorrow morning" });
 
-    const revisedDeadline = handleRunSpecConfirmationInput(revisedWorkspace.spec, "deadline tomorrow morning", { now: NOW });
-    expect(revisedDeadline.kind).toBe("revised");
-    expect(revisedDeadline.spec.deadline).toMatchObject({ raw: "tomorrow morning" });
-
-    const confirmed = handleRunSpecConfirmationInput(revisedDeadline.spec, "confirm", { now: NOW });
+    const confirmed = await handleRunSpecConfirmationInput(revisedWorkspace.spec, "adelante", {
+      now: NOW,
+      llmClient: confirmationDecision(),
+    });
     expect(confirmed.kind).toBe("confirmed");
   });
 
-  it("cancels a pending RunSpec", async () => {
+  it("cancels a pending RunSpec with multilingual freeform text", async () => {
     const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
       cwd: "/repo/kaggle",
       now: NOW,
@@ -366,7 +393,10 @@ describe("RunSpec confirmation", () => {
     });
     expect(spec).not.toBeNull();
 
-    const result = handleRunSpecConfirmationInput(spec!, "cancel", { now: NOW });
+    const result = await handleRunSpecConfirmationInput(spec!, "annule cette exécution", {
+      now: NOW,
+      llmClient: confirmationDecision({ decision: "cancel", confidence: 0.93 }),
+    });
 
     expect(result.kind).toBe("cancelled");
     expect(result.spec.status).toBe("cancelled");
@@ -396,11 +426,49 @@ describe("RunSpec confirmation", () => {
     });
     expect(spec).not.toBeNull();
 
-    const result = handleRunSpecConfirmationInput(spec!, "confirm", { now: NOW });
+    const result = await handleRunSpecConfirmationInput(spec!, "start it", {
+      now: NOW,
+      llmClient: confirmationDecision(),
+    });
 
     expect(result.kind).toBe("blocked");
     expect(result.message).toContain("Which local or remote workspace");
     expect(result.message).toContain("What deadline or review time");
+  });
+
+  it("does not execute a pending RunSpec on ambiguous confirmation text", async () => {
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      llmClient: llmDraft(),
+    });
+    expect(spec).not.toBeNull();
+
+    const result = await handleRunSpecConfirmationInput(spec!, "looks interesting", {
+      now: NOW,
+      llmClient: confirmationDecision({
+        decision: "unknown",
+        confidence: 0.42,
+        clarification: "Please explicitly approve or cancel.",
+      }),
+    });
+
+    expect(result.kind).toBe("unrecognized");
+    expect(result.spec.status).toBe("draft");
+  });
+
+  it("does not use a phrase fallback when confirmation classifier is unavailable", async () => {
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      llmClient: llmDraft(),
+    });
+    expect(spec).not.toBeNull();
+
+    const result = await handleRunSpecConfirmationInput(spec!, "confirm", { now: NOW });
+
+    expect(result.kind).toBe("unrecognized");
+    expect(result.spec.status).toBe("draft");
   });
 
   it("shows risky external actions as approval-gated in the proposal", async () => {
