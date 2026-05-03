@@ -185,8 +185,89 @@ describe("TelegramGatewayAdapter", () => {
       expect(sentMessages).toContain("Read Telegram config: Config file does not exist yet.");
       expect(sentMessages).toContain("Final setup guidance.");
     });
+    expect(sentMessages.filter((message) => message === "Final setup guidance.")).toHaveLength(1);
+  });
+
+  it("does not send fallback while async assistant_final delivery is still draining", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const finalSendStarted = createDeferred();
+    const finalSendCanFinish = createDeferred();
+    const sentMessages: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "getMe") {
+        return telegramResponse({ id: 1, username: "pulseed_test_bot" });
+      }
+      if (method === "getUpdates") {
+        return telegramResponse([
+          {
+            update_id: 100,
+            message: {
+              message_id: 2718,
+              from: { id: 42 },
+              chat: { id: 314 },
+              text: "hello",
+            },
+          },
+        ]);
+      }
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        if (body.text === "Final setup guidance.") {
+          finalSendStarted.resolve();
+          await finalSendCanFinish.promise;
+        }
+        return telegramResponse({ message_id: 9000 + sentMessages.length });
+      }
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({
+        type: "assistant_final",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:02.000Z",
+        text: "Final setup guidance.",
+        persisted: true,
+      });
+      await adapter.stop();
+      return "Final setup guidance.";
+    });
+
+    await adapter.start();
+    await finalSendStarted.promise;
+    expect(sentMessages.filter((message) => message === "Final setup guidance.")).toHaveLength(1);
+    finalSendCanFinish.resolve();
+
+    await vi.waitFor(() => {
+      expect(sentMessages.filter((message) => message === "Final setup guidance.")).toHaveLength(1);
+    });
   });
 });
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
 
 async function writeConfig(config: Record<string, unknown>): Promise<string> {
   const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-telegram-gateway-"));

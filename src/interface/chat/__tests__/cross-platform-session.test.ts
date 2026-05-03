@@ -52,6 +52,14 @@ function getSessionPaths(stateManager: StateManager): string[] {
     .filter((path: string) => path.startsWith("chat/sessions/"));
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
 describe("CrossPlatformChatSessionManager", () => {
   it("routes token-only setup follow-up through typed secret intake instead of adapter execution", async () => {
     const token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
@@ -184,6 +192,69 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(events.some((event) => event.type === "assistant_delta")).toBe(true);
     expect(events.some((event) => event.type === "assistant_final")).toBe(true);
     expect(events.at(-1)?.type).toBe("lifecycle_end");
+  });
+
+  it("drains async per-turn event delivery before returning to gateway callers", async () => {
+    const stateManager = makeMockStateManager();
+    const manager = new CrossPlatformChatSessionManager(makeDeps({ stateManager }));
+    const finalDelivery = createDeferred();
+    let finalHandlerEntered = false;
+    let finalDelivered = false;
+
+    const run = manager.processIncomingMessage({
+      text: "stream this gateway turn",
+      platform: "slack",
+      identity_key: "workspace:U123",
+      conversation_id: "C123:1700.1",
+      sender_id: "U123",
+      message_id: "1700.2",
+      cwd: "/repo",
+      onEvent: async (event) => {
+        if (event.type !== "assistant_final") return;
+        finalHandlerEntered = true;
+        await finalDelivery.promise;
+        finalDelivered = true;
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(finalHandlerEntered).toBe(true);
+    });
+    await expect(Promise.race([
+      run.then(() => "returned"),
+      Promise.resolve().then(() => "pending"),
+    ])).resolves.toBe("pending");
+
+    finalDelivery.resolve();
+    await expect(run).resolves.toBe("Task completed successfully.");
+    expect(finalDelivered).toBe(true);
+  });
+
+  it("isolates async event delivery failures and still returns the chat result", async () => {
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+    }));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const result = await manager.processIncomingMessage({
+      text: "stream this gateway turn",
+      platform: "discord",
+      conversation_id: "D123",
+      sender_id: "U123",
+      cwd: "/repo",
+      onEvent: async (event) => {
+        if (event.type === "assistant_final") {
+          throw new Error("discord delivery failed");
+        }
+      },
+    });
+
+    expect(result).toBe("Task completed successfully.");
+    expect(warnSpy).toHaveBeenCalledWith("[chat] event delivery failed", expect.objectContaining({
+      eventType: "assistant_final",
+      error: "discord delivery failed",
+    }));
+    warnSpy.mockRestore();
   });
 
   it("returns recovery guidance for gateway-visible failures", async () => {
