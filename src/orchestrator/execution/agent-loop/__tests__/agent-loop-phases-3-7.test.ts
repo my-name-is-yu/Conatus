@@ -36,6 +36,7 @@ import {
   type AgentLoopModelRequest,
   type AgentLoopModelResponse,
 } from "../index.js";
+import { defaultExecutionPolicy } from "../execution-policy.js";
 
 class ScriptedModelClient implements AgentLoopModelClient {
   calls: AgentLoopModelRequest[] = [];
@@ -204,6 +205,188 @@ describe("agentloop phase 3 tools", () => {
     const image = await executor.execute("view_image", { path: imagePath }, context);
     expect(image.success).toBe(true);
     expect(image.artifacts).toEqual([imagePath]);
+  });
+
+  it("blocks production agent-loop file mutations inside protected PulSeed roots in consumer mode", async () => {
+    const previousRoots = process.env["PULSEED_SELF_PROTECTION_ROOTS"];
+    const previousDev = process.env["PULSEED_DEV"];
+    process.env["PULSEED_SELF_PROTECTION_ROOTS"] = tmpDir;
+    delete process.env["PULSEED_DEV"];
+    try {
+      const registry = new ToolRegistry();
+      registry.register(new ApplyPatchTool());
+      registry.register(new ShellCommandTool());
+      const { runtime } = makeRuntime(registry);
+      const policy = defaultExecutionPolicy(tmpDir);
+      const turn = {
+        session: createAgentLoopSession(),
+        turnId: "turn-1",
+        goalId: "goal-1",
+        cwd: tmpDir,
+        model: makeModelInfo().ref,
+        modelInfo: makeModelInfo(),
+        messages: [],
+        outputSchema: z.object({}),
+        budget: defaultBudgetForTest(),
+        toolPolicy: { allowedTools: ["apply_patch", "shell_command"] },
+        executionPolicy: policy,
+        toolCallContext: {
+          cwd: tmpDir,
+          goalId: "goal-1",
+          trustBalance: 100,
+          preApproved: true,
+          trusted: true,
+          approvalFn: async () => true,
+          executionPolicy: policy,
+        },
+      };
+
+      const outputs = await runtime.executeBatch([
+        {
+          id: "patch-1",
+          name: "apply_patch",
+          input: {
+            cwd: tmpDir,
+            patch: [
+              "diff --git a/file.txt b/file.txt",
+              "index 3367afd..3e75765 100644",
+              "--- a/file.txt",
+              "+++ b/file.txt",
+              "@@ -1 +1 @@",
+              "-old",
+              "+blocked",
+              "",
+            ].join("\n"),
+          },
+        },
+        {
+          id: "shell-1",
+          name: "shell_command",
+          input: { command: "touch consumer-blocked.txt", cwd: tmpDir },
+        },
+      ], turn);
+
+      expect(outputs[0].success).toBe(false);
+      expect(outputs[0].content).toContain("protected");
+      expect(outputs[1].success).toBe(false);
+      expect(outputs[1].content).toContain("protected PulSeed source root");
+      expect(await fsp.readFile(path.join(tmpDir, "file.txt"), "utf-8")).toBe("old\n");
+      expect(fs.existsSync(path.join(tmpDir, "consumer-blocked.txt"))).toBe(false);
+
+      const interpreterWrite = await runtime.executeBatch([
+        {
+          id: "shell-interpreter-1",
+          name: "shell_command",
+          input: { command: "node -e \"require('fs').writeFileSync('interpreter-blocked.txt','x')\"", cwd: tmpDir },
+        },
+      ], turn);
+      expect(interpreterWrite[0].success).toBe(false);
+      expect(interpreterWrite[0].content).toContain("protected PulSeed source root");
+      expect(fs.existsSync(path.join(tmpDir, "interpreter-blocked.txt"))).toBe(false);
+
+      const outsideDir = makeTempDir();
+      try {
+        const outsideOutput = await runtime.executeBatch([
+          {
+            id: "shell-absolute-1",
+            name: "shell_command",
+            input: { command: `touch ${path.join(tmpDir, "absolute-blocked.txt")}`, cwd: outsideDir },
+          },
+        ], turn);
+        expect(outsideOutput[0].success).toBe(false);
+        expect(outsideOutput[0].content).toContain("protected PulSeed source root");
+        expect(fs.existsSync(path.join(tmpDir, "absolute-blocked.txt"))).toBe(false);
+      } finally {
+        fs.rmSync(outsideDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+
+      const deletePatch = [
+        "diff --git a/file.txt b/file.txt",
+        "deleted file mode 100644",
+        "index 3367afd..0000000",
+        "--- a/file.txt",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-old",
+        "",
+      ].join("\n");
+      const deleteOutput = await runtime.executeBatch([
+        { id: "patch-delete-1", name: "apply_patch", input: { patch: deletePatch, cwd: tmpDir } },
+      ], turn);
+      expect(deleteOutput[0].success).toBe(false);
+      expect(deleteOutput[0].content).toContain("protected");
+      expect(fs.existsSync(path.join(tmpDir, "file.txt"))).toBe(true);
+    } finally {
+      if (previousRoots === undefined) delete process.env["PULSEED_SELF_PROTECTION_ROOTS"];
+      else process.env["PULSEED_SELF_PROTECTION_ROOTS"] = previousRoots;
+      if (previousDev === undefined) delete process.env["PULSEED_DEV"];
+      else process.env["PULSEED_DEV"] = previousDev;
+    }
+  });
+
+  it("allows the same protected root mutation when dev mode is explicitly enabled", async () => {
+    const previousRoots = process.env["PULSEED_SELF_PROTECTION_ROOTS"];
+    const previousDev = process.env["PULSEED_DEV"];
+    process.env["PULSEED_SELF_PROTECTION_ROOTS"] = tmpDir;
+    process.env["PULSEED_DEV"] = "1";
+    try {
+      const registry = new ToolRegistry();
+      registry.register(new ApplyPatchTool());
+      const { runtime } = makeRuntime(registry);
+      const policy = defaultExecutionPolicy(tmpDir);
+      const turn = {
+        session: createAgentLoopSession(),
+        turnId: "turn-1",
+        goalId: "goal-1",
+        cwd: tmpDir,
+        model: makeModelInfo().ref,
+        modelInfo: makeModelInfo(),
+        messages: [],
+        outputSchema: z.object({}),
+        budget: defaultBudgetForTest(),
+        toolPolicy: { allowedTools: ["apply_patch"] },
+        executionPolicy: policy,
+        toolCallContext: {
+          cwd: tmpDir,
+          goalId: "goal-1",
+          trustBalance: 100,
+          preApproved: true,
+          trusted: true,
+          approvalFn: async () => true,
+          executionPolicy: policy,
+        },
+      };
+
+      const outputs = await runtime.executeBatch([
+        {
+          id: "patch-1",
+          name: "apply_patch",
+          input: {
+            cwd: tmpDir,
+            patch: [
+              "diff --git a/file.txt b/file.txt",
+              "index 3367afd..3e75765 100644",
+              "--- a/file.txt",
+              "+++ b/file.txt",
+              "@@ -1 +1 @@",
+              "-old",
+              "+dev",
+              "",
+            ].join("\n"),
+          },
+        },
+      ], turn);
+
+      expect(policy.executionProfile).toBe("dev");
+      expect(policy.protectedPaths).toEqual([]);
+      expect(outputs[0].success).toBe(true);
+      expect(await fsp.readFile(path.join(tmpDir, "file.txt"), "utf-8")).toBe("dev\n");
+    } finally {
+      if (previousRoots === undefined) delete process.env["PULSEED_SELF_PROTECTION_ROOTS"];
+      else process.env["PULSEED_SELF_PROTECTION_ROOTS"] = previousRoots;
+      if (previousDev === undefined) delete process.env["PULSEED_DEV"];
+      else process.env["PULSEED_DEV"] = previousDev;
+    }
   });
 });
 

@@ -1,4 +1,6 @@
 import { resolve } from "node:path";
+import type { PulSeedExecutionProfile } from "./self-protection.js";
+import { resolvePulSeedExecutionProfile, resolvePulSeedProtectedRoots } from "./self-protection.js";
 
 export type AgentLoopSandboxMode = "read_only" | "workspace_write" | "danger_full_access";
 export type AgentLoopApprovalPolicy = "on_request" | "never" | "untrusted";
@@ -13,6 +15,7 @@ export interface AgentLoopSecurityConfig {
 }
 
 export interface ExecutionPolicy {
+  executionProfile: PulSeedExecutionProfile;
   sandboxMode: AgentLoopSandboxMode;
   approvalPolicy: AgentLoopApprovalPolicy;
   networkAccess: boolean;
@@ -22,12 +25,15 @@ export interface ExecutionPolicy {
 }
 
 export function defaultExecutionPolicy(workspaceRoot: string): ExecutionPolicy {
+  const resolvedWorkspaceRoot = resolve(workspaceRoot);
+  const executionProfile = resolvePulSeedExecutionProfile();
   return {
+    executionProfile,
     sandboxMode: "workspace_write",
     approvalPolicy: "on_request",
     networkAccess: false,
-    workspaceRoot: resolve(workspaceRoot),
-    protectedPaths: [],
+    workspaceRoot: resolvedWorkspaceRoot,
+    protectedPaths: resolvePulSeedProtectedRoots({ workspaceRoot: resolvedWorkspaceRoot }),
     trustProjectInstructions: true,
   };
 }
@@ -41,17 +47,19 @@ export function resolveExecutionPolicy(input: {
   if (!security) return base;
 
   return {
+    executionProfile: base.executionProfile,
     sandboxMode: security.sandbox_mode ?? base.sandboxMode,
     approvalPolicy: security.approval_policy ?? base.approvalPolicy,
     networkAccess: security.network_access ?? base.networkAccess,
     workspaceRoot: base.workspaceRoot,
-    protectedPaths: [...(security.protected_paths ?? [])],
+    protectedPaths: [...base.protectedPaths, ...(security.protected_paths ?? [])],
     trustProjectInstructions: security.trust_project_instructions ?? base.trustProjectInstructions,
   };
 }
 
 export function summarizeExecutionPolicy(policy: ExecutionPolicy): string {
   const lines = [
+    `execution_profile: ${policy.executionProfile}`,
     `sandbox_mode: ${policy.sandboxMode}`,
     `approval_policy: ${policy.approvalPolicy}`,
     `network_access: ${policy.networkAccess ? "on" : "off"}`,

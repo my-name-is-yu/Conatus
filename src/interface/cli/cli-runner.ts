@@ -92,12 +92,14 @@ export class CLIRunner {
 
     await this.init();
 
-    // Extract --yes / -y globally so it works regardless of position
+    // Extract --yes / -y and --dev globally so they work regardless of position
     let globalYes = false;
     const filteredArgv: string[] = [];
     for (const arg of argv) {
       if (arg === "--yes" || arg === "-y") {
         globalYes = true;
+      } else if (arg === "--dev") {
+        process.env["PULSEED_DEV"] = "1";
       } else {
         filteredArgv.push(arg);
       }

@@ -1,4 +1,6 @@
+import { isAbsolute, resolve } from "node:path";
 import type { ExecutionPolicy } from "../../../orchestrator/execution/agent-loop/execution-policy.js";
+import { isPathInsideProtectedRoots } from "../../../orchestrator/execution/agent-loop/self-protection.js";
 
 export interface ShellCommandAssessment {
   status: "allowed" | "needs_approval" | "denied";
@@ -63,6 +65,7 @@ export function assessShellCommand(
   command: string,
   policy?: ExecutionPolicy,
   trusted = false,
+  cwd?: string,
 ): ShellCommandAssessment {
   const trimmed = command.trim();
   const segments = trimmed.split(/\s*(?:&&|\|\||;)\s*/).map((segment) => segment.trim()).filter(Boolean);
@@ -94,6 +97,10 @@ export function assessShellCommand(
     if (network) capabilities.network = true;
     if (destructive) capabilities.destructive = true;
     if (protectedTarget) capabilities.protectedTarget = true;
+  }
+
+  if ((capabilities.localWrite || !capabilities.readOnly) && targetsProtectedRoot(trimmed, policy, cwd)) {
+    return { status: "denied", reason: "Shell command would mutate a protected PulSeed source root", capabilities };
   }
 
   if (trusted && !capabilities.protectedTarget) {
@@ -145,4 +152,25 @@ export function assessShellCommand(
   }
 
   return { status: "allowed", capabilities };
+}
+
+function targetsProtectedRoot(command: string, policy: ExecutionPolicy | undefined, cwd: string | undefined): boolean {
+  if (!policy?.protectedPaths || policy.protectedPaths.length === 0) return false;
+  const effectiveCwd = cwd ?? policy.workspaceRoot;
+  if (isPathInsideProtectedRoots(effectiveCwd, policy.protectedPaths)) return true;
+  return extractPathLikeTokens(command).some((token) => {
+    const resolved = isAbsolute(token) ? token : resolve(effectiveCwd, token);
+    return isPathInsideProtectedRoots(resolved, policy.protectedPaths);
+  });
+}
+
+function extractPathLikeTokens(command: string): string[] {
+  return command
+    .split(/\s+/)
+    .map((token) => token.replace(/^['"]|['"]$/g, ""))
+    .filter((token) =>
+      token.length > 0
+      && !token.startsWith("-")
+      && (token.startsWith("/") || token.startsWith("./") || token.startsWith("../") || token.includes("/"))
+    );
 }

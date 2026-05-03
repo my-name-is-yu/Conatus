@@ -49,6 +49,7 @@ describe("ToolPermissionManager", () => {
       const tool = makeTool({ permissionLevel: "write_local", isReadOnly: false });
       const result = await manager.check(tool, {}, makeContext({
         executionPolicy: {
+          executionProfile: "consumer",
           sandboxMode: "read_only",
           approvalPolicy: "on_request",
           networkAccess: false,
@@ -65,6 +66,7 @@ describe("ToolPermissionManager", () => {
       const tool = makeTool({ permissionLevel: "write_remote", isReadOnly: false });
       const result = await manager.check(tool, {}, makeContext({
         executionPolicy: {
+          executionProfile: "consumer",
           sandboxMode: "workspace_write",
           approvalPolicy: "on_request",
           networkAccess: false,
@@ -86,6 +88,7 @@ describe("ToolPermissionManager", () => {
       });
       const result = await manager.check(tool, {}, makeContext({
         executionPolicy: {
+          executionProfile: "consumer",
           sandboxMode: "workspace_write",
           approvalPolicy: "on_request",
           networkAccess: false,
@@ -102,6 +105,7 @@ describe("ToolPermissionManager", () => {
       const tool = makeTool({ name: "shell", permissionLevel: "read_metrics", isReadOnly: false });
       const result = await manager.check(tool, { command: "git status" }, makeContext({
         executionPolicy: {
+          executionProfile: "consumer",
           sandboxMode: "read_only",
           approvalPolicy: "on_request",
           networkAccess: false,

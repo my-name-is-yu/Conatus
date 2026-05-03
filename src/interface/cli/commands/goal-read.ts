@@ -10,6 +10,7 @@ import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { dimensionProgress } from "../../../platform/drive/gap-calculator.js";
+import { resolvePulSeedExecutionProfile } from "../../../orchestrator/execution/agent-loop/self-protection.js";
 
 async function printActiveGoals(
   stateManager: StateManager,
@@ -139,6 +140,9 @@ export async function cmdStatus(
   console.log(`# Status: ${goal.title}`);
   console.log(`\n**Goal ID**: ${goalId}`);
   console.log(`**Status**: ${goal.status}`);
+  if (resolvePulSeedExecutionProfile() === "dev") {
+    console.log("**Execution profile**: dev");
+  }
   if (goal.deadline) {
     console.log(`**Deadline**: ${goal.deadline}`);
   }

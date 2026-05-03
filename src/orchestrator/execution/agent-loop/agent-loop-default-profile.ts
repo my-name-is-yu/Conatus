@@ -431,6 +431,7 @@ export function summarizeAgentLoopResolvedProfile(
 ): AgentLoopResolvedProfileSummary {
   const posture = executionPolicy
     ? [
+        `profile=${executionPolicy.executionProfile}`,
         `sandbox=${executionPolicy.sandboxMode}`,
         `approval=${executionPolicy.approvalPolicy}`,
         `network=${executionPolicy.networkAccess ? "on" : "off"}`,
