@@ -11,6 +11,7 @@ import type {
 } from "../agent-loop-model.js";
 import type { BoundedAgentLoopRunner } from "../bounded-agent-loop-runner.js";
 import { defaultAgentLoopCapabilities } from "../index.js";
+import type { AgentLoopCommandResult, AgentLoopToolResultSummary } from "../agent-loop-result.js";
 
 function makeModelRef(): AgentLoopModelRef {
   return { providerId: "test", modelId: "model" };
@@ -24,7 +25,18 @@ function makeModelInfo(): AgentLoopModelInfo {
   };
 }
 
-function makeRunner(returnOutput: unknown, finalText = JSON.stringify(returnOutput)) {
+function makeRunner(
+  returnOutput: unknown,
+  finalText = JSON.stringify(returnOutput),
+  commandResults: AgentLoopCommandResult[] = [],
+  toolResults: AgentLoopToolResultSummary[] = commandResults.map((entry) => ({
+    toolName: entry.toolName,
+    success: entry.success,
+    ...(entry.execution ? { execution: entry.execution } : {}),
+    outputSummary: entry.outputSummary,
+    durationMs: entry.durationMs,
+  })),
+) {
   const modelInfo = makeModelInfo();
   const boundedRunner = {
     run: vi.fn().mockResolvedValue({
@@ -40,7 +52,8 @@ function makeRunner(returnOutput: unknown, finalText = JSON.stringify(returnOutp
       usage: undefined,
       compactions: 0,
       changedFiles: [],
-      commandResults: [],
+      toolResults,
+      commandResults,
     }),
   } as unknown as BoundedAgentLoopRunner;
   const modelClient = {
@@ -217,6 +230,7 @@ describe("chat agentloop final-answer contract", () => {
         usage: undefined,
         compactions: 0,
         changedFiles: [],
+        toolResults: [],
         commandResults: [],
       }),
     } as unknown as BoundedAgentLoopRunner;
@@ -260,6 +274,117 @@ describe("chat agentloop final-answer contract", () => {
     expect(result.success).toBe(true);
     expect(result.output).toBe(finalText);
     expect(result.structuredOutput).toBeUndefined();
+  });
+
+  it("does not surface fabricated success after an approval-denied side-effect tool was not executed", async () => {
+    const { runner } = makeRunner(
+      null,
+      "I restarted the daemon and reproduced the EPERM error.",
+      [{
+        toolName: "dangerous_side_effect",
+        command: "restart-service",
+        cwd: "/tmp",
+        success: false,
+        execution: {
+          status: "not_executed",
+          reason: "approval_denied",
+          message: "Side-effect tool requires approval.",
+        },
+        category: "other",
+        evidenceEligible: false,
+        outputSummary: "TOOL NOT EXECUTED (approval_denied): Side-effect tool requires approval.",
+        durationMs: 1,
+      }],
+    );
+
+    const result = await runner.execute({ message: "restart it" });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Approval was denied");
+    expect(result.output).toContain("operation was not executed");
+    expect(result.output).not.toContain("restarted the daemon");
+    expect(result.output).not.toContain("EPERM");
+  });
+
+  it("still returns genuine executed command failures for model summarization", async () => {
+    const finalText = "The command executed and failed with stderr: EPERM.";
+    const { runner } = makeRunner(
+      null,
+      finalText,
+      [{
+        toolName: "generic_side_effect",
+        command: "restart-service",
+        cwd: "/tmp",
+        success: false,
+        execution: { status: "executed" },
+        category: "other",
+        evidenceEligible: false,
+        outputSummary: "stderr: EPERM",
+        durationMs: 1,
+      }],
+    );
+
+    const result = await runner.execute({ message: "restart it" });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe(finalText);
+  });
+
+  it("guards approval-denied non-command tools that do not appear in command results", async () => {
+    const { runner } = makeRunner(
+      null,
+      "I completed the side effect.",
+      [],
+      [{
+        toolName: "spawn-session",
+        success: false,
+        execution: {
+          status: "not_executed",
+          reason: "approval_denied",
+          message: "Session mutation requires approval.",
+        },
+        outputSummary: "TOOL NOT EXECUTED (approval_denied): Session mutation requires approval.",
+        durationMs: 1,
+      }],
+    );
+
+    const result = await runner.execute({ message: "start a new session" });
+
+    expect(result.output).toContain("Approval was denied");
+    expect(result.output).toContain("operation was not executed");
+    expect(result.output).not.toContain("completed the side effect");
+  });
+
+  it("keeps deterministic executed-result summaries when a denied tool also occurred", async () => {
+    const { runner } = makeRunner(
+      null,
+      "Everything was restarted successfully.",
+      [],
+      [{
+        toolName: "side_effect_tool",
+        success: false,
+        execution: {
+          status: "not_executed",
+          reason: "approval_denied",
+          message: "Restart requires approval.",
+        },
+        outputSummary: "TOOL NOT EXECUTED (approval_denied): Restart requires approval.",
+        durationMs: 1,
+      }, {
+        toolName: "status_reader",
+        success: true,
+        execution: { status: "executed" },
+        outputSummary: "status is running",
+        durationMs: 1,
+      }],
+    );
+
+    const result = await runner.execute({ message: "restart and check status" });
+
+    expect(result.output).toContain("operation was not executed");
+    expect(result.output).toContain("Executed tool results:");
+    expect(result.output).toContain("status_reader succeeded: status is running");
+    expect(result.output).not.toContain("Everything was restarted successfully");
   });
 
   it("biases chat mode prompts toward display markdown by default", () => {

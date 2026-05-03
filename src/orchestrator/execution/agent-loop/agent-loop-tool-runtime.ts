@@ -62,17 +62,19 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
         abortSignal: turn.abortSignal,
       });
       const disposition = this.resolveDisposition(result.error, turn.abortSignal?.aborted === true);
+      const execution = result.execution ?? (disposition === "approval_denied"
+        ? { status: "not_executed" as const, reason: "approval_denied" as const, message: result.error ?? result.summary }
+        : { status: "executed" as const });
       const command = this.extractCommand(call.name, call.input);
       const resolvedCwd = this.extractCwd(call.input) ?? turn.cwd;
       return {
         callId: call.id,
         toolName: call.name,
         success: result.success,
-        content: result.success
-          ? `${result.summary}\n${this.stringify(result.data)}${result.contextModifier ? `\n${result.contextModifier}` : ""}`
-          : result.error ?? result.summary,
+        content: this.formatContent(result, execution),
         durationMs: result.durationMs || Date.now() - start,
         disposition,
+        execution,
         ...(result.contextModifier ? { contextModifier: result.contextModifier } : {}),
         rawResult: result,
         ...(command ? { command, cwd: resolvedCwd } : {}),
@@ -109,6 +111,17 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
     if (typeof value === "string") return value;
     if (value === undefined) return "";
     return JSON.stringify(value);
+  }
+
+  private formatContent(result: Awaited<ReturnType<ToolExecutor["execute"]>>, execution: NonNullable<AgentLoopToolOutput["execution"]>): string {
+    if (execution.status === "not_executed") {
+      const reason = execution.reason ? ` (${execution.reason})` : "";
+      const message = execution.message ?? result.error ?? result.summary;
+      return `TOOL NOT EXECUTED${reason}: ${message}`;
+    }
+    return result.success
+      ? `${result.summary}\n${this.stringify(result.data)}${result.contextModifier ? `\n${result.contextModifier}` : ""}`
+      : result.error ?? result.summary;
   }
 
   private resolveDisposition(

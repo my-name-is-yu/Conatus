@@ -69,6 +69,7 @@ export class ToolExecutor {
       return this.failResult(
         `Permission denied: ${semanticResult.reason}`,
         Date.now() - startTime,
+        { status: "not_executed", reason: "permission_denied", message: semanticResult.reason },
       );
     }
     if (semanticResult.status === "needs_approval" && tool.metadata.tags.includes("automation")) {
@@ -87,6 +88,7 @@ export class ToolExecutor {
         return this.failResult(
           `User denied approval: ${semanticResult.reason}`,
           Date.now() - startTime,
+          { status: "not_executed", reason: "approval_denied", message: semanticResult.reason },
         );
       }
     }
@@ -97,6 +99,7 @@ export class ToolExecutor {
       return this.failResult(
         `Permission denied by policy: ${permResult.reason}`,
         Date.now() - startTime,
+        { status: "not_executed", reason: "policy_blocked", message: permResult.reason },
       );
     }
     if (permResult.status === "needs_approval") {
@@ -115,6 +118,7 @@ export class ToolExecutor {
         return this.failResult(
           `User denied approval: ${permResult.reason}`,
           Date.now() - startTime,
+          { status: "not_executed", reason: "approval_denied", message: permResult.reason },
         );
       }
     }
@@ -125,6 +129,7 @@ export class ToolExecutor {
       return this.failResult(
         `Input sanitization failed: ${sanitizeError}`,
         Date.now() - startTime,
+        { status: "not_executed", reason: "policy_blocked", message: sanitizeError },
       );
     }
 
@@ -140,6 +145,7 @@ export class ToolExecutor {
               success: true,
               data: null,
               summary: "dry-run: skipped",
+              execution: { status: "not_executed", reason: "dry_run", message: "dry-run skipped tool.call()" },
               durationMs: 0,
             };
           }
@@ -306,12 +312,13 @@ export class ToolExecutor {
     };
   }
 
-  private failResult(error: string, durationMs: number): ToolResult {
+  private failResult(error: string, durationMs: number, execution?: ToolResult["execution"]): ToolResult {
     return {
       success: false,
       data: null,
       summary: error,
       error,
+      ...(execution ? { execution } : {}),
       durationMs,
     };
   }
