@@ -12,6 +12,7 @@ import {
   type SelectedChatRoute,
 } from "./ingress-router.js";
 import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
+import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { buildAdapterRegistry, buildLLMClient } from "../../base/llm/provider-factory.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
@@ -534,11 +535,16 @@ export class CrossPlatformChatSessionManager {
         capabilities.hasRuntimeControlService
         || (!capabilities.hasAgentLoop && !capabilities.hasToolLoop)
       );
+    const runtimeControlIntent = runtimeControlAllowed
+      ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
+      : null;
+    const freeformRouteIntent = runtimeControlIntent === null && capabilities.hasAgentLoop
+      ? await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient)
+      : null;
     const selectedRoute = this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
-      runtimeControlIntent: runtimeControlAllowed
-        ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
-        : null,
+      runtimeControlIntent,
+      freeformRouteIntent,
     });
     session.lastRoute = selectedRoute;
 

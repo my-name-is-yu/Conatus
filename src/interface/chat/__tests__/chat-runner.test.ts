@@ -62,6 +62,14 @@ function interruptDecision(kind: "diff" | "review" | "summary" | "background" | 
   return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
 }
 
+function freeformRouteDecision(kind: "assist" | "configure" | "execute" | "clarify", confidence = 0.93): string {
+  return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
+}
+
+function freeformExecuteDecision(): string {
+  return freeformRouteDecision("execute");
+}
+
 function makeInterruptibleAgentLoopRunner() {
   let capturedSignal: AbortSignal | undefined;
   let resolveActive: ((value: AgentResult) => void) | undefined;
@@ -2373,8 +2381,12 @@ describe("ChatRunner", () => {
       } as unknown as ChatAgentLoopRunner;
       const llmClient = {
         supportsToolCalling: () => true,
-        sendMessage: vi.fn().mockRejectedValue(new Error("sendMessage must not be called")),
-        parseJSON: vi.fn(),
+        sendMessage: vi.fn().mockResolvedValue({
+          content: freeformExecuteDecision(),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: createSingleMockLLMClient(freeformExecuteDecision()).parseJSON,
       };
 
       const runner = new ChatRunner(makeDeps({
@@ -2387,7 +2399,7 @@ describe("ChatRunner", () => {
       const result = await runner.execute("Do something", "/repo");
 
       expect((chatAgentLoopRunner.execute as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
-      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Native agentloop response");
@@ -2436,8 +2448,12 @@ describe("ChatRunner", () => {
       } as unknown as ChatAgentLoopRunner;
       const llmClient = {
         supportsToolCalling: () => true,
-        sendMessage: vi.fn().mockRejectedValue(new Error("direct llm path must not be called")),
-        parseJSON: vi.fn(),
+        sendMessage: vi.fn().mockResolvedValue({
+          content: freeformExecuteDecision(),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: createSingleMockLLMClient(freeformExecuteDecision()).parseJSON,
       };
 
       const runner = new ChatRunner(makeDeps({
@@ -2448,7 +2464,7 @@ describe("ChatRunner", () => {
       const result = await runner.execute("What route should answer this?", "/repo");
 
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Agentloop direct answer");
@@ -2562,7 +2578,9 @@ describe("ChatRunner", () => {
         chatAgentLoopRunner,
         llmClient: createMockLLMClient([
           JSON.stringify({ intent: "none", reason: "ordinary continuation" }),
+          freeformExecuteDecision(),
           JSON.stringify({ intent: "none", reason: "ordinary implementation finish request" }),
+          freeformExecuteDecision(),
         ]),
         runtimeControlService,
       }));
@@ -2594,11 +2612,11 @@ describe("ChatRunner", () => {
         const llmClient = {
           supportsToolCalling: () => true,
           sendMessage: vi.fn().mockResolvedValue({
-            content: "Improve the long-running task until the target metric is reached.",
+            content: freeformExecuteDecision(),
             usage: { input_tokens: 10, output_tokens: 12 },
             stop_reason: "stop",
           }),
-          parseJSON: vi.fn(),
+          parseJSON: createSingleMockLLMClient(freeformExecuteDecision()).parseJSON,
         };
         const goal = makeGoal("goal-long", {
           title: "Reach the long-running score target",
@@ -2630,7 +2648,7 @@ describe("ChatRunner", () => {
         expect(result.output).toBe("Agentloop handles handoff");
         expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
         expect(adapter.execute).not.toHaveBeenCalled();
-        expect(llmClient.sendMessage).not.toHaveBeenCalled();
+        expect(llmClient.sendMessage).toHaveBeenCalledOnce();
         expect(goalNegotiator.negotiate).not.toHaveBeenCalled();
         expect(daemonClient.startGoal).not.toHaveBeenCalled();
       } finally {
@@ -2680,7 +2698,7 @@ describe("ChatRunner", () => {
       const runner = new ChatRunner(makeDeps({
         stateManager: makeMockStateManager(),
         chatAgentLoopRunner: interruptible.runner,
-        llmClient: createSingleMockLLMClient(interruptDecision("background")),
+        llmClient: createMockLLMClient([freeformExecuteDecision(), interruptDecision("background")]),
       }));
       runner.startSession("/repo");
 
@@ -2708,7 +2726,7 @@ describe("ChatRunner", () => {
         const runner = new ChatRunner(makeDeps({
           stateManager: makeMockStateManager(),
           chatAgentLoopRunner: interruptible.runner,
-          llmClient: createSingleMockLLMClient(interruptDecision("diff")),
+          llmClient: createMockLLMClient([freeformExecuteDecision(), interruptDecision("diff")]),
         }));
         runner.startSession(tmpDir);
 
@@ -2734,7 +2752,7 @@ describe("ChatRunner", () => {
         stateManager: makeMockStateManager(),
         chatAgentLoopRunner: interruptible.runner,
         reviewAgentLoopRunner,
-        llmClient: createSingleMockLLMClient(interruptDecision("review")),
+        llmClient: createMockLLMClient([freeformExecuteDecision(), interruptDecision("review")]),
       }));
       runner.startSession("/repo");
 
@@ -2755,7 +2773,7 @@ describe("ChatRunner", () => {
       const runner = new ChatRunner(makeDeps({
         stateManager: makeMockStateManager(),
         chatAgentLoopRunner: interruptible.runner,
-        llmClient: createSingleMockLLMClient(interruptDecision("summary")),
+        llmClient: createMockLLMClient([freeformExecuteDecision(), interruptDecision("summary")]),
       }));
       runner.startSession("/repo");
 
@@ -2775,7 +2793,7 @@ describe("ChatRunner", () => {
       const runner = new ChatRunner(makeDeps({
         stateManager: makeMockStateManager(),
         chatAgentLoopRunner: interruptible.runner,
-        llmClient: createSingleMockLLMClient(interruptDecision("unknown", 0.3)),
+        llmClient: createMockLLMClient([freeformExecuteDecision(), interruptDecision("unknown", 0.3)]),
       }));
       runner.startSession("/repo");
 
@@ -2792,8 +2810,24 @@ describe("ChatRunner", () => {
 
     it("does not apply stale interrupt classification after the active turn finishes", async () => {
       let releaseClassification!: () => void;
+      let sendMessageCount = 0;
       const llmClient = {
         sendMessage: vi.fn(async () => {
+          sendMessageCount += 1;
+          if (sendMessageCount === 1) {
+            return {
+              content: freeformExecuteDecision(),
+              usage: { input_tokens: 1, output_tokens: 1 },
+              stop_reason: "end_turn" as const,
+            };
+          }
+          if (sendMessageCount > 2) {
+            return {
+              content: freeformExecuteDecision(),
+              usage: { input_tokens: 1, output_tokens: 1 },
+              stop_reason: "end_turn" as const,
+            };
+          }
           await new Promise<void>((resolve) => {
             releaseClassification = resolve;
           });
@@ -2830,7 +2864,7 @@ describe("ChatRunner", () => {
       const active = runner.execute("Implement a feature", "/repo");
       await vi.waitFor(() => expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce());
       const redirected = runner.interruptAndRedirect("muéstrame los cambios", "/repo");
-      await vi.waitFor(() => expect(llmClient.sendMessage).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(llmClient.sendMessage).toHaveBeenCalledTimes(2));
       finishActive();
       await active;
       releaseClassification();
@@ -3279,8 +3313,12 @@ describe("ChatRunner", () => {
       } as unknown as ChatAgentLoopRunner;
       const llmClient = {
         supportsToolCalling: () => true,
-        sendMessage: vi.fn().mockRejectedValue(new Error("direct llm path must not be called")),
-        parseJSON: vi.fn(),
+        sendMessage: vi.fn().mockResolvedValue({
+          content: JSON.stringify({ kind: "execute", confidence: 0.91, rationale: "needs repository inspection" }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn((content: string, schema: z.ZodType) => schema.parse(JSON.parse(content))),
       };
 
       const runner = new ChatRunner(makeDeps({
@@ -3291,7 +3329,7 @@ describe("ChatRunner", () => {
       const result = await runner.execute("What files changed?", "/repo");
 
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Agentloop checked it");
@@ -3311,8 +3349,12 @@ describe("ChatRunner", () => {
       } as unknown as ChatAgentLoopRunner;
       const llmClient = {
         supportsToolCalling: () => true,
-        sendMessage: vi.fn().mockRejectedValue(new Error("direct llm path must not be called")),
-        parseJSON: vi.fn(),
+        sendMessage: vi.fn().mockResolvedValue({
+          content: JSON.stringify({ kind: "execute", confidence: 0.9, rationale: "requires verification" }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn((content: string, schema: z.ZodType) => schema.parse(JSON.parse(content))),
       };
 
       const runner = new ChatRunner(makeDeps({
@@ -3323,10 +3365,102 @@ describe("ChatRunner", () => {
       const result = await runner.execute("Can you confirm whether this is safe?", "/repo");
 
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Confirmed with tools");
+    });
+
+    it("routes Japanese Telegram setup requests to guidance before agent-loop execution", async () => {
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
+      } as unknown as ChatAgentLoopRunner;
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "configure",
+          confidence: 0.94,
+          configure_target: "telegram_gateway",
+          rationale: "operator wants Telegram chat setup",
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({ chatAgentLoopRunner, llmClient }));
+
+      const result = await runner.execute("telegramからseedyと会話できるようにしたい", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("pulseed telegram setup");
+      expect(result.output).toContain("pulseed gateway setup");
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    });
+
+    it("routes English Telegram setup paraphrases to guidance before agent-loop execution", async () => {
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
+      } as unknown as ChatAgentLoopRunner;
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "configure",
+          confidence: 0.93,
+          configure_target: "telegram_gateway",
+          rationale: "operator wants Telegram gateway setup",
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({ chatAgentLoopRunner, llmClient }));
+
+      const result = await runner.execute("I want to talk to Seedy from Telegram.", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("pulseed telegram setup");
+      expect(result.output).toContain("pulseed daemon start");
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    });
+
+    it("asks for clarification on ambiguous freeform input instead of editing code", async () => {
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
+      } as unknown as ChatAgentLoopRunner;
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "clarify",
+          confidence: 0.62,
+          configure_target: "unknown",
+          rationale: "unclear desired action",
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({ chatAgentLoopRunner, llmClient }));
+
+      const result = await runner.execute("いい感じにして", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("one more detail");
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    });
+
+    it("continues explicit implementation requests into the coding agent-loop", async () => {
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "Implementation done",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "execute",
+          confidence: 0.96,
+          rationale: "explicit code implementation request",
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({ chatAgentLoopRunner, llmClient }));
+
+      const result = await runner.execute("Implement the failing tests fix in this repo.", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe("Implementation done");
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
     });
 
     it("keeps non-native-tool clients on the local LLM/tool loop instead of the adapter fallback", async () => {

@@ -56,11 +56,15 @@ import {
 } from "./chat-runner-runtime.js";
 import {
   executeAdapterRoute,
+  executeAssistRoute,
+  executeClarifyRoute,
+  executeConfigureRoute,
   executeAgentLoopRoute,
   executeRuntimeControlRoute,
   executeToolLoopRoute,
   resolveSessionExecutionPolicy,
 } from "./chat-runner-routes.js";
+import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 
 export interface ChatRunnerDeps {
   stateManager: StateManager;
@@ -474,6 +478,28 @@ export class ChatRunner {
       return runtimeControlResult;
     }
 
+    if (selectedRoute?.kind === "configure") {
+      const result = await executeConfigureRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
+      return result;
+    }
+
+    if (selectedRoute?.kind === "clarify") {
+      const result = await executeClarifyRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
+      return result;
+    }
+
+    if (selectedRoute?.kind === "assist") {
+      const result = await executeAssistRoute(this.routeHost(), {
+        input,
+        priorTurns,
+        eventContext,
+        assistantBuffer,
+        history,
+        start,
+      });
+      return result;
+    }
+
     const usesNativeAgentLoop = resumeOnly || selectedRoute?.kind === "agent_loop";
     const groundingWorkspaceContext = !resumeOnly && usesNativeAgentLoop
       ? await buildChatContext(input, executionCwd)
@@ -626,9 +652,13 @@ export class ChatRunner {
     const runtimeControlIntent = runtimeControlAllowed
       ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
       : null;
+    const freeformRouteIntent = runtimeControlIntent === null && capabilities.hasAgentLoop
+      ? await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient)
+      : null;
     return standaloneIngressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
+      freeformRouteIntent,
     });
   }
 

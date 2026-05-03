@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChatEventHandler } from "./chat-events.js";
 import type { RuntimeControlIntent } from "../../runtime/control/index.js";
+import type { FreeformRouteIntent } from "./freeform-route-classifier.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -50,6 +51,14 @@ export interface ChatIngressMessage {
 
 export type SelectedChatRoute =
   | {
+      kind: "assist" | "configure" | "clarify";
+      reason: "freeform_semantic_route";
+      intent: FreeformRouteIntent;
+      replyTargetPolicy: ReplyTargetPolicy;
+      eventProjectionPolicy: EventProjectionPolicy;
+      concurrencyPolicy: ConcurrencyPolicy;
+    }
+  | {
       kind: "agent_loop" | "tool_loop" | "adapter";
       reason: "agent_loop_available" | "tool_loop_available" | "adapter_fallback";
       replyTargetPolicy: ReplyTargetPolicy;
@@ -70,6 +79,7 @@ export interface IngressRouterCapabilities {
   hasToolLoop: boolean;
   hasRuntimeControlService?: boolean;
   runtimeControlIntent?: RuntimeControlIntent | null;
+  freeformRouteIntent?: FreeformRouteIntent | null;
 }
 
 function selectRouteForText(
@@ -106,6 +116,26 @@ function selectRouteForText(
         ...runtimeControlPolicy,
       };
     }
+  }
+
+  const freeformIntent = deps.freeformRouteIntent ?? null;
+  if (freeformIntent && freeformIntent.confidence >= 0.7) {
+    if (freeformIntent.kind === "assist" || freeformIntent.kind === "configure" || freeformIntent.kind === "clarify") {
+      return {
+        kind: freeformIntent.kind,
+        reason: "freeform_semantic_route",
+        intent: freeformIntent,
+        ...baseTurnPolicy,
+      };
+    }
+  }
+  if (freeformIntent && freeformIntent.kind !== "execute") {
+    return {
+      kind: "clarify",
+      reason: "freeform_semantic_route",
+      intent: { ...freeformIntent, kind: "clarify" },
+      ...baseTurnPolicy,
+    };
   }
 
   if (deps.hasAgentLoop) {
