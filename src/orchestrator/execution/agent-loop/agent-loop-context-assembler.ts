@@ -3,6 +3,7 @@ import type { Task } from "../../../base/types/task.js";
 import { createGroundingGateway, type GroundingGateway } from "../../../grounding/gateway.js";
 import { discoverAgentInstructionCandidates } from "../../../grounding/providers/agents-provider.js";
 import type { GroundingSection } from "../../../grounding/contracts.js";
+import type { RelationshipProfileRetrievalContext } from "../../../platform/profile/retrieval-context.js";
 import { renderPromptSections } from "../../../grounding/renderers/prompt-renderer.js";
 
 export interface AgentLoopContextBlock {
@@ -30,6 +31,7 @@ export interface TaskAgentLoopAssemblyInput {
   cwd?: string;
   workspaceContext?: string;
   knowledgeContext?: string;
+  relationshipProfileContext?: RelationshipProfileRetrievalContext;
   soilPrefetch?: (query: SoilPrefetchQuery) => Promise<SoilPrefetchResult | null>;
   maxProjectDocChars?: number;
   trustProjectInstructions?: boolean;
@@ -97,6 +99,7 @@ export class AgentLoopContextAssembler {
       trustProjectInstructions: input.trustProjectInstructions ?? true,
       workspaceContext: input.workspaceContext,
       knowledgeContext: input.knowledgeContext,
+      relationshipProfileContext: input.relationshipProfileContext,
       soilQuery,
       include: {
         session_history: false,

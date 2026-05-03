@@ -1,4 +1,5 @@
 import type { StateManager } from "../base/state/state-manager.js";
+import type { RelationshipProfileRetrievalContext } from "../platform/profile/retrieval-context.js";
 
 export type GroundingSurface = "chat" | "agent_loop" | "core_loop";
 
@@ -168,11 +169,20 @@ export interface GroundingRequest {
   trustProjectInstructions?: boolean;
   workspaceContext?: string;
   knowledgeContext?: string;
+  relationshipProfileContext?: RelationshipProfileRetrievalContext;
   recentMessages?: GroundingMessage[];
   compactionSummary?: string;
   soilQuery?: (input: { query: string; rootDir: string; limit: number }) => Promise<GroundingSoilResult | null>;
-  knowledgeQuery?: (input: { query: string; goalId?: string; limit: number }) => Promise<GroundingKnowledgeResult | null>;
+  knowledgeQuery?: (input: {
+    query: string;
+    goalId?: string;
+    limit: number;
+    relationshipProfileContext?: RelationshipProfileRetrievalContext;
+  }) => Promise<GroundingKnowledgeResult | null>;
   lessonsQuery?: (input: { query: string; goalId?: string; limit: number }) => Promise<GroundingLessonResult | null>;
+  relationshipProfileRetrieval?: {
+    includeSensitive?: boolean;
+  };
 }
 
 export interface GroundingGatewayDeps {

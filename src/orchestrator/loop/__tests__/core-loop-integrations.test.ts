@@ -32,6 +32,10 @@ import type { CompletionJudgment } from "../../../base/types/satisficing.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { DriveScore } from "../../../base/types/drive.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
+import {
+  retractRelationshipProfileItem,
+  upsertRelationshipProfileItem,
+} from "../../../platform/profile/relationship-profile.js";
 import { SessionManager } from "../../execution/session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { ReportingEngine as RealReportingEngine } from "../../../reporting/reporting-engine.js";
@@ -997,10 +1001,112 @@ describe("CoreLoop", async () => {
       const loop = new CoreLoop(depsWithKM, { delayBetweenLoopsMs: 0 });
       await loop.runOneIteration("goal-1", 0);
 
-      expect(knowledgeManager.getRelevantKnowledge).toHaveBeenCalledWith("goal-1", expect.any(String));
+      expect(knowledgeManager.getRelevantKnowledge).toHaveBeenCalledWith(
+        "goal-1",
+        expect.any(String),
+        expect.objectContaining({
+          relationshipProfileContext: expect.objectContaining({ scope: "memory_retrieval" }),
+        })
+      );
       // runTaskCycle should receive knowledgeContext as the 5th argument
       const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
       expect(callArgs![4]).toContain("JWT tokens");
+    });
+
+    it("passes active memory-retrieval relationship profile context through production task-cycle recall", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+      await saveDreamConfig({
+        activation: {
+          verifiedPlannerHintsOnly: false,
+          semanticWorkingMemory: false,
+          crossGoalLessons: false,
+          semanticContext: true,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: false,
+          playbookHints: false,
+          workflowHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, mocks.stateManager.getBaseDir());
+      await upsertRelationshipProfileItem(mocks.stateManager.getBaseDir(), {
+        stableKey: "user.preference.status",
+        kind: "preference",
+        value: "Prefer verbose status reports.",
+        source: "cli_update",
+        allowedScopes: ["memory_retrieval", "user_facing_review"],
+        now: "2026-05-03T00:00:00.000Z",
+      });
+      await upsertRelationshipProfileItem(mocks.stateManager.getBaseDir(), {
+        stableKey: "user.preference.status",
+        kind: "preference",
+        value: "Prefer concise status reports.",
+        source: "cli_update",
+        allowedScopes: ["memory_retrieval", "user_facing_review"],
+        now: "2026-05-03T00:01:00.000Z",
+      });
+      await upsertRelationshipProfileItem(mocks.stateManager.getBaseDir(), {
+        stableKey: "user.boundary.health",
+        kind: "boundary",
+        value: "Do not retrieve health context unless explicitly allowed.",
+        source: "cli_update",
+        sensitivity: "sensitive",
+        allowedScopes: ["memory_retrieval", "user_facing_review"],
+        now: "2026-05-03T00:02:00.000Z",
+      });
+      await upsertRelationshipProfileItem(mocks.stateManager.getBaseDir(), {
+        stableKey: "user.preference.editor",
+        kind: "preference",
+        value: "Prefer VS Code.",
+        source: "cli_update",
+        allowedScopes: ["memory_retrieval", "user_facing_review"],
+        now: "2026-05-03T00:03:00.000Z",
+      });
+      await retractRelationshipProfileItem(mocks.stateManager.getBaseDir(), {
+        stableKey: "user.preference.editor",
+        reason: "No longer current.",
+        now: "2026-05-03T00:04:00.000Z",
+      });
+
+      const knowledgeManager = {
+        detectKnowledgeGap: vi.fn().mockResolvedValue(null),
+        generateAcquisitionTask: vi.fn(),
+        getRelevantKnowledge: vi.fn().mockResolvedValue([]),
+        searchKnowledge: vi.fn().mockResolvedValue([]),
+        saveKnowledge: vi.fn(),
+        loadKnowledge: vi.fn().mockResolvedValue([]),
+        checkContradiction: vi.fn(),
+      };
+
+      const loop = new CoreLoop({ ...deps, knowledgeManager: knowledgeManager as any }, { delayBetweenLoopsMs: 0 });
+      await loop.runOneIteration("goal-1", 0);
+
+      const semanticQuery = knowledgeManager.searchKnowledge.mock.calls[0]?.[0] as string;
+      const relevantOptions = knowledgeManager.getRelevantKnowledge.mock.calls[0]?.[2];
+      const semanticOptions = knowledgeManager.searchKnowledge.mock.calls[0]?.[2];
+      expect(relevantOptions?.relationshipProfileContext).toMatchObject({
+        scope: "memory_retrieval",
+        includeSensitive: false,
+      });
+      expect(relevantOptions?.relationshipProfileContext.items.map((item: { value: string }) => item.value)).toEqual([
+        "Prefer concise status reports.",
+      ]);
+      expect(semanticOptions?.relationshipProfileContext.items.map((item: { value: string }) => item.value)).toEqual([
+        "Prefer concise status reports.",
+      ]);
+      expect(semanticQuery).toContain("Relationship profile retrieval context");
+      expect(semanticQuery).toContain("Prefer concise status reports.");
+      expect(semanticQuery).not.toContain("Prefer verbose status reports.");
+      expect(semanticQuery).not.toContain("Do not retrieve health context");
+      expect(semanticQuery).not.toContain("Prefer VS Code.");
+      const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
+      expect(callArgs![4]).toContain("Relationship profile retrieval context");
+      expect(callArgs![4]).toContain("Prefer concise status reports.");
+      expect(callArgs![4]).not.toContain("Prefer verbose status reports.");
+      expect(callArgs![4]).not.toContain("Do not retrieve health context");
+      expect(callArgs![4]).not.toContain("Prefer VS Code.");
     });
 
     it("adds cross-goal lessons when activation flag is enabled", async () => {

@@ -23,6 +23,10 @@ import {
   expandKnowledgeEntriesWithGraph,
   mergeWorkingMemorySelections,
 } from "../../execution/context/context-builder.js";
+import {
+  formatRelationshipProfileRetrievalContext,
+  loadRelationshipProfileRetrievalContext,
+} from "../../../platform/profile/retrieval-context.js";
 import type { CapabilityAcquisitionOutcome } from "./capability.js";
 import type { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
@@ -227,21 +231,42 @@ export async function runTaskCycleWithContext(
 
     // Collect knowledge context
     let knowledgeContext: string | undefined;
+    const relationshipProfileRetrievalContext = baseDir
+      ? await loadRelationshipProfileRetrievalContext({ baseDir }).catch(() => null)
+      : null;
+    const relationshipProfileRetrievalBlock = relationshipProfileRetrievalContext
+      ? formatRelationshipProfileRetrievalContext(relationshipProfileRetrievalContext)
+      : "";
     if (ctx.deps.knowledgeManager) {
       try {
         await runPhase("collect-knowledge-context", async () => {
           if (activationFlags?.verifiedPlannerHintsOnly) return;
           const topDimension = driveScores[0]?.dimension_name ?? goal.dimensions[0]?.name;
           if (!topDimension) return;
-          let entries = await ctx.deps.knowledgeManager!.getRelevantKnowledge(goalId, topDimension);
+          let entries = await ctx.deps.knowledgeManager!.getRelevantKnowledge(
+            goalId,
+            topDimension,
+            relationshipProfileRetrievalContext
+              ? { relationshipProfileContext: relationshipProfileRetrievalContext }
+              : undefined
+          );
 
           if (
             activationFlags?.semanticContext &&
             typeof ctx.deps.knowledgeManager!.searchKnowledge === "function"
           ) {
+            const semanticQuery = [
+              goal.title,
+              goal.description,
+              topDimension,
+              relationshipProfileRetrievalBlock,
+            ].filter((part) => part.trim().length > 0).join("\n");
             const semanticEntries = await ctx.deps.knowledgeManager!.searchKnowledge(
-              `${goal.title} ${goal.description} ${topDimension}`,
-              5
+              semanticQuery,
+              5,
+              relationshipProfileRetrievalContext
+                ? { relationshipProfileContext: relationshipProfileRetrievalContext }
+                : undefined
             ).catch(() => []);
             entries = mergeUniqueKnowledgeEntries(entries, semanticEntries, 8);
           }
@@ -279,6 +304,12 @@ export async function runTaskCycleWithContext(
       } catch {
         // Knowledge retrieval failure is non-fatal
       }
+    }
+
+    if (relationshipProfileRetrievalBlock.trim().length > 0) {
+      knowledgeContext = knowledgeContext
+        ? `${relationshipProfileRetrievalBlock}\n\n${knowledgeContext}`
+        : relationshipProfileRetrievalBlock;
     }
 
     if (

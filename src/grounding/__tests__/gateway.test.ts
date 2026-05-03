@@ -4,6 +4,10 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { SqliteSoilRepository } from "../../platform/soil/sqlite-repository.js";
+import {
+  retractRelationshipProfileItem,
+  upsertRelationshipProfileItem,
+} from "../../platform/profile/relationship-profile.js";
 import { buildStaticSystemPrompt } from "../../interface/chat/grounding.js";
 import { createGroundingGateway } from "../gateway.js";
 
@@ -145,6 +149,151 @@ describe("GroundingGateway", () => {
     expect(bundle.dynamicSections.some((section) => section.key === "soil_knowledge")).toBe(true);
     expect(bundle.dynamicSections.some((section) => section.key === "knowledge_query")).toBe(false);
     expect(knowledgeQuery).not.toHaveBeenCalled();
+  });
+
+  it("passes active memory-retrieval relationship profile context to production knowledge grounding", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-profile-memory-"));
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+    await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.preference.status",
+      kind: "preference",
+      value: "Prefer detailed status reports.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval", "user_facing_review"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.preference.status",
+      kind: "preference",
+      value: "Prefer concise status reports.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval", "user_facing_review"],
+      now: "2026-05-03T00:01:00.000Z",
+    });
+    const knowledgeQuery = vi.fn().mockResolvedValue({
+      retrievalId: "knowledge:profile-context",
+      items: [{ id: "k1", content: "Knowledge result", source: "test" }],
+    });
+
+    const gateway = createGroundingGateway({ stateManager: makeStateManager({ getBaseDir: vi.fn().mockReturnValue(homeDir) }) });
+    await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+      userMessage: "Find relevant memory",
+      query: "Find relevant memory",
+      knowledgeQuery,
+    });
+
+    expect(knowledgeQuery).toHaveBeenCalledTimes(1);
+    const profileContext = knowledgeQuery.mock.calls[0]?.[0]?.relationshipProfileContext;
+    expect(profileContext).toMatchObject({
+      scope: "memory_retrieval",
+      includeSensitive: false,
+    });
+    expect((profileContext?.items as Array<{ value: string }> | undefined)?.map((item) => item.value)).toEqual(["Prefer concise status reports."]);
+    expect((profileContext?.items as Array<{ status: string }> | undefined)?.map((item) => item.status)).toEqual(["active"]);
+
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("attaches typed relationship profile context to prefetched knowledge grounding", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-prefetched-profile-"));
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+    await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.preference.status",
+      kind: "preference",
+      value: "Prefer concise status reports.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval", "user_facing_review"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+
+    const gateway = createGroundingGateway({ stateManager: makeStateManager({ getBaseDir: vi.fn().mockReturnValue(homeDir) }) });
+    const bundle = await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+      userMessage: "Find relevant memory",
+      query: "Find relevant memory",
+      knowledgeContext: "Prefetched knowledge",
+    });
+
+    const knowledgeSource = bundle.traces.source.find((source) => source.sectionKey === "knowledge_query");
+    const profileContext = knowledgeSource?.metadata?.["relationshipProfileContext"] as { items?: Array<{ value: string }> } | undefined;
+    expect(profileContext?.items?.map((item) => item.value)).toEqual(["Prefer concise status reports."]);
+    const knowledgeSection = bundle.dynamicSections.find((section) => section.key === "knowledge_query");
+    expect(knowledgeSection?.content).toContain("Relationship profile retrieval context");
+    expect(knowledgeSection?.content).toContain("Prefer concise status reports.");
+
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("excludes retracted and sensitive relationship profile items from lower-trust memory retrieval", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-profile-sensitive-"));
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+    await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.preference.editor",
+      kind: "preference",
+      value: "Prefer VS Code.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval", "user_facing_review"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+    await retractRelationshipProfileItem(homeDir, {
+      stableKey: "user.preference.editor",
+      reason: "No longer current.",
+      now: "2026-05-03T00:01:00.000Z",
+    });
+    await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.boundary.health",
+      kind: "boundary",
+      value: "Do not retrieve health context unless explicitly allowed.",
+      source: "cli_update",
+      sensitivity: "sensitive",
+      allowedScopes: ["memory_retrieval", "user_facing_review"],
+      now: "2026-05-03T00:02:00.000Z",
+    });
+    const knowledgeQuery = vi.fn().mockResolvedValue({
+      retrievalId: "knowledge:profile-context",
+      items: [{ id: "k1", content: "Knowledge result", source: "test" }],
+    });
+    const gateway = createGroundingGateway({ stateManager: makeStateManager({ getBaseDir: vi.fn().mockReturnValue(homeDir) }) });
+
+    await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+      userMessage: "Find relevant memory",
+      query: "Find relevant memory",
+      knowledgeQuery,
+    });
+    await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+      userMessage: "Find relevant memory",
+      query: "Find relevant memory",
+      relationshipProfileRetrieval: { includeSensitive: true },
+      knowledgeQuery,
+    });
+
+    expect(knowledgeQuery.mock.calls[0]?.[0]?.relationshipProfileContext?.items).toEqual([]);
+    expect(knowledgeQuery.mock.calls[1]?.[0]?.relationshipProfileContext).toMatchObject({
+      includeSensitive: true,
+    });
+    expect((knowledgeQuery.mock.calls[1]?.[0]?.relationshipProfileContext?.items as Array<{ value: string }> | undefined)?.map((item) => item.value)).toEqual([
+      "Do not retrieve health context unless explicitly allowed.",
+    ]);
+
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
   it("records usage for admitted SQLite Soil grounding hits and preserves usage stats in context", async () => {
