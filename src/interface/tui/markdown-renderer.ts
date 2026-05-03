@@ -143,6 +143,7 @@ export function splitMarkdownLineToRows(line: MarkdownLine, width: number): Mark
   let currentSegments: MarkdownSegment[] = [];
   let currentText = "";
   let currentWidth = 0;
+  let trimLeadingPlainText = false;
 
   const pushRow = (): void => {
     rows.push({
@@ -156,6 +157,7 @@ export function splitMarkdownLineToRows(line: MarkdownLine, width: number): Mark
     currentSegments = [];
     currentText = "";
     currentWidth = 0;
+    trimLeadingPlainText = true;
   };
 
   const appendPiece = (piece: string, segment: MarkdownSegment): void => {
@@ -220,10 +222,11 @@ export function splitMarkdownLineToRows(line: MarkdownLine, width: number): Mark
         pushRow();
       }
 
-      const rowPiece = currentWidth === 0 ? piece : piece.trimStart();
+      const rowPiece = trimLeadingPlainText && !segment.code ? piece.trimStart() : piece;
       if (!rowPiece) {
         continue;
       }
+      trimLeadingPlainText = false;
 
       pushSegmentPiece(rowPiece, segment);
 
