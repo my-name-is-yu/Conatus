@@ -530,13 +530,28 @@ describe("ChatRunner", () => {
       }));
 
       const intakeResult = await runner.execute(telegramToken, "/repo", 30_000);
-      const confirmResult = await runner.execute("/confirm-telegram-setup", "/repo", 30_000);
+      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
+        .map(([, value]) => value)
+        .find((value) => value?.setupDialogue?.selectedChannel === "telegram");
+      const persistedDialogue = JSON.parse(JSON.stringify(persistedSession.setupDialogue));
+      const confirmResult = await runner.execute("/confirm-setup-write", "/repo", 30_000);
 
       const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
       const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      expect(intakeResult.output).toContain("/confirm-telegram-setup");
+      expect(intakeResult.output).toContain("/confirm-setup-write");
       expect(confirmResult.success).toBe(true);
       expect(approvalFn).toHaveBeenCalledOnce();
+      expect(persistedDialogue).toMatchObject({
+        state: "confirm_write",
+        selectedChannel: "telegram",
+        action: {
+          kind: "write_gateway_config",
+          channel: "telegram",
+          command: "/confirm-setup-write",
+          requiresApproval: true,
+        },
+      });
+      expect(JSON.stringify(persistedDialogue)).not.toContain(telegramToken);
       expect(config.bot_token).toBe(telegramToken);
       expect(config.allow_all).toBe(false);
       expect(confirmResult.output).toContain("Restart the daemon");
@@ -563,7 +578,7 @@ describe("ChatRunner", () => {
       }));
 
       await runner.execute(telegramToken, "/repo", 30_000);
-      const confirmResult = await runner.execute("/confirm-telegram-setup", "/repo", 30_000);
+      const confirmResult = await runner.execute("/confirm-setup-write", "/repo", 30_000);
 
       const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
       const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
@@ -595,7 +610,7 @@ describe("ChatRunner", () => {
 
       await runner.execute(telegramToken, "/repo", 30_000);
       const confirmResult = await runner.executeIngressMessage(
-        makeIngress("/confirm-telegram-setup"),
+        makeIngress("/confirm-setup-write"),
         "/repo",
         30_000,
         adapterRoute()
@@ -606,6 +621,92 @@ describe("ChatRunner", () => {
       expect(confirmResult.output).toContain("approval-capable chat surface");
       expect(runtimeControlApprovalFn).not.toHaveBeenCalled();
       expect(fs.existsSync(configPath)).toBe(false);
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
+    it("rejects stale pending setup state when the selected channel is not Telegram", async () => {
+      const discordToken = "ABCDEFGHIJKLMNOPQRSTUVWX.abcdef.ABCDEFGHIJKLMNOPQRSTUVWXYZ1";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-discord-stale-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        approvalFn,
+      }));
+
+      const planResult = await runner.execute(discordToken, "/repo", 30_000);
+      const confirmResult = await runner.execute("/confirm-setup-write", "/repo", 30_000);
+
+      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
+        .map(([, value]) => value)
+        .find((value) => value?.setupDialogue?.selectedChannel === "discord");
+      const discordConfigPath = path.join(baseDir, "gateway", "channels", "discord-bot", "config.json");
+      expect(planResult.output).toContain("Discord gateway setup plan");
+      expect(persistedSession.setupDialogue).toMatchObject({
+        state: "blocked",
+        selectedChannel: "discord",
+        action: {
+          kind: "adapter_plan",
+          channel: "discord",
+          status: "blocked",
+        },
+      });
+      expect(JSON.stringify(persistedSession.setupDialogue)).not.toContain(discordToken);
+      expect(confirmResult.success).toBe(false);
+      expect(confirmResult.output).toContain("pending setup dialogue is for discord");
+      expect(approvalFn).not.toHaveBeenCalled();
+      expect(fs.existsSync(discordConfigPath)).toBe(false);
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
+    it("preserves Telegram setup dialogue across a gateway ingress confirmation turn", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-ingress-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const runtimeControlApprovalFn = vi.fn().mockResolvedValue(true);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        runtimeControlApprovalFn,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          configPath: path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"),
+          daemon: { running: true, port: 41700 },
+        })),
+      }));
+      const allowedIngress = (text: string): ChatIngressMessage => ({
+        ...makeIngress(text),
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+
+      const intakeResult = await runner.executeIngressMessage(
+        allowedIngress(telegramToken),
+        "/repo",
+        30_000,
+        telegramConfigureRoute()
+      );
+      const confirmResult = await runner.executeIngressMessage(
+        allowedIngress("/confirm-setup-write"),
+        "/repo",
+        30_000,
+        adapterRoute()
+      );
+
+      const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(intakeResult.output).toContain("/confirm-setup-write");
+      expect(confirmResult.success).toBe(true);
+      expect(runtimeControlApprovalFn).toHaveBeenCalledOnce();
+      expect(config.bot_token).toBe(telegramToken);
+      expect(config.allow_all).toBe(false);
       fs.rmSync(baseDir, { recursive: true, force: true });
     });
 

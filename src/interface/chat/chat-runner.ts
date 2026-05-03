@@ -50,6 +50,10 @@ import {
 } from "./chat-runner-commands.js";
 import { ChatRunnerEventBridge, type AssistantBuffer } from "./chat-runner-event-bridge.js";
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
+import {
+  isSetupWriteConfirmCommand,
+  type SetupDialogueRuntimeState,
+} from "./setup-dialogue.js";
 import type { TelegramGatewayConfig } from "../../runtime/gateway/telegram-gateway-adapter.js";
 import {
   buildRuntimeControlContextFromIngress,
@@ -168,7 +172,7 @@ export class ChatRunner {
   private sessionExecutionPolicy: ExecutionPolicy | null = null;
   private lastSelectedRoute: SelectedChatRoute | null = null;
   private setupSecretIntake: ReturnType<typeof intakeSetupSecrets> | null = null;
-  private pendingTelegramSetup: { token: string; createdAt: string } | null = null;
+  private pendingSetupDialogue: SetupDialogueRuntimeState | null = null;
 
   constructor(private readonly deps: ChatRunnerDeps) {
     this.groundingGateway = createChatGroundingGateway({
@@ -345,7 +349,7 @@ export class ChatRunner {
     const runtimeControlContext = options.runtimeControlContext ?? this.runtimeControlContext;
     const executionGoalId = options.goalId ?? this.deps.goalId;
 
-    const pendingTelegramSetupResult = await this.handlePendingTelegramSetupConfirmation(safeInput, runtimeControlContext);
+    const pendingTelegramSetupResult = await this.handlePendingSetupConfirmation(safeInput, runtimeControlContext);
     if (pendingTelegramSetupResult !== null) {
       return this.finalizeNonPersistentResult(pendingTelegramSetupResult, eventContext);
     }
@@ -703,8 +707,10 @@ export class ChatRunner {
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
       getProviderConfigBaseDir: () => this.providerConfigBaseDir(),
       getSetupSecretIntake: () => this.setupSecretIntake,
-      setPendingTelegramSetup: (token: string) => {
-        this.pendingTelegramSetup = { token, createdAt: new Date().toISOString() };
+      setPendingSetupDialogue: async (dialogue: SetupDialogueRuntimeState) => {
+        this.pendingSetupDialogue = dialogue;
+        this.history?.setSetupDialogue(dialogue.publicState);
+        await this.history?.persist();
       },
       getSessionExecutionPolicy: () => this.getSessionExecutionPolicy(),
       setSessionExecutionPolicy: (policy: ExecutionPolicy) => { this.sessionExecutionPolicy = policy; },
@@ -716,16 +722,30 @@ export class ChatRunner {
     return typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
   }
 
-  private async handlePendingTelegramSetupConfirmation(
+  private async handlePendingSetupConfirmation(
     input: string,
     runtimeControlContext: RuntimeControlChatContext | null
   ): Promise<ChatRunResult | null> {
-    if (input.trim() !== "/confirm-telegram-setup") return null;
-    const pending = this.pendingTelegramSetup;
+    if (!isSetupWriteConfirmCommand(input)) return null;
+    const pending = this.pendingSetupDialogue;
     if (!pending) {
       return {
         success: false,
-        output: "No pending Telegram setup token is available. Paste the token again to start a protected setup turn.",
+        output: "No pending setup write is available. Paste the secret again to start a protected setup turn.",
+        elapsed_ms: 0,
+      };
+    }
+    if (pending.publicState.selectedChannel !== "telegram" || pending.publicState.action?.kind !== "write_gateway_config") {
+      return {
+        success: false,
+        output: `The pending setup dialogue is for ${pending.publicState.selectedChannel}, so it cannot be confirmed as a Telegram config write. Start a new Telegram setup turn with a Telegram bot token.`,
+        elapsed_ms: 0,
+      };
+    }
+    if (!pending.secretValue) {
+      return {
+        success: false,
+        output: "The pending setup dialogue no longer has a transient secret value. Paste the token again so PulSeed can keep it protected through a fresh confirmation.",
         elapsed_ms: 0,
       };
     }
@@ -756,7 +776,9 @@ export class ChatRunner {
         : "Existing Telegram access policy will be preserved.",
     ].join(" "));
     if (!approved) {
-      this.pendingTelegramSetup = null;
+      this.pendingSetupDialogue = null;
+      this.history?.setSetupDialogue(null);
+      await this.history?.persist();
       return {
         success: false,
         output: "Telegram setup was not changed because approval was denied.",
@@ -764,7 +786,7 @@ export class ChatRunner {
       };
     }
     const nextConfig: TelegramGatewayConfig = {
-      bot_token: pending.token,
+      bot_token: pending.secretValue,
       ...(typeof current?.chat_id === "number" ? { chat_id: current.chat_id } : {}),
       allowed_user_ids: nextAllowedUserIds,
       denied_user_ids: Array.isArray(current?.denied_user_ids) ? current.denied_user_ids : [],
@@ -779,7 +801,18 @@ export class ChatRunner {
       ...(current?.identity_key ? { identity_key: current.identity_key } : {}),
     };
     await writeJsonFileAtomic(configPath, nextConfig);
-    this.pendingTelegramSetup = null;
+    this.pendingSetupDialogue = {
+      publicState: {
+        ...pending.publicState,
+        state: "restart_offer",
+        updatedAt: new Date().toISOString(),
+        action: pending.publicState.action
+          ? { ...pending.publicState.action, status: "completed" }
+          : pending.publicState.action,
+      },
+    };
+    this.history?.setSetupDialogue(this.pendingSetupDialogue.publicState);
+    await this.history?.persist();
     return {
       success: true,
       output: [

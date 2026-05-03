@@ -21,6 +21,12 @@ import { resolveExecutionPolicy, type ExecutionPolicy } from "../../orchestrator
 import type { AssistantBuffer, ChatRunnerEventBridge } from "./chat-runner-event-bridge.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 import { createGatewaySetupStatusProvider, type TelegramSetupStatus } from "./gateway-setup-status.js";
+import {
+  createDiscordAdapterPlanDialogue,
+  createTelegramConfirmWriteDialogue,
+  SETUP_WRITE_CONFIRM_COMMAND,
+  type SetupDialogueRuntimeState,
+} from "./setup-dialogue.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -35,7 +41,7 @@ export interface ChatRunnerRouteHost {
   getNativeAgentLoopStatePath(): string | null;
   getProviderConfigBaseDir(): string;
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
-  setPendingTelegramSetup(token: string): void;
+  setPendingSetupDialogue(dialogue: SetupDialogueRuntimeState): Promise<void>;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
   setSessionExecutionPolicy(policy: ExecutionPolicy): void;
 }
@@ -637,11 +643,32 @@ async function formatConfigureGuidance(
     const suppliedTelegramToken = suppliedSecretKinds.includes("telegram_bot_token");
     const telegramSecret = setupSecretIntake?.suppliedSecrets.find((secret) => secret.kind === "telegram_bot_token");
     if (telegramSecret) {
-      host.setPendingTelegramSetup(telegramSecret.value);
+      await host.setPendingSetupDialogue(createTelegramConfirmWriteDialogue(telegramSecret));
     }
     return formatTelegramConfigureGuidance(status, suppliedTelegramToken, telegramSecret !== undefined);
   }
   if (target === "gateway") {
+    const discordSecret = setupSecretIntake?.suppliedSecrets.find((secret) => secret.kind === "discord_bot_token");
+    if (discordSecret) {
+      const dialogue = createDiscordAdapterPlanDialogue();
+      await host.setPendingSetupDialogue({ publicState: dialogue });
+      return [
+        "Discord gateway setup plan",
+        "",
+        "- Setup dialogue state: blocked.",
+        "- Selected channel: discord.",
+        "- A Discord bot token was supplied and redacted, but PulSeed needs application ID, home channel ID, identity key, webhook host/port, and access policy before a chat-assisted config write can be safe.",
+        "",
+        "Recommended command path:",
+        "```sh",
+        dialogue.action?.command ?? "pulseed gateway setup",
+        "pulseed daemon start",
+        "pulseed daemon status",
+        "```",
+        "",
+        "This uses the same typed setup dialogue contract as Telegram, but Discord remains an adapter-plan path until the missing non-secret fields can be collected safely.",
+      ].join("\n");
+    }
     return [
       "Gateway setup is a configuration flow.",
       "",
@@ -710,7 +737,7 @@ function formatTelegramConfigureGuidance(
     "",
     suppliedTelegramToken
       ? pendingActionCreated
-        ? "I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Reply `/confirm-telegram-setup` to request an approval-gated config write."
+        ? `I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Reply \`${SETUP_WRITE_CONFIRM_COMMAND}\` to request an approval-gated config write.`
         : "I received a Telegram bot token in this turn and kept it redacted from chat history and activity, but no setup action could be prepared."
       : "If you prefer chat-assisted setup, paste the token here; PulSeed will redact it from history and prepare an approval-gated confirmation before writing config."
   );
