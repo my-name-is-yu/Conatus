@@ -150,4 +150,40 @@ describe("runtime-control restart result routing", () => {
       cleanupTempDir(tmpDir);
     }
   });
+
+  it("verifies legacy restart operations that were left running before startup", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-result-running-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      await operationStore.save(makeRestartingOperation({
+        operation_id: "op-running-restart",
+        state: "running",
+        result: {
+          ok: true,
+          message: "PulSeed daemon の再起動要求を送信しました。watchdog による復帰を確認します。",
+        },
+      }));
+
+      await reconcileRuntimeControlOperationsAfterStartup(
+        runtimeRoot,
+        { status: "idle" },
+        { info: vi.fn() },
+      );
+
+      expect(await operationStore.listPending()).toHaveLength(0);
+      const completed = await operationStore.listCompleted();
+      expect(completed).toHaveLength(1);
+      expect(completed[0]).toMatchObject({
+        operation_id: "op-running-restart",
+        state: "verified",
+        result: {
+          ok: true,
+          message: "PulSeed daemon の再起動を確認しました。",
+        },
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
 });

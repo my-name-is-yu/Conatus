@@ -58,7 +58,7 @@ describe("createDaemonRuntimeControlExecutor", () => {
       cwd: "/repo",
     })).resolves.toMatchObject({
       ok: true,
-      state: "running",
+      state: "restarting",
     });
 
     expect(DaemonClient).toHaveBeenCalledWith({
