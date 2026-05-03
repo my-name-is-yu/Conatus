@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import * as fs from "node:fs";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
@@ -8,6 +9,7 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { StateManager as RealStateManager } from "../../../base/state/state-manager.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -60,7 +62,95 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+function runSpecFreeformDecision(): string {
+  return JSON.stringify({
+    kind: "run_spec",
+    confidence: 0.93,
+    rationale: "Long-running background work request",
+  });
+}
+
+function runSpecDraftDecision(): string {
+  return JSON.stringify({
+    decision: "run_spec_request",
+    confidence: 0.92,
+    profile: "kaggle",
+    objective: "Continue Kaggle optimization until score exceeds 0.98",
+    execution_target: { kind: "daemon", remote_host: null, confidence: "medium" },
+    metric: {
+      name: "kaggle_score",
+      direction: "maximize",
+      target: 0.98,
+      target_rank_percent: null,
+      datasource: "kaggle_leaderboard",
+      confidence: "high",
+    },
+    progress_contract: {
+      kind: "metric_target",
+      dimension: "kaggle_score",
+      threshold: 0.98,
+      semantics: "Kaggle score exceeds 0.98.",
+      confidence: "high",
+    },
+    deadline: null,
+    budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
+    approval_policy: {
+      submit: "approval_required",
+      publish: "unspecified",
+      secret: "approval_required",
+      external_action: "approval_required",
+      irreversible_action: "approval_required",
+    },
+    missing_fields: [],
+  });
+}
+
 describe("CrossPlatformChatSessionManager", () => {
+  it("routes gateway natural-language long-running requests into a typed RunSpec draft", async () => {
+    const baseDir = makeTempDir();
+    try {
+      const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
+      const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = { execute: vi.fn() };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        adapter,
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        llmClient: createMockLLMClient([
+          runSpecFreeformDecision(),
+          runSpecDraftDecision(),
+        ]),
+      }));
+
+      const result = await manager.execute("Please keep improving this Kaggle run until score exceeds 0.98.", {
+        identity_key: "telegram:user-1",
+        platform: "telegram",
+        conversation_id: "telegram-chat-1",
+        user_id: "user-1",
+        message_id: "message-1",
+        cwd: "/repo/kaggle",
+        metadata: { gateway_message: true },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Proposed long-running run:");
+      expect(result.output).toContain("It has not started a daemon run.");
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      const [fileName] = fs.readdirSync(`${baseDir}/run-specs`);
+      const stored = JSON.parse(fs.readFileSync(`${baseDir}/run-specs/${fileName}`, "utf8"));
+      expect(stored.status).toBe("draft");
+      expect(stored.origin.channel).toBe("plugin_gateway");
+      expect(stored.origin.reply_target).toMatchObject({
+        conversation_id: "telegram-chat-1",
+        message_id: "message-1",
+        identity_key: "telegram:user-1",
+      });
+    } finally {
+      cleanupTempDir(baseDir);
+    }
+  });
+
   it("routes token-only setup follow-up through typed secret intake instead of adapter execution", async () => {
     const token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
     const stateManager = makeMockStateManager();

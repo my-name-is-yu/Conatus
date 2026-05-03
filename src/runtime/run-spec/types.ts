@@ -94,6 +94,14 @@ export const RunSpecLinksSchema = z.object({
 });
 export type RunSpecLinks = z.infer<typeof RunSpecLinksSchema>;
 
+export const RunSpecOriginSchema = z.object({
+  channel: z.string().nullable(),
+  session_id: z.string().nullable(),
+  reply_target: z.record(z.string(), z.unknown()).nullable(),
+  metadata: z.record(z.string(), z.unknown()),
+});
+export type RunSpecOrigin = z.infer<typeof RunSpecOriginSchema>;
+
 export const RunSpecSchema = z.object({
   schema_version: z.literal("run-spec-v1"),
   id: RunSpecIdSchema,
@@ -113,6 +121,7 @@ export const RunSpecSchema = z.object({
   missing_fields: z.array(RunSpecMissingFieldSchema),
   confidence: RunSpecConfidenceSchema,
   links: RunSpecLinksSchema,
+  origin: RunSpecOriginSchema,
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -121,6 +130,10 @@ export type RunSpec = z.infer<typeof RunSpecSchema>;
 export interface RunSpecDerivationContext {
   cwd?: string;
   conversationId?: string | null;
+  channel?: string | null;
+  sessionId?: string | null;
+  replyTarget?: Record<string, unknown> | null;
+  originMetadata?: Record<string, unknown>;
   now?: Date;
   timezone?: string;
   llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;

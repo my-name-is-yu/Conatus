@@ -33,6 +33,7 @@ import {
   type TurnLanguageHint,
 } from "./turn-language.js";
 import { createOperationProgressItem } from "./operation-progress.js";
+import { createRunSpecStore, formatRunSpecSetupProposal } from "../../runtime/run-spec/index.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -91,6 +92,25 @@ export async function executeRuntimeControlRoute(
     output: result.message,
     elapsed_ms: Date.now() - start,
   };
+}
+
+export async function executeRunSpecDraftRoute(
+  host: ChatRunnerRouteHost,
+  route: Extract<SelectedChatRoute, { kind: "run_spec_draft" }>,
+  eventContext: ChatEventContext,
+  assistantBuffer: AssistantBuffer,
+  history: { appendAssistantMessage(message: string): Promise<void> },
+  start: number,
+): Promise<ChatRunResult> {
+  const store = createRunSpecStore(host.deps.stateManager);
+  await store.save(route.draft);
+  host.eventBridge.emitCheckpoint("RunSpec draft prepared", `${route.draft.id} is awaiting confirmation wiring.`, eventContext, "route");
+  const output = [
+    formatRunSpecSetupProposal(route.draft),
+    "",
+    "PulSeed prepared this as a typed long-running RunSpec draft. It has not started a daemon run.",
+  ].join("\n");
+  return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
 }
 
 export function formatBlockedRuntimeControlRoute(route: Extract<SelectedChatRoute, { kind: "runtime_control_blocked" }>): string {

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
 import type {
   RunSpec,
@@ -217,6 +216,12 @@ export async function deriveRunSpecFromText(
       goal_id: null,
       runtime_session_id: null,
       conversation_id: context.conversationId ?? null,
+    },
+    origin: {
+      channel: context.channel ?? null,
+      session_id: context.sessionId ?? context.conversationId ?? null,
+      reply_target: context.replyTarget ?? null,
+      metadata: context.originMetadata ?? {},
     },
     created_at: createdAt,
     updated_at: createdAt,

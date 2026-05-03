@@ -3,6 +3,7 @@ import type { ChatEventHandler } from "./chat-events.js";
 import type { RuntimeControlIntent } from "../../runtime/control/index.js";
 import type { FreeformRouteIntent } from "./freeform-route-classifier.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
+import type { RunSpec } from "../../runtime/run-spec/index.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -67,6 +68,14 @@ export type SelectedChatRoute =
       concurrencyPolicy: ConcurrencyPolicy;
     }
   | {
+      kind: "run_spec_draft";
+      reason: "run_spec_draft_intent";
+      draft: RunSpec;
+      replyTargetPolicy: ReplyTargetPolicy;
+      eventProjectionPolicy: EventProjectionPolicy;
+      concurrencyPolicy: ConcurrencyPolicy;
+    }
+  | {
       kind: "runtime_control";
       reason: "runtime_control_intent";
       intent: RuntimeControlIntent;
@@ -90,6 +99,7 @@ export interface IngressRouterCapabilities {
   runtimeControlIntent?: RuntimeControlIntent | null;
   freeformRouteIntent?: FreeformRouteIntent | null;
   setupSecretIntake?: SetupSecretIntakeResult | null;
+  runSpecDraft?: RunSpec | null;
 }
 
 function selectRouteForText(
@@ -164,6 +174,16 @@ function selectRouteForText(
         configure_target: "gateway",
         rationale: "typed setup secret intake detected a Discord bot token",
       },
+      ...baseTurnPolicy,
+    };
+  }
+
+  const runSpecDraft = deps.runSpecDraft ?? null;
+  if (runSpecDraft) {
+    return {
+      kind: "run_spec_draft",
+      reason: "run_spec_draft_intent",
+      draft: runSpecDraft,
       ...baseTurnPolicy,
     };
   }
