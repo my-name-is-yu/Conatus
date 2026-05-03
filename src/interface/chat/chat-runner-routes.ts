@@ -27,6 +27,11 @@ import {
   SETUP_WRITE_CONFIRM_COMMAND,
   type SetupDialogueRuntimeState,
 } from "./setup-dialogue.js";
+import {
+  sameLanguageResponseInstruction,
+  shouldRenderJapanese,
+  type TurnLanguageHint,
+} from "./turn-language.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -41,6 +46,7 @@ export interface ChatRunnerRouteHost {
   getNativeAgentLoopStatePath(): string | null;
   getProviderConfigBaseDir(): string;
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
+  getTurnLanguageHint(): TurnLanguageHint;
   setPendingSetupDialogue(dialogue: SetupDialogueRuntimeState): Promise<void>;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
   setSessionExecutionPolicy(policy: ExecutionPolicy): void;
@@ -97,7 +103,7 @@ export async function executeConfigureRoute(
   if (route.kind !== "configure") {
     throw new Error(`executeConfigureRoute received route kind ${route.kind}`);
   }
-  const output = await formatConfigureGuidance(host, route.intent.configure_target ?? "unknown", host.getSetupSecretIntake());
+  const output = await formatConfigureGuidance(host, route.intent.configure_target ?? "unknown", host.getSetupSecretIntake(), host.getTurnLanguageHint());
   return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
 }
 
@@ -144,7 +150,10 @@ export async function executeAssistRoute(
     { role: "user", content: params.input },
   ];
   const response = await sendLLMMessage(host, host.deps.llmClient, messages, {
-    system: "Answer read-only. Provide concise operational guidance. Do not ask to edit files or run commands unless the user explicitly asks for execution.",
+    system: [
+      "Answer read-only. Provide concise operational guidance. Do not ask to edit files or run commands unless the user explicitly asks for execution.",
+      sameLanguageResponseInstruction(host.getTurnLanguageHint()),
+    ].join(" "),
     max_tokens: 1000,
     temperature: 0,
   }, params.assistantBuffer, params.eventContext);
@@ -635,6 +644,7 @@ async function formatConfigureGuidance(
   host: ChatRunnerRouteHost,
   target: "telegram_gateway" | "gateway" | "provider" | "daemon" | "notification" | "slack" | "unknown",
   setupSecretIntake: SetupSecretIntakeResult | null = null,
+  languageHint: TurnLanguageHint,
 ): Promise<string> {
   const suppliedSecretKinds = setupSecretIntake?.suppliedSecrets.map((secret) => secret.kind) ?? [];
   if (target === "telegram_gateway") {
@@ -645,13 +655,31 @@ async function formatConfigureGuidance(
     if (telegramSecret) {
       await host.setPendingSetupDialogue(createTelegramConfirmWriteDialogue(telegramSecret));
     }
-    return formatTelegramConfigureGuidance(status, suppliedTelegramToken, telegramSecret !== undefined);
+    return formatTelegramConfigureGuidance(status, suppliedTelegramToken, telegramSecret !== undefined, languageHint);
   }
   if (target === "gateway") {
     const discordSecret = setupSecretIntake?.suppliedSecrets.find((secret) => secret.kind === "discord_bot_token");
     if (discordSecret) {
       const dialogue = createDiscordAdapterPlanDialogue();
       await host.setPendingSetupDialogue({ publicState: dialogue });
+      if (shouldRenderJapanese(languageHint)) {
+        return [
+          "Discord gateway setup plan",
+          "",
+          "- Setup dialogue state: blocked.",
+          "- Selected channel: discord.",
+          "- Discord bot token は受け取り redacted しましたが、chat-assisted config write を安全に準備するには application ID、home channel ID、identity key、webhook host/port、access policy が必要です。",
+          "",
+          "Recommended command path:",
+          "```sh",
+          dialogue.action?.command ?? "pulseed gateway setup",
+          "pulseed daemon start",
+          "pulseed daemon status",
+          "```",
+          "",
+          "Telegram と同じ typed setup dialogue contract を使っていますが、Discord は不足している non-secret field を安全に集められるまで adapter-plan path のままです。",
+        ].join("\n");
+      }
       return [
         "Discord gateway setup plan",
         "",
@@ -669,10 +697,24 @@ async function formatConfigureGuidance(
         "This uses the same typed setup dialogue contract as Telegram, but Discord remains an adapter-plan path until the missing non-secret fields can be collected safely.",
       ].join("\n");
     }
+    if (shouldRenderJapanese(languageHint)) {
+      return [
+        "Gateway setup は configuration flow です。",
+        "",
+        "`pulseed gateway setup` を実行し、その後 `pulseed daemon start` で daemon を起動または再起動してください。",
+      ].join("\n");
+    }
     return [
       "Gateway setup is a configuration flow.",
       "",
       "Run `pulseed gateway setup`, then start or restart the daemon with `pulseed daemon start`.",
+    ].join("\n");
+  }
+  if (shouldRenderJapanese(languageHint)) {
+    return [
+      "これは code-edit task ではなく、setup/configuration のリクエストに見えます。",
+      "",
+      "main wizard には `pulseed setup`、chat channel には `pulseed gateway setup`、利用可能な場合は channel-specific setup command を使ってください。",
     ].join("\n");
   }
   return [
@@ -685,8 +727,12 @@ async function formatConfigureGuidance(
 function formatTelegramConfigureGuidance(
   status: TelegramSetupStatus,
   suppliedTelegramToken: boolean,
-  pendingActionCreated: boolean
+  pendingActionCreated: boolean,
+  languageHint: TurnLanguageHint
 ): string {
+  if (shouldRenderJapanese(languageHint)) {
+    return formatTelegramConfigureGuidanceJa(status, suppliedTelegramToken, pendingActionCreated);
+  }
   const lines = [
     "Telegram gateway status",
     "",
@@ -751,6 +797,81 @@ function formatTelegramConfigureGuidance(
     lines.push(
       "",
       "If Telegram was configured or changed after this daemon started, restart the daemon so the gateway loads the latest config."
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function formatTelegramConfigureGuidanceJa(
+  status: TelegramSetupStatus,
+  suppliedTelegramToken: boolean,
+  pendingActionCreated: boolean
+): string {
+  const lines = [
+    "Telegram gateway status",
+    "",
+    status.daemon.running
+      ? `- Daemon: port ${status.daemon.port} で起動中です。chat status だけでは gateway の load state までは確定できません。`
+      : `- Daemon: port ${status.daemon.port} で応答していません。`,
+  ];
+
+  if (status.state === "unconfigured") {
+    lines.push(
+      "- Telegram: まだ設定されていません。",
+      "",
+      "Recommended command path:",
+      "```sh",
+      "pulseed telegram setup",
+      "pulseed gateway setup",
+      "pulseed daemon start",
+      "pulseed daemon status",
+      "```",
+      "",
+      "@BotFather で bot を作成または開き、`pulseed telegram setup` で token を入力してください。"
+    );
+  } else if (status.state === "partially_configured") {
+    lines.push(
+      "- Telegram config: bot token は設定済みですが、home chat が未設定です。",
+      "- Gateway loaded in daemon: chat status からは未確認です。",
+      "",
+      "Next step:",
+      "- PulSeed の返信先にしたい Telegram chat から bot に `/sethome` を送ってください。",
+      "- その後 `pulseed daemon status` で gateway を確認してください。"
+    );
+  } else {
+    lines.push(
+      "- Telegram config: 設定済みです。",
+      status.config.hasHomeChat
+        ? "- Home chat: 設定済みです。"
+        : "- Home chat: 未設定です。この bot が特定 chat に返信する必要がある場合は `/sethome` を送ってください。",
+      "- Gateway loaded in daemon: chat status からは未確認です。",
+      "",
+      "Verification:",
+      "- Telegram bot にメッセージを送ってください。",
+      "- 配信されない場合は `pulseed daemon status` を実行してください。",
+      "- daemon 起動後に config を追加または変更した場合は、daemon を再起動して gateway に最新 config を読み込ませてください。"
+    );
+  }
+
+  lines.push(
+    "",
+    suppliedTelegramToken
+      ? pendingActionCreated
+        ? `この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しました。approval-gated config write を依頼するには \`${SETUP_WRITE_CONFIRM_COMMAND}\` と返信してください。`
+        : "この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しましたが、setup action は準備できませんでした。"
+      : "chat-assisted setup を使う場合は、ここに token を貼ってください。PulSeed は history から redaction し、config 書き込み前に approval-gated confirmation を準備します。"
+  );
+
+  if (!status.daemon.running && status.state !== "unconfigured") {
+    lines.push(
+      "",
+      "config は daemon を起動または再起動するまで反映されません。"
+    );
+  } else if (status.daemon.running && status.state !== "unconfigured") {
+    lines.push(
+      "",
+      "Telegram config を daemon 起動後に追加または変更した場合は、daemon を再起動して最新 config を読み込ませてください。"
     );
   }
 

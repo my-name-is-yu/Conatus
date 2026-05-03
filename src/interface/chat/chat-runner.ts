@@ -54,6 +54,12 @@ import {
   isSetupWriteConfirmCommand,
   type SetupDialogueRuntimeState,
 } from "./setup-dialogue.js";
+import {
+  detectTurnLanguageHint,
+  sameLanguageResponseInstruction,
+  UNKNOWN_TURN_LANGUAGE_HINT,
+  type TurnLanguageHint,
+} from "./turn-language.js";
 import type { TelegramGatewayConfig } from "../../runtime/gateway/telegram-gateway-adapter.js";
 import {
   buildRuntimeControlContextFromIngress,
@@ -172,6 +178,7 @@ export class ChatRunner {
   private sessionExecutionPolicy: ExecutionPolicy | null = null;
   private lastSelectedRoute: SelectedChatRoute | null = null;
   private setupSecretIntake: ReturnType<typeof intakeSetupSecrets> | null = null;
+  private turnLanguageHint: TurnLanguageHint = UNKNOWN_TURN_LANGUAGE_HINT;
   private pendingSetupDialogue: SetupDialogueRuntimeState | null = null;
 
   constructor(private readonly deps: ChatRunnerDeps) {
@@ -345,6 +352,8 @@ export class ChatRunner {
     const setupSecretIntake = intakeSetupSecrets(input);
     this.setupSecretIntake = setupSecretIntake;
     const safeInput = setupSecretIntake.redactedText;
+    this.turnLanguageHint = detectTurnLanguageHint(safeInput);
+    eventContext.languageHint = this.turnLanguageHint;
     const persistedSecretIntake = setupSecretIntake.suppliedSecrets.map(({ value: _value, ...metadata }) => metadata);
     const runtimeControlContext = options.runtimeControlContext ?? this.runtimeControlContext;
     const executionGoalId = options.goalId ?? this.deps.goalId;
@@ -561,6 +570,7 @@ export class ChatRunner {
     }
     const agentLoopSystemPrompt = [
       systemPrompt,
+      sameLanguageResponseInstruction(this.turnLanguageHint),
       compactionSummary ? `## Compacted Chat Summary\n${compactionSummary}` : "",
     ]
       .filter((section) => section && section.trim().length > 0)
@@ -707,6 +717,7 @@ export class ChatRunner {
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
       getProviderConfigBaseDir: () => this.providerConfigBaseDir(),
       getSetupSecretIntake: () => this.setupSecretIntake,
+      getTurnLanguageHint: () => this.turnLanguageHint,
       setPendingSetupDialogue: async (dialogue: SetupDialogueRuntimeState) => {
         this.pendingSetupDialogue = dialogue;
         this.history?.setSetupDialogue(dialogue.publicState);

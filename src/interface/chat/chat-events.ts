@@ -1,10 +1,12 @@
 import type { FailureRecoveryGuidance } from "./failure-recovery.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
+import type { TurnLanguageHint } from "./turn-language.js";
 
 export interface ChatEventBase {
   runId: string;
   turnId: string;
   createdAt: string;
+  languageHint?: TurnLanguageHint;
 }
 
 export interface LifecycleStartEvent extends ChatEventBase {
@@ -104,4 +106,5 @@ export type ChatEventHandler = (event: ChatEvent) => Promise<void> | void;
 export interface ChatEventContext {
   runId: string;
   turnId: string;
+  languageHint?: TurnLanguageHint;
 }
