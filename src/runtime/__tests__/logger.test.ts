@@ -107,6 +107,18 @@ describe("log levels — file output", () => {
     expect(content).toContain('"loop":5');
   });
 
+  it("redacts setup secrets from message and nested context before console or file output", async () => {
+    const token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const logger = new Logger({ dir: tmpDir, consoleOutput: true });
+    logger.info(`token ${token}`, { nested: { token } });
+
+    const content = await readLogFile(logger, tmpDir);
+    expect(content).not.toContain(token);
+    expect(content).toContain("[REDACTED:telegram_bot_token:setup_secret_1]");
+    expect(consoleSpy.mock.calls.join("\n")).not.toContain(token);
+  });
+
   it("does not include context JSON when context is not provided", async () => {
     const logger = new Logger({ dir: tmpDir, consoleOutput: false });
     logger.info("no context here");

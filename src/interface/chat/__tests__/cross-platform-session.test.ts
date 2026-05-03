@@ -50,6 +50,37 @@ function getSessionPaths(stateManager: StateManager): string[] {
 }
 
 describe("CrossPlatformChatSessionManager", () => {
+  it("routes token-only setup follow-up through typed secret intake instead of adapter execution", async () => {
+    const token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const llmClient = createMockLLMClient([
+      JSON.stringify({ kind: "assist", confidence: 0.95, rationale: "generic fallback" }),
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      llmClient,
+      chatAgentLoopRunner: {
+        execute: vi.fn(),
+      } as never,
+    }));
+
+    const result = await manager.execute(token, {
+      identity_key: "telegram:user-1",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("I received a Telegram bot token");
+    expect(result.output).not.toContain(token);
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect(JSON.stringify((stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(token);
+  });
+
   it("reuses the same ChatRunner session for the same identity_key across platforms", async () => {
     const stateManager = makeMockStateManager();
     const manager = new CrossPlatformChatSessionManager(makeDeps({ stateManager }));

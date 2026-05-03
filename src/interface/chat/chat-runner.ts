@@ -46,6 +46,7 @@ import {
   type PendingTendState,
 } from "./chat-runner-commands.js";
 import { ChatRunnerEventBridge, type AssistantBuffer } from "./chat-runner-event-bridge.js";
+import { intakeSetupSecrets } from "./setup-secret-intake.js";
 import {
   buildRuntimeControlContextFromIngress,
   buildStandaloneIngressMessageFromContext,
@@ -161,6 +162,7 @@ export class ChatRunner {
   private runtimeControlContext: RuntimeControlChatContext | null = null;
   private sessionExecutionPolicy: ExecutionPolicy | null = null;
   private lastSelectedRoute: SelectedChatRoute | null = null;
+  private setupSecretIntake: ReturnType<typeof intakeSetupSecrets> | null = null;
 
   constructor(private readonly deps: ChatRunnerDeps) {
     this.groundingGateway = createChatGroundingGateway({
@@ -330,16 +332,20 @@ export class ChatRunner {
     const activeTurn = this.eventBridge.beginActiveTurn(eventContext, resolvedCwd);
     const resumeCommand = this.commandHandler.parseResumeCommand(input);
     const resumeOnly = resumeCommand !== null;
+    const setupSecretIntake = intakeSetupSecrets(input);
+    this.setupSecretIntake = setupSecretIntake;
+    const safeInput = setupSecretIntake.redactedText;
+    const persistedSecretIntake = setupSecretIntake.suppliedSecrets.map(({ value: _value, ...metadata }) => metadata);
     const runtimeControlContext = options.runtimeControlContext ?? this.runtimeControlContext;
     const executionGoalId = options.goalId ?? this.deps.goalId;
 
-    const commandResult = resumeOnly ? null : await this.commandHandler.handleCommand(input, resolvedCwd);
+    const commandResult = resumeOnly ? null : await this.commandHandler.handleCommand(safeInput, resolvedCwd);
     if (commandResult !== null) {
       return this.finalizeNonPersistentResult(commandResult, eventContext);
     }
 
     if (this.pendingTend !== null && !resumeOnly) {
-      const confirmationResult = await this.commandHandler.handleTendConfirmation(input.trim(), Date.now());
+      const confirmationResult = await this.commandHandler.handleTendConfirmation(safeInput.trim(), Date.now());
       return this.finalizeNonPersistentResult(confirmationResult, eventContext);
     }
 
@@ -388,12 +394,12 @@ export class ChatRunner {
 
     this.eventBridge.emitEvent({
       type: "lifecycle_start",
-      input,
+      input: safeInput,
       ...this.eventBridge.eventBase(eventContext),
     });
 
     if (!resumeOnly) {
-      await history.appendUserMessage(input);
+      await history.appendUserMessage(safeInput, { setupSecretIntake: persistedSecretIntake });
     }
 
     if (this.cachedStaticSystemPrompt === null) {
@@ -419,13 +425,13 @@ export class ChatRunner {
 
     const selectedRoute = resumeOnly
       ? null
-      : (options.selectedRoute ?? await this.resolveRouteFromInput(input, runtimeControlContext));
+      : (options.selectedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext));
     this.lastSelectedRoute = selectedRoute;
-    this.eventBridge.emitIntent(input, selectedRoute, eventContext);
+    this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
 
     const start = Date.now();
     const assistantBuffer: AssistantBuffer = { text: "" };
-    const identityResponse = resumeOnly ? null : resolveSelfIdentityResponse(input, this.providerConfigBaseDir());
+    const identityResponse = resumeOnly ? null : resolveSelfIdentityResponse(safeInput, this.providerConfigBaseDir());
 
     if (identityResponse !== null) {
       const elapsed_ms = Date.now() - start;
@@ -490,7 +496,7 @@ export class ChatRunner {
 
     if (selectedRoute?.kind === "assist") {
       const result = await executeAssistRoute(this.routeHost(), {
-        input,
+        input: safeInput,
         priorTurns,
         eventContext,
         assistantBuffer,
@@ -502,7 +508,7 @@ export class ChatRunner {
 
     const usesNativeAgentLoop = resumeOnly || selectedRoute?.kind === "agent_loop";
     const groundingWorkspaceContext = !resumeOnly && usesNativeAgentLoop
-      ? await buildChatContext(input, executionCwd)
+      ? await buildChatContext(safeInput, executionCwd)
       : undefined;
 
     let systemPrompt = this.cachedStaticSystemPrompt ?? "";
@@ -515,7 +521,7 @@ export class ChatRunner {
             pluginLoader: this.deps.pluginLoader,
             workspaceRoot: executionCwd,
             goalId: executionGoalId,
-            userMessage: input,
+            userMessage: safeInput,
             trustProjectInstructions: this.sessionExecutionPolicy?.trustProjectInstructions ?? true,
             workspaceContext: groundingWorkspaceContext,
           });
@@ -525,8 +531,8 @@ export class ChatRunner {
             purpose: "general_turn",
             workspaceRoot: executionCwd,
             goalId: executionGoalId,
-            userMessage: input,
-            query: input,
+            userMessage: safeInput,
+            query: safeInput,
             trustProjectInstructions: this.sessionExecutionPolicy?.trustProjectInstructions ?? true,
           });
           systemPrompt = String(groundingBundle.render("prompt"));
@@ -546,8 +552,8 @@ export class ChatRunner {
       .join("\n\n")
       .trim();
 
-    const context = resumeOnly || usesNativeAgentLoop ? "" : await buildChatContext(input, gitRoot);
-    const basePrompt = resumeOnly ? "" : (context ? `${context}\n\n${input}` : input);
+    const context = resumeOnly || usesNativeAgentLoop ? "" : await buildChatContext(safeInput, gitRoot);
+    const basePrompt = resumeOnly ? "" : (context ? `${context}\n\n${safeInput}` : safeInput);
     const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
 
     if (resumeOnly && !this.deps.chatAgentLoopRunner) {
@@ -659,6 +665,7 @@ export class ChatRunner {
       ...capabilities,
       runtimeControlIntent,
       freeformRouteIntent,
+      setupSecretIntake: this.setupSecretIntake,
     });
   }
 
@@ -683,6 +690,7 @@ export class ChatRunner {
       getConversationSessionId: () => this.history?.getSessionId() ?? null,
       getSessionCwd: () => this.sessionCwd,
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
+      getSetupSecretIntake: () => this.setupSecretIntake,
       getSessionExecutionPolicy: () => this.getSessionExecutionPolicy(),
       setSessionExecutionPolicy: (policy: ExecutionPolicy) => { this.sessionExecutionPolicy = policy; },
     };

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
@@ -170,7 +171,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
     if (text === null || senderId === null) {
       return null;
     }
-    const messageId = message.id ?? `${senderId}:${message.timestamp ?? Date.now()}:${text}`;
+    const messageId = message.id ?? `${senderId}:${message.timestamp ?? Date.now()}:${randomUUID()}`;
     const conversationId = message.groupId ?? message.conversationId ?? senderId;
     return {
       messageId,

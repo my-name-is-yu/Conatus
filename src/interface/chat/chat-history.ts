@@ -6,6 +6,7 @@
 import { z } from "zod";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { RuntimeReplyTargetSchema, type RuntimeReplyTarget } from "../../runtime/session-registry/types.js";
+import { redactSetupSecrets, SetupSecretIntakeItemSchema } from "./setup-secret-intake.js";
 
 // ─── Schemas ───
 
@@ -14,6 +15,7 @@ export const ChatMessageSchema = z.object({
   content: z.string(),
   timestamp: z.string(), // ISO 8601
   turnIndex: z.number().int().min(0),
+  setupSecretIntake: z.array(SetupSecretIntakeItemSchema.omit({ value: true })).optional(),
 }).passthrough();
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
@@ -117,12 +119,15 @@ export class ChatHistory {
   }
 
   /** Append a user message and persist to disk BEFORE adapter execution. */
-  async appendUserMessage(content: string): Promise<void> {
+  async appendUserMessage(content: string, options: { setupSecretIntake?: Array<Omit<z.infer<typeof SetupSecretIntakeItemSchema>, "value">> } = {}): Promise<void> {
     this.session.messages.push({
       role: "user",
       content,
       timestamp: new Date().toISOString(),
       turnIndex: this.session.messages.length,
+      ...(options.setupSecretIntake && options.setupSecretIntake.length > 0
+        ? { setupSecretIntake: options.setupSecretIntake }
+        : {}),
     });
     await this.persist();
   }
@@ -131,7 +136,7 @@ export class ChatHistory {
   async appendAssistantMessage(content: string): Promise<void> {
     this.session.messages.push({
       role: "assistant",
-      content,
+      content: redactSetupSecrets(content),
       timestamp: new Date().toISOString(),
       turnIndex: this.session.messages.length,
     });

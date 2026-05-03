@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { redactSetupSecretsDeep } from "../interface/chat/setup-secret-intake.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -133,8 +134,10 @@ export class Logger {
     if (LOG_LEVELS[level] < this.level) return;
 
     const timestamp = new Date().toISOString();
-    const contextStr = context ? " " + JSON.stringify(context) : "";
-    const line = `[${timestamp}] [${level.toUpperCase().padEnd(5)}] ${message}${contextStr}\n`;
+    const safeMessage = redactSetupSecretsDeep(message);
+    const safeContext = context ? redactSetupSecretsDeep(context) : undefined;
+    const contextStr = safeContext ? " " + JSON.stringify(safeContext) : "";
+    const line = `[${timestamp}] [${level.toUpperCase().padEnd(5)}] ${safeMessage}${contextStr}\n`;
 
     // Console output
     if (this.consoleOutput) {
