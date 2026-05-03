@@ -35,3 +35,15 @@
 - Verification: `npm run test:changed` passed after adapter stop/health cleanup fix.
 - Review: second review agent reported no material findings after runtime-control and health fixes.
 - Status: implementation complete; preparing commit and PR.
+
+## #984 Harden setup wizard completion for resident daemon and gateway readiness
+- Status: in progress
+- Branch: codex/issue-984-setup-readiness
+- Initial sync: main up to date; issue #984 is open as of 2026-05-03.
+- Plan: inspect setup wizard completion/startup path, reuse operator binding status for final ready/partial/blocked checks, print failed checks and recovery commands, and add focused setup completion tests.
+- Implementation: setup wizard now builds and prints resident readiness as ready/partial/blocked using operator binding status, daemon response, gateway channel state, notification routing, reply target, and runtime-control checks.
+- Recovery output: failed checks include concrete commands such as `pulseed daemon start --detach`, `pulseed gateway setup`, and Telegram `/sethome` guidance.
+- Verification: focused setup readiness tests passed; `npm run typecheck` passed.
+- Review: separate review agent found daemon health was not included in readiness and Telegram configured channels could report ready before any inbound/outbound health evidence.
+- Fix after review: daemon readiness now requires `health=ok`; Telegram readiness requires recent inbound and outbound health with no last error before reporting ready.
+- Verification after review fixes: focused setup readiness tests passed (28 tests); `npm run typecheck` passed; `npm run lint:boundaries` exited 0 with existing warnings; `npm run test:changed` passed (17 files, 346 tests).
