@@ -65,6 +65,7 @@ export const RelationshipProfileAuditEventSchema = z.object({
   version: z.number().int().positive(),
   source: RelationshipProfileSourceSchema,
   previous_item_id: z.string().min(1).optional(),
+  reason: z.string().min(1).optional(),
 });
 
 export const RelationshipProfileStoreSchema = z.object({
@@ -92,6 +93,13 @@ export interface RelationshipProfileItemInput {
   allowedScopes?: RelationshipProfileConsentScope[];
   evidenceRef?: string;
   note?: string;
+  now?: string;
+}
+
+export interface RelationshipProfileRetractionInput {
+  stableKey: string;
+  reason: string;
+  source?: RelationshipProfileSource;
   now?: string;
 }
 
@@ -236,6 +244,93 @@ export async function upsertRelationshipProfileItem(
   const result = upsertRelationshipProfileItemInStore(loaded, input);
   await saveRelationshipProfile(baseDir, result.store);
   return { item: result.item, superseded: result.superseded };
+}
+
+function normalizeRetractionInput(input: RelationshipProfileRetractionInput): Required<RelationshipProfileRetractionInput> {
+  const stableKey = input.stableKey.trim();
+  const reason = input.reason.trim();
+  if (!stableKey) throw new Error("stable key is required");
+  if (!reason) throw new Error("retraction reason is required");
+  return {
+    stableKey,
+    reason,
+    source: input.source ?? "cli_update",
+    now: input.now ?? new Date().toISOString(),
+  };
+}
+
+export function retractRelationshipProfileItemInStore(
+  store: RelationshipProfileStore,
+  input: RelationshipProfileRetractionInput
+): { store: RelationshipProfileStore; item: RelationshipProfileItem } {
+  const normalized = normalizeRetractionInput(input);
+  const active = store.items.filter((item) => item.stable_key === normalized.stableKey && item.status === "active");
+  if (active.length === 0) {
+    throw new Error(`no active relationship profile item found for key: ${normalized.stableKey}`);
+  }
+  if (active.length > 1) {
+    throw new Error(`multiple active relationship profile items found for key: ${normalized.stableKey}`);
+  }
+
+  const target = active[0]!;
+  let retracted: RelationshipProfileItem | null = null;
+  const items = store.items.map((item) => {
+    if (item.id !== target.id) return item;
+    retracted = RelationshipProfileItemSchema.parse({
+      ...item,
+      status: "retracted",
+      updated_at: normalized.now,
+    });
+    return retracted;
+  });
+
+  const event = RelationshipProfileAuditEventSchema.parse({
+    id: `profile-event-${randomUUID()}`,
+    at: normalized.now,
+    action: "retracted",
+    item_id: target.id,
+    stable_key: target.stable_key,
+    version: target.version,
+    source: normalized.source,
+    reason: normalized.reason,
+  });
+
+  return {
+    store: RelationshipProfileStoreSchema.parse({
+      ...store,
+      items,
+      audit_events: [...store.audit_events, event],
+      updated_at: normalized.now,
+    }),
+    item: retracted ?? target,
+  };
+}
+
+export async function retractRelationshipProfileItem(
+  baseDir: string,
+  input: RelationshipProfileRetractionInput
+): Promise<{ item: RelationshipProfileItem }> {
+  const loaded = await loadRelationshipProfile(baseDir);
+  const result = retractRelationshipProfileItemInStore(loaded, input);
+  await saveRelationshipProfile(baseDir, result.store);
+  return { item: result.item };
+}
+
+export function getRelationshipProfileHistory(
+  store: RelationshipProfileStore,
+  stableKey: string
+): { stable_key: string; items: RelationshipProfileItem[]; audit_events: z.infer<typeof RelationshipProfileAuditEventSchema>[] } {
+  const key = stableKey.trim();
+  if (!key) throw new Error("stable key is required");
+  return {
+    stable_key: key,
+    items: store.items
+      .filter((item) => item.stable_key === key)
+      .sort((a, b) => a.version - b.version),
+    audit_events: store.audit_events
+      .filter((event) => event.stable_key === key)
+      .sort((a, b) => a.at.localeCompare(b.at)),
+  };
 }
 
 export function selectActiveRelationshipProfileItems(

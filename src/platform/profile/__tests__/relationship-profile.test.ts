@@ -4,8 +4,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   formatRelationshipProfilePromptBlock,
+  getRelationshipProfileHistory,
   loadRelationshipProfile,
   relationshipProfilePath,
+  retractRelationshipProfileItem,
   seedRelationshipProfileFromSetup,
   selectActiveRelationshipProfileItems,
   upsertRelationshipProfileItem,
@@ -59,6 +61,79 @@ describe("relationship profile store", () => {
     const block = formatRelationshipProfilePromptBlock(store, "local_planning");
     expect(block).toContain("The user prefers VS Code.");
     expect(block).not.toContain("The user prefers Atom.");
+  });
+
+  it("tracks active to superseded to retracted lifecycle and keeps stale items out of scoped context", async () => {
+    const baseDir = makeTempDir();
+
+    const first = await upsertRelationshipProfileItem(baseDir, {
+      stableKey: "user.preference.editor",
+      kind: "preference",
+      value: "The user prefers Atom.",
+      source: "cli_update",
+      allowedScopes: ["local_planning", "resident_behavior", "memory_retrieval", "user_facing_review"],
+      evidenceRef: "cli:first",
+      now: "2026-05-02T00:00:00.000Z",
+    });
+    const second = await upsertRelationshipProfileItem(baseDir, {
+      stableKey: "user.preference.editor",
+      kind: "preference",
+      value: "The user prefers VS Code.",
+      source: "user_correction",
+      allowedScopes: ["local_planning", "resident_behavior", "memory_retrieval", "user_facing_review"],
+      evidenceRef: "cli:second",
+      now: "2026-05-02T01:00:00.000Z",
+    });
+    const retracted = await retractRelationshipProfileItem(baseDir, {
+      stableKey: "user.preference.editor",
+      reason: "User said this preference is no longer true.",
+      source: "cli_update",
+      now: "2026-05-02T02:00:00.000Z",
+    });
+
+    const store = await loadRelationshipProfile(baseDir);
+    expect(first.item.version).toBe(1);
+    expect(second.item.version).toBe(2);
+    expect(retracted.item.id).toBe(second.item.id);
+    expect(store.items.find((item) => item.id === first.item.id)?.status).toBe("superseded");
+    expect(store.items.find((item) => item.id === second.item.id)?.status).toBe("retracted");
+
+    for (const scope of ["local_planning", "resident_behavior", "memory_retrieval", "user_facing_review"] as const) {
+      expect(selectActiveRelationshipProfileItems(store, scope)).toHaveLength(0);
+      expect(formatRelationshipProfilePromptBlock(store, scope)).not.toContain("VS Code");
+      expect(formatRelationshipProfilePromptBlock(store, scope)).not.toContain("Atom");
+    }
+
+    const history = getRelationshipProfileHistory(store, "user.preference.editor");
+    expect(history.items.map((item) => [item.version, item.status])).toEqual([
+      [1, "superseded"],
+      [2, "retracted"],
+    ]);
+    expect(history.audit_events.map((event) => event.action)).toEqual(["seeded", "superseded", "created", "retracted"]);
+    expect(history.audit_events.at(-1)?.reason).toBe("User said this preference is no longer true.");
+  });
+
+  it("rejects retracting a stale key without an active item", async () => {
+    const baseDir = makeTempDir();
+    await upsertRelationshipProfileItem(baseDir, {
+      stableKey: "user.preference.editor",
+      kind: "preference",
+      value: "The user prefers VS Code.",
+      source: "cli_update",
+      allowedScopes: ["local_planning"],
+      now: "2026-05-02T00:00:00.000Z",
+    });
+    await retractRelationshipProfileItem(baseDir, {
+      stableKey: "user.preference.editor",
+      reason: "No longer current.",
+      now: "2026-05-02T01:00:00.000Z",
+    });
+
+    await expect(retractRelationshipProfileItem(baseDir, {
+      stableKey: "user.preference.editor",
+      reason: "Second retract should fail.",
+      now: "2026-05-02T02:00:00.000Z",
+    })).rejects.toThrow("no active relationship profile item found");
   });
 
   it("keeps sensitive boundary items out of prompts unless explicitly allowed", async () => {

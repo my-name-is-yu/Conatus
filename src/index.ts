@@ -233,6 +233,8 @@ export {
   loadRelationshipProfileSync,
   saveRelationshipProfile,
   upsertRelationshipProfileItem,
+  retractRelationshipProfileItem,
+  getRelationshipProfileHistory,
   selectActiveRelationshipProfileItems,
   formatRelationshipProfilePromptBlock,
   seedRelationshipProfileFromSetup,

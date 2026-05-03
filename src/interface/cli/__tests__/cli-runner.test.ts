@@ -1459,6 +1459,114 @@ describe("profile command", () => {
     expect(output).toContain("Ask before non-urgent notifications.");
     expect(output).not.toContain("Notify freely.");
   });
+
+  it("shows history and retracts profile items through the production CLI entrypoint", async () => {
+    await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "preference",
+      "--key",
+      "user.preference.status",
+      "--value",
+      "Prefer verbose status reports.",
+      "--scope",
+      "local_planning",
+      "--scope",
+      "resident_behavior",
+      "--evidence-ref",
+      "cli:first"
+    );
+    await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "preference",
+      "--key",
+      "user.preference.status",
+      "--value",
+      "Prefer concise status reports.",
+      "--scope",
+      "local_planning",
+      "--scope",
+      "resident_behavior",
+      "--source",
+      "user_correction",
+      "--evidence-ref",
+      "cli:correction"
+    );
+
+    const historySpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const historyCode = await runCLI("profile", "history", "user.preference.status", "--json");
+    const historyOutput = historySpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    historySpy.mockRestore();
+
+    expect(historyCode).toBe(0);
+    const history = JSON.parse(historyOutput) as {
+      items: Array<{ version: number; status: string; provenance: { evidence_ref?: string } }>;
+      audit_events: Array<{ action: string }>;
+    };
+    expect(history.items.map((item) => [item.version, item.status])).toEqual([
+      [1, "superseded"],
+      [2, "active"],
+    ]);
+    expect(history.items[1]?.provenance.evidence_ref).toBe("cli:correction");
+    expect(history.audit_events.map((event) => event.action)).toEqual(["seeded", "superseded", "created"]);
+
+    const retractSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const retractCode = await runCLI(
+      "profile",
+      "retract",
+      "--key",
+      "user.preference.status",
+      "--reason",
+      "User said this should no longer be used.",
+      "--json"
+    );
+    const retractOutput = retractSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    retractSpy.mockRestore();
+
+    expect(retractCode).toBe(0);
+    expect(JSON.parse(retractOutput).item.status).toBe("retracted");
+
+    const showSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const showCode = await runCLI("profile", "show", "--scope", "resident_behavior", "--json");
+    const showOutput = showSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    showSpy.mockRestore();
+
+    expect(showCode).toBe(0);
+    const scopedShow = JSON.parse(showOutput) as { items: Array<{ value: string; status: string }> };
+    expect(scopedShow.items).toEqual([]);
+
+    const afterRetractSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const afterRetractCode = await runCLI("profile", "history", "user.preference.status", "--json");
+    const afterRetractOutput = afterRetractSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    afterRetractSpy.mockRestore();
+
+    const afterRetractHistory = JSON.parse(afterRetractOutput) as {
+      items: Array<{ version: number; status: string }>;
+      audit_events: Array<{ action: string; reason?: string }>;
+    };
+    expect(afterRetractCode).toBe(0);
+    expect(afterRetractHistory.items.map((item) => [item.version, item.status])).toEqual([
+      [1, "superseded"],
+      [2, "retracted"],
+    ]);
+    expect(afterRetractHistory.audit_events.at(-1)).toMatchObject({
+      action: "retracted",
+      reason: "User said this should no longer be used.",
+    });
+
+    const allSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const allCode = await runCLI("profile", "show", "--all", "--json");
+    const allOutput = allSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    allSpy.mockRestore();
+
+    const allProfile = JSON.parse(allOutput) as { items: Array<{ value: string; status: string }>; audit_events: unknown[] };
+    expect(allCode).toBe(0);
+    expect(allProfile.items.map((item) => item.status)).toEqual(["superseded", "retracted"]);
+    expect(allProfile.audit_events).toHaveLength(4);
+  });
 });
 
 describe("runtime proactive feedback commands", () => {

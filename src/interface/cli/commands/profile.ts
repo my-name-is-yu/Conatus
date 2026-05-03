@@ -4,10 +4,12 @@ import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 import {
   loadRelationshipProfile,
+  getRelationshipProfileHistory,
   RelationshipProfileConsentScopeSchema,
   RelationshipProfileItemKindSchema,
   RelationshipProfileSensitivitySchema,
   RelationshipProfileSourceSchema,
+  retractRelationshipProfileItem,
   selectActiveRelationshipProfileItems,
   upsertRelationshipProfileItem,
   type RelationshipProfileConsentScope,
@@ -20,6 +22,8 @@ function usage(): string {
   return `Usage:
   pulseed profile show [--scope <scope>] [--all] [--json]
   pulseed profile update --kind <kind> --key <stable_key> --value <value> [--scope <scope>] [--sensitivity <public|private|sensitive>] [--confidence <0-1>] [--source <source>] [--evidence-ref <ref>]
+  pulseed profile history <stable_key> [--json]
+  pulseed profile retract --key <stable_key> --reason <reason> [--source <source>] [--json]
 
 Scopes: local_planning, resident_behavior, memory_retrieval, user_facing_review
 Kinds: identity_fact, preference, dislike, value, boundary, communication_style, notification_preference, long_term_goal, life_context, intervention_policy`;
@@ -76,11 +80,6 @@ export async function cmdProfile(stateManager: StateManager, argv: string[]): Pr
     }
 
     const store = await loadRelationshipProfile(stateManager.getBaseDir());
-    if (values.json) {
-      console.log(JSON.stringify(store, null, 2));
-      return 0;
-    }
-
     let scope: RelationshipProfileConsentScope | null = null;
     if (values.scope !== undefined) {
       const parsed = RelationshipProfileConsentScopeSchema.safeParse(values.scope);
@@ -96,6 +95,17 @@ export async function cmdProfile(stateManager: StateManager, argv: string[]): Pr
         ? selectActiveRelationshipProfileItems(store, scope)
         : store.items.filter((item) => item.status === "active");
 
+    if (values.json) {
+      console.log(JSON.stringify({
+        schema_version: store.schema_version,
+        profile_id: store.profile_id,
+        items,
+        ...(values.all ? { audit_events: store.audit_events } : {}),
+        updated_at: store.updated_at,
+      }, null, 2));
+      return 0;
+    }
+
     if (items.length === 0) {
       console.log("No relationship profile items.");
       return 0;
@@ -109,6 +119,67 @@ export async function cmdProfile(stateManager: StateManager, argv: string[]): Pr
       );
     }
     return 0;
+  }
+
+  if (subcommand === "history") {
+    let values: { json?: boolean };
+    let positionals: string[];
+    try {
+      const parsed = parseArgs({
+        args: argv.slice(1),
+        options: {
+          json: { type: "boolean" },
+        },
+        allowPositionals: true,
+        strict: true,
+      }) as { values: { json?: boolean }; positionals: string[] };
+      values = parsed.values;
+      positionals = parsed.positionals;
+    } catch (err) {
+      getCliLogger().error(formatOperationError("parse profile history arguments", err));
+      return 1;
+    }
+
+    const stableKey = positionals[0]?.trim();
+    if (!stableKey || positionals.length > 1) {
+      getCliLogger().error("Error: profile history requires exactly one <stable_key> argument.");
+      console.log(usage());
+      return 1;
+    }
+
+    try {
+      const store = await loadRelationshipProfile(stateManager.getBaseDir());
+      const history = getRelationshipProfileHistory(store, stableKey);
+      if (values.json) {
+        console.log(JSON.stringify(history, null, 2));
+        return 0;
+      }
+      if (history.items.length === 0 && history.audit_events.length === 0) {
+        console.log(`No relationship profile history for ${stableKey}.`);
+        return 0;
+      }
+      console.log(`Relationship profile history for ${history.stable_key}:`);
+      for (const item of history.items) {
+        const evidence = item.provenance.evidence_ref ? `; evidence=${item.provenance.evidence_ref}` : "";
+        const note = item.provenance.note ? `; note=${item.provenance.note}` : "";
+        console.log(
+          `- item v${item.version} ${item.status}: ${item.value}` +
+            ` (source=${item.provenance.source}; scopes=${item.allowed_scopes.join(",")}; sensitivity=${item.sensitivity}; confidence=${item.confidence.toFixed(2)}${evidence}${note})`
+        );
+      }
+      if (history.audit_events.length > 0) {
+        console.log("Audit events:");
+        for (const event of history.audit_events) {
+          const reason = event.reason ? `; reason=${event.reason}` : "";
+          const previous = event.previous_item_id ? `; previous=${event.previous_item_id}` : "";
+          console.log(`- ${event.at} ${event.action} v${event.version} item=${event.item_id} source=${event.source}${previous}${reason}`);
+        }
+      }
+      return 0;
+    } catch (err) {
+      getCliLogger().error(formatOperationError("show relationship profile history", err));
+      return 1;
+    }
   }
 
   if (subcommand === "update") {
@@ -214,6 +285,59 @@ export async function cmdProfile(stateManager: StateManager, argv: string[]): Pr
       return 0;
     } catch (err) {
       getCliLogger().error(formatOperationError("update relationship profile", err));
+      return 1;
+    }
+  }
+
+  if (subcommand === "retract") {
+    let values: {
+      key?: string;
+      reason?: string;
+      source?: string;
+      json?: boolean;
+    };
+    try {
+      ({ values } = parseArgs({
+        args: argv.slice(1),
+        options: {
+          key: { type: "string" },
+          reason: { type: "string" },
+          source: { type: "string" },
+          json: { type: "boolean" },
+        },
+        strict: true,
+      }) as { values: { key?: string; reason?: string; source?: string; json?: boolean } });
+    } catch (err) {
+      getCliLogger().error(formatOperationError("parse profile retract arguments", err));
+      return 1;
+    }
+
+    const source = parseEnum<RelationshipProfileSource>(
+      values.source ?? "cli_update",
+      "source",
+      (value) => RelationshipProfileSourceSchema.safeParse(value) as never
+    );
+    if (!source) return 1;
+    if (!values.key?.trim() || !values.reason?.trim()) {
+      getCliLogger().error("Error: --key and --reason are required.");
+      console.log(usage());
+      return 1;
+    }
+
+    try {
+      const result = await retractRelationshipProfileItem(stateManager.getBaseDir(), {
+        stableKey: values.key,
+        reason: values.reason,
+        source,
+      });
+      if (values.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Retracted relationship profile item ${result.item.stable_key} v${result.item.version}.`);
+      }
+      return 0;
+    } catch (err) {
+      getCliLogger().error(formatOperationError("retract relationship profile item", err));
       return 1;
     }
   }
