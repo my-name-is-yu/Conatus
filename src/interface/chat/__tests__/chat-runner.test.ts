@@ -276,19 +276,23 @@ describe("ChatRunner", () => {
 
       await runner.execute("Do something", "/repo");
 
-      expect(events[0]).toContain("commentary:Intent\n- Confirm: Do something");
+      expect(events[0]).toContain("commentary:I understand the request as Do something.");
       expect(events.indexOf("lifecycle:Preparing context...")).toBeGreaterThan(0);
       const contextCheckpointIndex = events.findIndex((event) =>
-        event.includes("checkpoint:Checkpoint\n- Context gathered:")
+        event.includes("checkpoint:Context gathered:")
       );
       const adapterCheckpointIndex = events.findIndex((event) =>
-        event.includes("checkpoint:Checkpoint\n- Adapter started:")
+        event.includes("checkpoint:Adapter started:")
       );
       const adapterActivityIndex = events.indexOf("lifecycle:Calling adapter...");
       expect(contextCheckpointIndex).toBeGreaterThan(events.indexOf("lifecycle:Preparing context..."));
       expect(adapterCheckpointIndex).toBeGreaterThan(contextCheckpointIndex);
       expect(adapterActivityIndex).toBeGreaterThan(adapterCheckpointIndex);
       expect(events).toContain("lifecycle:Calling adapter...");
+      const transcript = events.join("\n");
+      expect(transcript).not.toContain("Intent");
+      expect(transcript).not.toContain("Checkpoint");
+      expect(transcript).not.toContain("Updated plan:");
     });
 
     it("emits verification checkpoints when adapter execution changes the working tree", async () => {
@@ -2458,7 +2462,7 @@ describe("ChatRunner", () => {
         type: "activity",
         kind: "commentary",
         transient: false,
-        message: expect.stringContaining("Intent\n- Confirm: Do something"),
+        message: expect.stringContaining("I understand the request as Do something."),
       });
       const checkpointMessages = seenEvents
         .filter((event): event is Extract<ChatEvent, { type: "activity" }> =>

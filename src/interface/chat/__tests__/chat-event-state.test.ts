@@ -387,6 +387,102 @@ describe("applyChatEventToMessages", () => {
     expect(messages.map((message) => message.text).join("\n")).not.toContain("Recent activity");
   });
 
+  it("keeps operational timeline information visible without internal presentation labels", () => {
+    const base = {
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    };
+    const timelineBase = {
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      visibility: "user" as const,
+    };
+    const events = [
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:resume-1",
+          sourceEventId: "resume-1",
+          sourceType: "resumed" as const,
+          createdAt: "2026-04-08T00:00:01.000Z",
+          kind: "lifecycle" as const,
+          status: "resumed" as const,
+          restoredMessages: 3,
+          fromUpdatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:plan-1",
+          sourceEventId: "plan-1",
+          sourceType: "plan_update" as const,
+          createdAt: "2026-04-08T00:00:02.000Z",
+          kind: "plan" as const,
+          summary: "Inspect, edit, then verify.",
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:approval-1",
+          sourceEventId: "approval-1",
+          sourceType: "approval_request" as const,
+          createdAt: "2026-04-08T00:00:03.000Z",
+          kind: "approval" as const,
+          status: "requested" as const,
+          callId: "call-approval",
+          toolName: "apply_patch",
+          reason: "modify src/example.ts",
+          permissionLevel: "workspace-write",
+          isDestructive: false,
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:compaction-1",
+          sourceEventId: "compaction-1",
+          sourceType: "context_compaction" as const,
+          createdAt: "2026-04-08T00:00:04.000Z",
+          kind: "compaction" as const,
+          phase: "mid_turn" as const,
+          reason: "context_limit" as const,
+          inputMessages: 10,
+          outputMessages: 4,
+          summaryPreview: "Shorter context",
+        },
+      },
+    ];
+
+    const messages = events.reduce(
+      (current, event) => applyChatEventToMessages(current, event, 20),
+      [] as ReturnType<typeof applyChatEventToMessages>
+    );
+    const transcript = messages.map((message) => message.text).join("\n");
+
+    expect(transcript).toContain("Resumed 3 message(s)");
+    expect(transcript).toContain("Plan changed: Inspect, edit, then verify.");
+    expect(transcript).toContain("Approval requested for apply_patch: modify src/example.ts");
+    expect(transcript).toContain("Compacted context (mid_turn, context_limit): 10 -> 4.");
+    expect(transcript).not.toContain("Checkpoint");
+    expect(transcript).not.toContain("Intent");
+    expect(transcript).not.toContain("Updated plan:");
+    expect(transcript).not.toContain("Current activity");
+    expect(transcript).not.toContain("Recent activity");
+  });
+
   it("keeps shared timeline rendering compatible when no commentary is emitted", async () => {
     const events: ChatEvent[] = [];
     const bridge = new ChatRunnerEventBridge(() => (event) => {
@@ -537,7 +633,7 @@ describe("applyChatEventToMessages", () => {
       turnId: "turn-1",
       createdAt: "2026-04-08T00:00:00.000Z",
       kind: "commentary",
-      message: "Intent\n- Confirm: inspect the repo",
+      message: "I understand the request as inspect the repo.",
       sourceId: "intent:first-step",
       transient: false,
     }, 20);
@@ -566,9 +662,10 @@ describe("applyChatEventToMessages", () => {
     expect(afterEnd).toHaveLength(1);
     expect(afterEnd[0]!).toMatchObject({
       id: "activity:turn-1:intent:first-step",
-      text: "Intent\n- Confirm: inspect the repo",
+      text: "I understand the request as inspect the repo.",
       transient: false,
     });
+    expect(afterEnd[0]!.text).not.toContain("Intent");
   });
 
   it("keeps checkpoint rows visible after transient lifecycle activity ends", () => {
@@ -578,7 +675,7 @@ describe("applyChatEventToMessages", () => {
       turnId: "turn-1",
       createdAt: "2026-04-08T00:00:00.000Z",
       kind: "checkpoint",
-      message: "Checkpoint\n- Context gathered: Workspace grounding is ready.",
+      message: "Context gathered: Workspace grounding is ready.",
       sourceId: "checkpoint:context",
       transient: false,
     }, 20);
@@ -607,9 +704,10 @@ describe("applyChatEventToMessages", () => {
     expect(afterEnd).toHaveLength(1);
     expect(afterEnd[0]!).toMatchObject({
       id: "activity:turn-1:checkpoint:context",
-      text: "Checkpoint\n- Context gathered: Workspace grounding is ready.",
+      text: "Context gathered: Workspace grounding is ready.",
       transient: false,
     });
+    expect(afterEnd[0]!.text).not.toContain("Checkpoint");
   });
 
   it("keeps diff artifact rows visible after transient lifecycle activity ends", () => {
