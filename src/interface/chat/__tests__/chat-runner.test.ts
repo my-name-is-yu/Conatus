@@ -3454,8 +3454,17 @@ describe("ChatRunner", () => {
       const result = await runner.execute("telegramからseedyと会話できるようにしたい", "/repo");
 
       expect(result.success).toBe(true);
+      expect(result.output).toContain("configuration flow, not a source-edit task");
+      expect(result.output).toContain("@BotFather");
+      expect(result.output).toContain("bot token");
       expect(result.output).toContain("pulseed telegram setup");
+      expect(result.output).toContain("allowed Telegram user IDs");
+      expect(result.output).toContain("/sethome");
       expect(result.output).toContain("pulseed gateway setup");
+      expect(result.output).toContain("pulseed daemon start");
+      expect(result.output).toContain("Send a message to the Telegram bot");
+      expect(result.output).toContain("pulseed daemon status");
+      expect(result.output).toContain("check logs");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
       const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
         event.type === "activity" && event.sourceId === "intent:first-step"
@@ -3481,8 +3490,12 @@ describe("ChatRunner", () => {
       const result = await runner.execute("I want to talk to Seedy from Telegram.", "/repo");
 
       expect(result.success).toBe(true);
+      expect(result.output).toContain("@BotFather");
       expect(result.output).toContain("pulseed telegram setup");
+      expect(result.output).toContain("pulseed gateway setup");
       expect(result.output).toContain("pulseed daemon start");
+      expect(result.output).toContain("pulseed daemon status");
+      expect(result.output).toContain("Do not paste the token into chat");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     });
 

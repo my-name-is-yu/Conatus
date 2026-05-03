@@ -625,12 +625,15 @@ function formatConfigureGuidance(target: "telegram_gateway" | "gateway" | "provi
     return [
       "Telegram setup is a configuration flow, not a source-edit task.",
       "",
-      "Run these from your shell:",
-      "1. `pulseed telegram setup`",
-      "2. `pulseed gateway setup`",
-      "3. `pulseed daemon start`",
+      "First-time setup:",
+      "1. Create or open a bot with @BotFather and copy the bot token.",
+      "2. Run `pulseed telegram setup`, then enter the token and allowed Telegram user IDs or home chat settings. You can leave the home chat blank and send `/sethome` later.",
+      "3. If you need to choose gateway channels, run `pulseed gateway setup` and select Telegram.",
+      "4. Start or restart PulSeed with `pulseed daemon start`.",
+      "5. Send a message to the Telegram bot.",
+      "6. Verify the daemon/gateway with `pulseed daemon status` and check logs if the message does not arrive.",
       "",
-      "After setup, send a message to the Telegram bot and confirm the gateway is running with `pulseed daemon status`.",
+      "Do not paste the token into chat; enter it only in the setup command.",
     ].join("\n");
   }
   if (target === "gateway") {

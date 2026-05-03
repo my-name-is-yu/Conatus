@@ -388,8 +388,12 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
+    expect(result.output).toContain("@BotFather");
     expect(result.output).toContain("pulseed telegram setup");
     expect(result.output).toContain("pulseed gateway setup");
+    expect(result.output).toContain("pulseed daemon start");
+    expect(result.output).toContain("pulseed daemon status");
+    expect(result.output).toContain("Telegram setup is a configuration flow");
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
