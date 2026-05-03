@@ -56,6 +56,156 @@ describe("applyChatEventToMessages", () => {
     expect(messages[0]!.text).toContain("Reading shell_command - command=rg ChatEvent src/interface/chat");
   });
 
+  it("renders shared agent timeline items as chronological chat messages", () => {
+    const base = {
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    };
+    const timelineBase = {
+      sourceEventId: "event-1",
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      visibility: "user" as const,
+    };
+    const events = [
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:commentary-1",
+          sourceEventId: "commentary-1",
+          sourceType: "assistant_message" as const,
+          createdAt: "2026-04-08T00:00:01.000Z",
+          kind: "assistant_message" as const,
+          phase: "commentary" as const,
+          text: "I will inspect the relevant files first.",
+          toolCallCount: 1,
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:tool-start-1",
+          sourceEventId: "tool-start-1",
+          sourceType: "tool_call_started" as const,
+          createdAt: "2026-04-08T00:00:02.000Z",
+          kind: "tool" as const,
+          status: "started" as const,
+          callId: "call-1",
+          toolName: "shell_command",
+          inputPreview: "{\"command\":\"pwd\"}",
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:tool-finish-1",
+          sourceEventId: "tool-finish-1",
+          sourceType: "tool_call_finished" as const,
+          createdAt: "2026-04-08T00:00:03.000Z",
+          kind: "tool" as const,
+          status: "finished" as const,
+          callId: "call-1",
+          toolName: "shell_command",
+          success: true,
+          outputPreview: "/repo",
+          durationMs: 10,
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:final-1",
+          sourceEventId: "final-1",
+          sourceType: "final" as const,
+          createdAt: "2026-04-08T00:00:04.000Z",
+          kind: "final" as const,
+          success: true,
+          outputPreview: "Done",
+        },
+      },
+    ];
+
+    const messages = events.reduce(
+      (current, event) => applyChatEventToMessages(current, event, 20),
+      [] as ReturnType<typeof applyChatEventToMessages>
+    );
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "agent-timeline:turn-1:commentary-1",
+      "agent-timeline:turn-1:tool-start-1",
+      "agent-timeline:turn-1:tool-finish-1",
+      "agent-timeline:turn-1:final-1",
+    ]);
+    expect(messages.map((message) => message.text)).toEqual([
+      "I will inspect the relevant files first.",
+      "Started shell_command: {\"command\":\"pwd\"}",
+      "Finished shell_command: /repo",
+      "Done",
+    ]);
+
+    const afterFinal = applyChatEventToMessages(messages, {
+      type: "assistant_final",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:05.000Z",
+      text: "Done",
+      persisted: true,
+    }, 20);
+
+    expect(afterFinal.map((message) => message.id)).toEqual(["turn-1"]);
+    expect(afterFinal[0]!.text).toBe("Done");
+  });
+
+  it("drops transient timeline overflow before evicting durable chat messages", () => {
+    let messages = applyChatEventToMessages([], {
+      type: "assistant_final",
+      runId: "run-1",
+      turnId: "older-turn",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      text: "Earlier durable answer",
+      persisted: true,
+    }, 3);
+
+    for (let index = 1; index <= 4; index += 1) {
+      messages = applyChatEventToMessages(messages, {
+        type: "agent_timeline",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: `2026-04-08T00:00:0${index}.000Z`,
+        item: {
+          id: `agent-timeline:commentary-${index}`,
+          sourceEventId: `commentary-${index}`,
+          sourceType: "assistant_message",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "agent-turn-1",
+          goalId: "goal-1",
+          createdAt: `2026-04-08T00:00:0${index}.000Z`,
+          visibility: "user",
+          kind: "assistant_message",
+          phase: "commentary",
+          text: `Working step ${index}`,
+          toolCallCount: 0,
+        },
+      }, 3);
+    }
+
+    expect(messages.some((message) => message.id === "older-turn")).toBe(true);
+    expect(messages).toHaveLength(3);
+    expect(messages.filter((message) => message.transient)).toHaveLength(2);
+  });
+
   it("removes transient activity when assistant final arrives", () => {
     const withActivity = applyChatEventToMessages([], {
       type: "activity",

@@ -2330,30 +2330,57 @@ describe("ChatRunner", () => {
           eventSink?: { emit(event: unknown): Promise<void> | void };
           approvalFn?: (request: { reason: string }) => Promise<boolean>;
         }) => {
+          const base = {
+            sessionId: "session-1",
+            traceId: "trace-1",
+            turnId: "agent-turn",
+            goalId: "goal-1",
+            createdAt: new Date().toISOString(),
+          };
           await input.eventSink?.emit({
+            ...base,
+            type: "model_request",
+            eventId: "model-event-1",
+            model: "gpt-test",
+            toolCount: 2,
+          });
+          await input.eventSink?.emit({
+            ...base,
+            type: "assistant_message",
+            eventId: "commentary-event-1",
+            phase: "commentary",
+            contentPreview: "I will inspect the workspace first.",
+            toolCallCount: 1,
+          });
+          await input.eventSink?.emit({
+            ...base,
             type: "tool_call_started",
+            eventId: "tool-start-event-1",
             callId: "call-1",
             toolName: "shell_command",
             inputPreview: "{\"command\":\"pwd\"}",
           });
           await input.eventSink?.emit({
+            ...base,
             type: "plan_update",
             eventId: "plan-event-1",
-            turnId: "agent-turn",
-            createdAt: new Date().toISOString(),
             summary: "Inspect workspace, apply patch, then verify.",
           });
           await input.eventSink?.emit({
+            ...base,
             type: "approval_request",
+            eventId: "approval-event-1",
             callId: "call-approval",
-            turnId: "agent-turn",
-            createdAt: new Date().toISOString(),
             toolName: "apply_patch",
             reason: "needs confirmation",
+            permissionLevel: "workspace-write",
+            isDestructive: false,
           });
           await input.approvalFn?.({ reason: "needs confirmation" });
           await input.eventSink?.emit({
+            ...base,
             type: "tool_call_finished",
+            eventId: "tool-finish-event-1",
             callId: "call-1",
             toolName: "shell_command",
             success: true,
@@ -2361,13 +2388,28 @@ describe("ChatRunner", () => {
             durationMs: 12,
           });
           await input.eventSink?.emit({
+            ...base,
             type: "context_compaction",
+            eventId: "compaction-event-1",
             turnId: "agent-turn",
-            createdAt: new Date().toISOString(),
             phase: "mid_turn",
             reason: "context_limit",
             inputMessages: 10,
             outputMessages: 4,
+            summaryPreview: "Shorter context",
+          });
+          await input.eventSink?.emit({
+            ...base,
+            type: "final",
+            eventId: "final-event-1",
+            success: true,
+            outputPreview: "Native agentloop response",
+          });
+          await input.eventSink?.emit({
+            ...base,
+            type: "stopped",
+            eventId: "stopped-event-1",
+            reason: "completed",
           });
           return {
             success: true,
@@ -2432,6 +2474,21 @@ describe("ChatRunner", () => {
       expect(eventTypes).toContain("tool_start");
       expect(eventTypes).toContain("tool_end");
       expect(eventTypes).toContain("tool_update");
+      const timelineSourceTypes = seenEvents
+        .filter((event): event is Extract<ChatEvent, { type: "agent_timeline" }> =>
+          event.type === "agent_timeline"
+        )
+        .map((event) => event.item.sourceType);
+      expect(timelineSourceTypes).toEqual(expect.arrayContaining([
+        "model_request",
+        "assistant_message",
+        "tool_call_started",
+        "tool_call_finished",
+        "final",
+        "stopped",
+      ]));
+      expect(timelineSourceTypes.indexOf("assistant_message")).toBeLessThan(timelineSourceTypes.indexOf("tool_call_started"));
+      expect(timelineSourceTypes.indexOf("tool_call_finished")).toBeLessThan(timelineSourceTypes.indexOf("final"));
     });
 
     it("routes simple questions through chatAgentLoopRunner when configured", async () => {
