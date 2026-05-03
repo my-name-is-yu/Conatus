@@ -39,6 +39,14 @@ export const LLMGeneratedTaskSchema = z.object({
     blast_radius: z.string(),
   }),
   constraints: z.array(z.string()),
+  risk_profile: z.object({
+    external_action: z.object({
+      required: z.boolean().default(true),
+      approval_required: z.boolean().default(true),
+      action_kind: z.enum(["none", "submission", "publication", "notification", "deployment", "external_mutation", "unknown"]).default("unknown"),
+      rationale: z.string().nullable().default(null),
+    }).default({}),
+  }).default({}),
   reversibility: z.enum(["reversible", "irreversible", "unknown"]).default("reversible"),
   intended_direction: z.enum(["increase", "decrease", "neutral"]).optional(),
   estimated_duration: z
@@ -462,6 +470,7 @@ export async function generateTask(
     success_criteria: generated.success_criteria,
     scope_boundary: generated.scope_boundary,
     constraints: generated.constraints,
+    risk_profile: generated.risk_profile,
     reversibility: generated.reversibility,
     intended_direction: generated.intended_direction,
     estimated_duration: generated.estimated_duration,
@@ -504,6 +513,14 @@ const LLMTaskGroupSchema = z.object({
         blast_radius: z.string(),
       }),
       constraints: z.array(z.string()).default([]),
+      risk_profile: z.object({
+        external_action: z.object({
+          required: z.boolean().default(true),
+          approval_required: z.boolean().default(true),
+          action_kind: z.enum(["none", "submission", "publication", "notification", "deployment", "external_mutation", "unknown"]).default("unknown"),
+          rationale: z.string().nullable().default(null),
+        }).default({}),
+      }).default({}),
       reversibility: z.enum(["reversible", "irreversible", "unknown"]).default("reversible"),
     })
   ).min(2),
@@ -551,13 +568,14 @@ export async function generateTaskGroup(
     ``,
     `Respond with a JSON object inside a markdown code block with this structure:`,
     `{`,
-    `  "subtasks": [ { "work_description", "rationale", "approach", "target_dimension", "success_criteria", "scope_boundary", "constraints", "reversibility" }, ... ],`,
+    `  "subtasks": [ { "work_description", "rationale", "approach", "target_dimension", "success_criteria", "scope_boundary", "constraints", "risk_profile", "reversibility" }, ... ],`,
     `  "dependencies": [ { "from": "<subtask index>", "to": "<subtask index>" }, ... ],`,
     `  "file_ownership": { "<subtask index>": ["file1", "file2"], ... },`,
     `  "shared_context": "<optional shared context for all subtasks>"`,
     `}`,
     ``,
-    `Use subtask array index (as string) for dependency/ownership keys. Ensure at least 2 subtasks.`
+    `Use subtask array index (as string) for dependency/ownership keys. Ensure at least 2 subtasks.`,
+    `Set risk_profile.external_action from each subtask's intended side effects. Use action_kind "none" only when the subtask stays local; use "unknown" with approval_required true when uncertain.`
   );
 
   const prompt = promptParts.join("\n");
@@ -625,6 +643,7 @@ export async function generateTaskGroup(
       success_criteria: sub.success_criteria,
       scope_boundary: sub.scope_boundary,
       constraints: sub.constraints,
+      risk_profile: sub.risk_profile,
       reversibility: sub.reversibility,
       estimated_duration: null,
       status: "pending",

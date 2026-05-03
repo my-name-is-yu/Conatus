@@ -69,6 +69,12 @@ export class ActionHandler {
 
     if (explicitGoalId) {
       const goal = await this.deps.stateManager.loadGoal(explicitGoalId);
+      if (!goal || (goal.status !== "active" && goal.status !== "waiting")) {
+        return {
+          messages: [`No runnable goal found for ID "${explicitGoalId}".`],
+          messageType: "warning",
+        };
+      }
       const label = goal?.title ?? explicitGoalId;
       return { messages: [`Starting loop: ${label}`], startLoop: { goalId: explicitGoalId } };
     }
@@ -92,7 +98,7 @@ export class ActionHandler {
       };
     }
 
-    // If a goal argument was provided, match by number (1-indexed) or title substring
+    // If a goal argument was provided, match by number (1-indexed), exact ID, or exact title.
     if (goalArg) {
       const num = parseInt(goalArg, 10);
       let matched: { id: string; title: string } | undefined;
@@ -100,17 +106,32 @@ export class ActionHandler {
       if (!isNaN(num) && num >= 1 && num <= runnableGoals.length) {
         matched = runnableGoals[num - 1];
       } else {
-        const lower = goalArg.toLowerCase();
-        matched = runnableGoals.find((g) => g.title.toLowerCase().includes(lower));
+        const exactId = runnableGoals.find((g) => g.id === goalArg);
+        const exactTitleMatches = runnableGoals.filter((g) => g.title === goalArg);
+        if (exactId) {
+          matched = exactId;
+        } else if (exactTitleMatches.length === 1) {
+          matched = exactTitleMatches[0];
+        } else if (exactTitleMatches.length > 1) {
+          const list = exactTitleMatches.map((g, i) => `  ${i + 1}. ${g.title} (ID: ${g.id})`).join("\n");
+          return {
+            messages: [
+              `Ambiguous goal title "${goalArg}".`,
+              list,
+              "Use /start <goal-id> or /start <number>.",
+            ],
+            messageType: "warning",
+          };
+        }
       }
 
       if (!matched) {
-        const list = runnableGoals.map((g, i) => `  ${i + 1}. ${g.title}`).join("\n");
+        const list = runnableGoals.map((g, i) => `  ${i + 1}. ${g.title} (ID: ${g.id})`).join("\n");
         return {
           messages: [
             `No goal matching "${goalArg}". Available goals:`,
             list,
-            'Use /start <number> or /start <name>.',
+            "Use /start <number>, /start <goal-id>, or the exact title.",
           ],
           messageType: "warning",
         };
@@ -130,7 +151,7 @@ export class ActionHandler {
       messages: [
         "Multiple goals available. Specify which one to start:",
         list,
-        'Use /start <number> or /start <name>.',
+        "Use /start <number>, /start <goal-id>, or the exact title.",
       ],
     };
   }

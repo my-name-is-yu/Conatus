@@ -6,6 +6,7 @@ import { SearchOrchestrator } from "../orchestrator.js";
 import { ProgressiveReader } from "../progressive-reader.js";
 import { buildFileIndex } from "../indexes/file-index.js";
 import { getCodeSearchIndexes } from "../indexes/index-store.js";
+import { planCodeSearchTask } from "../query-planner.js";
 import { parseVerificationSignal } from "../verification-retrieval.js";
 
 describe("code search platform", () => {
@@ -80,6 +81,16 @@ describe("code search platform", () => {
 
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.some((candidate) => candidate.reasons.some((reason) => reason.includes("verification:")))).toBe(true);
+  });
+
+  it("does not classify freeform task intent from keywords without caller intent", () => {
+    const planned = planCodeSearchTask({
+      task: "調査してセキュリティっぽい設定名の説明コメントを追加する",
+      cwd: root,
+    });
+
+    expect(planned.intent).toBe("unknown");
+    expect(planned.task).toContain("セキュリティっぽい");
   });
 
   it("excludes hidden worktree directories before applying the file cap", async () => {

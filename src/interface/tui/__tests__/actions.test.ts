@@ -169,6 +169,65 @@ describe("ActionHandler — handle()", () => {
       const result = await handler.handle(intent);
       expect(result.startLoop).toEqual({ goalId: "explicit-id" });
     });
+
+    it("rejects stale explicit goalId instead of reusing a previous target", async () => {
+      const deps = makeDeps();
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(makeGoal({ id: "done-id", status: "completed" }));
+
+      const handler = new ActionHandler(deps);
+      const result = await handler.handle({
+        intent: "loop_start",
+        params: { goalId: "done-id" },
+        raw: "run done-id",
+      });
+
+      expect(result.startLoop).toBeUndefined();
+      expect(result.messages.join("\n")).toContain("No runnable goal found");
+    });
+
+    it("does not select a goal by title substring", async () => {
+      const goals = [
+        makeGoal({ id: "goal-alpha", title: "Improve alpha routing", status: "active" }),
+        makeGoal({ id: "goal-beta", title: "Improve beta routing", status: "active" }),
+      ];
+      const deps = makeDeps();
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(goals.map((goal) => goal.id));
+      vi.mocked(deps.stateManager.loadGoal).mockImplementation(async (id) => goals.find((goal) => goal.id === id) ?? null);
+
+      const handler = new ActionHandler(deps);
+      const result = await handler.handle({
+        intent: "loop_start",
+        params: { goalArg: "routing" },
+        raw: "/start routing",
+      });
+
+      expect(result.startLoop).toBeUndefined();
+      expect(result.messages.join("\n")).toContain('No goal matching "routing"');
+    });
+
+    it("selects by exact title or list number", async () => {
+      const goals = [
+        makeGoal({ id: "goal-alpha", title: "Improve alpha routing", status: "active" }),
+        makeGoal({ id: "goal-beta", title: "Improve beta routing", status: "active" }),
+      ];
+      const deps = makeDeps();
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(goals.map((goal) => goal.id));
+      vi.mocked(deps.stateManager.loadGoal).mockImplementation(async (id) => goals.find((goal) => goal.id === id) ?? null);
+
+      const handler = new ActionHandler(deps);
+
+      await expect(handler.handle({
+        intent: "loop_start",
+        params: { goalArg: "Improve beta routing" },
+        raw: "/start Improve beta routing",
+      })).resolves.toMatchObject({ startLoop: { goalId: "goal-beta" } });
+
+      await expect(handler.handle({
+        intent: "loop_start",
+        params: { goalArg: "1" },
+        raw: "/start 1",
+      })).resolves.toMatchObject({ startLoop: { goalId: "goal-alpha" } });
+    });
   });
 
   describe("status intent", () => {

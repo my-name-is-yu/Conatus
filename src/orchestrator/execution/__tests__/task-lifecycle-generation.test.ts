@@ -827,6 +827,14 @@ describe("TaskLifecycle", async () => {
           blast_radius: "low",
         },
         constraints: [],
+        risk_profile: {
+          external_action: {
+            required: false,
+            approval_required: false,
+            action_kind: "none",
+            rationale: "Test fixture task is local-only unless overridden.",
+          },
+        },
         plateau_until: null,
         estimated_duration: null,
         consecutive_failure_count: 0,
@@ -1000,9 +1008,17 @@ describe("TaskLifecycle", async () => {
       await trustManager.setOverride("normal", 50, "test");
 
       const task = makeTask({
-        work_description: "Submit the final Kaggle submission.csv to the external competition",
-        approach: "Upload submission.csv through the Kaggle submit workflow",
+        work_description: "Hand the final artifact to the competition scoring system",
+        approach: "Use the typed task risk profile to require operator approval before the handoff",
         reversibility: "reversible",
+        risk_profile: {
+          external_action: {
+            required: true,
+            approval_required: true,
+            action_kind: "submission",
+            rationale: "The task sends an artifact to an external competition system.",
+          },
+        },
       });
       const result = await lifecycle.checkIrreversibleApproval(task, 0.9);
 
@@ -1034,8 +1050,16 @@ describe("TaskLifecycle", async () => {
       await trustManager.setOverride("normal", 50, "test");
 
       const task = makeTask({
-        work_description: "Publish the final report to an external service",
+        work_description: "Make the final report visible outside the local workspace",
         reversibility: "reversible",
+        risk_profile: {
+          external_action: {
+            required: true,
+            approval_required: true,
+            action_kind: "publication",
+            rationale: "The task exposes a report outside the local workspace.",
+          },
+        },
       });
       const result = await lifecycle.checkIrreversibleApproval(task, 0.9);
 
@@ -1046,6 +1070,58 @@ describe("TaskLifecycle", async () => {
         status: "approved",
         triggers: ["external_action"],
       });
+    });
+
+    it("does not infer external approval from freeform task keywords without a typed risk profile", async () => {
+      let approvalCalled = false;
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm, {
+        approvalFn: async () => {
+          approvalCalled = true;
+          return true;
+        },
+      });
+      await trustManager.setOverride("normal", 50, "test");
+
+      const task = makeTask({
+        work_description: "Publish a local-only fixture named production-notify-sample.json",
+        approach: "Create a local test fixture; no external system is contacted.",
+        reversibility: "reversible",
+      });
+      const result = await lifecycle.checkIrreversibleApproval(task, 0.9);
+
+      expect(result).toBe(true);
+      expect(approvalCalled).toBe(false);
+    });
+
+    it("requires approval when the typed external action profile is missing or unknown", async () => {
+      let approvalCalls = 0;
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm, {
+        approvalFn: async () => {
+          approvalCalls += 1;
+          return false;
+        },
+      });
+      await trustManager.setOverride("normal", 50, "test");
+
+      const missingProfileTask = makeTask({ reversibility: "reversible" });
+      delete missingProfileTask.risk_profile;
+      await expect(lifecycle.checkIrreversibleApproval(missingProfileTask, 0.9)).resolves.toBe(false);
+
+      await expect(lifecycle.checkIrreversibleApproval(makeTask({
+        reversibility: "reversible",
+        risk_profile: {
+          external_action: {
+            required: false,
+            approval_required: false,
+            action_kind: "unknown",
+            rationale: "Classifier could not determine side effects.",
+          },
+        },
+      }), 0.9)).resolves.toBe(false);
+
+      expect(approvalCalls).toBe(2);
     });
 
     it("uses default confidence of 0.5 when not provided", async () => {

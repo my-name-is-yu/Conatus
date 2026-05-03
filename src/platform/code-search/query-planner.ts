@@ -19,15 +19,7 @@ const STACK_FRAME_RE = /(?:at\s+(?<symbol>[^\s(]+)\s+\()?((?<file>(?:\/|\.{1,2}\
 
 function inferIntent(task: string, explicit?: Intent): Intent {
   if (explicit) return explicit;
-  const lower = task.toLowerCase();
-  if (/security|ssrf|xss|attack|攻撃|セキュリティ/.test(lower)) return "security_review";
-  if (/test|spec|assert|failure|failing|失敗/.test(lower)) return "test_failure";
-  if (/refactor|cleanup|整理|債務/.test(lower)) return "refactor";
-  if (/config|tsconfig|eslint|package|設定/.test(lower)) return "config_fix";
-  if (/explain|どう|なぜ|説明/.test(lower)) return "explain";
-  if (/api|schema|route|contract/.test(lower)) return "api_change";
-  if (/bug|fix|error|例外|壊/.test(lower)) return "bugfix";
-  if (/add|implement|feature|実装|追加/.test(lower)) return "feature_addition";
+  void task;
   return "unknown";
 }
 
