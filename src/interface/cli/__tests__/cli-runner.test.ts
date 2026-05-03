@@ -1461,6 +1461,56 @@ describe("profile command", () => {
     expect(output).not.toContain("Notify freely.");
   });
 
+  it("shows review-safe user-facing profile context without leaking sensitive details", async () => {
+    await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "boundary",
+      "--key",
+      "user.boundary.notifications",
+      "--value",
+      "Ask before non-urgent notifications.",
+      "--scope",
+      "user_facing_review"
+    );
+    await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "boundary",
+      "--key",
+      "user.boundary.health",
+      "--value",
+      "Do not use health context outside explicit review.",
+      "--scope",
+      "user_facing_review",
+      "--sensitivity",
+      "sensitive"
+    );
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const showCode = await runCLI("profile", "show", "--scope", "user_facing_review", "--json");
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    consoleSpy.mockRestore();
+
+    expect(showCode).toBe(0);
+    const parsed = JSON.parse(output) as { items: Array<{ stable_key: string; value: string; sensitivity: string }> };
+    expect(parsed.items.map((item) => item.stable_key)).toEqual(["user.boundary.notifications"]);
+    expect(parsed.items[0]?.value).toBe("Ask before non-urgent notifications.");
+    expect(output).not.toContain("health context");
+
+    const defaultConsoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const defaultShowCode = await runCLI("profile", "show", "--json");
+    const defaultOutput = defaultConsoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    defaultConsoleSpy.mockRestore();
+
+    expect(defaultShowCode).toBe(0);
+    const defaultParsed = JSON.parse(defaultOutput) as { items: Array<{ stable_key: string; value: string }> };
+    expect(defaultParsed.items.map((item) => item.stable_key)).toEqual(["user.boundary.notifications"]);
+    expect(defaultOutput).not.toContain("health context");
+  });
+
   it("shows history and retracts profile items through the production CLI entrypoint", async () => {
     await runCLI(
       "profile",

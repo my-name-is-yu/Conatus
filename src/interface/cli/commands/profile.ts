@@ -109,7 +109,7 @@ export async function cmdProfile(stateManager: StateManager, argv: string[]): Pr
       ? store.items
       : scope
         ? selectActiveRelationshipProfileItems(store, scope)
-        : store.items.filter((item) => item.status === "active");
+        : selectActiveRelationshipProfileItems(store, "user_facing_review");
 
     if (values.json) {
       console.log(JSON.stringify({
