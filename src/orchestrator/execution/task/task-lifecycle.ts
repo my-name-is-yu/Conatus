@@ -782,17 +782,12 @@ export class TaskLifecycle {
 }
 
 function isExternalActionTask(task: Task): boolean {
-  const haystack = [
-    task.work_description,
-    task.approach,
-    task.rationale,
-    ...task.constraints,
-    ...task.success_criteria.map((criterion) => `${criterion.description} ${criterion.verification_method}`),
-    task.scope_boundary.blast_radius,
-    ...task.scope_boundary.in_scope,
-    ...task.scope_boundary.out_of_scope,
-  ].join("\n").toLowerCase();
-  return /\b(submit|submission|publish|deploy|release|upload|send|email|notify|external|production)\b/.test(haystack);
+  const externalAction = task.risk_profile?.external_action;
+  if (!externalAction) return true;
+  if (externalAction.action_kind === "unknown") return true;
+  return externalAction.action_kind !== "none"
+    || externalAction.required === true
+    || externalAction.approval_required === true;
 }
 
 function taskApprovalHandoffId(task: Task): string {

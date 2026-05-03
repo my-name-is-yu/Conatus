@@ -350,6 +350,7 @@ Requirements:
 - work_description: target file path(s), specific changes (not "improve X" → "add section Y to file Z")
 - No vague review/triage tasks
 - Prefer minimal-change approach: make the smallest targeted change that moves the metric; avoid unrelated refactoring
+- Set risk_profile.external_action from the task's intended side effects, not from keywords. Mark approval_required true whenever the task requires submitting, publishing, notifying, deploying, uploading, sending, or mutating an external system outside the local workspace.
 
 Return JSON only (inside markdown code block):
 {
@@ -361,6 +362,14 @@ Return JSON only (inside markdown code block):
   ],
   "scope_boundary": {"in_scope": ["included"], "out_of_scope": ["excluded"], "blast_radius": "what could be affected"},
   "constraints": ["any constraints"],
+  "risk_profile": {
+    "external_action": {
+      "required": false,
+      "approval_required": false,
+      "action_kind": "none|submission|publication|notification|deployment|external_mutation|unknown",
+      "rationale": "why this is or is not an external action" | null
+    }
+  },
   "reversibility": "reversible|irreversible|unknown",
   "intended_direction": "increase|decrease|neutral — direction this task intends to move the primary dimension",
   "estimated_duration": {"value": number, "unit": "minutes|hours|days|weeks"} | null

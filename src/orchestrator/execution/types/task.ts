@@ -25,6 +25,19 @@ export const ScopeBoundarySchema = z.object({
 });
 export type ScopeBoundary = z.infer<typeof ScopeBoundarySchema>;
 
+export const TaskExternalActionSchema = z.object({
+  required: z.boolean().default(false),
+  approval_required: z.boolean().default(false),
+  action_kind: z.enum(["none", "submission", "publication", "notification", "deployment", "external_mutation", "unknown"]).default("none"),
+  rationale: z.string().nullable().default(null),
+});
+export type TaskExternalAction = z.infer<typeof TaskExternalActionSchema>;
+
+export const TaskRiskProfileSchema = z.object({
+  external_action: TaskExternalActionSchema.default({}),
+});
+export type TaskRiskProfile = z.infer<typeof TaskRiskProfileSchema>;
+
 export const VerificationFileDiffSchema = z.object({
   path: z.string(),
   patch: z.string(),
@@ -48,6 +61,7 @@ export const TaskSchema = z.object({
   success_criteria: z.array(CriterionSchema),
   scope_boundary: ScopeBoundarySchema,
   constraints: z.array(z.string()),
+  risk_profile: TaskRiskProfileSchema.optional(),
 
   plateau_until: z.string().nullable().default(null),
   estimated_duration: DurationSchema.nullable().default(null),
