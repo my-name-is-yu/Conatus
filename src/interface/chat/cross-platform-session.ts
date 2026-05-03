@@ -344,6 +344,14 @@ export class CrossPlatformChatSessionManager {
       metadata: options.metadata,
       onEvent: options.onEvent,
     });
+    const approvalReply = await this.tryResolveConversationalApprovalReply(ingress);
+    if (approvalReply) {
+      return {
+        success: true,
+        output: approvalReply,
+        elapsed_ms: 0,
+      };
+    }
     const session = this.getOrCreateSession(ingress, options.cwd);
     const queueEntry = session.queue.then(() => this.executeInSession(session, ingress, options));
     session.queue = queueEntry.then(() => undefined, () => undefined);
@@ -365,6 +373,14 @@ export class CrossPlatformChatSessionManager {
 
   async interruptAndRedirect(input: CrossPlatformIncomingChatMessage): Promise<ChatRunResult> {
     const ingress = this.createIngressMessage(input);
+    const approvalReply = await this.tryResolveConversationalApprovalReply(ingress);
+    if (approvalReply) {
+      return {
+        success: true,
+        output: approvalReply,
+        elapsed_ms: 0,
+      };
+    }
     const session = this.getOrCreateSession(ingress, input.cwd);
     const previousOnEvent = session.runner.onEvent;
     if (input.onEvent) {

@@ -13,10 +13,6 @@ import { createMockLLMClient, createSingleMockLLMClient } from "../../../../test
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
   lastChatMessages: [] as Array<{ role: string; text: string; messageType?: string }>,
-  lastApprovalProps: null as null | {
-    task: { work_description: string; rationale: string; goal_id: string };
-    onDecision: (approved: boolean) => void;
-  },
   lastDashboardProps: null as null | Record<string, unknown>,
   runtimeSessionSnapshots: [] as Array<Record<string, unknown>>,
   runtimeSessionSnapshotCalls: 0,
@@ -99,15 +95,6 @@ vi.mock("../../../runtime/store/evidence-ledger.js", async (importOriginal) => {
 
 vi.mock("../help-overlay.js", () => ({ HelpOverlay: () => null }));
 vi.mock("../settings-overlay.js", () => ({ SettingsOverlay: () => null }));
-vi.mock("../approval-overlay.js", () => ({
-  ApprovalOverlay: (props: {
-    task: { work_description: string; rationale: string; goal_id: string };
-    onDecision: (approved: boolean) => void;
-  }) => {
-    testState.lastApprovalProps = props;
-    return null;
-  },
-}));
 vi.mock("../report-view.js", () => ({ ReportView: () => null }));
 
 function createDaemonClientMock() {
@@ -126,7 +113,6 @@ function createDaemonClientMock() {
     startGoal: vi.fn(async () => {}),
     stopGoal: vi.fn(async () => {}),
     chat: vi.fn(async () => {}),
-    approve: vi.fn(async () => {}),
   };
 }
 
@@ -982,7 +968,6 @@ describe("daemon-mode chat routing", () => {
   beforeEach(() => {
     testState.lastChatProps = null;
     testState.lastChatMessages = [];
-    testState.lastApprovalProps = null;
     testState.lastDashboardProps = null;
     testState.runtimeSessionSnapshots = [];
     testState.runtimeSessionSnapshotCalls = 0;
@@ -1063,117 +1048,24 @@ describe("daemon-mode chat routing", () => {
     });
     await flush();
 
-    expect(testState.lastApprovalProps?.task.work_description).toBe("Deadline handoff");
-    expect(testState.lastApprovalProps?.task.rationale).toBe("Deadline finalization requires review.");
-    testState.lastApprovalProps?.onDecision(true);
-
-    expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-1", true);
+    expect(testState.lastChatMessages.some((message) =>
+      message.text.includes("Approval required.")
+      && message.text.includes("Deadline handoff")
+      && message.text.includes("originating conversation channel")
+    )).toBe(true);
+    expect("approve" in daemonClient).toBe(false);
     screen.unmount();
   });
 
-  it("classifies multilingual freeform approval text inside a pending approval context", async () => {
+  it("routes approval-looking freeform text through ChatRunner instead of resolving mechanically", async () => {
     const daemonClient = createDaemonClientMock();
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
-    const llmClient = createSingleMockLLMClient(confirmationResponse({
-      decision: "approve",
-      confidence: 0.94,
-    }));
 
     const screen = render(React.createElement(App, {
       daemonClient: daemonClient as unknown as DaemonClient,
       stateManager: stateManager as unknown as StateManager,
       chatRunner: chatRunner as unknown as TuiChatSurface,
-      llmClient,
-      noFlicker: false,
-      controlStream: process.stdout,
-      cwd: "~/workspace",
-      gitBranch: "main",
-      providerName: "claude",
-    }), {
-      patchConsole: false,
-      stdout: process.stdout,
-      stderr: process.stderr,
-    });
-
-    await flush();
-    daemonClient.handlers.get("operator_handoff_required")?.({
-      handoff_id: "handoff-approval",
-      goal_id: "goal-a",
-      title: "Submit handoff",
-      summary: "External submission requires approval.",
-      recommended_action: "Submit the result.",
-      triggers: ["approval_required"],
-      created_at: "2026-05-01T00:00:00.000Z",
-    });
-    await flush();
-
-    await testState.lastChatProps!.onSubmit("proceda con la entrega");
-
-    expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-approval", true);
-    expect(chatRunner.execute).not.toHaveBeenCalled();
-    screen.unmount();
-  });
-
-  it("classifies multilingual freeform cancellation inside a pending approval context", async () => {
-    const daemonClient = createDaemonClientMock();
-    const stateManager = createStateManagerMock();
-    const chatRunner = createChatRunnerMock();
-    const llmClient = createSingleMockLLMClient(confirmationResponse({
-      decision: "cancel",
-      confidence: 0.93,
-    }));
-
-    const screen = render(React.createElement(App, {
-      daemonClient: daemonClient as unknown as DaemonClient,
-      stateManager: stateManager as unknown as StateManager,
-      chatRunner: chatRunner as unknown as TuiChatSurface,
-      llmClient,
-      noFlicker: false,
-      controlStream: process.stdout,
-      cwd: "~/workspace",
-      gitBranch: "main",
-      providerName: "claude",
-    }), {
-      patchConsole: false,
-      stdout: process.stdout,
-      stderr: process.stderr,
-    });
-
-    await flush();
-    daemonClient.handlers.get("operator_handoff_required")?.({
-      handoff_id: "handoff-cancel",
-      goal_id: "goal-a",
-      title: "Publish handoff",
-      summary: "External publish requires approval.",
-      recommended_action: "Publish the result.",
-      triggers: ["approval_required"],
-      created_at: "2026-05-01T00:00:00.000Z",
-    });
-    await flush();
-
-    await testState.lastChatProps!.onSubmit("annule cette publication");
-
-    expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-cancel", false);
-    expect(chatRunner.execute).not.toHaveBeenCalled();
-    screen.unmount();
-  });
-
-  it("keeps ambiguous approval text pending and does not execute chat or approval", async () => {
-    const daemonClient = createDaemonClientMock();
-    const stateManager = createStateManagerMock();
-    const chatRunner = createChatRunnerMock();
-    const llmClient = createSingleMockLLMClient(confirmationResponse({
-      decision: "unknown",
-      confidence: 0.45,
-      clarification: "Please explicitly approve or cancel.",
-    }));
-
-    const screen = render(React.createElement(App, {
-      daemonClient: daemonClient as unknown as DaemonClient,
-      stateManager: stateManager as unknown as StateManager,
-      chatRunner: chatRunner as unknown as TuiChatSurface,
-      llmClient,
       noFlicker: false,
       controlStream: process.stdout,
       cwd: "~/workspace",
@@ -1197,70 +1089,11 @@ describe("daemon-mode chat routing", () => {
     });
     await flush();
 
-    await testState.lastChatProps!.onSubmit("sounds fine maybe");
+    await testState.lastChatProps!.onSubmit("proceda con la entrega");
 
-    expect(daemonClient.approve).not.toHaveBeenCalled();
-    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect("approve" in daemonClient).toBe(false);
+    expect(chatRunner.execute).toHaveBeenCalledWith("proceda con la entrega", "~/workspace");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
-    expect(testState.lastApprovalProps?.task.work_description).toBe("Secret handoff");
-    screen.unmount();
-  });
-
-  it("ignores stale async freeform approval classification after the overlay button resolves", async () => {
-    const daemonClient = createDaemonClientMock();
-    const stateManager = createStateManagerMock();
-    const chatRunner = createChatRunnerMock();
-    let releaseClassification!: () => void;
-    const llmClient = {
-      sendMessage: vi.fn(async () => {
-        await new Promise<void>((resolve) => {
-          releaseClassification = resolve;
-        });
-        return {
-          content: confirmationResponse({ decision: "cancel", confidence: 0.93 }),
-          usage: { input_tokens: 1, output_tokens: 1 },
-          stop_reason: "end_turn" as const,
-        };
-      }),
-      parseJSON: createSingleMockLLMClient(confirmationResponse()).parseJSON,
-    };
-
-    const screen = render(React.createElement(App, {
-      daemonClient: daemonClient as unknown as DaemonClient,
-      stateManager: stateManager as unknown as StateManager,
-      chatRunner: chatRunner as unknown as TuiChatSurface,
-      llmClient,
-      noFlicker: false,
-      controlStream: process.stdout,
-      cwd: "~/workspace",
-      gitBranch: "main",
-      providerName: "claude",
-    }), {
-      patchConsole: false,
-      stdout: process.stdout,
-      stderr: process.stderr,
-    });
-
-    await flush();
-    daemonClient.handlers.get("operator_handoff_required")?.({
-      handoff_id: "handoff-stale",
-      goal_id: "goal-a",
-      title: "Publish handoff",
-      summary: "External publish requires approval.",
-      recommended_action: "Publish the result.",
-      triggers: ["approval_required"],
-      created_at: "2026-05-01T00:00:00.000Z",
-    });
-    await flush();
-
-    const pendingSubmit = testState.lastChatProps!.onSubmit("please decide");
-    await vi.waitFor(() => expect(llmClient.sendMessage).toHaveBeenCalledOnce());
-    testState.lastApprovalProps?.onDecision(true);
-    releaseClassification();
-    await pendingSubmit;
-
-    expect(daemonClient.approve).toHaveBeenCalledTimes(1);
-    expect(daemonClient.approve).toHaveBeenCalledWith("goal-a", "handoff-stale", true);
     screen.unmount();
   });
 

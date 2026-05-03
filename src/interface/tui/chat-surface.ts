@@ -17,6 +17,7 @@ export class SharedManagerTuiChatSurface implements TuiChatSurface {
   onEvent: ChatEventHandler | undefined = undefined;
 
   private readonly conversationId = randomUUID();
+  private readonly userId = "local_tui_user";
   private sessionCwd: string | null = null;
   private readonly manager: CrossPlatformChatSessionManager;
 
@@ -34,10 +35,13 @@ export class SharedManagerTuiChatSurface implements TuiChatSurface {
 
   execute(input: string, cwd: string): Promise<ChatRunResult> {
     const effectiveCwd = this.sessionCwd ?? cwd;
+    const messageId = randomUUID();
     return this.manager.execute(input, {
       channel: "tui",
       platform: "local_tui",
       conversation_id: this.conversationId,
+      user_id: this.userId,
+      message_id: messageId,
       cwd: effectiveCwd,
       onEvent: this.onEvent,
       runtimeControl: {
@@ -49,16 +53,21 @@ export class SharedManagerTuiChatSurface implements TuiChatSurface {
         channel: "tui",
         platform: "local_tui",
         conversation_id: this.conversationId,
+        user_id: this.userId,
+        message_id: messageId,
       },
     });
   }
 
   interruptAndRedirect(input: string, cwd: string): Promise<ChatRunResult> {
     const effectiveCwd = this.sessionCwd ?? cwd;
+    const messageId = randomUUID();
     return this.manager.interruptAndRedirect({
       channel: "tui",
       platform: "local_tui",
       conversation_id: this.conversationId,
+      user_id: this.userId,
+      message_id: messageId,
       cwd: effectiveCwd,
       text: input,
       onEvent: this.onEvent,
@@ -67,22 +76,28 @@ export class SharedManagerTuiChatSurface implements TuiChatSurface {
 
   executeIngressMessage(ingress: CrossPlatformIngressMessage, cwd: string): Promise<ChatRunResult> {
     const effectiveCwd = this.sessionCwd ?? cwd;
+    const messageId = ingress.message_id ?? ingress.replyTarget?.message_id ?? randomUUID();
     return this.manager.executeIngress({
       ...ingress,
       channel: ingress.channel ?? "tui",
       platform: ingress.platform ?? "local_tui",
       conversation_id: ingress.conversation_id ?? this.conversationId,
+      user_id: ingress.user_id ?? ingress.actor?.user_id ?? ingress.replyTarget?.user_id ?? this.userId,
+      message_id: messageId,
       replyTarget: {
         ...ingress.replyTarget,
         channel: ingress.replyTarget?.channel ?? "tui",
         platform: ingress.replyTarget?.platform ?? ingress.platform ?? "local_tui",
         conversation_id: ingress.replyTarget?.conversation_id ?? ingress.conversation_id ?? this.conversationId,
+        user_id: ingress.replyTarget?.user_id ?? ingress.user_id ?? this.userId,
+        message_id: messageId,
       },
       actor: {
         ...ingress.actor,
         surface: ingress.actor?.surface ?? "tui",
         platform: ingress.actor?.platform ?? ingress.platform ?? "local_tui",
         conversation_id: ingress.actor?.conversation_id ?? ingress.conversation_id ?? this.conversationId,
+        user_id: ingress.actor?.user_id ?? ingress.user_id ?? this.userId,
       },
     }, {
       cwd: effectiveCwd,

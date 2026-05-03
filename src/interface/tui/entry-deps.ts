@@ -7,9 +7,18 @@ import type { TuiChatSurface } from "./chat-surface.js";
 import { isSafeBashCommand } from "./bash-mode.js";
 import { getCliLogger } from "../cli/cli-logger.js";
 import type { Task } from "../../base/types/task.js";
-import { createApprovalQueue, createChatToolApprovalTask } from "./entry-approval.js";
+import { createApprovalQueue } from "./entry-approval.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
+import { ApprovalBroker } from "../../runtime/approval-broker.js";
+import { ApprovalStore, createRuntimeStorePaths } from "../../runtime/store/index.js";
+
+function createTuiApprovalBroker(stateManager: StateManager): ApprovalBroker {
+  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  return new ApprovalBroker({
+    store: new ApprovalStore(createRuntimeStorePaths(runtimeRoot)),
+  });
+}
 
 export async function buildStandaloneTuiDeps() {
   const { buildLLMClient, buildAdapterRegistry } = await import("../../base/llm/provider-factory.js");
@@ -134,8 +143,7 @@ export async function buildStandaloneTuiDeps() {
 
   const approvalQueue = createApprovalQueue();
   const approvalFn = (task: Task): Promise<boolean> => approvalQueue.enqueueApproval(task);
-  const chatToolApprovalFn = async (description: string): Promise<boolean> =>
-    approvalQueue.enqueueApproval(createChatToolApprovalTask(description));
+  const approvalBroker = createTuiApprovalBroker(stateManager);
 
   const reportingEngine = new ReportingEngine(stateManager, undefined, characterConfig);
   const goalTreeManager = new GoalTreeManager(stateManager, llmClient, ethicsGate, goalDependencyGraph);
@@ -342,7 +350,7 @@ export async function buildStandaloneTuiDeps() {
       chatAgentLoopRunner,
       reviewAgentLoopRunner,
       runtimeControlService,
-      approvalFn: chatToolApprovalFn,
+      approvalBroker,
     });
   } catch (err) {
     getCliLogger().warn(`[pulseed] ChatRunner init failed — free-form chat disabled: ${err instanceof Error ? err.message : String(err)}`);
@@ -412,8 +420,7 @@ export async function buildDaemonModeChatSurface(
     concurrency: new ConcurrencyController(),
   });
   const approvalQueue = createApprovalQueue();
-  const chatToolApprovalFn = async (description: string): Promise<boolean> =>
-    approvalQueue.enqueueApproval(createChatToolApprovalTask(description));
+  const approvalBroker = createTuiApprovalBroker(stateManager);
 
   let chatRunner: TuiChatSurface | undefined;
   let llmClient: ILLMClient | undefined;
@@ -484,7 +491,7 @@ export async function buildDaemonModeChatSurface(
       goalNegotiator,
       daemonClient,
       daemonBaseUrl: `http://127.0.0.1:${daemonPort}`,
-      approvalFn: chatToolApprovalFn,
+      approvalBroker,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

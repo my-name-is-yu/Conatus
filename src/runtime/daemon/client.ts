@@ -327,10 +327,6 @@ export class DaemonClient {
     return this.post(`/goals/${encodeURIComponent(goalId)}/resume`, {});
   }
 
-  async approve(goalId: string, requestId: string, approved: boolean): Promise<{ ok: boolean }> {
-    return this.post(`/goals/${encodeURIComponent(goalId)}/approve`, { requestId, approved });
-  }
-
   async chat(goalId: string, message: string): Promise<{ ok: boolean }> {
     return this.post(`/goals/${encodeURIComponent(goalId)}/chat`, { message });
   }
