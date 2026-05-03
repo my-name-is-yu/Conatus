@@ -74,8 +74,10 @@ export interface ProposalGenerationDeps {
 export function buildProposalPrompt(
   trigger: CuriosityTrigger,
   goals: Goal[],
-  learningRecords: LearningRecord[]
+  learningRecords: LearningRecord[],
+  options: { relationshipProfileContext?: string } = {}
 ): string {
+  const relationshipProfileContext = options.relationshipProfileContext?.trim() ?? "";
   const activeGoalsSummary = goals
     .filter((g) => g.status === "active" || g.status === "waiting")
     .map((g) => {
@@ -105,6 +107,9 @@ ${activeGoalsSummary || "(none)"}
 
 ## Recent Learning Records
 ${recentLearning || "(none)"}
+
+## Resident Relationship Profile Context
+${relationshipProfileContext || "(none)"}
 
 ## Task
 Based on the trigger and learning history, propose 1-3 curiosity goals that:
@@ -165,7 +170,8 @@ export async function generateProposals(
   goals: Goal[],
   state: CuriosityState,
   activeProposalCount: number,
-  deps: ProposalGenerationDeps
+  deps: ProposalGenerationDeps,
+  options: { relationshipProfileContext?: string } = {}
 ): Promise<CuriosityProposal[]> {
   const config: CuriosityConfig = CuriosityConfigSchema.parse(deps.config);
 
@@ -198,7 +204,9 @@ export async function generateProposals(
     let llmItems: LLMProposalItem[] = [];
 
     try {
-      const prompt = buildProposalPrompt(trigger, goals, state.learning_records);
+      const prompt = buildProposalPrompt(trigger, goals, state.learning_records, {
+        relationshipProfileContext: options.relationshipProfileContext,
+      });
       if (deps.gateway) {
         llmItems = await deps.gateway.execute({
           purpose: "curiosity_propose",

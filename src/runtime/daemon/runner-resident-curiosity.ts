@@ -1,4 +1,5 @@
 import type { ResidentActivity } from "../../base/types/daemon.js";
+import { loadRelationshipProfilePromptBlock } from "../../platform/profile/relationship-profile.js";
 import type { DaemonRunnerResidentContext } from "./runner-resident-shared.js";
 import {
   gatherResidentWorkspaceContext,
@@ -133,7 +134,13 @@ export async function runResidentCuriosityCycle(
       return true;
     }
 
-    const proposals = await context.curiosityEngine.generateProposals(triggers, goals);
+    const relationshipProfileContext = loadRelationshipProfilePromptBlock(
+      context.stateManager.getBaseDir(),
+      "resident_behavior"
+    );
+    const proposals = await context.curiosityEngine.generateProposals(triggers, goals, {
+      relationshipProfileContext,
+    });
     if (proposals.length === 0) {
       await persistResidentActivity(context, {
         kind: "curiosity",
