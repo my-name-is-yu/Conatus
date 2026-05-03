@@ -26,3 +26,9 @@
 - Render shared timeline tool/commentary/approval/final items as chronological transcript rows with normal retention, not latest-five activity retention.
 - Keep raw/debug events available by continuing to emit structured chat events, while normal transcript rendering uses shared timeline rows.
 - #947 verification: focused chat state/chat runner tests passed (117 tests), `npm run typecheck` passed, `npm run lint:boundaries` exited 0 with existing warnings, review agent LGTM, `npm run test:changed` passed (20 files passed, 2 skipped; 441 tests passed, 2 skipped).
+
+## #948 plan
+- Confirmed #948 is open after syncing main.
+- Replace chat/TUI-facing Intent/Checkpoint/Updated plan labels with natural user-facing text while preserving structured event kinds/source ids for raw/debug traceability.
+- Add transcript tests that assert normal output does not expose the internal labels while plan, approval, compaction, resume, and recovery information remains visible.
+- #948 verification: focused chat state/chat runner tests passed (118 tests), `npm run typecheck` passed, `npm run lint:boundaries` exited 0 with existing warnings, review agent LGTM, `npm run test:changed` passed (20 files passed, 2 skipped; 442 tests passed, 2 skipped).

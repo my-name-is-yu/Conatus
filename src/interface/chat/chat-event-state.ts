@@ -96,7 +96,7 @@ function renderTimelineItem(item: AgentTimelineItem): string {
       return detail ? `${label} ${item.toolName}: ${detail}` : `${label} ${item.toolName}.`;
     }
     case "plan":
-      return `Plan updated: ${item.summary}`;
+      return `Plan changed: ${item.summary}`;
     case "approval":
       return item.status === "requested"
         ? `Approval requested for ${item.toolName}: ${item.reason}`

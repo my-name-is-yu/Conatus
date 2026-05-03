@@ -188,7 +188,7 @@ export class ChatRunnerEventBridge {
         }
 
         if (event.type === "plan_update") {
-          this.emitActivity("tool", `Updated plan: ${previewActivityText(event.summary)}`, eventContext, `plan:${event.turnId}`);
+          this.emitActivity("tool", `Plan changed: ${previewActivityText(event.summary)}`, eventContext, `plan:${event.turnId}`);
           this.emitCheckpoint("Plan updated", previewActivityText(event.summary, 160), eventContext, `plan:${event.eventId}`);
           this.emitEvent({
             type: "tool_update",
@@ -324,10 +324,9 @@ export class ChatRunnerEventBridge {
       reason = "the adapter needs the current workspace context to act correctly.";
     }
     const message = [
-      "Intent",
-      `- Confirm: ${subject || "the current request"}`,
-      `- Next: ${nextStep}`,
-      `- Why: ${reason}`,
+      `I understand the request as ${subject || "the current request"}.`,
+      `Next I will ${nextStep}`,
+      `This is needed because ${reason}`,
     ].join("\n");
     this.emitActivity("commentary", message, eventContext, "intent:first-step", false);
   }
@@ -338,9 +337,7 @@ export class ChatRunnerEventBridge {
     eventContext: ChatEventContext,
     sourceKey: string
   ): void {
-    const message = detail
-      ? `Checkpoint\n- ${title}: ${detail}`
-      : `Checkpoint\n- ${title}`;
+    const message = detail ? `${title}: ${detail}` : title;
     this.emitActivity("checkpoint", message, eventContext, `checkpoint:${sourceKey}`, false);
   }
 
