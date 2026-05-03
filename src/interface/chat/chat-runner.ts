@@ -224,6 +224,44 @@ function goalConstraintsFromRunSpec(spec: RunSpec): string[] {
     `Irreversible actions: ${spec.approval_policy.irreversible_action}`,
   ];
 }
+
+function validateRunSpecStartSafety(spec: RunSpec): string | null {
+  const required = spec.missing_fields.filter((field) => field.severity === "required");
+  if (required.length > 0) {
+    return [
+      `RunSpec confirmed but not started: ${spec.id}`,
+      "Required RunSpec details are unresolved.",
+      ...required.map((field) => `- ${field.question}`),
+      "Reply with the missing workspace, deadline, metric, or approval details, then approve again.",
+    ].join("\n");
+  }
+
+  if (!spec.workspace?.path || spec.workspace.confidence === "low") {
+    return [
+      `RunSpec confirmed but not started: ${spec.id}`,
+      "Workspace is missing or ambiguous.",
+      "Reply with the exact local or remote workspace path before starting background CoreLoop work.",
+    ].join("\n");
+  }
+
+  const blockedPolicies = [
+    spec.approval_policy.submit === "disallowed" ? "submit" : null,
+    spec.approval_policy.publish === "disallowed" ? "publish" : null,
+    spec.approval_policy.external_action === "disallowed" ? "external action" : null,
+    spec.approval_policy.irreversible_action === "disallowed" ? "irreversible action" : null,
+    spec.approval_policy.secret === "disallowed" ? "secret transmission" : null,
+  ].filter((value): value is string => value !== null);
+  if (blockedPolicies.length > 0) {
+    return [
+      `RunSpec confirmed but not started: ${spec.id}`,
+      `Blocked safety policy: ${blockedPolicies.join(", ")}.`,
+      "PulSeed will not start a long-running handoff that requires a disallowed external, secret, production, destructive, or irreversible action.",
+      "Revise the RunSpec to remove the blocked action or mark it approval-required for a later explicit approval gate.",
+    ].join("\n");
+  }
+
+  return null;
+}
 const standaloneIngressRouter = createIngressRouter();
 
 function resolveSelfIdentityResponse(input: string, baseDir: string): string | null {
@@ -929,6 +967,26 @@ export class ChatRunner {
     await store.save(result.spec);
 
     if (result.kind === "confirmed") {
+      const safetyBlock = validateRunSpecStartSafety(result.spec);
+      if (safetyBlock) {
+        const pendingSpec: RunSpec = {
+          ...result.spec,
+          status: "draft",
+        };
+        await store.save(pendingSpec);
+        this.history?.setRunSpecConfirmation({
+          ...pending,
+          state: "pending",
+          spec: pendingSpec,
+          updatedAt: pendingSpec.updated_at,
+        });
+        await this.history?.persist();
+        return {
+          success: false,
+          output: safetyBlock,
+          elapsed_ms: Date.now() - start,
+        };
+      }
       const started = await this.startConfirmedRunSpec(result.spec);
       this.history?.setRunSpecConfirmation({
         ...pending,
@@ -993,6 +1051,14 @@ export class ChatRunner {
 
   private async startConfirmedRunSpec(spec: RunSpec): Promise<ChatRunResult> {
     const start = Date.now();
+    const safetyBlock = validateRunSpecStartSafety(spec);
+    if (safetyBlock) {
+      return {
+        success: false,
+        output: safetyBlock,
+        elapsed_ms: Date.now() - start,
+      };
+    }
     if (!this.deps.daemonClient) {
       return {
         success: false,

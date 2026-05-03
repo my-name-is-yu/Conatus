@@ -4561,6 +4561,105 @@ describe("ChatRunner", () => {
       }));
     });
 
+    it("blocks approved RunSpecs with unresolved required fields before daemon start", async () => {
+      const stateManager = new StateManager(fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-required-")), undefined, { walEnabled: false });
+      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        daemonClient: daemonClient as never,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision({
+            metric: {
+              name: "kaggle_score",
+              direction: "unknown",
+              target: 0.98,
+              target_rank_percent: null,
+              datasource: "kaggle_leaderboard",
+              confidence: "medium",
+            },
+          }),
+          runSpecConfirmationDecision("approve"),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      const result = await runner.execute("approve", "/repo/kaggle");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Run cannot start until required fields are resolved");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    });
+
+    it("blocks disallowed external or irreversible actions before daemon start", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-disallowed-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        daemonClient: daemonClient as never,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision({
+            approval_policy: {
+              submit: "disallowed",
+              publish: "unspecified",
+              secret: "approval_required",
+              external_action: "disallowed",
+              irreversible_action: "disallowed",
+            },
+          }),
+          runSpecConfirmationDecision("approve"),
+          runSpecConfirmationDecision("cancel"),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await runner.execute("本番に不可逆な変更を入れる長期実行を開始して", "/repo/app");
+      const result = await runner.execute("approve", "/repo/app");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Blocked safety policy");
+      expect(result.output).toContain("disallowed external");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.status).toBe("draft");
+
+      const cancelResult = await runner.execute("cancel", "/repo/app");
+      expect(cancelResult.output).toContain("RunSpec cancelled:");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    });
+
+    it("blocks low-confidence workspace before daemon start", async () => {
+      const stateManager = new StateManager(fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-workspace-")), undefined, { walEnabled: false });
+      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        daemonClient: daemonClient as never,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision({
+            workspace: {
+              path: "/repo/maybe",
+              source: "context",
+              confidence: "low",
+            },
+          }),
+          runSpecConfirmationDecision("approve"),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await runner.execute("このワークスペースで長期実行して", "/repo/maybe");
+      const result = await runner.execute("approve", "/repo/maybe");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Workspace is missing or ambiguous");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    });
+
     it("cancels a pending RunSpec without starting a background run", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-cancel-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });

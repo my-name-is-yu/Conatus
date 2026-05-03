@@ -51,3 +51,16 @@
   - `npm run test:unit -- src/runtime/session-registry/__tests__/runtime-session-registry.test.ts -t "background"`: not applicable in unit config because runtime tests are excluded.
   - `npm run test:integration -- src/runtime/session-registry/__tests__/runtime-session-registry.test.ts -t "background"`: suite was skipped by filter/config.
 - Review: first review found configured daemon runtime ledger records could be invisible or stale in `/sessions`. Fixed by mirroring initial records and updating RuntimeSessionRegistry to read/merge both state-base and configured daemon runtime ledgers. Re-review: no material findings.
+
+## #1000
+
+- Branch: `codex/issue-1000-runspec-safety`.
+- Plan: add a typed pre-start safety validation for confirmed RunSpecs so unresolved required fields, missing/ambiguous workspace, and disallowed external/secret/irreversible policies fail before daemon start or background-run creation.
+- Current status: implemented locally; review pending.
+- Verification:
+  - `npm run test:unit -- src/interface/chat/__tests__/chat-runner.test.ts -t "natural-language RunSpec draft routing"`: pass after review fixes (12 pass, 118 skipped).
+  - `npm run test:unit -- src/interface/chat/__tests__/chat-runner.test.ts -t "blocks approved RunSpecs"`: pass.
+  - `npm run typecheck`: pass.
+  - `npm run lint:boundaries`: pass with existing warnings only.
+  - `git diff --check`: pass.
+- Review: first review found safety-blocked approvals were persisted as confirmed and low-confidence workspaces were not treated as ambiguous. Fixed by keeping safety-blocked specs pending/draft and blocking low-confidence workspaces before daemon start.
