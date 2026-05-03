@@ -83,6 +83,7 @@ describe("cmdGatewaySetup", () => {
     textMock
       .mockResolvedValueOnce("test-token")
       .mockResolvedValueOnce("777,888")
+      .mockResolvedValueOnce("999")
       .mockResolvedValueOnce("")
       .mockResolvedValueOnce("personal")
       .mockResolvedValueOnce("http://127.0.0.1:8080")
@@ -106,7 +107,7 @@ describe("cmdGatewaySetup", () => {
     expect(telegramConfig).toMatchObject({
       bot_token: "test-token",
       allowed_user_ids: [777, 888],
-      runtime_control_allowed_user_ids: [777, 888],
+      runtime_control_allowed_user_ids: [999],
       allow_all: false,
       polling_timeout: 30,
       identity_key: "personal",

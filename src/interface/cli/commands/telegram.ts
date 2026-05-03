@@ -98,13 +98,33 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
     console.log("  Hermes-style setup uses user IDs for access control instead of requiring chat_id up front.");
     console.log("  Message @userinfobot if you need your numeric user ID.\n");
 
-    const allowedStr = await ask(rl, "Allowed user IDs (e.g. 123456,789012) or press Enter to skip: ");
+    const allowedStr = await ask(rl, "Allowed user IDs (e.g. 123456,789012) or press Enter to bind first /sethome sender later: ");
     const allowedUserIds: number[] = [];
     if (allowedStr) {
       for (const part of allowedStr.split(",")) {
         const n = parseInt(part.trim(), 10);
         if (!isNaN(n)) {
           allowedUserIds.push(n);
+        }
+      }
+    }
+    let allowAll = false;
+    if (allowedUserIds.length === 0) {
+      console.log("\nNo allowed users were entered. By default, PulSeed will keep Telegram chat access closed until the first /sethome sender is bound.");
+      const unrestricted = await ask(rl, "Type ALLOW ALL to intentionally allow any Telegram user who can reach this bot: ");
+      allowAll = unrestricted === "ALLOW ALL";
+    }
+
+    console.log("\nRuntime control (optional)");
+    console.log("  Runtime-control permission is separate from ordinary Telegram chat access.");
+    console.log("  Leave blank to disable Telegram runtime-control approval.\n");
+    const runtimeControlStr = await ask(rl, "Runtime-control user IDs (comma-separated) or press Enter to disable: ");
+    const runtimeControlAllowedUserIds: number[] = [];
+    if (runtimeControlStr) {
+      for (const part of runtimeControlStr.split(",")) {
+        const n = parseInt(part.trim(), 10);
+        if (!isNaN(n)) {
+          runtimeControlAllowedUserIds.push(n);
         }
       }
     }
@@ -140,7 +160,8 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
     const config = {
       bot_token: token,
       allowed_user_ids: allowedUserIds,
-      allow_all: allowedUserIds.length === 0,
+      runtime_control_allowed_user_ids: runtimeControlAllowedUserIds,
+      allow_all: allowAll,
       polling_timeout: 30,
       ...(chatId !== undefined ? { chat_id: chatId } : {}),
       ...(identityKey ? { identity_key: identityKey } : {}),
@@ -156,14 +177,17 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
     console.log(`  Home:   ${chatId !== undefined ? chatId : "(send /sethome to set later)"}`);
     if (allowedUserIds.length > 0) {
       console.log(`  Allowed users: ${allowedUserIds.join(", ")}`);
+    } else if (allowAll) {
+      console.log("  Allowed users: (all; explicitly confirmed)");
     } else {
-      console.log("  Allowed users: (all)");
+      console.log("  Allowed users: (closed until first /sethome binding)");
     }
     if (identityKey) {
       console.log(`  Identity key: ${identityKey}`);
     } else {
       console.log("  Identity key: (not set)");
     }
+    console.log(`  Runtime-control users: ${runtimeControlAllowedUserIds.length > 0 ? runtimeControlAllowedUserIds.join(", ") : "(disabled)"}`);
     console.log("\nThe daemon will pick this up automatically as a built-in gateway channel.");
 
     return 0;

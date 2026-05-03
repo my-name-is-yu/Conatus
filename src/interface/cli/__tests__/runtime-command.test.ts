@@ -146,6 +146,11 @@ describe("runtime registry CLI commands", () => {
       polling_timeout: 20,
       identity_key: "personal",
     });
+    await stateManager.writeRaw("gateway/channels/telegram-bot/health.json", {
+      last_inbound_at: "2026-05-03T00:01:00.000Z",
+      last_outbound_at: "2026-05-03T00:02:00.000Z",
+      last_error: null,
+    });
     await stateManager.writeRaw("gateway/channels/discord-bot/config.json", {
       application_id: "app",
       bot_token: "token",
@@ -186,6 +191,8 @@ describe("runtime registry CLI commands", () => {
         state: string;
         home_target: { target_id?: string } | null;
         goal_bindings: Array<{ scope: string; subject_id: string | null; goal_id: string }>;
+        access: { allow_all: boolean; allowed_count: number };
+        recent_health: { inbound_at: string | null; outbound_at: string | null; last_error: string | null };
         runtime_control: { state: string };
       }>;
       background_runs: Array<{ id: string; pinned_reply_target: { channel: string; target_id?: string } | null }>;
@@ -202,6 +209,12 @@ describe("runtime registry CLI commands", () => {
         { scope: "conversation", subject_id: "12345", goal_id: "goal-home" },
         { scope: "default", subject_id: null, goal_id: "goal-home" },
       ]),
+      access: { allow_all: false, allowed_count: 1 },
+      recent_health: {
+        inbound_at: "2026-05-03T00:01:00.000Z",
+        outbound_at: "2026-05-03T00:02:00.000Z",
+        last_error: null,
+      },
       runtime_control: { state: "missing_allowlist", allowed_count: 0 },
     }));
     expect(parsed.daemon.runtime_root).toBe(runtimeRoot);

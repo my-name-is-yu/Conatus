@@ -166,12 +166,29 @@ async function promptTelegramChannelConfig(baseDir: string): Promise<TelegramGat
   const allowedUserIds = parseIntegerList(
     guardCancel(
       await p.text({
-        message: "Allowed Telegram user IDs (comma-separated, blank = allow all)",
+        message: "Allowed Telegram user IDs (comma-separated, blank = closed first-use / explicit unrestricted confirmation)",
         placeholder: "123456789,987654321",
         initialValue: current?.allowed_user_ids.join(",") ?? "",
       })
     )
   );
+  const runtimeControlAllowedUserIds = parseIntegerList(
+    guardCancel(
+      await p.text({
+        message: "Telegram runtime-control user IDs (comma-separated, blank = disabled)",
+        placeholder: "123456789",
+        initialValue: current?.runtime_control_allowed_user_ids.join(",") ?? "",
+      })
+    )
+  );
+  const allowAll = allowedUserIds.length === 0
+    ? guardCancel(
+      await p.confirm({
+        message: "Allow any Telegram user who can reach this bot to use normal chat? Choose No to keep access closed until /sethome binds the first sender.",
+        initialValue: false,
+      })
+    )
+    : false;
   const chatIdInput = guardCancel(
     await p.text({
       message: "Home chat ID (optional, blank = use /sethome later)",
@@ -199,11 +216,11 @@ async function promptTelegramChannelConfig(baseDir: string): Promise<TelegramGat
     denied_user_ids: current?.denied_user_ids ?? [],
     allowed_chat_ids: current?.allowed_chat_ids ?? [],
     denied_chat_ids: current?.denied_chat_ids ?? [],
-    runtime_control_allowed_user_ids: allowedUserIds,
+    runtime_control_allowed_user_ids: runtimeControlAllowedUserIds,
     chat_goal_map: current?.chat_goal_map ?? {},
     user_goal_map: current?.user_goal_map ?? {},
     default_goal_id: current?.default_goal_id,
-    allow_all: allowedUserIds.length === 0,
+    allow_all: allowAll,
     polling_timeout: current?.polling_timeout ?? 30,
     ...(identityKey ? { identity_key: identityKey } : {}),
   };

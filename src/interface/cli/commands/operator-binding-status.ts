@@ -30,10 +30,19 @@ export interface OperatorChannelBindingStatus {
     state: RuntimeControlPermissionState;
     allowed_count: number;
   };
+  access: {
+    allow_all: boolean;
+    allowed_count: number;
+  };
   health: {
     daemon_running: boolean;
     gateway: RuntimeHealthSnapshot["status"] | "missing";
     checked_at: number | null;
+  };
+  recent_health: {
+    inbound_at: string | null;
+    outbound_at: string | null;
+    last_error: string | null;
   };
   warnings: string[];
 }
@@ -62,6 +71,8 @@ interface ChannelConfigSummary {
   goalBindings: OperatorChannelGoalBinding[];
   runtimeControlAllowedCount: number;
   runtimeControlState: RuntimeControlPermissionState;
+  accessAllowAll: boolean;
+  accessAllowedCount: number;
   warnings: string[];
 }
 
@@ -107,6 +118,7 @@ function telegramSummary(raw: Record<string, unknown> | null): ChannelConfigSumm
   const warnings: string[] = [];
   const chatId = typeof raw["chat_id"] === "number" ? String(raw["chat_id"]) : null;
   const runtimeAllowedCount = arrayCount(raw["runtime_control_allowed_user_ids"]);
+  const allowedUserCount = arrayCount(raw["allowed_user_ids"]);
   const defaultGoalId = nonEmptyString(raw["default_goal_id"]);
   if (!chatId) warnings.push("Missing Telegram home chat. Send /sethome from the target chat.");
   if (runtimeAllowedCount === 0) warnings.push("Missing Telegram runtime-control allowed user list.");
@@ -122,11 +134,9 @@ function telegramSummary(raw: Record<string, unknown> | null): ChannelConfigSumm
       ...defaultGoalBinding(defaultGoalId),
     ],
     runtimeControlAllowedCount: runtimeAllowedCount,
-    runtimeControlState: raw["allow_all"] === true
-      ? "unrestricted"
-      : runtimeAllowedCount > 0
-        ? "allowed"
-        : "missing_allowlist",
+    runtimeControlState: runtimeAllowedCount > 0 ? "allowed" : "missing_allowlist",
+    accessAllowAll: raw["allow_all"] === true,
+    accessAllowedCount: allowedUserCount,
     warnings: [
       ...warnings,
       ...(!hasBotToken ? ["Invalid Telegram config: bot_token is missing."] : []),
@@ -161,6 +171,8 @@ function senderSummary(raw: Record<string, unknown> | null, channel: Exclude<Bui
     ],
     runtimeControlAllowedCount: runtimeAllowedCount,
     runtimeControlState: runtimeAllowedCount > 0 ? "allowed" : "missing_allowlist",
+    accessAllowAll: false,
+    accessAllowedCount: arrayCount(raw["allowed_sender_ids"]),
     warnings: [
       ...warnings,
       ...(missingFields.length > 0 ? [`Invalid ${channel} config: missing ${missingFields.join(", ")}.`] : []),
@@ -178,6 +190,8 @@ function missingSummary(): ChannelConfigSummary {
     goalBindings: [],
     runtimeControlAllowedCount: 0,
     runtimeControlState: "unsupported",
+    accessAllowAll: false,
+    accessAllowedCount: 0,
     warnings: [],
   };
 }
@@ -189,6 +203,15 @@ function channelConfigPath(baseDir: string, channel: BuiltinGatewayChannelName):
 async function loadRawConfig(filePath: string): Promise<Record<string, unknown> | null> {
   const raw = await readJsonFileOrNull<unknown>(filePath);
   return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+}
+
+async function loadRecentChannelHealth(configPath: string): Promise<OperatorChannelBindingStatus["recent_health"]> {
+  const raw = await readJsonFileOrNull<Record<string, unknown>>(path.join(path.dirname(configPath), "health.json"));
+  return {
+    inbound_at: nonEmptyString(raw?.["last_inbound_at"]),
+    outbound_at: nonEmptyString(raw?.["last_outbound_at"]),
+    last_error: nonEmptyString(raw?.["last_error"]),
+  };
 }
 
 function channelState(summary: ChannelConfigSummary, daemonRunning: boolean, gatewayHealth: RuntimeHealthSnapshot["status"] | "missing"): OperatorChannelState {
@@ -224,6 +247,7 @@ export async function collectOperatorBindingStatus(stateManager: StateManager): 
   for (const name of BUILTIN_GATEWAY_CHANNEL_NAMES) {
     const configPath = channelConfigPath(baseDir, name);
     const raw = await loadRawConfig(configPath);
+    const recentHealth = await loadRecentChannelHealth(configPath);
     const summary = name === "telegram-bot" ? telegramSummary(raw) : senderSummary(raw, name);
     const state = channelState(summary, daemon.running, gatewayHealth);
     channels.push({
@@ -241,11 +265,16 @@ export async function collectOperatorBindingStatus(stateManager: StateManager): 
         state: summary.runtimeControlState,
         allowed_count: summary.runtimeControlAllowedCount,
       },
+      access: {
+        allow_all: summary.accessAllowAll,
+        allowed_count: summary.accessAllowedCount,
+      },
       health: {
         daemon_running: daemon.running,
         gateway: gatewayHealth,
         checked_at: health?.checked_at ?? null,
       },
+      recent_health: recentHealth,
       warnings: summary.warnings,
     });
   }
@@ -280,6 +309,7 @@ export function printOperatorBindingStatus(status: OperatorBindingStatus): void 
     console.log(
       `- ${channel.name}: ${channel.state}; home=${formatReplyTarget(channel.home_target)}; identity=${channel.identity_key ?? "-"}; runtime_control=${channel.runtime_control.state} (${channel.runtime_control.allowed_count})`
     );
+    console.log(`  access allow_all=${channel.access.allow_all ? "yes" : "no"} allowed=${channel.access.allowed_count}`);
     for (const binding of channel.goal_bindings) {
       const subject = binding.subject_id ? `${binding.scope}:${binding.subject_id}` : binding.scope;
       console.log(`  goal_binding ${subject} -> ${binding.goal_id}`);

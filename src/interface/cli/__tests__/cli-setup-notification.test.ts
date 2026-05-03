@@ -354,6 +354,7 @@ describe("setup notification step", () => {
     textMock
       .mockResolvedValueOnce("test-token")
       .mockResolvedValueOnce("777,888")
+      .mockResolvedValueOnce("999")
       .mockResolvedValueOnce("")
       .mockResolvedValueOnce("personal");
     selectMock
@@ -372,7 +373,7 @@ describe("setup notification step", () => {
     expect(telegramConfig).toMatchObject({
       bot_token: "test-token",
       allowed_user_ids: [777, 888],
-      runtime_control_allowed_user_ids: [777, 888],
+      runtime_control_allowed_user_ids: [999],
       allow_all: false,
       identity_key: "personal",
     });
