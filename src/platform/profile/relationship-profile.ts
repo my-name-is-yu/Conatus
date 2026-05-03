@@ -66,6 +66,7 @@ export const RelationshipProfileAuditEventSchema = z.object({
   source: RelationshipProfileSourceSchema,
   previous_item_id: z.string().min(1).optional(),
   reason: z.string().min(1).optional(),
+  proposal_id: z.string().min(1).optional(),
 });
 
 export const RelationshipProfileStoreSchema = z.object({
@@ -93,6 +94,7 @@ export interface RelationshipProfileItemInput {
   allowedScopes?: RelationshipProfileConsentScope[];
   evidenceRef?: string;
   note?: string;
+  proposalId?: string;
   now?: string;
 }
 
@@ -100,6 +102,7 @@ export interface RelationshipProfileRetractionInput {
   stableKey: string;
   reason: string;
   source?: RelationshipProfileSource;
+  proposalId?: string;
   now?: string;
 }
 
@@ -211,6 +214,7 @@ export function upsertRelationshipProfileItemInStore(
       version: previous.version,
       source: normalized.source,
       previous_item_id: previous.id,
+      ...(normalized.proposalId ? { proposal_id: normalized.proposalId } : {}),
     })),
     RelationshipProfileAuditEventSchema.parse({
       id: `profile-event-${randomUUID()}`,
@@ -221,6 +225,7 @@ export function upsertRelationshipProfileItemInStore(
       version: item.version,
       source: normalized.source,
       previous_item_id: superseded.at(-1)?.id,
+      ...(normalized.proposalId ? { proposal_id: normalized.proposalId } : {}),
     }),
   ];
 
@@ -246,7 +251,12 @@ export async function upsertRelationshipProfileItem(
   return { item: result.item, superseded: result.superseded };
 }
 
-function normalizeRetractionInput(input: RelationshipProfileRetractionInput): Required<RelationshipProfileRetractionInput> {
+function normalizeRetractionInput(input: RelationshipProfileRetractionInput): RelationshipProfileRetractionInput & {
+  stableKey: string;
+  reason: string;
+  source: RelationshipProfileSource;
+  now: string;
+} {
   const stableKey = input.stableKey.trim();
   const reason = input.reason.trim();
   if (!stableKey) throw new Error("stable key is required");
@@ -255,6 +265,7 @@ function normalizeRetractionInput(input: RelationshipProfileRetractionInput): Re
     stableKey,
     reason,
     source: input.source ?? "cli_update",
+    ...(input.proposalId ? { proposalId: input.proposalId } : {}),
     now: input.now ?? new Date().toISOString(),
   };
 }
@@ -293,6 +304,7 @@ export function retractRelationshipProfileItemInStore(
     version: target.version,
     source: normalized.source,
     reason: normalized.reason,
+    ...(normalized.proposalId ? { proposal_id: normalized.proposalId } : {}),
   });
 
   return {

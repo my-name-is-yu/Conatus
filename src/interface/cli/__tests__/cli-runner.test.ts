@@ -173,6 +173,7 @@ import { getPulseedVersion } from "../../../base/utils/pulseed-meta.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import { DaemonClient } from "../../../runtime/daemon/client.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
+import { createRelationshipProfileChangeProposal } from "../../../platform/profile/profile-change-proposal.js";
 import type { LoopResult } from "../../../orchestrator/loop/core-loop.js";
 import type { Goal } from "../../../base/types/goal.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -1566,6 +1567,88 @@ describe("profile command", () => {
     expect(allCode).toBe(0);
     expect(allProfile.items.map((item) => item.status)).toEqual(["superseded", "retracted"]);
     expect(allProfile.audit_events).toHaveLength(4);
+  });
+
+  it("lists, inspects, approves, applies, and rejects profile proposals through the production CLI entrypoint", async () => {
+    const applyCandidate = await createRelationshipProfileChangeProposal(tmpDir, {
+      operation: "upsert_item",
+      stableKey: "user.preference.status",
+      kind: "preference",
+      value: "Prefer concise status reports.",
+      source: "cli_proposal",
+      confidence: 0.9,
+      sensitivity: "private",
+      consentScopes: ["user_facing_review"],
+      allowedScopes: ["local_planning", "memory_retrieval", "user_facing_review"],
+      evidenceRefs: ["cli:proposal"],
+      rationale: "Operator wants this preference governed before use.",
+    });
+    const rejectCandidate = await createRelationshipProfileChangeProposal(tmpDir, {
+      operation: "upsert_item",
+      stableKey: "user.boundary.notifications",
+      kind: "boundary",
+      value: "Allow every proactive notification.",
+      source: "cli_proposal",
+      confidence: 0.6,
+      sensitivity: "private",
+      consentScopes: ["user_facing_review"],
+      allowedScopes: ["resident_behavior", "memory_retrieval", "user_facing_review"],
+      evidenceRefs: ["cli:rejected-proposal"],
+      rationale: "This proposal should not affect runtime context after rejection.",
+    });
+
+    const listSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const listCode = await runCLI("profile", "proposal", "list", "--state", "pending", "--json");
+    const listOutput = listSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    listSpy.mockRestore();
+
+    expect(listCode).toBe(0);
+    expect(JSON.parse(listOutput).proposals).toHaveLength(2);
+
+    const inspectSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const inspectCode = await runCLI("profile", "proposal", "inspect", applyCandidate.proposal.id, "--json");
+    const inspectOutput = inspectSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    inspectSpy.mockRestore();
+
+    expect(inspectCode).toBe(0);
+    expect(JSON.parse(inspectOutput).proposal.proposed_item.stable_key).toBe("user.preference.status");
+
+    const approveCode = await runCLI("profile", "proposal", "approve", applyCandidate.proposal.id, "--reason", "Approved by operator.");
+    expect(approveCode).toBe(0);
+    const applyCode = await runCLI("profile", "proposal", "apply", applyCandidate.proposal.id);
+    expect(applyCode).toBe(0);
+
+    const rejectCode = await runCLI("profile", "proposal", "reject", rejectCandidate.proposal.id, "--reason", "Rejected by operator.");
+    expect(rejectCode).toBe(0);
+
+    const showSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const showCode = await runCLI("profile", "show", "--scope", "memory_retrieval", "--json");
+    const showOutput = showSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    showSpy.mockRestore();
+
+    const profile = JSON.parse(showOutput) as { items: Array<{ stable_key: string; value: string }> };
+    expect(showCode).toBe(0);
+    expect(profile.items.map((item) => item.stable_key)).toEqual(["user.preference.status"]);
+    expect(profile.items[0]?.value).toBe("Prefer concise status reports.");
+    expect(showOutput).not.toContain("Allow every proactive notification.");
+
+    const proposalStore = JSON.parse(fs.readFileSync(path.join(tmpDir, "relationship-profile-proposals.json"), "utf-8"));
+    expect(proposalStore.proposals.map((proposal: { approval_state: string }) => proposal.approval_state).sort()).toEqual([
+      "applied",
+      "rejected",
+    ]);
+    const profileStore = JSON.parse(fs.readFileSync(path.join(tmpDir, "relationship-profile.json"), "utf-8"));
+    expect(profileStore.audit_events.at(-1).proposal_id).toBe(applyCandidate.proposal.id);
+  });
+
+  it("rejects invalid profile proposal state filters through the production CLI entrypoint", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("profile", "proposal", "list", "--state", "pendng");
+    const output = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    errorSpy.mockRestore();
+
+    expect(code).toBe(1);
+    expect(output).toContain("invalid proposal state");
   });
 });
 
