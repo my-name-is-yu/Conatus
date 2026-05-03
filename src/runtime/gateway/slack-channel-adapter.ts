@@ -175,6 +175,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
       slack_event_id: parsed["event_id"],
       ...(route.goalId ? { goal_id: route.goalId } : {}),
       ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+      ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
     };
 
     if (isSlackChatTextEvent(slackEvent, eventType) && this.api) {

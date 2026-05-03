@@ -229,6 +229,8 @@ function resolveRuntimeControl(
   const approvalMode = runtimeControl?.approvalMode
     ?? (metadata?.["runtime_control_approved"] === true
       ? "preapproved"
+      : metadata?.["runtime_control_denied"] === true
+        ? "disallowed"
       : channel === "tui" || channel === "cli"
         ? "interactive"
         : "disallowed");
@@ -359,13 +361,13 @@ export class CrossPlatformChatSessionManager {
       channel: options.channel ?? (options.platform ? "plugin_gateway" : "cli"),
       actor: options.actor,
       replyTarget: options.replyTarget,
-      runtimeControl: options.runtimeControl ?? {
-        allowed: true,
-        approvalMode: "interactive",
-      },
+      runtimeControl: options.runtimeControl,
       cwd: options.cwd,
       timeoutMs: options.timeoutMs,
-      metadata: options.metadata,
+      metadata: {
+        ...(options.metadata ?? {}),
+        ...(options.runtimeControl ? { runtime_control_explicit: true } : {}),
+      },
       onEvent: options.onEvent,
     });
     const approvalReply = await this.tryResolveConversationalApprovalReply(ingress);
@@ -705,21 +707,27 @@ export class CrossPlatformChatSessionManager {
       hasToolLoop: this.deps.llmClient !== undefined,
       hasRuntimeControlService: this.deps.runtimeControlService !== undefined,
     };
-    const runtimeControlAllowed =
-      ingress.runtimeControl.allowed
-      && ingress.runtimeControl.approvalMode !== "disallowed"
-      && (
-        capabilities.hasRuntimeControlService
-        || (!capabilities.hasAgentLoop && !capabilities.hasToolLoop)
-      );
     const setupSecretIntake = intakeSetupSecrets(ingress.text);
     const safeIngressText = setupSecretIntake.redactedText;
-    const runtimeControlIntent = runtimeControlAllowed
-      ? await recognizeRuntimeControlIntent(safeIngressText, this.deps.llmClient)
-      : null;
-    const freeformRouteIntent = runtimeControlIntent === null && capabilities.hasAgentLoop
+    const shouldPreferFreeformBeforeDeniedRuntimeControl =
+      ingress.metadata["runtime_control_denied"] === true
+      && ingress.metadata["runtime_control_approved"] !== true
+      && ingress.metadata["runtime_control_explicit"] !== true
+      && capabilities.hasAgentLoop;
+    let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
       ? await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient)
       : null;
+    const shouldClassifyRuntimeControl =
+      (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
+      || ingress.metadata["runtime_control_approved"] === true
+      || ingress.metadata["runtime_control_denied"] === true
+      || ingress.metadata["runtime_control_explicit"] === true;
+    const runtimeControlIntent = freeformRouteIntent === null && shouldClassifyRuntimeControl
+      ? await recognizeRuntimeControlIntent(safeIngressText, this.deps.llmClient)
+      : null;
+    if (freeformRouteIntent === null && runtimeControlIntent === null && capabilities.hasAgentLoop) {
+      freeformRouteIntent = await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient);
+    }
     const selectedRoute = this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,

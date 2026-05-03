@@ -143,6 +143,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
           ...normalized.metadata,
           ...(route.goalId ? { goal_id: route.goalId } : {}),
           ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+          ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
         },
       });
 

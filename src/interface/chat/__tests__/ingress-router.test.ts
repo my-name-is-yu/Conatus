@@ -65,7 +65,7 @@ describe("IngressRouter", () => {
 	    expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
 	  });
 
-	  it("does not route runtime-control text to runtime_control when the service is not wired", () => {
+	  it("fails closed for runtime-control text when the service is not wired", () => {
 	    const route = router.selectRoute(
 	      buildStandaloneIngressMessage({
 	        text: "PulSeed を再起動して",
@@ -87,10 +87,11 @@ describe("IngressRouter", () => {
 	      }
 	    );
 
-	    expect(route.kind).toBe("agent_loop");
+	    expect(route.kind).toBe("runtime_control_blocked");
+      expect(route.reason).toBe("runtime_control_unavailable");
 	  });
 
-  it("does not route runtime-control text to runtime_control when ingress policy disallows it", () => {
+  it("fails closed for runtime-control text when ingress policy disallows it", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "PulSeed を再起動して",
@@ -112,7 +113,8 @@ describe("IngressRouter", () => {
       }
     );
 
-    expect(route.kind).toBe("agent_loop");
+    expect(route.kind).toBe("runtime_control_blocked");
+    expect(route.reason).toBe("runtime_control_disallowed");
   });
 
   it("keeps long-running natural-language work on agent_loop so tools can decide handoff", () => {

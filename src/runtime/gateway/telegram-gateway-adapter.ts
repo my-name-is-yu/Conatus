@@ -175,6 +175,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         chat_id: chatId,
         ...(route.goalId ? { goal_id: route.goalId } : {}),
         ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+        ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
       },
     });
 

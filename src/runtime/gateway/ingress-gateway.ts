@@ -140,6 +140,7 @@ export class IngressGateway {
     setEnvelopeMetadata(envelope, {
       ...route.metadata,
       ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+      ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
     });
     return true;
   }

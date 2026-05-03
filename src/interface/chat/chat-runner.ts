@@ -78,6 +78,7 @@ import {
   executeClarifyRoute,
   executeConfigureRoute,
   executeAgentLoopRoute,
+  formatBlockedRuntimeControlRoute,
   executeRuntimeControlRoute,
   executeToolLoopRoute,
   resolveSessionExecutionPolicy,
@@ -558,6 +559,25 @@ export class ChatRunner {
       return runtimeControlResult;
     }
 
+    if (selectedRoute?.kind === "runtime_control_blocked") {
+      const output = formatBlockedRuntimeControlRoute(selectedRoute);
+      this.eventBridge.pushAssistantDelta(output, assistantBuffer, eventContext);
+      await history.appendAssistantMessage(output);
+      this.eventBridge.emitEvent({
+        type: "assistant_final",
+        text: output,
+        persisted: true,
+        ...this.eventBridge.eventBase(eventContext),
+      });
+      const elapsed_ms = Date.now() - start;
+      this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, true);
+      return {
+        success: false,
+        output,
+        elapsed_ms,
+      };
+    }
+
     if (selectedRoute?.kind === "configure") {
       const result = await executeConfigureRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
       return result;
@@ -723,19 +743,25 @@ export class ChatRunner {
 
   private async resolveRouteFromIngress(ingress: ChatIngressMessage): Promise<SelectedChatRoute> {
     const capabilities = getRouteCapabilities(this.deps);
-    const runtimeControlAllowed =
-      ingress.runtimeControl.allowed
-      && ingress.runtimeControl.approvalMode !== "disallowed"
-      && (
-        capabilities.hasRuntimeControlService
-        || (!capabilities.hasAgentLoop && !capabilities.hasToolLoop)
-      );
-    const runtimeControlIntent = runtimeControlAllowed
-      ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
-      : null;
-    const freeformRouteIntent = runtimeControlIntent === null && capabilities.hasAgentLoop
+    const shouldPreferFreeformBeforeDeniedRuntimeControl =
+      ingress.metadata["runtime_control_denied"] === true
+      && ingress.metadata["runtime_control_approved"] !== true
+      && ingress.metadata["runtime_control_explicit"] !== true
+      && capabilities.hasAgentLoop;
+    let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
       ? await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient)
       : null;
+    const shouldClassifyRuntimeControl =
+      (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
+      || ingress.metadata["runtime_control_approved"] === true
+      || ingress.metadata["runtime_control_denied"] === true
+      || ingress.metadata["runtime_control_explicit"] === true;
+    const runtimeControlIntent = freeformRouteIntent === null && shouldClassifyRuntimeControl
+      ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
+      : null;
+    if (freeformRouteIntent === null && runtimeControlIntent === null && capabilities.hasAgentLoop) {
+      freeformRouteIntent = await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient);
+    }
     return standaloneIngressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
@@ -922,8 +948,8 @@ export class ChatRunner {
             ? "- Telegram bot にメッセージを送って動作確認してください。"
             : "- Send a message to the Telegram bot to verify delivery."
           : this.turnLanguageHint.language === "ja"
-            ? "- 自動反映できなかったため、fallback として `pulseed daemon restart` を実行してから `pulseed daemon status` で確認してください。"
-            : "- Automatic refresh was not applied; as a fallback, run `pulseed daemon restart`, then `pulseed daemon status`.",
+            ? "- 自動反映できませんでした。daemon lifecycle 操作は typed runtime-control が利用可能な chat surface から再実行してください。"
+            : "- Automatic refresh was not applied. Retry the lifecycle refresh from a chat surface with typed runtime-control available.",
       ].join("\n"),
       elapsed_ms: 0,
     };

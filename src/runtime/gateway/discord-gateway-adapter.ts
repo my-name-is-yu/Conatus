@@ -218,6 +218,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
         guild_id: payload.guild_id,
         ...(route.goalId ? { goal_id: route.goalId } : {}),
         ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+        ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
       },
     }).catch(() => undefined);
 

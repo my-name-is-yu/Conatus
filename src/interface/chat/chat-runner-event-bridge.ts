@@ -393,7 +393,7 @@ export class ChatRunnerEventBridge {
     const subject = formatIntentInput(input);
     let nextStep = "resume the saved agent loop state before continuing.";
     let reason = "resume needs the prior runtime context before any further action.";
-    if (selectedRoute?.kind === "runtime_control" && selectedRoute.intent) {
+    if ((selectedRoute?.kind === "runtime_control" || selectedRoute?.kind === "runtime_control_blocked") && selectedRoute.intent) {
       nextStep = `prepare the ${selectedRoute.intent.kind} runtime-control request.`;
       reason = "runtime changes need an explicit operation plan and approval path.";
     } else if (selectedRoute?.kind === "configure") {
