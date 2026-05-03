@@ -1,5 +1,20 @@
-import type { GroundingKnowledgeResult, GroundingProvider } from "../contracts.js";
-import { makeSection, makeSource } from "./helpers.js";
+import { loadRelationshipProfileRetrievalContext } from "../../platform/profile/retrieval-context.js";
+import { formatRelationshipProfileRetrievalContext } from "../../platform/profile/retrieval-context.js";
+import type {
+  GroundingKnowledgeResult,
+  GroundingProvider,
+} from "../contracts.js";
+import { makeSection, makeSource, resolveHomeDir, resolveStateManagerBaseDir } from "./helpers.js";
+
+async function buildRelationshipProfileRetrievalContext(
+  context: Parameters<GroundingProvider["build"]>[0]
+): ReturnType<typeof loadRelationshipProfileRetrievalContext> {
+  const baseDir = resolveHomeDir(context.request.homeDir ?? resolveStateManagerBaseDir(context.deps.stateManager));
+  return loadRelationshipProfileRetrievalContext({
+    baseDir,
+    includeSensitive: context.request.relationshipProfileRetrieval?.includeSensitive,
+  });
+}
 
 export const knowledgeQueryProvider: GroundingProvider = {
   key: "knowledge_query",
@@ -15,9 +30,14 @@ export const knowledgeQueryProvider: GroundingProvider = {
     }
 
     let result: GroundingKnowledgeResult | null = null;
+    const relationshipProfileContext = context.request.relationshipProfileContext
+      ?? await buildRelationshipProfileRetrievalContext(context);
     if (context.request.knowledgeContext?.trim()) {
       result = {
         retrievalId: "knowledge:prefetched",
+        warnings: relationshipProfileContext.items.length > 0
+          ? [`relationship_profile_context_items:${relationshipProfileContext.items.length}`]
+          : undefined,
         items: [
           {
             id: "knowledge:prefetched",
@@ -31,15 +51,20 @@ export const knowledgeQueryProvider: GroundingProvider = {
         query,
         goalId: context.request.goalId,
         limit: context.profile.budgets.maxKnowledgeHits,
+        relationshipProfileContext,
       });
     }
 
     const items = result?.items ?? [];
     context.runtime.set("knowledge_hit_count", items.length);
+    const relationshipProfileBlock = formatRelationshipProfileRetrievalContext(relationshipProfileContext);
     return makeSection(
       "knowledge_query",
       items.length > 0
-        ? items.slice(0, context.profile.budgets.maxKnowledgeHits).map((item) => `- ${item.content}`).join("\n")
+        ? [
+          relationshipProfileBlock,
+          items.slice(0, context.profile.budgets.maxKnowledgeHits).map((item) => `- ${item.content}`).join("\n"),
+        ].filter((part) => part.trim().length > 0).join("\n\n")
         : "No broader knowledge results.",
       [
         makeSource("knowledge_query", "knowledge query", {
@@ -47,7 +72,10 @@ export const knowledgeQueryProvider: GroundingProvider = {
           trusted: true,
           accepted: true,
           retrievalId: items.length > 0 ? result?.retrievalId ?? "knowledge:query" : "none:knowledge_query",
-          metadata: result?.warnings ? { warnings: result.warnings } : undefined,
+          metadata: {
+            ...(result?.warnings ? { warnings: result.warnings } : {}),
+            relationshipProfileContext,
+          },
         }),
       ],
     );

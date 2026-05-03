@@ -66,6 +66,10 @@ import {
 import type { MemoryQuarantineState } from "../corrections/memory-quarantine.js";
 import type { MemoryProvenance, MemoryVerificationStatus } from "../corrections/memory-quarantine.js";
 import type { MemoryGovernanceInput, MemorySensitivity } from "../corrections/memory-governance.js";
+import {
+  formatRelationshipProfileRetrievalContext,
+  type RelationshipProfileRetrievalContext,
+} from "../profile/retrieval-context.js";
 import type {
   MemoryCorrectionEntry,
   MemoryCorrectionKind,
@@ -187,9 +191,15 @@ export class KnowledgeManager {
    */
   async getRelevantKnowledge(
     goalId: string,
-    dimensionName: string
+    dimensionName: string,
+    options: { relationshipProfileContext?: RelationshipProfileRetrievalContext } = {}
   ): Promise<KnowledgeEntry[]> {
-    return this.loadKnowledge(goalId, [dimensionName]);
+    const entries = await this.loadKnowledge(goalId, [dimensionName]);
+    const profileEntries = this.relationshipProfileContextToKnowledgeEntries(
+      goalId,
+      options.relationshipProfileContext
+    );
+    return [...profileEntries, ...entries];
   }
 
   // ─── searchKnowledge (Phase 2) ───
@@ -200,13 +210,45 @@ export class KnowledgeManager {
    */
   async searchKnowledge(
     query: string,
-    topK: number = 5
+    topK: number = 5,
+    options: { relationshipProfileContext?: RelationshipProfileRetrievalContext } = {}
   ): Promise<KnowledgeEntry[]> {
+    const profileEntries = this.relationshipProfileContextToKnowledgeEntries(
+      null,
+      options.relationshipProfileContext
+    );
+    const profileQuery = options.relationshipProfileContext
+      ? formatRelationshipProfileRetrievalContext(options.relationshipProfileContext)
+      : "";
     return searchKnowledge(
       { stateManager: this.stateManager, vectorIndex: this.vectorIndex },
-      query,
+      [query, profileQuery].filter((part) => part.trim().length > 0).join("\n"),
       topK
-    );
+    ).then((entries) => [...profileEntries, ...entries]);
+  }
+
+  private relationshipProfileContextToKnowledgeEntries(
+    goalId: string | null,
+    context?: RelationshipProfileRetrievalContext
+  ): KnowledgeEntry[] {
+    if (!context || context.items.length === 0) return [];
+    const acquiredAt = new Date(0).toISOString();
+    return context.items.map((item) => ({
+      entry_id: `relationship-profile:${item.id}`,
+      question: `Relationship profile context: ${item.stable_key}`,
+      answer: item.value,
+      sources: [{
+        type: "document",
+        reference: item.provenance.evidence_ref ?? item.id,
+        reliability: item.confidence >= 0.8 ? "high" : item.confidence >= 0.5 ? "medium" : "low",
+      }],
+      confidence: item.confidence,
+      acquired_at: acquiredAt,
+      acquisition_task_id: "relationship-profile",
+      superseded_by: null,
+      embedding_id: null,
+      tags: [item.kind, context.scope, ...(goalId ? [goalId] : [])],
+    }));
   }
 
   // ─── searchAcrossGoals (Phase 2) ───
