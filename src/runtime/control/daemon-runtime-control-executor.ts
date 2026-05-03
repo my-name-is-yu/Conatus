@@ -93,7 +93,7 @@ export function createDaemonRuntimeControlExecutor(
 
     return {
       ok: true,
-      state: "running",
+      state: "restarting",
       message:
         operation.kind === "restart_gateway"
           ? "gateway の再起動要求を daemon に送信しました。daemon 全体の再起動として復帰を確認します。"

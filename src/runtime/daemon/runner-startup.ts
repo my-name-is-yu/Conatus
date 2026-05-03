@@ -366,7 +366,7 @@ export async function reconcileRuntimeControlOperationsAfterStartup(
   const now = new Date().toISOString();
   for (const operation of pending) {
     if (
-      operation.state !== "restarting" ||
+      (operation.state !== "restarting" && operation.state !== "running") ||
       (operation.kind !== "restart_daemon" && operation.kind !== "restart_gateway")
     ) {
       continue;
