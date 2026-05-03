@@ -809,6 +809,7 @@ describe("standalone slash command routing", () => {
         stopped_reason: "completed",
       }),
     } as unknown as ChatAgentLoopRunner;
+    let tuiEventHandler: TuiChatSurface["onEvent"];
     const realRunner = new ChatRunner({
       stateManager: stateManager as unknown as StateManager,
       adapter,
@@ -819,6 +820,7 @@ describe("standalone slash command routing", () => {
         confidence: 0.97,
         rationale: "user wants Telegram chat setup",
       })) as never,
+      onEvent: (event) => tuiEventHandler?.(event),
     });
     let chatRunnerOutput = "";
     const chatRunner = {
@@ -831,7 +833,12 @@ describe("standalone slash command routing", () => {
       interruptAndRedirect: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
       executeIngressMessage: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
       getConversationId: vi.fn(() => "tui-conversation-test"),
-      onEvent: undefined,
+      get onEvent() {
+        return tuiEventHandler;
+      },
+      set onEvent(handler) {
+        tuiEventHandler = handler;
+      },
     };
     const llmClient = createMockLLMClient([
       JSON.stringify({
@@ -873,6 +880,12 @@ describe("standalone slash command routing", () => {
     await vi.waitFor(() => expect(chatRunnerOutput).toContain("pulseed telegram setup"));
     expect(chatRunnerOutput).toContain("pulseed telegram setup");
     expect(chatRunnerOutput).toContain("pulseed gateway setup");
+    await vi.waitFor(() => {
+      const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
+      expect(visibleText).toContain("prepare configuration guidance");
+      expect(visibleText).toContain("pulseed telegram setup");
+      expect(visibleText).not.toContain("resume the saved agent loop state");
+    });
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
 
