@@ -270,6 +270,10 @@ describe("chat agentloop final-answer contract", () => {
     expect(chatPrompt).toContain("user-visible Markdown");
     expect(chatPrompt).toContain("Do not wrap the final answer in JSON");
     expect(chatPrompt).toContain("short headings and bullets");
+    expect(chatPrompt).toContain("Emit short user-facing commentary");
+    expect(chatPrompt).toContain("before edits");
+    expect(chatPrompt).toContain("before verification");
+    expect(chatPrompt).toContain("Do not summarize tool output as commentary");
     expect(chatPrompt).not.toContain("finalAnswer");
     expect(taskPrompt).not.toContain("Do not wrap the final answer in JSON");
     expect(structuredPrompt).toContain("Return only JSON");

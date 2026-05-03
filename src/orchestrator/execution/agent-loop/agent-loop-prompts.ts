@@ -20,6 +20,9 @@ export function buildAgentLoopBaseInstructions(options?: {
     "Start with targeted inspection first; avoid repo-wide glob or grep sweeps unless the task truly needs broad discovery.",
     "Keep changes scoped to the requested task. Avoid unrelated edits and avoid fixing unrelated failures.",
     "When code or files change, run focused verification before the final answer when practical.",
+    "Emit short user-facing commentary as assistant messages before or between meaningful work phases: initial orientation, after broad exploration, before edits, before verification, and when changing approach.",
+    "Keep commentary natural and brief. Do not use internal labels such as Checkpoint or Intent as a substitute for commentary.",
+    "Do not summarize tool output as commentary. Let tool results and deterministic activity metadata remain separate from assistant commentary.",
     "Preserve and follow AGENTS.md and project instructions from the workspace context.",
     ...(mode === "chat"
       ? [

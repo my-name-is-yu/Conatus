@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyChatEventToMessages } from "../chat-event-state.js";
+import { ChatRunnerEventBridge } from "../chat-runner-event-bridge.js";
+import type { ChatEvent } from "../chat-events.js";
 import { classifyFailureRecovery } from "../failure-recovery.js";
 
 describe("applyChatEventToMessages", () => {
@@ -204,6 +206,117 @@ describe("applyChatEventToMessages", () => {
     expect(messages.some((message) => message.id === "older-turn")).toBe(true);
     expect(messages).toHaveLength(3);
     expect(messages.filter((message) => message.transient)).toHaveLength(2);
+  });
+
+  it("preserves agent commentary around tool work through the shared timeline caller path", async () => {
+    const events: ChatEvent[] = [];
+    const bridge = new ChatRunnerEventBridge(() => (event) => {
+      events.push(event);
+    });
+    const context = { runId: "run-1", turnId: "turn-1" };
+    const sink = bridge.createAgentLoopEventSink(context);
+    const base = {
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    };
+
+    await sink.emit({
+      ...base,
+      type: "assistant_message",
+      eventId: "commentary-1",
+      phase: "commentary",
+      contentPreview: "I will inspect the entrypoint first.",
+      toolCallCount: 1,
+    });
+    await sink.emit({
+      ...base,
+      type: "tool_call_started",
+      eventId: "tool-start-1",
+      callId: "call-1",
+      toolName: "shell_command",
+      inputPreview: "{\"command\":\"rg ChatRunner src/interface/chat\"}",
+    });
+    await sink.emit({
+      ...base,
+      type: "tool_call_finished",
+      eventId: "tool-finish-1",
+      callId: "call-1",
+      toolName: "shell_command",
+      success: true,
+      outputPreview: "src/interface/chat/chat-runner.ts",
+      durationMs: 12,
+    });
+    await sink.emit({
+      ...base,
+      type: "assistant_message",
+      eventId: "commentary-2",
+      phase: "commentary",
+      contentPreview: "I found the bridge path, so I will update the contract test next.",
+      toolCallCount: 0,
+    });
+    await sink.emit({
+      ...base,
+      type: "final",
+      eventId: "final-1",
+      success: true,
+      outputPreview: "Done",
+    });
+
+    const messages = events.reduce(
+      (current, event) => applyChatEventToMessages(current, event, 20),
+      [] as ReturnType<typeof applyChatEventToMessages>
+    );
+    const timelineMessages = messages.filter((message) => message.id.startsWith("agent-timeline:turn-1:"));
+
+    expect(timelineMessages.map((message) => message.text)).toEqual([
+      "I will inspect the entrypoint first.",
+      "Started shell_command: {\"command\":\"rg ChatRunner src/interface/chat\"}",
+      "Finished shell_command: src/interface/chat/chat-runner.ts",
+      "I found the bridge path, so I will update the contract test next.",
+      "Done",
+    ]);
+  });
+
+  it("keeps shared timeline rendering compatible when no commentary is emitted", async () => {
+    const events: ChatEvent[] = [];
+    const bridge = new ChatRunnerEventBridge(() => (event) => {
+      events.push(event);
+    });
+    const sink = bridge.createAgentLoopEventSink({ runId: "run-1", turnId: "turn-1" });
+    const base = {
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    };
+
+    await sink.emit({
+      ...base,
+      type: "tool_call_started",
+      eventId: "tool-start-1",
+      callId: "call-1",
+      toolName: "shell_command",
+      inputPreview: "{\"command\":\"pwd\"}",
+    });
+    await sink.emit({
+      ...base,
+      type: "final",
+      eventId: "final-1",
+      success: true,
+      outputPreview: "Done",
+    });
+
+    const messages = events.reduce(
+      (current, event) => applyChatEventToMessages(current, event, 20),
+      [] as ReturnType<typeof applyChatEventToMessages>
+    );
+
+    expect(messages.map((message) => message.text)).toContain("Started shell_command: {\"command\":\"pwd\"}");
+    expect(messages.map((message) => message.text)).toContain("Done");
   });
 
   it("removes transient activity when assistant final arrives", () => {

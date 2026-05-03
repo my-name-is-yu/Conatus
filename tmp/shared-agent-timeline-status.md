@@ -12,3 +12,10 @@
 - #945 verification so far: focused chat-event-state/chat-runner tests passed; `npm run typecheck` passed; `npm run lint:boundaries` exited 0 with existing warnings only.
 - #945 review: first review found duplicate final/stopped timeline rendering; fixed by making timeline rows transient and coalescing them before assistant final/lifecycle end. Second review found transient overflow could evict durable chat history; fixed cap trimming to drop transient rows before durable rows and added regression coverage. Final review LGTM.
 - #945 final verification: focused tests passed (114 tests), `npm run typecheck` passed, `npm run lint:boundaries` exited 0 with existing warnings, `npm run test:changed` passed (20 files passed, 2 skipped; 438 tests passed, 2 skipped).
+
+## #946 plan
+- Confirmed #946 is open after syncing main.
+- Add explicit agent-loop prompt/profile guidance requiring short user-facing commentary before major phases: initial orientation, after broad exploration, before edits, before verification, and approach changes.
+- Keep commentary as `assistant_message` / shared timeline `assistant_message` items, separate from tool rows and future deterministic summaries.
+- Add caller-path coverage for `commentary -> tool start -> tool result -> commentary -> final` through the chat event bridge and chat state consumer, plus no-commentary compatibility.
+- #946 verification: focused commentary/chat prompt tests passed (28 tests), `npm run typecheck` passed, `npm run lint:boundaries` exited 0 with existing warnings, review agent LGTM, `npm run test:changed` passed (31 files passed, 3 skipped; 476 tests passed, 3 skipped).
