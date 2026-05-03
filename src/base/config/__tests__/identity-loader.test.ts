@@ -241,6 +241,78 @@ Content here.`);
     expect(result).toContain("Prefer concise status reports.");
     expect(result).not.toContain("Prefer verbose status reports.");
   });
+
+  it("keeps stale and sensitive boundaries out of lower-trust planning prompts unless explicitly allowed", () => {
+    withFiles({
+      "relationship-profile.json": JSON.stringify({
+        schema_version: 1,
+        profile_id: "default",
+        updated_at: "2026-05-03T00:00:00.000Z",
+        items: [
+          {
+            id: "old-boundary",
+            stable_key: "user.boundary.notifications",
+            kind: "boundary",
+            value: "Notify freely.",
+            status: "superseded",
+            version: 1,
+            confidence: 0.9,
+            sensitivity: "private",
+            allowed_scopes: ["local_planning", "user_facing_review"],
+            provenance: { source: "cli_update" },
+            created_at: "2026-05-02T00:00:00.000Z",
+            updated_at: "2026-05-03T00:00:00.000Z",
+            superseded_at: "2026-05-03T00:00:00.000Z",
+            superseded_by: "new-boundary",
+          },
+          {
+            id: "new-boundary",
+            stable_key: "user.boundary.notifications",
+            kind: "boundary",
+            value: "Ask before non-urgent notifications.",
+            status: "active",
+            version: 2,
+            confidence: 0.9,
+            sensitivity: "private",
+            allowed_scopes: ["local_planning", "user_facing_review"],
+            provenance: { source: "user_correction" },
+            created_at: "2026-05-03T00:00:00.000Z",
+            updated_at: "2026-05-03T00:00:00.000Z",
+            superseded_at: null,
+            superseded_by: null,
+          },
+          {
+            id: "sensitive-boundary",
+            stable_key: "user.boundary.health",
+            kind: "boundary",
+            value: "Do not use health context outside explicit review.",
+            status: "active",
+            version: 1,
+            confidence: 0.8,
+            sensitivity: "sensitive",
+            allowed_scopes: ["local_planning", "user_facing_review"],
+            provenance: { source: "cli_update" },
+            created_at: "2026-05-03T00:00:00.000Z",
+            updated_at: "2026-05-03T00:00:00.000Z",
+            superseded_at: null,
+            superseded_by: null,
+          },
+        ],
+        audit_events: [],
+      }),
+    });
+
+    const defaultPrompt = getInternalIdentityPrefix("planner", { profileScope: "local_planning" });
+    expect(defaultPrompt).toContain("Ask before non-urgent notifications.");
+    expect(defaultPrompt).not.toContain("Notify freely.");
+    expect(defaultPrompt).not.toContain("health context");
+
+    const explicitSensitivePrompt = getInternalIdentityPrefix("planner", {
+      profileScope: "local_planning",
+      includeSensitiveProfile: true,
+    });
+    expect(explicitSensitivePrompt).toContain("Do not use health context outside explicit review.");
+  });
 });
 
 describe("runtime identity slot", () => {

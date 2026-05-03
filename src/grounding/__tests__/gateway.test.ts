@@ -296,6 +296,59 @@ describe("GroundingGateway", () => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
+  it("uses the latest active boundary and excludes sensitive boundary details in memory retrieval context", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-boundary-policy-"));
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+    await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.boundary.notifications",
+      kind: "boundary",
+      value: "Notify freely.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval", "user_facing_review"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.boundary.notifications",
+      kind: "boundary",
+      value: "Ask before non-urgent notifications.",
+      source: "user_correction",
+      allowedScopes: ["memory_retrieval", "user_facing_review"],
+      now: "2026-05-03T00:01:00.000Z",
+    });
+    await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.boundary.health",
+      kind: "boundary",
+      value: "Do not use health context outside explicit review.",
+      source: "cli_update",
+      sensitivity: "sensitive",
+      allowedScopes: ["memory_retrieval", "user_facing_review"],
+      now: "2026-05-03T00:02:00.000Z",
+    });
+
+    const knowledgeQuery = vi.fn().mockResolvedValue({
+      retrievalId: "knowledge:profile-boundary",
+      items: [{ id: "k1", content: "Knowledge result", source: "test" }],
+    });
+    const gateway = createGroundingGateway({ stateManager: makeStateManager({ getBaseDir: vi.fn().mockReturnValue(homeDir) }) });
+    await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+      userMessage: "Find relevant memory",
+      query: "Find relevant memory",
+      knowledgeQuery,
+    });
+
+    const profileContext = knowledgeQuery.mock.calls[0]?.[0]?.relationshipProfileContext;
+    expect((profileContext?.items as Array<{ value: string }> | undefined)?.map((item) => item.value)).toEqual([
+      "Ask before non-urgent notifications.",
+    ]);
+
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
   it("records usage for admitted SQLite Soil grounding hits and preserves usage stats in context", async () => {
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-soil-"));
     const homeDir = path.join(tmpRoot, "home");
