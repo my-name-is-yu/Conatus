@@ -2,9 +2,12 @@ import { describe, it, expect, vi } from "vitest";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
+import { ApprovalBroker } from "../../../runtime/approval-broker.js";
+import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -324,6 +327,156 @@ describe("CrossPlatformChatSessionManager", () => {
         }),
       })
     );
+  });
+
+  it("routes runtime-control approval through the originating conversation metadata", async () => {
+    const tmpDir = makeTempDir();
+    const events: string[] = [];
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-cross-platform",
+      });
+      const runtimeControlService = {
+        request: vi.fn(async (request: {
+          approvalFn?: (description: string) => Promise<boolean>;
+        }) => {
+          const approved = await request.approvalFn?.("Restart the resident daemon.");
+          return {
+            success: approved === true,
+            message: approved === true ? "restart queued" : "not approved",
+            operationId: "op-approval",
+            state: approved === true ? "acknowledged" as const : "blocked" as const,
+          };
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        llmClient: createSingleMockLLMClient(JSON.stringify({
+          intent: "restart_daemon",
+          reason: "PulSeed を再起動して",
+        })),
+        runtimeControlService,
+        approvalBroker,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "PulSeed を再起動して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: (event) => {
+          if (event.type === "activity") {
+            events.push(event.message);
+          }
+        },
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && !events.some((message) => message.includes("Approval ID: approval-cross-platform"))) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await expect(manager.processIncomingMessage({
+        text: "",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        approvalResponse: {
+          approval_id: "approval-cross-platform",
+          approved: true,
+        },
+      })).resolves.toBe("Approval response recorded.");
+
+      const result = await resultPromise;
+      expect(result).toBe("restart queued");
+      expect(events.some((message) =>
+        message.includes("Approval required.")
+        && message.includes("Restart the resident daemon.")
+        && message.includes("Approval ID: approval-cross-platform")
+      )).toBe(true);
+      const resolved = await store.loadResolved("approval-cross-platform");
+      expect(resolved).toMatchObject({
+        state: "approved",
+        response_channel: "slack",
+        origin: {
+          channel: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+          session_id: "identity:workspace:U123",
+          turn_id: "1700.2",
+        },
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("fails closed when the originating conversation delivery handler rejects", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-delivery-failure",
+      });
+      const runtimeControlService = {
+        request: vi.fn(async (request: {
+          approvalFn?: (description: string) => Promise<boolean>;
+        }) => {
+          const approved = await request.approvalFn?.("Restart the resident daemon.");
+          return {
+            success: approved === true,
+            message: approved === true ? "restart queued" : "not approved",
+            operationId: "op-approval",
+            state: approved === true ? "acknowledged" as const : "blocked" as const,
+          };
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        llmClient: createSingleMockLLMClient(JSON.stringify({
+          intent: "restart_daemon",
+          reason: "PulSeed を再起動して",
+        })),
+        runtimeControlService,
+        approvalBroker,
+      }));
+
+      const result = await manager.processIncomingMessage({
+        text: "PulSeed を再起動して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: async () => {
+          throw new Error("slack delivery failed");
+        },
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+
+      expect(result).toContain("not approved");
+      const resolved = await store.loadResolved("approval-delivery-failure");
+      expect(resolved).toMatchObject({
+        state: "denied",
+        response_channel: "slack",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
   });
 
   it("does not route broad finish text to runtime control without run context", async () => {

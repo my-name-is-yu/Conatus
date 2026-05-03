@@ -1,6 +1,6 @@
 import type { Logger } from "./logger.js";
 import { ApprovalStore } from "./store/approval-store.js";
-import type { ApprovalRecord } from "./store/runtime-schemas.js";
+import type { ApprovalOrigin, ApprovalRecord } from "./store/runtime-schemas.js";
 
 export interface ApprovalTaskRequest {
   id: string;
@@ -14,12 +14,37 @@ export interface ApprovalRequiredEvent {
   task: ApprovalTaskRequest;
   expiresAt: number;
   restored?: boolean;
+  origin?: ApprovalOrigin;
+  prompt?: string;
+}
+
+export interface ConversationalApprovalDelivery {
+  delivered: boolean;
+  reason?: string;
+}
+
+export interface ConversationalApprovalRequest {
+  record: ApprovalRecord;
+  origin: ApprovalOrigin;
+  prompt: string;
+}
+
+export interface ConversationalApprovalOptions {
+  origin: ApprovalOrigin;
+  timeoutMs?: number;
+  approvalId?: string;
+  deliverConversationalApproval?: (
+    request: ConversationalApprovalRequest
+  ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery;
 }
 
 export interface ApprovalBrokerOptions {
   store: ApprovalStore;
   logger?: Logger;
   broadcast?: (eventType: string, data: unknown) => void;
+  deliverConversationalApproval?: (
+    request: ConversationalApprovalRequest
+  ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery;
   now?: () => number;
   createId?: () => string;
   defaultTimeoutMs?: number;
@@ -37,6 +62,9 @@ export class ApprovalBroker {
   private readonly store: ApprovalStore;
   private readonly logger?: Logger;
   private broadcast?: (eventType: string, data: unknown) => void;
+  private readonly deliverConversationalApproval?: (
+    request: ConversationalApprovalRequest
+  ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery;
   private readonly now: () => number;
   private readonly createId: () => string;
   private readonly defaultTimeoutMs: number;
@@ -47,6 +75,7 @@ export class ApprovalBroker {
     this.store = options.store;
     this.logger = options.logger;
     this.broadcast = options.broadcast;
+    this.deliverConversationalApproval = options.deliverConversationalApproval;
     this.now = options.now ?? (() => Date.now());
     this.createId =
       options.createId ??
@@ -107,26 +136,32 @@ export class ApprovalBroker {
       payload: { task },
     };
 
-    return new Promise<boolean>((resolve, reject) => {
-      const ready = this.store.savePending(record).then(
-        () => {
-          const session = this.pending.get(approvalId);
-          if (session && !session.finalizing) {
-            this.emitApprovalRequired(record, false);
-          }
-        },
-        (err) => {
-          const session = this.pending.get(approvalId);
-          if (session) {
-            clearTimeout(session.timer);
-            this.pending.delete(approvalId);
-          }
-          reject(err);
-        }
-      );
-      this.trackPending(record, resolve, ready);
-      void ready.catch(() => undefined);
-    });
+    return this.trackApprovalRequest(record);
+  }
+
+  async requestConversationalApproval(
+    goalId: string,
+    task: ApprovalTaskRequest,
+    options: ConversationalApprovalOptions
+  ): Promise<boolean> {
+    await this.start();
+
+    const approvalId = options.approvalId ?? this.createId();
+    const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
+    const createdAt = this.now();
+    const record: ApprovalRecord = {
+      approval_id: approvalId,
+      goal_id: goalId,
+      request_envelope_id: approvalId,
+      correlation_id: approvalId,
+      state: "pending",
+      created_at: createdAt,
+      expires_at: createdAt + timeoutMs,
+      origin: options.origin,
+      payload: { task },
+    };
+
+    return this.trackApprovalRequest(record, options.deliverConversationalApproval);
   }
 
   async resolveApproval(
@@ -134,10 +169,31 @@ export class ApprovalBroker {
     approved: boolean,
     responseChannel = "http"
   ): Promise<boolean> {
+    const pendingRecord = this.pending.get(approvalId)?.record ?? await this.store.loadPending(approvalId);
+    if (pendingRecord?.origin) {
+      return false;
+    }
     const resolved = await this.finalizeApproval(approvalId, {
       state: approved ? "approved" : "denied",
       approved,
       responseChannel,
+    });
+    return resolved !== null;
+  }
+
+  async resolveConversationalApproval(
+    approvalId: string,
+    approved: boolean,
+    origin: ApprovalOrigin
+  ): Promise<boolean> {
+    const record = await this.store.loadPending(approvalId);
+    if (record === null || !approvalOriginMatches(record.origin, origin)) {
+      return false;
+    }
+    const resolved = await this.finalizeApproval(approvalId, {
+      state: approved ? "approved" : "denied",
+      approved,
+      responseChannel: origin.channel,
     });
     return resolved !== null;
   }
@@ -175,6 +231,90 @@ export class ApprovalBroker {
     }, msUntilExpiry);
 
     this.pending.set(record.approval_id, { record, resolve, timer, ready });
+  }
+
+  private trackApprovalRequest(
+    record: ApprovalRecord,
+    deliverOverride?: (
+      request: ConversationalApprovalRequest
+    ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
+      const ready = this.store.savePending(record).then(
+        () => {
+          const session = this.pending.get(record.approval_id);
+          if (!session || session.finalizing) {
+            return;
+          }
+          this.emitApprovalRequired(record, false);
+          void this.deliverIfConversational(record, deliverOverride).catch((err) => {
+            this.logger?.error("ApprovalBroker: conversational approval delivery failed", {
+              approvalId: record.approval_id,
+              error: String(err),
+            });
+          });
+        },
+        (err) => {
+          const session = this.pending.get(record.approval_id);
+          if (session) {
+            clearTimeout(session.timer);
+            this.pending.delete(record.approval_id);
+          }
+          reject(err);
+        }
+      );
+      this.trackPending(record, resolve, ready);
+      void ready.catch(() => undefined);
+    });
+  }
+
+  private async deliverIfConversational(
+    record: ApprovalRecord,
+    deliverOverride?: (
+      request: ConversationalApprovalRequest
+    ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery
+  ): Promise<void> {
+    if (!record.origin) {
+      return;
+    }
+
+    const deliver = deliverOverride ?? this.deliverConversationalApproval;
+    if (!deliver) {
+      await this.finalizeApproval(record.approval_id, {
+        state: "denied",
+        approved: false,
+        reason: "approval_channel_unreachable",
+        responseChannel: record.origin.channel,
+      });
+      return;
+    }
+
+    try {
+      const delivery = await deliver({
+        record,
+        origin: record.origin,
+        prompt: renderConversationalApprovalPrompt(record),
+      });
+      if (!delivery.delivered) {
+        await this.finalizeApproval(record.approval_id, {
+          state: "denied",
+          approved: false,
+          reason: delivery.reason ?? "approval_channel_unreachable",
+          responseChannel: record.origin.channel,
+        });
+      }
+    } catch (err) {
+      this.logger?.error("ApprovalBroker: conversational approval delivery failed", {
+        approvalId: record.approval_id,
+        error: String(err),
+      });
+      await this.finalizeApproval(record.approval_id, {
+        state: "denied",
+        approved: false,
+        reason: "approval_channel_unreachable",
+        responseChannel: record.origin.channel,
+      });
+    }
   }
 
   private async finalizeApproval(
@@ -228,12 +368,43 @@ export class ApprovalBroker {
 
   private toApprovalRequiredEvent(record: ApprovalRecord, restored: boolean): ApprovalRequiredEvent {
     const payload = record.payload as { task?: ApprovalTaskRequest };
+    const prompt = record.origin ? renderConversationalApprovalPrompt(record) : undefined;
     return {
       requestId: record.approval_id,
       goalId: record.goal_id,
       task: payload.task ?? { id: "", description: "", action: "" },
       expiresAt: record.expires_at,
       restored,
+      ...(record.origin ? { origin: record.origin } : {}),
+      ...(prompt ? { prompt } : {}),
     };
   }
+}
+
+function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
+  const payload = record.payload as { task?: ApprovalTaskRequest };
+  const task = payload.task ?? { id: record.approval_id, description: "Approval required", action: "unknown" };
+  return [
+    "Approval required.",
+    `Action: ${task.action}`,
+    `Target: ${task.id}`,
+    `Details: ${task.description}`,
+    `Approval ID: ${record.approval_id}`,
+    "Reply in this conversation to approve, reject, or ask for clarification.",
+  ].join("\n");
+}
+
+function approvalOriginMatches(expected: ApprovalOrigin | undefined, actual: ApprovalOrigin): boolean {
+  if (!expected) {
+    return false;
+  }
+  return expected.channel === actual.channel
+    && expected.conversation_id === actual.conversation_id
+    && requiredFieldMatches(expected.user_id, actual.user_id)
+    && requiredFieldMatches(expected.session_id, actual.session_id)
+    && requiredFieldMatches(expected.turn_id, actual.turn_id);
+}
+
+function requiredFieldMatches(expected: string | undefined, actual: string | undefined): boolean {
+  return expected !== undefined && expected === actual;
 }
