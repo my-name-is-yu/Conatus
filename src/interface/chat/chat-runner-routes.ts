@@ -34,6 +34,7 @@ import {
 } from "./turn-language.js";
 import { createOperationProgressItem } from "./operation-progress.js";
 import { createRunSpecStore, formatRunSpecSetupProposal } from "../../runtime/run-spec/index.js";
+import type { RunSpecConfirmationState } from "./chat-history.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -50,6 +51,7 @@ export interface ChatRunnerRouteHost {
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
   getTurnLanguageHint(): TurnLanguageHint;
   setPendingSetupDialogue(dialogue: SetupDialogueRuntimeState): Promise<void>;
+  setPendingRunSpecConfirmation(confirmation: RunSpecConfirmationState): Promise<void>;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
   setSessionExecutionPolicy(policy: ExecutionPolicy): void;
 }
@@ -104,12 +106,21 @@ export async function executeRunSpecDraftRoute(
 ): Promise<ChatRunResult> {
   const store = createRunSpecStore(host.deps.stateManager);
   await store.save(route.draft);
-  host.eventBridge.emitCheckpoint("RunSpec draft prepared", `${route.draft.id} is awaiting confirmation wiring.`, eventContext, "route");
+  const proposal = formatRunSpecSetupProposal(route.draft);
   const output = [
-    formatRunSpecSetupProposal(route.draft),
+    proposal,
     "",
     "PulSeed prepared this as a typed long-running RunSpec draft. It has not started a daemon run.",
+    "Reply with approval to confirm, cancel to discard it, or provide updated workspace/deadline/metric details.",
   ].join("\n");
+  await host.setPendingRunSpecConfirmation({
+    state: "pending",
+    spec: route.draft,
+    prompt: output,
+    createdAt: route.draft.created_at,
+    updatedAt: route.draft.updated_at,
+  });
+  host.eventBridge.emitCheckpoint("RunSpec confirmation pending", `${route.draft.id} is awaiting confirmation.`, eventContext, "route");
   return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
 }
 

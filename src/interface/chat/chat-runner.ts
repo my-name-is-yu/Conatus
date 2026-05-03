@@ -86,6 +86,11 @@ import {
 } from "./chat-runner-routes.js";
 import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
+import {
+  createRunSpecStore,
+  formatRunSpecSetupProposal,
+  handleRunSpecConfirmationInput,
+} from "../../runtime/run-spec/index.js";
 
 export interface ChatRunnerDeps {
   stateManager: StateManager;
@@ -412,6 +417,11 @@ export class ChatRunner {
     const pendingTelegramSetupResult = await this.handlePendingSetupConfirmation(safeInput, runtimeControlContext);
     if (pendingTelegramSetupResult !== null) {
       return this.finalizeNonPersistentResult(pendingTelegramSetupResult, eventContext);
+    }
+
+    const pendingRunSpecConfirmationResult = await this.handlePendingRunSpecConfirmation(safeInput);
+    if (pendingRunSpecConfirmationResult !== null) {
+      return this.finalizeNonPersistentResult(pendingRunSpecConfirmationResult, eventContext);
     }
 
     const commandResult = resumeOnly ? null : await this.commandHandler.handleCommand(safeInput, resolvedCwd);
@@ -828,6 +838,10 @@ export class ChatRunner {
         this.history?.setSetupDialogue(dialogue.publicState);
         await this.history?.persist();
       },
+      setPendingRunSpecConfirmation: async (confirmation: NonNullable<ReturnType<ChatHistory["getRunSpecConfirmation"]>>) => {
+        this.history?.setRunSpecConfirmation(confirmation);
+        await this.history?.persist();
+      },
       getSessionExecutionPolicy: () => this.getSessionExecutionPolicy(),
       setSessionExecutionPolicy: (policy: ExecutionPolicy) => { this.sessionExecutionPolicy = policy; },
     };
@@ -836,6 +850,86 @@ export class ChatRunner {
   private providerConfigBaseDir(): string {
     const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
     return typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
+  }
+
+  private async handlePendingRunSpecConfirmation(input: string): Promise<ChatRunResult | null> {
+    const pending = this.history?.getRunSpecConfirmation() ?? null;
+    if (!pending || pending.state !== "pending") return null;
+    const start = Date.now();
+    const result = await handleRunSpecConfirmationInput(pending.spec, input, {
+      llmClient: this.deps.llmClient,
+    });
+    const store = createRunSpecStore(this.deps.stateManager);
+    await store.save(result.spec);
+
+    if (result.kind === "confirmed") {
+      this.history?.setRunSpecConfirmation({
+        ...pending,
+        state: "confirmed",
+        spec: result.spec,
+        updatedAt: result.spec.updated_at,
+      });
+      await this.history?.persist();
+      return {
+        success: true,
+        output: [
+          result.message,
+          "",
+          "The RunSpec is confirmed. Daemon start is not wired in this step, so no background run has been started yet.",
+        ].join("\n"),
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    if (result.kind === "cancelled") {
+      this.history?.setRunSpecConfirmation(null);
+      await this.history?.persist();
+      return {
+        success: false,
+        output: `${result.message}\nNo background run was started.`,
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    if (result.kind === "revised") {
+      const proposal = formatRunSpecSetupProposal(result.spec);
+      this.history?.setRunSpecConfirmation({
+        ...pending,
+        spec: result.spec,
+        prompt: proposal,
+        updatedAt: result.spec.updated_at,
+      });
+      await this.history?.persist();
+      return {
+        success: true,
+        output: [
+          proposal,
+          "",
+          "RunSpec updated. Reply with approval to confirm, cancel to discard it, or provide another update.",
+        ].join("\n"),
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    if (result.kind === "blocked") {
+      this.history?.setRunSpecConfirmation({
+        ...pending,
+        spec: result.spec,
+        updatedAt: result.spec.updated_at,
+      });
+      await this.history?.persist();
+      return {
+        success: false,
+        output: result.message,
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    return {
+      success: false,
+      output: result.message,
+      elapsed_ms: Date.now() - start,
+    };
   }
 
   private async handlePendingSetupConfirmation(

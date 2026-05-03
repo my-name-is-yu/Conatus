@@ -8,6 +8,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import { RuntimeReplyTargetSchema, type RuntimeReplyTarget } from "../../runtime/session-registry/types.js";
 import { redactSetupSecrets, SetupSecretIntakeItemSchema } from "./setup-secret-intake.js";
 import { SetupDialoguePublicStateSchema, type SetupDialoguePublicState } from "./setup-dialogue.js";
+import { RunSpecSchema } from "../../runtime/run-spec/index.js";
 
 // ─── Schemas ───
 
@@ -46,6 +47,15 @@ export const ChatSessionUsageSchema = z.object({
 }).passthrough();
 export type ChatSessionUsage = z.infer<typeof ChatSessionUsageSchema>;
 
+export const RunSpecConfirmationStateSchema = z.object({
+  state: z.enum(["pending", "confirmed", "cancelled"]),
+  spec: RunSpecSchema,
+  prompt: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+}).passthrough();
+export type RunSpecConfirmationState = z.infer<typeof RunSpecConfirmationStateSchema>;
+
 export const ChatSessionSchema = z.object({
   id: z.string(),
   cwd: z.string(), // git root at session start
@@ -74,6 +84,7 @@ export const ChatSessionSchema = z.object({
   parentNotificationSummary: z.string().nullable().optional(),
   parentNotifiedAt: z.string().nullable().optional(),
   setupDialogue: SetupDialoguePublicStateSchema.nullable().optional(),
+  runSpecConfirmation: RunSpecConfirmationStateSchema.nullable().optional(),
   messages: z.array(ChatMessageSchema),
   compactionSummary: z.string().optional(),
   agentLoopStatePath: z.string().nullable().optional(),
@@ -234,6 +245,18 @@ export class ChatHistory {
       this.session.setupDialogue = dialogue;
     } else {
       delete this.session.setupDialogue;
+    }
+  }
+
+  getRunSpecConfirmation(): RunSpecConfirmationState | null {
+    return this.session.runSpecConfirmation ?? null;
+  }
+
+  setRunSpecConfirmation(confirmation: RunSpecConfirmationState | null): void {
+    if (confirmation) {
+      this.session.runSpecConfirmation = confirmation;
+    } else {
+      delete this.session.runSpecConfirmation;
     }
   }
 

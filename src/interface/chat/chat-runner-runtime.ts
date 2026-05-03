@@ -55,6 +55,7 @@ export function loadedSessionToChatSession(session: LoadedChatSession): ChatSess
     ...(session.lastRetryAt ? { lastRetryAt: session.lastRetryAt } : {}),
     ...(session.lastResumedAt ? { lastResumedAt: session.lastResumedAt } : {}),
     ...(session.notificationReplyTarget ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+    ...(session.runSpecConfirmation ? { runSpecConfirmation: session.runSpecConfirmation } : {}),
     ...(session.parentNotificationStatus ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
     ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
     ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
