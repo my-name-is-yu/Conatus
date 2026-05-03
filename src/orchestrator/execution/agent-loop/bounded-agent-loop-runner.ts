@@ -325,6 +325,7 @@ export class BoundedAgentLoopRunner {
           ...this.baseEvent(turn),
           callId: result.callId,
           toolName: result.toolName,
+          inputPreview: this.preview(this.stringify(response.toolCalls.find((call) => call.id === result.callId)?.input ?? {})),
           success: result.success,
           disposition: result.disposition,
           outputPreview: this.preview(result.content),

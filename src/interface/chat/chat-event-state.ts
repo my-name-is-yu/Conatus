@@ -103,6 +103,8 @@ function renderTimelineItem(item: AgentTimelineItem): string {
         : `Approval denied for ${item.toolName}: ${item.reason}`;
     case "compaction":
       return `Compacted context (${item.phase}, ${item.reason}): ${item.inputMessages} -> ${item.outputMessages}.`;
+    case "activity_summary":
+      return item.text;
     case "final":
       return item.outputPreview;
     case "stopped":

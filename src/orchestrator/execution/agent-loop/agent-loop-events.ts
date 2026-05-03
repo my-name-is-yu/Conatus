@@ -74,6 +74,7 @@ export interface AgentLoopToolCallFinishedEvent extends AgentLoopBaseEvent {
   type: "tool_call_finished";
   callId: string;
   toolName: string;
+  inputPreview?: string;
   success: boolean;
   disposition?: "respond_to_model" | "fatal" | "approval_denied" | "cancelled";
   outputPreview: string;

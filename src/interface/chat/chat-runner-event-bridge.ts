@@ -3,7 +3,11 @@ import type {
   AgentLoopEvent,
   AgentLoopEventSink,
 } from "../../orchestrator/execution/agent-loop/agent-loop-events.js";
-import { projectAgentLoopEventToTimeline } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
+import {
+  createAgentTimelineActivitySummary,
+  projectAgentLoopEventToTimeline,
+  type AgentTimelineItem,
+} from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 import {
   DIFF_ARTIFACT_MAX_LINES,
   formatIntentInput,
@@ -38,6 +42,7 @@ export interface ActiveChatTurn {
 
 export class ChatRunnerEventBridge {
   private activeTurn: ActiveChatTurn | null = null;
+  private readonly timelineActivityItemsByRun = new Map<string, AgentTimelineItem[]>();
 
   constructor(
     private readonly onEventGetter: () => ((event: ChatEvent) => void) | undefined,
@@ -87,6 +92,7 @@ export class ChatRunnerEventBridge {
     if (!activeTurn || activeTurn.context.runId !== context.runId) return;
     activeTurn.resolveFinished();
     this.activeTurn = null;
+    this.timelineActivityItemsByRun.delete(context.runId);
   }
 
   waitForActiveTurn(turn: ActiveChatTurn, timeoutMs: number): Promise<boolean> {
@@ -121,9 +127,12 @@ export class ChatRunnerEventBridge {
   createAgentLoopEventSink(eventContext: ChatEventContext): AgentLoopEventSink {
     return {
       emit: async (event: AgentLoopEvent) => {
+        const timelineItem = projectAgentLoopEventToTimeline(event);
+        this.emitTimelineSummaryBeforeCompletion(eventContext, timelineItem);
+        this.rememberTimelineActivityItem(eventContext, timelineItem);
         this.emitEvent({
           type: "agent_timeline",
-          item: projectAgentLoopEventToTimeline(event),
+          item: timelineItem,
           ...this.eventBase(eventContext),
         });
 
@@ -282,6 +291,35 @@ export class ChatRunnerEventBridge {
   emitEvent(event: ChatEvent): void {
     this.rememberActiveTurnEvent(event);
     this.onEventGetter()?.(event);
+  }
+
+  private rememberTimelineActivityItem(eventContext: ChatEventContext, item: AgentTimelineItem): void {
+    if (item.kind !== "tool" && item.kind !== "approval") return;
+    const existing = this.timelineActivityItemsByRun.get(eventContext.runId) ?? [];
+    this.timelineActivityItemsByRun.set(eventContext.runId, [...existing, item]);
+  }
+
+  private emitTimelineSummaryBeforeCompletion(eventContext: ChatEventContext, nextItem: AgentTimelineItem): void {
+    if (nextItem.kind !== "final" && nextItem.kind !== "stopped") return;
+    const items = this.timelineActivityItemsByRun.get(eventContext.runId) ?? [];
+    const summary = createAgentTimelineActivitySummary({
+      id: `agent-timeline:${eventContext.turnId}:activity-summary:${nextItem.sourceEventId}`,
+      sourceEventId: `activity-summary:${nextItem.sourceEventId}`,
+      sessionId: nextItem.sessionId,
+      traceId: nextItem.traceId,
+      turnId: nextItem.turnId,
+      goalId: nextItem.goalId,
+      ...(nextItem.taskId ? { taskId: nextItem.taskId } : {}),
+      createdAt: nextItem.createdAt,
+      items,
+    });
+    if (!summary) return;
+    this.timelineActivityItemsByRun.delete(eventContext.runId);
+    this.emitEvent({
+      type: "agent_timeline",
+      item: summary,
+      ...this.eventBase(eventContext),
+    });
   }
 
   emitActivity(

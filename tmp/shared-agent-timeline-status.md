@@ -32,3 +32,11 @@
 - Replace chat/TUI-facing Intent/Checkpoint/Updated plan labels with natural user-facing text while preserving structured event kinds/source ids for raw/debug traceability.
 - Add transcript tests that assert normal output does not expose the internal labels while plan, approval, compaction, resume, and recovery information remains visible.
 - #948 verification: focused chat state/chat runner tests passed (118 tests), `npm run typecheck` passed, `npm run lint:boundaries` exited 0 with existing warnings, review agent LGTM, `npm run test:changed` passed (20 files passed, 2 skipped; 442 tests passed, 2 skipped).
+
+## #949 plan
+- Confirmed #949 is open after syncing main.
+- Add a shared deterministic activity-summary timeline item and projection helper generated from structured timeline/tool metadata, not LLM output.
+- Classify search/read, command execution, file create/modify, test/verification, and approval from tool metadata.
+- Render summary rows through the existing chat/TUI shared timeline consumer while preserving detailed timeline rows.
+- #949 review: first review found activity summaries were only test-constructible and not emitted by production bridge; fixed by accumulating shared timeline activity and emitting a summary before final/stopped. Second review found duplicate final/stopped summaries; fixed by clearing accumulated activity after summary emission. Final review LGTM.
+- #949 verification: focused agent-timeline/chat-state tests passed (21 tests), `npm run typecheck` passed, `npm run lint:boundaries` exited 0 with existing warnings, `npm run test:changed` passed (38 files passed, 3 skipped; 552 tests passed, 3 skipped).
