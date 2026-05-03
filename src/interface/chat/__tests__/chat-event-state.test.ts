@@ -251,6 +251,7 @@ describe("applyChatEventToMessages", () => {
       callId: "call-1",
       toolName: "shell_command",
       success: true,
+      inputPreview: "{\"command\":\"rg ChatRunner src/interface/chat\"}",
       outputPreview: "src/interface/chat/chat-runner.ts",
       durationMs: 12,
     });
@@ -269,6 +270,12 @@ describe("applyChatEventToMessages", () => {
       success: true,
       outputPreview: "Done",
     });
+    await sink.emit({
+      ...base,
+      type: "stopped",
+      eventId: "stopped-1",
+      reason: "completed",
+    });
 
     const messages = events.reduce(
       (current, event) => applyChatEventToMessages(current, event, 20),
@@ -281,8 +288,11 @@ describe("applyChatEventToMessages", () => {
       "Started shell_command: {\"command\":\"rg ChatRunner src/interface/chat\"}",
       "Finished shell_command: src/interface/chat/chat-runner.ts",
       "I found the bridge path, so I will update the contract test next.",
+      "searched 1 search",
       "Done",
+      "Stopped: completed",
     ]);
+    expect(timelineMessages.filter((message) => message.text === "searched 1 search")).toHaveLength(1);
   });
 
   it("renders shared timeline tool and approval rows chronologically without a latest-five cap", () => {
@@ -481,6 +491,82 @@ describe("applyChatEventToMessages", () => {
     expect(transcript).not.toContain("Updated plan:");
     expect(transcript).not.toContain("Current activity");
     expect(transcript).not.toContain("Recent activity");
+  });
+
+  it("renders shared activity summary rows without replacing detailed timeline rows", () => {
+    const base = {
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    };
+    const timelineBase = {
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      visibility: "user" as const,
+    };
+    const events = [
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:commentary-1",
+          sourceEventId: "commentary-1",
+          sourceType: "assistant_message" as const,
+          createdAt: "2026-04-08T00:00:01.000Z",
+          kind: "assistant_message" as const,
+          phase: "commentary" as const,
+          text: "I will inspect the files first.",
+          toolCallCount: 1,
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:tool-finish-1",
+          sourceEventId: "tool-finish-1",
+          sourceType: "tool_call_finished" as const,
+          createdAt: "2026-04-08T00:00:02.000Z",
+          kind: "tool" as const,
+          status: "finished" as const,
+          callId: "call-1",
+          toolName: "shell_command",
+          success: true,
+          inputPreview: "{\"command\":\"rg Timeline src\"}",
+          outputPreview: "src/orchestrator/execution/agent-loop/agent-timeline.ts",
+          durationMs: 10,
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:summary-1",
+          sourceEventId: "summary-1",
+          sourceType: "tool_call_finished" as const,
+          createdAt: "2026-04-08T00:00:03.000Z",
+          kind: "activity_summary" as const,
+          buckets: [{ kind: "search" as const, count: 1 }],
+          text: "searched 1 search",
+        },
+      },
+    ];
+
+    const messages = events.reduce(
+      (current, event) => applyChatEventToMessages(current, event, 20),
+      [] as ReturnType<typeof applyChatEventToMessages>
+    );
+
+    expect(messages.map((message) => message.text)).toEqual([
+      "I will inspect the files first.",
+      "Finished shell_command: src/orchestrator/execution/agent-loop/agent-timeline.ts",
+      "searched 1 search",
+    ]);
   });
 
   it("keeps shared timeline rendering compatible when no commentary is emitted", async () => {

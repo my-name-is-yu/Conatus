@@ -9,8 +9,18 @@ export type AgentTimelineItem =
   | AgentTimelinePlanItem
   | AgentTimelineApprovalItem
   | AgentTimelineCompactionItem
+  | AgentTimelineActivitySummaryItem
   | AgentTimelineFinalItem
   | AgentTimelineStoppedItem;
+
+export type AgentTimelineActivityKind =
+  | "search"
+  | "read"
+  | "command"
+  | "file_create"
+  | "file_modify"
+  | "test"
+  | "approval";
 
 export interface AgentTimelineBaseItem {
   id: string;
@@ -93,6 +103,17 @@ export interface AgentTimelineCompactionItem extends AgentTimelineBaseItem {
   summaryPreview: string;
 }
 
+export interface AgentTimelineActivitySummaryItem extends AgentTimelineBaseItem {
+  kind: "activity_summary";
+  buckets: AgentTimelineActivitySummaryBucket[];
+  text: string;
+}
+
+export interface AgentTimelineActivitySummaryBucket {
+  kind: AgentTimelineActivityKind;
+  count: number;
+}
+
 export interface AgentTimelineFinalItem extends AgentTimelineBaseItem {
   kind: "final";
   success: boolean;
@@ -170,6 +191,7 @@ export function projectAgentLoopEventToTimeline(event: AgentLoopEvent): AgentTim
         callId: event.callId,
         toolName: event.toolName,
         success: event.success,
+        ...(event.inputPreview ? { inputPreview: event.inputPreview } : {}),
         ...(event.disposition ? { disposition: event.disposition } : {}),
         outputPreview: event.outputPreview,
         durationMs: event.durationMs,
@@ -223,3 +245,149 @@ export function projectAgentLoopEventToTimeline(event: AgentLoopEvent): AgentTim
       };
   }
 }
+
+export function summarizeAgentTimelineActivity(items: AgentTimelineItem[]): AgentTimelineActivitySummaryBucket[] {
+  const counts = new Map<AgentTimelineActivityKind, number>();
+  for (const item of items) {
+    const kind = classifyTimelineActivity(item);
+    if (!kind) continue;
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  return ACTIVITY_SUMMARY_ORDER
+    .map((kind) => ({ kind, count: counts.get(kind) ?? 0 }))
+    .filter((bucket) => bucket.count > 0);
+}
+
+export function createAgentTimelineActivitySummary(input: {
+  id: string;
+  sourceEventId: string;
+  sessionId: string;
+  traceId: string;
+  turnId: string;
+  goalId: string;
+  taskId?: string;
+  createdAt: string;
+  items: AgentTimelineItem[];
+}): AgentTimelineActivitySummaryItem | null {
+  const buckets = summarizeAgentTimelineActivity(input.items);
+  if (buckets.length === 0) return null;
+  return {
+    id: input.id,
+    sourceEventId: input.sourceEventId,
+    sourceType: "tool_call_finished",
+    sessionId: input.sessionId,
+    traceId: input.traceId,
+    turnId: input.turnId,
+    goalId: input.goalId,
+    ...(input.taskId ? { taskId: input.taskId } : {}),
+    createdAt: input.createdAt,
+    visibility: "user",
+    kind: "activity_summary",
+    buckets,
+    text: formatAgentTimelineActivitySummary(buckets),
+  };
+}
+
+export function formatAgentTimelineActivitySummary(buckets: AgentTimelineActivitySummaryBucket[]): string {
+  return buckets.map((bucket) => {
+    const label = ACTIVITY_SUMMARY_LABELS[bucket.kind];
+    return `${label} ${bucket.count} ${bucket.count === 1 ? ACTIVITY_SUMMARY_NOUNS[bucket.kind].singular : ACTIVITY_SUMMARY_NOUNS[bucket.kind].plural}`;
+  }).join(", ");
+}
+
+function classifyTimelineActivity(item: AgentTimelineItem): AgentTimelineActivityKind | null {
+  if (item.kind === "approval" && item.status === "requested") return "approval";
+  if (item.kind !== "tool" || item.status !== "finished") return null;
+  return classifyToolActivity(item.toolName, item.inputPreview);
+}
+
+function classifyToolActivity(toolName: string, inputPreview?: string): AgentTimelineActivityKind {
+  const normalizedTool = normalizeToolToken(toolName);
+  const input = parseToolInputPreview(inputPreview);
+  const command = stringField(input, "command") ?? stringField(input, "cmd");
+  if (command) return classifyCommandActivity(command);
+  if (hasAny(normalizedTool, ["test", "verify", "check"])) return "test";
+  if (hasAny(normalizedTool, ["search", "grep", "query"])) return "search";
+  if (hasAny(normalizedTool, ["read", "list", "dir", "log", "diff"])) return "read";
+  if (hasAny(normalizedTool, ["write", "create"])) return "file_create";
+  if (hasAny(normalizedTool, ["edit", "patch", "apply"])) return "file_modify";
+  return "command";
+}
+
+function classifyCommandActivity(command: string): AgentTimelineActivityKind {
+  const trimmed = command.trim();
+  const executable = firstCommandToken(trimmed);
+  if (["rg", "grep", "ag", "ack"].includes(executable)) return "search";
+  if (["cat", "sed", "awk", "ls", "find", "pwd", "head", "tail"].includes(executable)) return "read";
+  if (executable === "git") {
+    const subcommand = firstCommandToken(trimmed.split(/\s+/).slice(1).join(" "));
+    if (["grep"].includes(subcommand)) return "search";
+    if (["show", "log", "status", "diff", "ls-files"].includes(subcommand)) return "read";
+  }
+  if (["npm", "pnpm", "yarn", "bun"].includes(executable)) {
+    if (/\b(test|vitest|jest|typecheck|lint|check|verify)\b/.test(trimmed)) return "test";
+  }
+  if (["pytest", "vitest", "jest"].includes(executable)) return "test";
+  if (executable === "go" && /\btest\b/.test(trimmed)) return "test";
+  if (executable === "cargo" && /\btest\b/.test(trimmed)) return "test";
+  return "command";
+}
+
+function parseToolInputPreview(inputPreview?: string): Record<string, unknown> | null {
+  if (!inputPreview) return null;
+  try {
+    const parsed = JSON.parse(inputPreview);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function stringField(input: Record<string, unknown> | null, field: string): string | null {
+  const value = input?.[field];
+  return typeof value === "string" ? value : null;
+}
+
+function normalizeToolToken(value: string): string {
+  return value.toLowerCase().replace(/[-_]/g, "");
+}
+
+function hasAny(value: string, needles: string[]): boolean {
+  return needles.some((needle) => value.includes(needle));
+}
+
+function firstCommandToken(command: string): string {
+  return command.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+}
+
+const ACTIVITY_SUMMARY_ORDER: AgentTimelineActivityKind[] = [
+  "search",
+  "read",
+  "command",
+  "file_create",
+  "file_modify",
+  "test",
+  "approval",
+];
+
+const ACTIVITY_SUMMARY_LABELS: Record<AgentTimelineActivityKind, string> = {
+  search: "searched",
+  read: "read",
+  command: "ran",
+  file_create: "created",
+  file_modify: "modified",
+  test: "verified",
+  approval: "requested",
+};
+
+const ACTIVITY_SUMMARY_NOUNS: Record<AgentTimelineActivityKind, { singular: string; plural: string }> = {
+  search: { singular: "search", plural: "searches" },
+  read: { singular: "file", plural: "files" },
+  command: { singular: "command", plural: "commands" },
+  file_create: { singular: "file", plural: "files" },
+  file_modify: { singular: "file", plural: "files" },
+  test: { singular: "check", plural: "checks" },
+  approval: { singular: "approval", plural: "approvals" },
+};
