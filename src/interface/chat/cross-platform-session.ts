@@ -297,15 +297,39 @@ function normalizeActor(
   };
 }
 
-function safeInvoke(handler: ChatEventHandler | undefined, event: ChatEvent): void {
+async function safeInvoke(handler: ChatEventHandler | undefined, event: ChatEvent): Promise<void> {
   if (!handler) return;
   try {
-    const result = handler(event);
-    if (result && typeof (result as Promise<void>).catch === "function") {
-      void (result as Promise<void>).catch(() => undefined);
-    }
-  } catch {
+    await handler(event);
+  } catch (err) {
     // Event streaming should not break chat delivery.
+    console.warn("[chat] event delivery failed", {
+      eventType: event.type,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+class ChatEventDeliveryQueue {
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly handler: ChatEventHandler | undefined,
+    private readonly upstream: ChatEventHandler | undefined
+  ) {}
+
+  dispatch = (event: ChatEvent): Promise<void> => {
+    this.queue = this.queue.then(async () => {
+      await safeInvoke(this.handler, event);
+      if (this.upstream && this.upstream !== this.handler) {
+        await safeInvoke(this.upstream, event);
+      }
+    });
+    return this.queue;
+  };
+
+  async drain(): Promise<void> {
+    await this.queue;
   }
 }
 
@@ -383,19 +407,15 @@ export class CrossPlatformChatSessionManager {
     }
     const session = this.getOrCreateSession(ingress, input.cwd);
     const previousOnEvent = session.runner.onEvent;
+    let deliveryQueue: ChatEventDeliveryQueue | null = null;
     if (input.onEvent) {
-      const handler = input.onEvent;
-      const upstream = this.deps.onEvent;
-      session.runner.onEvent = (event: ChatEvent) => {
-        safeInvoke(handler, event);
-        if (upstream && upstream !== handler) {
-          safeInvoke(upstream, event);
-        }
-      };
+      deliveryQueue = new ChatEventDeliveryQueue(input.onEvent, this.deps.onEvent);
+      session.runner.onEvent = deliveryQueue.dispatch;
     }
     try {
       return await session.runner.interruptAndRedirect(input.text, session.info.cwd, input.timeoutMs);
     } finally {
+      await deliveryQueue?.drain();
       session.runner.onEvent = previousOnEvent;
     }
   }
@@ -709,16 +729,11 @@ export class CrossPlatformChatSessionManager {
     session.lastRoute = selectedRoute;
 
     const previousOnEvent = session.runner.onEvent;
+    let deliveryQueue: ChatEventDeliveryQueue | null = null;
     if (options.onEvent) {
-      const handler = options.onEvent;
-      this.activeApprovalEventHandlers.set(session.info.session_key, handler);
-      const upstream = this.deps.onEvent;
-      session.runner.onEvent = (event: ChatEvent) => {
-        safeInvoke(handler, event);
-        if (upstream && upstream !== handler) {
-          safeInvoke(upstream, event);
-        }
-      };
+      deliveryQueue = new ChatEventDeliveryQueue(options.onEvent, this.deps.onEvent);
+      this.activeApprovalEventHandlers.set(session.info.session_key, options.onEvent);
+      session.runner.onEvent = deliveryQueue.dispatch;
     } else {
       this.activeApprovalEventHandlers.delete(session.info.session_key);
       session.runner.onEvent = undefined;
@@ -732,6 +747,7 @@ export class CrossPlatformChatSessionManager {
         selectedRoute
       );
     } finally {
+      await deliveryQueue?.drain();
       this.activeApprovalEventHandlers.delete(session.info.session_key);
       session.runner.onEvent = previousOnEvent;
     }

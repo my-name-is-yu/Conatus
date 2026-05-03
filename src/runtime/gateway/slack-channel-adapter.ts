@@ -246,10 +246,11 @@ export class SlackChannelAdapter implements ChannelAdapter {
       cwd: process.cwd(),
       onEvent: (event) => {
         if (event.type === "assistant_final") {
-          void sendReply(event.text).catch((err: unknown) => {
+          return sendReply(event.text).catch((err: unknown) => {
             console.warn("SlackChannelAdapter: failed to send assistant event", err);
           });
         }
+        return undefined;
       },
       metadata: input.metadata,
     });
