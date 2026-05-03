@@ -9,9 +9,26 @@ export interface AgentLoopCommandResult {
   command: string;
   cwd: string;
   success: boolean;
+  execution?: {
+    status: "executed" | "not_executed";
+    reason?: "approval_denied" | "permission_denied" | "policy_blocked" | "dry_run" | "tool_error";
+    message?: string;
+  };
   category: AgentLoopCommandResultCategory;
   evidenceEligible: boolean;
   relevantToTask?: boolean;
+  outputSummary: string;
+  durationMs: number;
+}
+
+export interface AgentLoopToolResultSummary {
+  toolName: string;
+  success: boolean;
+  execution?: {
+    status: "executed" | "not_executed";
+    reason?: "approval_denied" | "permission_denied" | "policy_blocked" | "dry_run" | "tool_error";
+    message?: string;
+  };
   outputSummary: string;
   durationMs: number;
 }
@@ -42,6 +59,7 @@ export interface AgentLoopResult<TOutput> {
   compactions: number;
   filesChanged?: boolean;
   changedFiles: string[];
+  toolResults?: AgentLoopToolResultSummary[];
   commandResults: AgentLoopCommandResult[];
   workspace?: AgentLoopWorkspaceInfo;
   traceId: string;

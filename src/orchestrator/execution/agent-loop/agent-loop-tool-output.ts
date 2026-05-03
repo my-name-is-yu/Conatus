@@ -15,6 +15,7 @@ export interface AgentLoopToolOutput {
   disposition?: AgentLoopToolDisposition;
   contextModifier?: string;
   rawResult?: ToolResult;
+  execution?: ToolResult["execution"];
   command?: string;
   cwd?: string;
   artifacts?: string[];

@@ -204,12 +204,16 @@ export class ChatAgentLoopRunner {
       const success = outputMode.kind === "structured"
         ? result.success && outputStatus === "done"
         : result.success;
-      const hadApprovalDeniedError = result.commandResults.some((entry) =>
-        /approval denied|user denied approval|requires approval/i.test(entry.outputSummary),
+      const toolResults = result.toolResults ?? [];
+      const notExecutedApprovalDenied = toolResults.filter((entry) =>
+        entry.execution?.status === "not_executed" && entry.execution.reason === "approval_denied"
+      );
+      const executedToolResults = toolResults.filter((entry) =>
+        entry.execution?.status === "executed"
       );
       const fallbackOutput = success
-        ? this.buildSuccessfulOutput(result.finalText, chatOutput)
-        : this.buildFailureOutput(result.stopReason, hadApprovalDeniedError, result.finalText, chatOutput, extractStringArray(result.output, "blockers"));
+        ? this.buildSuccessfulOutput(result.finalText, chatOutput, notExecutedApprovalDenied, executedToolResults)
+        : this.buildFailureOutput(result.stopReason, notExecutedApprovalDenied.length > 0, result.finalText, chatOutput, extractStringArray(result.output, "blockers"));
       return {
         success,
         output: fallbackOutput,
@@ -273,7 +277,26 @@ export class ChatAgentLoopRunner {
     }
   }
 
-  private buildSuccessfulOutput(finalText: string, output?: ChatAgentLoopOutput | null): string {
+  private buildSuccessfulOutput(
+    finalText: string,
+    output?: ChatAgentLoopOutput | null,
+    notExecutedApprovalDenied: Array<{ toolName: string; execution?: { message?: string } }> = [],
+    executedToolResults: Array<{ toolName: string; success: boolean; outputSummary: string }> = [],
+  ): string {
+    if (notExecutedApprovalDenied.length > 0) {
+      const tools = [...new Set(notExecutedApprovalDenied.map((entry) => entry.toolName))].join(", ");
+      const detail = notExecutedApprovalDenied
+        .map((entry) => entry.execution?.message)
+        .find((message): message is string => typeof message === "string" && message.trim().length > 0);
+      const executedSummaries = executedToolResults
+        .map((entry) => `- ${entry.toolName} ${entry.success ? "succeeded" : "failed"}: ${entry.outputSummary}`)
+        .slice(0, 5);
+      return [
+        `Approval was denied for ${tools || "the requested tool action"}, so the operation was not executed.`,
+        detail ? `Reason: ${detail}` : "",
+        executedSummaries.length > 0 ? ["Executed tool results:", ...executedSummaries].join("\n") : "",
+      ].filter(Boolean).join("\n");
+    }
     const displayText = normalizeAssistantDisplayText({ finalText, output });
     if (displayText) return displayText;
     return "(no response)";

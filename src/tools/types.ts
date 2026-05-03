@@ -12,6 +12,15 @@ export const ToolResultSchema = z.object({
   summary: z.string(),
   /** Optional error message on failure */
   error: z.string().optional(),
+  /**
+   * Whether the tool implementation actually ran.
+   * Approval-denied and policy-blocked calls are not executed side effects.
+   */
+  execution: z.object({
+    status: z.enum(["executed", "not_executed"]),
+    reason: z.enum(["approval_denied", "permission_denied", "policy_blocked", "dry_run", "tool_error"]).optional(),
+    message: z.string().optional(),
+  }).optional(),
   /** Duration of the tool call in milliseconds */
   durationMs: z.number(),
   /** Optional context modifier: instructions to append to subsequent LLM context */
