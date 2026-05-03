@@ -4,7 +4,7 @@ import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.
 import type { ChatRunnerDeps } from "../chat-runner.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
-import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -318,10 +318,17 @@ describe("CrossPlatformChatSessionManager", () => {
       stateManager,
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      llmClient: createSingleMockLLMClient(JSON.stringify({
-        intent: "none",
-        reason: "ordinary implementation finish request",
-      })),
+      llmClient: createMockLLMClient([
+        JSON.stringify({
+          intent: "none",
+          reason: "ordinary implementation finish request",
+        }),
+        JSON.stringify({
+          kind: "execute",
+          confidence: 0.94,
+          rationale: "ordinary implementation finish request",
+        }),
+      ]),
       runtimeControlService,
       runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
     }));
@@ -343,6 +350,48 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
     expect(adapter.execute).not.toHaveBeenCalled();
     expect(runtimeControlService.request).not.toHaveBeenCalled();
+  });
+
+  it("routes gateway Telegram setup requests to configure guidance before agent-loop execution", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "agent loop should not run",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      llmClient: createMockLLMClient([
+        JSON.stringify({
+          kind: "configure",
+          configure_target: "telegram_gateway",
+          confidence: 0.96,
+          rationale: "user wants Telegram chat setup",
+        }),
+      ]),
+    }));
+
+    const result = await manager.execute("telegramからseedyと会話できるようにしたい", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("pulseed telegram setup");
+    expect(result.output).toContain("pulseed gateway setup");
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
   });
 
   it("routes long-running work through the native agent loop and leaves durable handoff to tools", async () => {

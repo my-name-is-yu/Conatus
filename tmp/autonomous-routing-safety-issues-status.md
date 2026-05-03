@@ -29,4 +29,25 @@
 - Review agent found two material bypasses: interpreter-based shell writes from protected cwd and unified delete patches. Both were fixed and covered by tests.
 
 ### Issue #912 plan
-- Pending until #914 is merged.
+- Branch: `codex/issue-912-setup-help-routing`.
+- #914 dependency completed: PR #944 merged with green `unit (22)` and `integration (24)`.
+- Scope: add a typed freeform semantic routing contract before coding agent-loop execution, using structured LLM classification with confidence/clarification instead of keyword/includes logic.
+- Route classes: `assist`, `configure`, `execute`, `clarify`.
+- Configure route will return actionable setup guidance for Telegram/gateway setup without launching agent-loop.
+- Tests: ChatRunner production route tests for Japanese/English Telegram setup and ambiguous clarification, explicit execute still entering agent-loop, and a TUI caller-path test proving freeform input reaches ChatRunner rather than direct lower-level execution.
+- Blockers: none yet.
+
+### Issue #912 implementation status
+- Added `FreeformRouteIntentSchema` and an LLM-backed pre-agent route classifier for freeform ChatRunner input.
+- `IngressRouter` now accepts typed freeform route intent and selects `assist`, `configure`, `clarify`, or existing execution routes before coding agent-loop handoff.
+- `configure` returns actionable Telegram/gateway/setup guidance without invoking the coding agent loop; `clarify` asks for setup/config/code intent; `assist` stays read-only through the LLM response path.
+- Added ChatRunner production routing tests for Japanese and English Telegram setup requests, ambiguous clarification, and explicit implementation still entering agent-loop.
+- Added a TUI caller-path test confirming freeform Telegram setup input reaches the production ChatRunner entrypoint.
+- Verification so far:
+  - `npm run typecheck` passed.
+  - `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/tui/__tests__/app.test.ts` passed.
+  - `npm run lint:boundaries` passed with pre-existing warnings.
+  - `npm run test:changed` passed.
+  - `git diff --check` passed.
+- Review: fresh review agent found a cross-platform gateway bypass and weak TUI route coverage. Fixed by passing `freeformRouteIntent` through `CrossPlatformChatSessionManager`, adding a Telegram gateway production session regression test, and strengthening the TUI test to execute a real ChatRunner route.
+- Additional regression update: `chat-boundary-contract` now accounts for the new freeform execute pre-route while preserving latest reply-target runtime-control behavior.

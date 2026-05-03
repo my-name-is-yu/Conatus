@@ -75,6 +75,80 @@ export async function executeRuntimeControlRoute(
   };
 }
 
+export async function executeConfigureRoute(
+  host: ChatRunnerRouteHost,
+  route: SelectedChatRoute,
+  eventContext: ChatEventContext,
+  assistantBuffer: AssistantBuffer,
+  history: { appendAssistantMessage(message: string): Promise<void> },
+  start: number,
+): Promise<ChatRunResult> {
+  if (route.kind !== "configure") {
+    throw new Error(`executeConfigureRoute received route kind ${route.kind}`);
+  }
+  const output = formatConfigureGuidance(route.intent.configure_target ?? "unknown");
+  return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
+}
+
+export async function executeClarifyRoute(
+  host: ChatRunnerRouteHost,
+  _route: SelectedChatRoute,
+  eventContext: ChatEventContext,
+  assistantBuffer: AssistantBuffer,
+  history: { appendAssistantMessage(message: string): Promise<void> },
+  start: number,
+): Promise<ChatRunResult> {
+  const output = [
+    "I need one more detail before taking action.",
+    "",
+    "Tell me whether you want setup guidance, a configuration flow, or a code/test change.",
+  ].join("\n");
+  return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
+}
+
+export async function executeAssistRoute(
+  host: ChatRunnerRouteHost,
+  params: {
+    input: string;
+    priorTurns: Array<{ role: string; content: string }>;
+    eventContext: ChatEventContext;
+    assistantBuffer: AssistantBuffer;
+    history: { appendAssistantMessage(message: string): Promise<void>; recordUsage(phase: string, usage: ChatUsageCounter): void };
+    start: number;
+  },
+): Promise<ChatRunResult> {
+  if (!host.deps.llmClient) {
+    return persistDirectRouteResult(
+      host,
+      "I can answer this as guidance, but no language model is configured for read-only chat.",
+      params.eventContext,
+      params.assistantBuffer,
+      params.history,
+      params.start,
+    );
+  }
+  host.eventBridge.emitCheckpoint("Read-only assist selected", "The message will be answered without coding-agent execution.", params.eventContext, "route");
+  const messages: LLMMessage[] = [
+    ...params.priorTurns.map((m): LLMMessage => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })),
+    { role: "user", content: params.input },
+  ];
+  const response = await sendLLMMessage(host, host.deps.llmClient, messages, {
+    system: "Answer read-only. Provide concise operational guidance. Do not ask to edit files or run commands unless the user explicitly asks for execution.",
+    max_tokens: 1000,
+    temperature: 0,
+  }, params.assistantBuffer, params.eventContext);
+  const usage = usageFromLLMResponse(response);
+  if (hasUsage(usage)) params.history.recordUsage("assist", usage);
+  return persistDirectRouteResult(
+    host,
+    params.assistantBuffer.text || response.content || "(no response)",
+    params.eventContext,
+    params.assistantBuffer,
+    params.history,
+    params.start,
+  );
+}
+
 export async function executeAgentLoopRoute(
   host: ChatRunnerRouteHost,
   params: {
@@ -520,6 +594,57 @@ async function executeWithTools(
     output: lastAssistant?.content || "I was unable to complete the request within the allowed tool call limit.",
     usage,
   };
+}
+
+async function persistDirectRouteResult(
+  host: ChatRunnerRouteHost,
+  output: string,
+  eventContext: ChatEventContext,
+  assistantBuffer: AssistantBuffer,
+  history: { appendAssistantMessage(message: string): Promise<void> },
+  start: number,
+): Promise<ChatRunResult> {
+  const elapsed_ms = Date.now() - start;
+  if (!assistantBuffer.text) {
+    host.eventBridge.pushAssistantDelta(output, assistantBuffer, eventContext);
+  }
+  await history.appendAssistantMessage(output);
+  host.eventBridge.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
+  host.eventBridge.emitEvent({
+    type: "assistant_final",
+    text: output,
+    persisted: true,
+    ...host.eventBridge.eventBase(eventContext),
+  });
+  host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
+  return { success: true, output, elapsed_ms };
+}
+
+function formatConfigureGuidance(target: "telegram_gateway" | "gateway" | "provider" | "daemon" | "notification" | "slack" | "unknown"): string {
+  if (target === "telegram_gateway") {
+    return [
+      "Telegram setup is a configuration flow, not a source-edit task.",
+      "",
+      "Run these from your shell:",
+      "1. `pulseed telegram setup`",
+      "2. `pulseed gateway setup`",
+      "3. `pulseed daemon start`",
+      "",
+      "After setup, send a message to the Telegram bot and confirm the gateway is running with `pulseed daemon status`.",
+    ].join("\n");
+  }
+  if (target === "gateway") {
+    return [
+      "Gateway setup is a configuration flow.",
+      "",
+      "Run `pulseed gateway setup`, then start or restart the daemon with `pulseed daemon start`.",
+    ].join("\n");
+  }
+  return [
+    "This looks like setup/configuration rather than a code-edit task.",
+    "",
+    "Use `pulseed setup` for the main wizard, `pulseed gateway setup` for chat channels, or the channel-specific setup command when available.",
+  ].join("\n");
 }
 
 async function dispatchToolCall(

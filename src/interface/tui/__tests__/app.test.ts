@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "../../../runtime/daemon/client.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { TuiChatSurface } from "../chat-surface.js";
+import { ChatRunner } from "../../chat/chat-runner.js";
+import type { AgentResult, IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
+import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from "../app.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
@@ -81,14 +84,18 @@ vi.mock("../../../runtime/store/health-store.js", () => ({
   },
 }));
 
-vi.mock("../../../runtime/store/evidence-ledger.js", () => ({
-  RuntimeEvidenceLedger: class {
+vi.mock("../../../runtime/store/evidence-ledger.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../runtime/store/evidence-ledger.js")>();
+  return {
+    ...actual,
+    RuntimeEvidenceLedger: class {
     summarizeRun = vi.fn(async (runId: string) => {
       testState.summarizedRunIds.push(runId);
       return testState.runtimeEvidenceSummaries[runId] ?? null;
     });
-  },
-}));
+    },
+  };
+});
 
 vi.mock("../help-overlay.js", () => ({ HelpOverlay: () => null }));
 vi.mock("../settings-overlay.js", () => ({ SettingsOverlay: () => null }));
@@ -128,6 +135,8 @@ function createStateManagerMock() {
     listGoalIds: vi.fn(async () => [] as string[]),
     loadGoal: vi.fn(async () => null),
     getBaseDir: vi.fn(() => "/tmp/pulseed-tui-test"),
+    writeRaw: vi.fn(async () => undefined),
+    readRaw: vi.fn(async () => null),
   };
 }
 
@@ -140,6 +149,22 @@ function createChatRunnerMock() {
     getConversationId: vi.fn(() => "tui-conversation-test"),
     onEvent: undefined,
   };
+}
+
+const CANNED_AGENT_RESULT: AgentResult = {
+  success: true,
+  output: "Task completed successfully.",
+  error: null,
+  exit_code: 0,
+  elapsed_ms: 50,
+  stopped_reason: "completed",
+};
+
+function createAdapterMock(result: AgentResult = CANNED_AGENT_RESULT): IAdapter {
+  return {
+    adapterType: "mock",
+    execute: vi.fn().mockResolvedValue(result),
+  } as unknown as IAdapter;
 }
 
 function nonEvidenceResponse(): string {
@@ -767,6 +792,89 @@ describe("standalone slash command routing", () => {
     expect(llmClient.callCount).toBe(2);
     expect(chatRunner.execute).toHaveBeenCalledWith("このタスクの進め方を説明して", "/work/kaggle");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
+  it("routes Telegram setup freeform input through the production TUI ChatRunner path", async () => {
+    const stateManager = createStateManagerMock();
+    const adapter = createAdapterMock();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "agent loop should not run",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    } as unknown as ChatAgentLoopRunner;
+    const realRunner = new ChatRunner({
+      stateManager: stateManager as unknown as StateManager,
+      adapter,
+      chatAgentLoopRunner,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        kind: "configure",
+        configure_target: "telegram_gateway",
+        confidence: 0.97,
+        rationale: "user wants Telegram chat setup",
+      })) as never,
+    });
+    let chatRunnerOutput = "";
+    const chatRunner = {
+      startSession: vi.fn(),
+      execute: vi.fn(async (input: string, cwd: string) => {
+        const result = await realRunner.execute(input, cwd);
+        chatRunnerOutput = result.output;
+        return result;
+      }),
+      interruptAndRedirect: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
+      executeIngressMessage: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
+      getConversationId: vi.fn(() => "tui-conversation-test"),
+      onEvent: undefined,
+    };
+    const llmClient = createMockLLMClient([
+      JSON.stringify({
+        decision: "not_runtime_evidence_question",
+        topics: [],
+        confidence: 0.98,
+        rationale: "setup request, not runtime evidence",
+      }),
+      JSON.stringify({
+        decision: "not_run_spec_request",
+        confidence: 0.95,
+        missing_fields: [],
+      }),
+    ]);
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      llmClient,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/pulseed",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("telegramからseedyと会話できるようにしたい");
+    await flush();
+
+    expect(chatRunner.execute).toHaveBeenCalledWith("telegramからseedyと会話できるようにしたい", "/work/pulseed");
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(chatRunnerOutput).toContain("pulseed telegram setup"));
+    expect(chatRunnerOutput).toContain("pulseed telegram setup");
+    expect(chatRunnerOutput).toContain("pulseed gateway setup");
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
 
     screen.unmount();
   });
