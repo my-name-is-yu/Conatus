@@ -61,6 +61,7 @@ export interface LoadedChatSession {
   lastRetryAt?: string | null;
   lastResumedAt?: string | null;
   notificationReplyTarget?: ChatSession["notificationReplyTarget"];
+  runSpecConfirmation?: ChatSession["runSpecConfirmation"];
   parentNotificationStatus?: "none" | "pending" | "sent" | "failed" | null;
   parentNotificationSummary?: string | null;
   parentNotifiedAt?: string | null;
@@ -334,6 +335,7 @@ async function readSessionRecordWithMetadata(
     ...(optionalString(parsed.data.lastRetryAt) !== null ? { lastRetryAt: optionalString(parsed.data.lastRetryAt) } : {}),
     ...(optionalString(parsed.data.lastResumedAt) !== null ? { lastResumedAt: optionalString(parsed.data.lastResumedAt) } : {}),
     ...(parsed.data.notificationReplyTarget ? { notificationReplyTarget: parsed.data.notificationReplyTarget } : {}),
+    ...(parsed.data.runSpecConfirmation ? { runSpecConfirmation: parsed.data.runSpecConfirmation } : {}),
     ...(parsed.data.parentNotificationStatus ? { parentNotificationStatus: parsed.data.parentNotificationStatus } : {}),
     ...(optionalString(parsed.data.parentNotificationSummary) !== null ? { parentNotificationSummary: optionalString(parsed.data.parentNotificationSummary) } : {}),
     ...(optionalString(parsed.data.parentNotifiedAt) !== null ? { parentNotifiedAt: optionalString(parsed.data.parentNotifiedAt) } : {}),
@@ -400,6 +402,7 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
     ...(session.lastRetryAt !== null && session.lastRetryAt !== undefined ? { lastRetryAt: session.lastRetryAt } : {}),
     ...(session.lastResumedAt !== null && session.lastResumedAt !== undefined ? { lastResumedAt: session.lastResumedAt } : {}),
     ...(session.notificationReplyTarget !== null && session.notificationReplyTarget !== undefined ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+    ...(session.runSpecConfirmation !== null && session.runSpecConfirmation !== undefined ? { runSpecConfirmation: session.runSpecConfirmation } : {}),
     ...(session.parentNotificationStatus !== null && session.parentNotificationStatus !== undefined ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
     ...(session.parentNotificationSummary !== null && session.parentNotificationSummary !== undefined ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
     ...(session.parentNotifiedAt !== null && session.parentNotifiedAt !== undefined ? { parentNotifiedAt: session.parentNotifiedAt } : {}),

@@ -22,3 +22,16 @@
   - `npm run test:unit -- src/interface/chat/__tests__/chat-runner.test.ts`: 119 pass, 2 local Telegram setup expectation failures observed; failures assert unconfigured setup guidance while the local status provider reports configured Telegram config/home chat.
   - `npm run test:changed`: failed only on 4 Telegram setup guidance expectations (`chat-runner.test.ts` x2, `cross-platform-session.test.ts` x2) for the same local configured-Telegram status reason; related non-setup tests passed.
 - Review: first review found CrossPlatformChatSessionManager bypassed the new draft route because it preselected routes before ChatRunner. Fixed by deriving/passing `runSpecDraft` in the cross-platform route selection path and adding a gateway production-path test.
+
+## #998
+
+- Branch: `codex/issue-998-runspec-confirmation`.
+- Plan: persist pending RunSpec confirmation in chat session state, route next-turn input through the existing typed RunSpec confirmation state machine, and keep daemon start out of scope.
+- Current status: implemented locally.
+- Verification:
+  - `npm run typecheck`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/chat-runner.test.ts -t "natural-language RunSpec draft routing"`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/cross-platform-session.test.ts -t "RunSpec draft"`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/chat-session-store.test.ts src/interface/chat/__tests__/chat-history.test.ts`: pass.
+  - `git diff --check`: pass.
+- Review: first review found `runSpecConfirmation` was persisted in raw chat history but dropped through `LoadedChatSession`/resume conversion. Fixed by threading the field through session load/save conversion and adding a reload-before-approval test. Re-review: no material findings.

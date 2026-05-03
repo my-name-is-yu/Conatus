@@ -7,6 +7,7 @@ import { z } from "zod";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
+import { ChatSessionCatalog } from "../chat-session-store.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { EscalationHandler, EscalationResult } from "../escalation.js";
@@ -181,7 +182,13 @@ function runSpecDraftDecision(overrides: Record<string, unknown> = {}): string {
       semantics: "Kaggle score exceeds 0.98.",
       confidence: "high",
     },
-    deadline: null,
+    deadline: {
+      raw: "until score exceeds 0.98",
+      iso_at: null,
+      timezone: null,
+      finalization_buffer_minutes: null,
+      confidence: "medium",
+    },
     budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
     approval_policy: {
       submit: "approval_required",
@@ -191,6 +198,14 @@ function runSpecDraftDecision(overrides: Record<string, unknown> = {}): string {
       irreversible_action: "approval_required",
     },
     missing_fields: [],
+    ...overrides,
+  });
+}
+
+function runSpecConfirmationDecision(decision: "approve" | "cancel" | "unknown" | "revise", overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    decision,
+    confidence: 0.93,
     ...overrides,
   });
 }
@@ -4439,6 +4454,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Proposed long-running run:");
       expect(result.output).toContain("Kaggle score 0.98");
       expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).toContain("Reply with approval");
       expect(adapter.execute).not.toHaveBeenCalled();
       const runSpecDir = path.join(baseDir, "run-specs");
       const [fileName] = fs.readdirSync(runSpecDir);
@@ -4450,6 +4466,155 @@ describe("ChatRunner", () => {
         channel: "cli",
         session_id: expect.any(String),
       });
+    });
+
+    it("keeps a RunSpec pending until the next turn approves it", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-confirm-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const adapter = makeMockAdapter();
+      const daemonClient = { startGoal: vi.fn() };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter,
+        daemonClient: daemonClient as never,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision(),
+          runSpecConfirmationDecision("approve"),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      const draftResult = await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      const approveResult = await runner.execute("承認します", "/repo/kaggle");
+
+      expect(draftResult.success).toBe(true);
+      expect(approveResult.success).toBe(true);
+      expect(approveResult.output).toContain("RunSpec confirmed:");
+      expect(approveResult.output).toContain("no background run has been started yet");
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.status).toBe("confirmed");
+    });
+
+    it("cancels a pending RunSpec without starting a background run", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-cancel-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const daemonClient = { startGoal: vi.fn() };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        daemonClient: daemonClient as never,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision(),
+          runSpecConfirmationDecision("cancel"),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      const cancelResult = await runner.execute("cancel it", "/repo/kaggle");
+
+      expect(cancelResult.success).toBe(false);
+      expect(cancelResult.output).toContain("RunSpec cancelled:");
+      expect(cancelResult.output).toContain("No background run was started.");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.status).toBe("cancelled");
+    });
+
+    it("does not reuse a stale cancelled RunSpec confirmation on a later approval", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-stale-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision(),
+          runSpecConfirmationDecision("cancel"),
+          freeformRouteDecision("assist"),
+          "There is no pending RunSpec to approve.",
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      await runner.execute("cancel it", "/repo/kaggle");
+      const staleApproval = await runner.execute("approve it now", "/repo/kaggle");
+
+      expect(staleApproval.success).toBe(true);
+      expect(staleApproval.output).toBe("There is no pending RunSpec to approve.");
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.status).toBe("cancelled");
+    });
+
+    it("preserves pending RunSpec confirmation across session reload before approval", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-reload-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const firstRunner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision(),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await firstRunner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      const sessionId = firstRunner.getSessionId();
+      expect(sessionId).toBeTruthy();
+
+      const catalog = new ChatSessionCatalog(stateManager);
+      const loaded = await catalog.loadSession(sessionId!);
+      expect(loaded?.runSpecConfirmation).toMatchObject({ state: "pending" });
+
+      const reloadedRunner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient: createSingleMockLLMClient(runSpecConfirmationDecision("approve")),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+      reloadedRunner.startSessionFromLoadedSession(loaded!);
+
+      const approved = await reloadedRunner.execute("approve", "/repo/kaggle");
+
+      expect(approved.success).toBe(true);
+      expect(approved.output).toContain("RunSpec confirmed:");
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.status).toBe("confirmed");
+    });
+
+    it("keeps pending confirmation on ambiguous approval text", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-ambiguous-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision(),
+          runSpecConfirmationDecision("unknown", {
+            confidence: 0.41,
+            clarification: "Please explicitly approve or cancel.",
+          }),
+          runSpecConfirmationDecision("approve"),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      const ambiguousResult = await runner.execute("looks good maybe", "/repo/kaggle");
+      const approvedResult = await runner.execute("approve", "/repo/kaggle");
+
+      expect(ambiguousResult.success).toBe(false);
+      expect(ambiguousResult.output).toContain("awaiting confirmation");
+      expect(approvedResult.success).toBe(true);
+      expect(approvedResult.output).toContain("RunSpec confirmed:");
     });
 
     it("keeps explanatory long-running questions on the ordinary chat path", async () => {
