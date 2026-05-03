@@ -651,7 +651,7 @@ async function formatConfigureGuidance(
   const suppliedSecretKinds = setupSecretIntake?.suppliedSecrets.map((secret) => secret.kind) ?? [];
   if (target === "telegram_gateway") {
     const provider = host.deps.gatewaySetupStatusProvider ?? createGatewaySetupStatusProvider();
-    host.eventBridge.emitOperationProgress(createOperationProgressItem({
+    await host.eventBridge.emitOperationProgressAndFlush(createOperationProgressItem({
       id: "telegram-configure:started",
       kind: "started",
       operation: "telegram_setup",
@@ -661,7 +661,7 @@ async function formatConfigureGuidance(
       languageHint,
     }), eventContext);
     const status = await provider.getTelegramStatus(host.getProviderConfigBaseDir());
-    host.eventBridge.emitOperationProgress(createOperationProgressItem({
+    await host.eventBridge.emitOperationProgressAndFlush(createOperationProgressItem({
       id: "telegram-configure:checked-status",
       kind: "checked_status",
       operation: "telegram_setup",
@@ -680,7 +680,7 @@ async function formatConfigureGuidance(
         daemon_port: status.daemon.port,
       },
     }), eventContext);
-    host.eventBridge.emitOperationProgress(createOperationProgressItem({
+    await host.eventBridge.emitOperationProgressAndFlush(createOperationProgressItem({
       id: "telegram-configure:read-config",
       kind: "read_config",
       operation: "telegram_setup",
@@ -701,7 +701,7 @@ async function formatConfigureGuidance(
         replacesExistingSecret: status.config.hasBotToken,
       }));
     }
-    host.eventBridge.emitOperationProgress(createOperationProgressItem({
+    await host.eventBridge.emitOperationProgressAndFlush(createOperationProgressItem({
       id: "telegram-configure:planned-action",
       kind: telegramSecret ? "awaiting_approval" : "planned_action",
       operation: "telegram_setup",

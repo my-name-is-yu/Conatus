@@ -26,7 +26,7 @@ import type { ToolExecutor } from "../../tools/executor.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { GatewaySetupStatusProvider } from "./gateway-setup-status.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
-import type { ChatEvent } from "./chat-events.js";
+import type { ChatEventHandler } from "./chat-events.js";
 import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
@@ -102,7 +102,7 @@ export interface ChatRunnerDeps {
   goalNegotiator?: GoalNegotiator;
   onNotification?: (message: string) => void;
   daemonBaseUrl?: string;
-  onEvent?: (event: ChatEvent) => void;
+  onEvent?: ChatEventHandler;
   chatAgentLoopRunner?: ChatAgentLoopRunner;
   reviewAgentLoopRunner?: Pick<ReviewAgentLoopRunner, "execute">;
   runtimeControlService?: Pick<RuntimeControlService, "request">;
@@ -200,7 +200,7 @@ export class ChatRunner {
   private pendingTend: PendingTendState | null = null;
   private activeSubscribers = new Map<string, { unsubscribe(): void }>();
   onNotification: ((message: string) => void) | undefined = undefined;
-  onEvent: ((event: ChatEvent) => void) | undefined = undefined;
+  onEvent: ChatEventHandler | undefined = undefined;
   private nativeAgentLoopStatePath: string | null = null;
   private runtimeControlContext: RuntimeControlChatContext | null = null;
   private sessionExecutionPolicy: ExecutionPolicy | null = null;

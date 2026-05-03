@@ -1,4 +1,4 @@
-import type { ActivityKind, ChatEvent, ChatEventContext } from "./chat-events.js";
+import type { ActivityKind, ChatEvent, ChatEventContext, ChatEventHandler } from "./chat-events.js";
 import type {
   AgentLoopEvent,
   AgentLoopEventSink,
@@ -52,7 +52,7 @@ export class ChatRunnerEventBridge {
   private readonly timelineActivityItemsByRun = new Map<string, AgentTimelineItem[]>();
 
   constructor(
-    private readonly onEventGetter: () => ((event: ChatEvent) => void) | undefined,
+    private readonly onEventGetter: () => ChatEventHandler | undefined,
   ) {}
 
   hasActiveTurn(): boolean {
@@ -296,9 +296,24 @@ export class ChatRunnerEventBridge {
   }
 
   emitEvent(event: ChatEvent): void {
+    void this.deliverEvent(event);
+  }
+
+  async emitEventAndFlush(event: ChatEvent): Promise<void> {
+    await this.deliverEvent(event);
+  }
+
+  private async deliverEvent(event: ChatEvent): Promise<void> {
     const safeEvent = redactChatEvent(event);
     this.rememberActiveTurnEvent(safeEvent);
-    this.onEventGetter()?.(safeEvent);
+    try {
+      await this.onEventGetter()?.(safeEvent);
+    } catch (err) {
+      console.warn("[chat] event flush failed", {
+        eventType: safeEvent.type,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private rememberTimelineActivityItem(eventContext: ChatEventContext, item: AgentTimelineItem): void {
@@ -332,15 +347,23 @@ export class ChatRunnerEventBridge {
   }
 
   emitOperationProgress(item: OperationProgressItem, eventContext: ChatEventContext): void {
+    this.emitEvent(this.createOperationProgressEvent(item, eventContext));
+  }
+
+  async emitOperationProgressAndFlush(item: OperationProgressItem, eventContext: ChatEventContext): Promise<void> {
+    await this.emitEventAndFlush(this.createOperationProgressEvent(item, eventContext));
+  }
+
+  private createOperationProgressEvent(item: OperationProgressItem, eventContext: ChatEventContext): ChatEvent {
     const safeItem = createOperationProgressItem({
       ...item,
       ...(eventContext.languageHint && !item.languageHint ? { languageHint: eventContext.languageHint } : {}),
     });
-    this.emitEvent({
+    return {
       type: "operation_progress",
       item: safeItem,
       ...this.eventBase(eventContext),
-    });
+    };
   }
 
   emitActivity(

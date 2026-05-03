@@ -9,6 +9,7 @@ import type { AgentResult, IAdapter } from "../../../orchestrator/execution/adap
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from "../app.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import type { TelegramSetupStatus } from "../../chat/gateway-setup-status.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
@@ -299,6 +300,38 @@ function createEvidenceSummary(overrides: Record<string, unknown> = {}) {
 
 async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
+function createTelegramSetupStatus(): TelegramSetupStatus {
+  return {
+    channel: "telegram",
+    state: "unconfigured",
+    configPath: "/tmp/pulseed-tui-test/gateways/telegram-bot/config.json",
+    daemon: {
+      running: false,
+      port: 49876,
+    },
+    gateway: {
+      loadState: "unknown",
+    },
+    config: {
+      exists: false,
+      hasBotToken: false,
+      hasHomeChat: false,
+      allowAll: false,
+      allowedUserCount: 0,
+      runtimeControlAllowedUserCount: 0,
+      identityKeyConfigured: false,
+    },
+  };
 }
 
 describe("formatDaemonConnectionState", () => {
@@ -785,6 +818,13 @@ describe("standalone slash command routing", () => {
   it("routes Telegram setup freeform input through the production TUI ChatRunner path", async () => {
     const stateManager = createStateManagerMock();
     const adapter = createAdapterMock();
+    const statusLookupCanFinish = createDeferred();
+    const gatewaySetupStatusProvider = {
+      getTelegramStatus: vi.fn(async () => {
+        await statusLookupCanFinish.promise;
+        return createTelegramSetupStatus();
+      }),
+    };
     const chatAgentLoopRunner = {
       execute: vi.fn().mockResolvedValue({
         success: true,
@@ -800,6 +840,7 @@ describe("standalone slash command routing", () => {
       stateManager: stateManager as unknown as StateManager,
       adapter,
       chatAgentLoopRunner,
+      gatewaySetupStatusProvider,
       llmClient: createSingleMockLLMClient(JSON.stringify({
         kind: "configure",
         configure_target: "telegram_gateway",
@@ -858,11 +899,19 @@ describe("standalone slash command routing", () => {
     await flush();
     expect(testState.lastChatProps).not.toBeNull();
 
-    await testState.lastChatProps!.onSubmit("telegramからseedyと会話できるようにしたい");
+    const submit = testState.lastChatProps!.onSubmit("telegramからseedyと会話できるようにしたい");
+    await vi.waitFor(() => {
+      const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
+      expect(visibleText).toContain("Telegram setup を開始しました");
+      expect(visibleText).not.toContain("pulseed telegram setup");
+    });
+    statusLookupCanFinish.resolve();
+    await submit;
     await flush();
 
     expect(chatRunner.execute).toHaveBeenCalledWith("telegramからseedyと会話できるようにしたい", "/work/pulseed");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    expect(gatewaySetupStatusProvider.getTelegramStatus).toHaveBeenCalledWith("/tmp/pulseed-tui-test");
     await vi.waitFor(() => expect(chatRunnerOutput).toContain("pulseed telegram setup"));
     expect(chatRunnerOutput).toContain("pulseed telegram setup");
     expect(chatRunnerOutput).toContain("pulseed gateway setup");

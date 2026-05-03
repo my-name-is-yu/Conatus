@@ -500,8 +500,11 @@ export function App({
   useEffect(() => {
     if (chatRunner) {
       chatRunner.startSession(cwd ?? process.cwd());
-      chatRunner.onEvent = (event) => {
+      chatRunner.onEvent = async (event) => {
         setMessages((prev) => applyChatEventToMessages(prev, event, MAX_MESSAGES) as ChatMessage[]);
+        if (event.type === "operation_progress") {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
       };
     }
   }, [chatRunner, cwd]);
