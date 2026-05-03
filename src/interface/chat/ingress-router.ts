@@ -134,6 +134,19 @@ function selectRouteForText(
       ...baseTurnPolicy,
     };
   }
+  if (setupSecretKinds.has("discord_bot_token")) {
+    return {
+      kind: "configure",
+      reason: "freeform_semantic_route",
+      intent: {
+        kind: "configure",
+        confidence: 1,
+        configure_target: "gateway",
+        rationale: "typed setup secret intake detected a Discord bot token",
+      },
+      ...baseTurnPolicy,
+    };
+  }
 
   const freeformIntent = deps.freeformRouteIntent ?? null;
   if (freeformIntent && freeformIntent.confidence >= 0.7) {

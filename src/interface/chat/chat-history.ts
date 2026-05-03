@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { RuntimeReplyTargetSchema, type RuntimeReplyTarget } from "../../runtime/session-registry/types.js";
 import { redactSetupSecrets, SetupSecretIntakeItemSchema } from "./setup-secret-intake.js";
+import { SetupDialoguePublicStateSchema, type SetupDialoguePublicState } from "./setup-dialogue.js";
 
 // ─── Schemas ───
 
@@ -72,6 +73,7 @@ export const ChatSessionSchema = z.object({
   parentNotificationStatus: z.enum(["none", "pending", "sent", "failed"]).nullable().optional(),
   parentNotificationSummary: z.string().nullable().optional(),
   parentNotifiedAt: z.string().nullable().optional(),
+  setupDialogue: SetupDialoguePublicStateSchema.nullable().optional(),
   messages: z.array(ChatMessageSchema),
   compactionSummary: z.string().optional(),
   agentLoopStatePath: z.string().nullable().optional(),
@@ -220,6 +222,18 @@ export class ChatHistory {
       this.session.notificationReplyTarget = target;
     } else {
       delete this.session.notificationReplyTarget;
+    }
+  }
+
+  getSetupDialogue(): SetupDialoguePublicState | null {
+    return this.session.setupDialogue ?? null;
+  }
+
+  setSetupDialogue(dialogue: SetupDialoguePublicState | null): void {
+    if (dialogue) {
+      this.session.setupDialogue = dialogue;
+    } else {
+      delete this.session.setupDialogue;
     }
   }
 
