@@ -246,6 +246,27 @@ export type {
   RelationshipProfileConsentScope,
   RelationshipProfileSensitivity,
 } from "./platform/profile/relationship-profile.js";
+export {
+  RelationshipProfileProposalOperationSchema,
+  RelationshipProfileProposalSourceSchema,
+  RelationshipProfileProposalStateSchema,
+  RelationshipProfileChangeProposalSchema,
+  RelationshipProfileProposalStoreSchema,
+  loadRelationshipProfileProposalStore,
+  loadRelationshipProfileProposalStoreSync,
+  saveRelationshipProfileProposalStore,
+  createRelationshipProfileChangeProposal,
+  approveRelationshipProfileChangeProposal,
+  rejectRelationshipProfileChangeProposal,
+  applyRelationshipProfileChangeProposal,
+} from "./platform/profile/profile-change-proposal.js";
+export type {
+  RelationshipProfileProposalOperation,
+  RelationshipProfileProposalSource,
+  RelationshipProfileProposalState,
+  RelationshipProfileChangeProposal,
+  RelationshipProfileProposalStore,
+} from "./platform/profile/profile-change-proposal.js";
 export { CuriosityEngine } from "./platform/traits/curiosity-engine.js";
 export { GoalDependencyGraph } from "./orchestrator/goal/goal-dependency-graph.js";
 export { KnowledgeGraph } from "./platform/knowledge/knowledge-graph.js";
