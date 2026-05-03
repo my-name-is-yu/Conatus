@@ -1,5 +1,6 @@
 import type { ChatEvent } from "./chat-events.js";
 import { formatLifecycleFailureMessage } from "./failure-recovery.js";
+import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 
 type ToolActivityState = "reading" | "planning" | "editing" | "verifying" | "waiting" | "running" | "completed" | "failed";
 
@@ -34,7 +35,20 @@ function upsertMessage(
     next[index] = nextMessage;
     return next;
   }
-  return [...next, nextMessage].slice(-maxMessages);
+  return trimMessages([...next, nextMessage], maxMessages);
+}
+
+function trimMessages(messages: StreamChatMessage[], maxMessages: number): StreamChatMessage[] {
+  if (messages.length <= maxMessages) return messages;
+  const overflow = messages.length - maxMessages;
+  let remainingTransientDrops = overflow;
+  const withoutTransientOverflow = messages.filter((message) => {
+    if (remainingTransientDrops <= 0 || !message.transient) return true;
+    remainingTransientDrops -= 1;
+    return false;
+  });
+  if (withoutTransientOverflow.length <= maxMessages) return withoutTransientOverflow;
+  return withoutTransientOverflow.slice(-maxMessages);
 }
 
 function removeTransientActivityForTurn(
@@ -42,7 +56,12 @@ function removeTransientActivityForTurn(
   turnId: string
 ): StreamChatMessage[] {
   const transientActivityId = `activity:${turnId}`;
-  return messages.filter((message) => !(message.id === transientActivityId && message.transient));
+  const transientTimelinePrefix = `agent-timeline:${turnId}:`;
+  return messages.filter((message) => {
+    if (!message.transient) return true;
+    if (message.id === transientActivityId) return false;
+    return !message.id.startsWith(transientTimelinePrefix);
+  });
 }
 
 function getToolLogId(turnId: string): string {
@@ -54,6 +73,43 @@ function getActivityMessageId(event: Extract<ChatEvent, { type: "activity" }>): 
     return `activity:${event.turnId}:${event.sourceId}`;
   }
   return `activity:${event.turnId}`;
+}
+
+function getTimelineMessageId(chatTurnId: string, item: AgentTimelineItem): string {
+  return `agent-timeline:${chatTurnId}:${item.sourceEventId}`;
+}
+
+function renderTimelineItem(item: AgentTimelineItem): string {
+  switch (item.kind) {
+    case "lifecycle":
+      if (item.status === "resumed") {
+        return `Resumed ${item.restoredMessages ?? 0} message(s) from ${item.fromUpdatedAt ?? "saved state"}.`;
+      }
+      return "Started work.";
+    case "turn_context":
+      return `Prepared turn context with ${item.model} and ${item.visibleTools.length} tool(s).`;
+    case "model_request":
+      return `Asked ${item.model} for the next step with ${item.toolCount} available tool(s).`;
+    case "assistant_message":
+      return item.text;
+    case "tool": {
+      const detail = item.status === "started" ? item.inputPreview : item.outputPreview;
+      const label = item.status === "started" ? "Started" : item.success ? "Finished" : "Failed";
+      return detail ? `${label} ${item.toolName}: ${detail}` : `${label} ${item.toolName}.`;
+    }
+    case "plan":
+      return `Plan updated: ${item.summary}`;
+    case "approval":
+      return item.status === "requested"
+        ? `Approval requested for ${item.toolName}: ${item.reason}`
+        : `Approval denied for ${item.toolName}: ${item.reason}`;
+    case "compaction":
+      return `Compacted context (${item.phase}, ${item.reason}): ${item.inputMessages} -> ${item.outputMessages}.`;
+    case "final":
+      return item.outputPreview;
+    case "stopped":
+      return item.reasonDetail ? `Stopped: ${item.reason} (${item.reasonDetail})` : `Stopped: ${item.reason}`;
+  }
 }
 
 function summarizeValue(value: unknown): string {
@@ -267,6 +323,20 @@ export function applyChatEventToMessages(
       timestamp,
       messageType: "info",
       transient: event.transient === true,
+    }, maxMessages);
+  }
+
+  if (event.type === "agent_timeline") {
+    if (event.item.visibility !== "user") return messages;
+    const text = renderTimelineItem(event.item).trim();
+    if (!text) return messages;
+    return upsertMessage(messages, {
+      id: getTimelineMessageId(event.turnId, event.item),
+      role: "pulseed",
+      text,
+      timestamp: new Date(event.item.createdAt),
+      messageType: event.item.kind === "stopped" ? "warning" : "info",
+      transient: true,
     }, maxMessages);
   }
 

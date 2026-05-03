@@ -3,6 +3,7 @@ import type {
   AgentLoopEvent,
   AgentLoopEventSink,
 } from "../../orchestrator/execution/agent-loop/agent-loop-events.js";
+import { projectAgentLoopEventToTimeline } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 import {
   DIFF_ARTIFACT_MAX_LINES,
   formatIntentInput,
@@ -120,6 +121,12 @@ export class ChatRunnerEventBridge {
   createAgentLoopEventSink(eventContext: ChatEventContext): AgentLoopEventSink {
     return {
       emit: async (event: AgentLoopEvent) => {
+        this.emitEvent({
+          type: "agent_timeline",
+          item: projectAgentLoopEventToTimeline(event),
+          ...this.eventBase(eventContext),
+        });
+
         if (event.type === "tool_call_started") {
           const detail = event.inputPreview ? previewActivityText(event.inputPreview) : undefined;
           this.emitActivity("tool", formatToolActivity("Running", event.toolName, detail), eventContext, event.callId);
