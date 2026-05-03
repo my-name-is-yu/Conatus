@@ -73,6 +73,14 @@ export type SelectedChatRoute =
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
+    }
+  | {
+      kind: "runtime_control_blocked";
+      reason: "runtime_control_unavailable" | "runtime_control_disallowed";
+      intent: RuntimeControlIntent;
+      replyTargetPolicy: ReplyTargetPolicy;
+      eventProjectionPolicy: EventProjectionPolicy;
+      concurrencyPolicy: ConcurrencyPolicy;
     };
 
 export interface IngressRouterCapabilities {
@@ -104,16 +112,28 @@ function selectRouteForText(
 
   if (canUseRuntimeControlRoute) {
     const intent = deps.runtimeControlIntent ?? null;
-    if (
-      intent !== null
-      && (
-        deps.hasRuntimeControlService === true
-        || (!deps.hasAgentLoop && !deps.hasToolLoop)
-      )
-    ) {
+    if (intent !== null && deps.hasRuntimeControlService === true) {
       return {
         kind: "runtime_control",
         reason: "runtime_control_intent",
+        intent,
+        ...runtimeControlPolicy,
+      };
+    }
+    if (intent !== null) {
+      return {
+        kind: "runtime_control_blocked",
+        reason: "runtime_control_unavailable",
+        intent,
+        ...runtimeControlPolicy,
+      };
+    }
+  } else {
+    const intent = deps.runtimeControlIntent ?? null;
+    if (intent !== null) {
+      return {
+        kind: "runtime_control_blocked",
+        reason: "runtime_control_disallowed",
         intent,
         ...runtimeControlPolicy,
       };
@@ -270,11 +290,12 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
   const preapproved = input.runtimeControl?.approvalMode === "preapproved"
     || input.runtimeControl?.approval_mode === "preapproved"
     || metadata["runtime_control_approved"] === true;
+  const disallowedByMetadata = metadata["runtime_control_denied"] === true;
   const interactiveDefault = channel === "tui" || channel === "cli";
   const allowed = input.runtimeControl?.allowed ?? (preapproved || interactiveDefault);
   const approvalMode = input.runtimeControl?.approvalMode
     ?? input.runtimeControl?.approval_mode
-    ?? (preapproved ? "preapproved" : interactiveDefault ? "interactive" : "disallowed");
+    ?? (preapproved ? "preapproved" : disallowedByMetadata ? "disallowed" : interactiveDefault ? "interactive" : "disallowed");
 
   const actor: RuntimeControlActor = input.actor ?? {
     surface: actorSurface,

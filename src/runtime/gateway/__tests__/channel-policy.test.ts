@@ -26,7 +26,16 @@ describe("channel policy", () => {
       { platform: "slack", senderId: "admin" }
     );
 
-    expect(decision).toEqual({ allowed: true, runtimeControlApproved: true });
+    expect(decision).toEqual({ allowed: true, runtimeControlApproved: true, runtimeControlConfigured: true });
+  });
+
+  it("marks runtime control as configured when sender is not approved for it", () => {
+    const decision = evaluateChannelAccess(
+      { allowAll: true, runtimeControlAllowedSenderIds: ["admin"] },
+      { platform: "slack", senderId: "user-2" }
+    );
+
+    expect(decision).toEqual({ allowed: true, runtimeControlApproved: false, runtimeControlConfigured: true });
   });
 
   it("routes conversation before sender and default", () => {

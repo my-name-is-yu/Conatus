@@ -228,7 +228,6 @@ describe("chat boundary contracts", () => {
         }),
       } as never,
       llmClient: createMockLLMClient([
-        JSON.stringify({ intent: "none", reason: "ordinary greeting" }),
         JSON.stringify({ kind: "execute", confidence: 0.93, rationale: "ordinary greeting" }),
         JSON.stringify({ intent: "restart_daemon", reason: "PulSeed を再起動して" }),
       ]),
@@ -249,6 +248,7 @@ describe("chat boundary contracts", () => {
       conversation_id: "telegram-chat-1",
       user_id: "user-1",
       cwd: workspaceDir,
+      metadata: { runtime_control_approved: true },
     });
 
     expect(runtimeControlService.request).toHaveBeenCalledOnce();

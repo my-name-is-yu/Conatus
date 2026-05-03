@@ -128,6 +128,7 @@ export class WsChannelAdapter implements ChannelAdapter {
     (envelope as Record<string, unknown>)["metadata"] = {
       ...route.metadata,
       ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+      ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
     };
 
     const reply: ReplyChannel = {

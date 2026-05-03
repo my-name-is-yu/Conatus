@@ -562,7 +562,8 @@ describe("ChatRunner", () => {
       expect(config.bot_token).toBe(telegramToken);
       expect(config.allow_all).toBe(false);
       expect(confirmResult.output).toContain("runtime control is unavailable");
-      expect(confirmResult.output).toContain("pulseed daemon restart");
+      expect(confirmResult.output).toContain("typed runtime-control");
+      expect(confirmResult.output).not.toContain("pulseed daemon restart");
       expect(confirmResult.output).toContain("Access remains closed");
       fs.rmSync(baseDir, { recursive: true, force: true });
     });
@@ -617,7 +618,7 @@ describe("ChatRunner", () => {
       fs.rmSync(baseDir, { recursive: true, force: true });
     });
 
-    it("reports refresh failure with a manual fallback after Telegram config write", async () => {
+    it("reports refresh failure without shell lifecycle fallback after Telegram config write", async () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-refresh-fail-"));
       const stateManager = {
@@ -649,8 +650,9 @@ describe("ChatRunner", () => {
 
       expect(confirmResult.success).toBe(true);
       expect(confirmResult.output).toContain("PulSeed attempted an internal gateway refresh, but it failed");
-      expect(confirmResult.output).toContain("pulseed daemon restart");
-      expect(confirmResult.output).toContain("pulseed daemon status");
+      expect(confirmResult.output).toContain("typed runtime-control");
+      expect(confirmResult.output).not.toContain("pulseed daemon restart");
+      expect(confirmResult.output).not.toContain("pulseed daemon status");
       expect(runtimeControlService.request).toHaveBeenCalledOnce();
       fs.rmSync(baseDir, { recursive: true, force: true });
     });

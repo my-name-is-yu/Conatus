@@ -93,6 +93,19 @@ export async function executeRuntimeControlRoute(
   };
 }
 
+export function formatBlockedRuntimeControlRoute(route: Extract<SelectedChatRoute, { kind: "runtime_control_blocked" }>): string {
+  if (route.reason === "runtime_control_disallowed") {
+    return [
+      `Runtime control ${route.intent.kind} was recognized, but this chat surface is not authorized for runtime-control lifecycle actions.`,
+      "The operation was not executed, and PulSeed will not fall back to shell tools for daemon or gateway lifecycle control.",
+    ].join("\n");
+  }
+  return [
+    `Runtime control ${route.intent.kind} was recognized, but the runtime-control service is not available in this chat surface.`,
+    "The operation was not executed, and PulSeed will not fall back to shell tools for daemon or gateway lifecycle control.",
+  ].join("\n");
+}
+
 export async function executeConfigureRoute(
   host: ChatRunnerRouteHost,
   route: SelectedChatRoute,

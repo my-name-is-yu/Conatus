@@ -32,6 +32,7 @@ export interface ChannelAccessDecision {
   allowed: boolean;
   reason?: "sender_denied" | "sender_not_allowed" | "conversation_denied" | "conversation_not_allowed";
   runtimeControlApproved: boolean;
+  runtimeControlConfigured: boolean;
 }
 
 export interface ChannelRouteDecision {
@@ -59,7 +60,7 @@ export function evaluateChannelAccess(
 ): ChannelAccessDecision {
   const denySenders = policy?.deniedSenderIds;
   if (includes(denySenders, context.senderId)) {
-    return { allowed: false, reason: "sender_denied", runtimeControlApproved: false };
+    return { allowed: false, reason: "sender_denied", runtimeControlApproved: false, runtimeControlConfigured: false };
   }
 
   const denyConversations = policy?.deniedConversationIds;
@@ -67,13 +68,13 @@ export function evaluateChannelAccess(
     includes(denyConversations, context.conversationId) ||
     includes(denyConversations, context.channelId)
   ) {
-    return { allowed: false, reason: "conversation_denied", runtimeControlApproved: false };
+    return { allowed: false, reason: "conversation_denied", runtimeControlApproved: false, runtimeControlConfigured: false };
   }
 
   const allowAll = policy?.allowAll ?? false;
   const allowSenders = policy?.allowedSenderIds;
   if (!allowAll && isRestrictedByAllowlist(allowSenders) && !includes(allowSenders, context.senderId)) {
-    return { allowed: false, reason: "sender_not_allowed", runtimeControlApproved: false };
+    return { allowed: false, reason: "sender_not_allowed", runtimeControlApproved: false, runtimeControlConfigured: false };
   }
 
   const allowConversations = policy?.allowedConversationIds;
@@ -82,12 +83,14 @@ export function evaluateChannelAccess(
     !includes(allowConversations, context.conversationId) &&
     !includes(allowConversations, context.channelId)
   ) {
-    return { allowed: false, reason: "conversation_not_allowed", runtimeControlApproved: false };
+    return { allowed: false, reason: "conversation_not_allowed", runtimeControlApproved: false, runtimeControlConfigured: false };
   }
+  const runtimeControlConfigured = isRestrictedByAllowlist(policy?.runtimeControlAllowedSenderIds);
 
   return {
     allowed: true,
     runtimeControlApproved: includes(policy?.runtimeControlAllowedSenderIds, context.senderId),
+    runtimeControlConfigured,
   };
 }
 

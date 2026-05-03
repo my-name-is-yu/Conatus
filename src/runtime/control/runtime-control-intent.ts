@@ -83,8 +83,12 @@ export async function recognizeRuntimeControlIntent(
       model_tier: "light",
     }
   );
-  const decision = llmClient.parseJSON(response.content, RuntimeControlIntentDecisionSchema);
-  return toRuntimeControlIntent(trimmed, decision);
+  try {
+    const decision = llmClient.parseJSON(response.content, RuntimeControlIntentDecisionSchema);
+    return toRuntimeControlIntent(trimmed, decision);
+  } catch {
+    return null;
+  }
 }
 
 function toRuntimeControlIntent(

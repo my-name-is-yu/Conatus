@@ -83,6 +83,7 @@ describe("CrossPlatformChatSessionManager", () => {
       conversation_id: "telegram-chat-1",
       user_id: "user-1",
       cwd: "/repo",
+      metadata: { runtime_control_approved: true },
     });
 
     expect(result.success).toBe(true);
@@ -311,6 +312,7 @@ describe("CrossPlatformChatSessionManager", () => {
       conversation_id: "telegram-chat-1",
       user_id: "user-1",
       cwd: "/repo",
+      metadata: { runtime_control_approved: true },
     });
 
     expect(result.success).toBe(true);
@@ -342,6 +344,187 @@ describe("CrossPlatformChatSessionManager", () => {
       identity_key: "owner",
       user_id: "user-1",
     });
+  });
+
+  it("fails closed for natural-language daemon restart when runtime control is unavailable", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "agent loop should not run shell fallback",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      llmClient: createMockLLMClient([
+        JSON.stringify({
+          intent: "restart_daemon",
+          reason: "PulSeed を再起動して",
+        }),
+      ]),
+    }));
+
+    const result = await manager.execute("PulSeed を再起動して", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "interactive",
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("runtime-control service is not available");
+    expect(result.output).toContain("operation was not executed");
+    expect(result.output).toContain("will not fall back to shell tools");
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for default local daemon restart when runtime control is unavailable", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "agent loop should not run shell fallback",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      llmClient: createMockLLMClient([
+        JSON.stringify({
+          intent: "restart_daemon",
+          reason: "PulSeed を再起動して",
+        }),
+      ]),
+    }));
+
+    const result = await manager.execute("PulSeed を再起動して", {
+      identity_key: "local",
+      cwd: "/repo",
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "interactive",
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("runtime-control service is not available");
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("does not preempt ordinary disallowed gateway setup when runtime-control service is wired", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const runtimeControlService = {
+      request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "runtime control should not run",
+      }),
+    };
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "agent loop should not run",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      llmClient: createMockLLMClient([
+        JSON.stringify({ kind: "configure", confidence: 0.9, configure_target: "telegram_gateway", rationale: "setup request" }),
+      ]),
+      runtimeControlService,
+    }));
+
+    const result = await manager.execute("Telegram bot setup help", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      metadata: { runtime_control_denied: true },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("@BotFather");
+    expect(runtimeControlService.request).not.toHaveBeenCalled();
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for unauthorized gateway daemon restart instead of using agent-loop shell fallback", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "agent loop should not run shell fallback",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const runtimeControlService = {
+      request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "runtime control should not run",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      llmClient: createMockLLMClient([
+        "not a freeform route decision",
+        JSON.stringify({
+          intent: "restart_daemon",
+          reason: "PulSeed を再起動して",
+        }),
+      ]),
+      runtimeControlService,
+    }));
+
+    const result = await manager.execute("PulSeed を再起動して", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      metadata: { runtime_control_denied: true },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("not authorized for runtime-control lifecycle actions");
+    expect(result.output).toContain("operation was not executed");
+    expect(result.output).toContain("will not fall back to shell tools");
+    expect(runtimeControlService.request).not.toHaveBeenCalled();
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
   });
 
   it("routes gateway natural-language run pause to runtime control with current reply target", async () => {

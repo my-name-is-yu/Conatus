@@ -199,6 +199,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
         timestamp: message.timestamp,
         ...(route.goalId ? { goal_id: route.goalId } : {}),
         ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+        ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
       },
     });
 
