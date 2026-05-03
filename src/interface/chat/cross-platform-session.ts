@@ -43,8 +43,11 @@ import {
   RuntimeControlService,
   createDaemonRuntimeControlExecutor,
 } from "../../runtime/control/index.js";
+import { ApprovalBroker } from "../../runtime/approval-broker.js";
+import { ApprovalStore, createRuntimeStorePaths } from "../../runtime/store/index.js";
 import { registerGlobalCrossPlatformChatSessionManager } from "./cross-platform-session-global.js";
 import type { RuntimeControlActor } from "../../runtime/store/runtime-operation-schemas.js";
+import type { ApprovalOrigin } from "../../runtime/store/runtime-schemas.js";
 
 export interface CrossPlatformChatSessionOptions {
   /**
@@ -102,6 +105,10 @@ export interface CrossPlatformIncomingChatMessage {
   replyTarget?: Partial<ChatIngressReplyTarget>;
   runtimeControl?: Partial<ChatIngressRuntimeControl>;
   metadata?: Record<string, unknown>;
+  approvalResponse?: {
+    approval_id: string;
+    approved: boolean;
+  };
   onEvent?: ChatEventHandler;
 }
 
@@ -303,6 +310,7 @@ function safeInvoke(handler: ChatEventHandler | undefined, event: ChatEvent): vo
 
 export class CrossPlatformChatSessionManager {
   private readonly sessions = new Map<string, ManagedChatSession>();
+  private readonly activeApprovalEventHandlers = new Map<string, ChatEventHandler>();
   private readonly ingressRouter = createIngressRouter();
 
   constructor(private readonly deps: ChatRunnerDeps) {}
@@ -342,7 +350,11 @@ export class CrossPlatformChatSessionManager {
   }
 
   async processIncomingMessage(input: CrossPlatformIncomingChatMessage): Promise<string> {
-    const result = await this.executeIngress(this.createIngressMessage(input), input);
+    const ingress = this.createIngressMessage(input);
+    if (input.approvalResponse) {
+      return this.resolveConversationalApprovalIngress(ingress, input.approvalResponse);
+    }
+    const result = await this.executeIngress(ingress, input);
     return result.output;
   }
 
@@ -375,6 +387,28 @@ export class CrossPlatformChatSessionManager {
     const queueEntry = session.queue.then(() => this.executeInSession(session, ingress, options));
     session.queue = queueEntry.then(() => undefined, () => undefined);
     return queueEntry;
+  }
+
+  private async resolveConversationalApprovalIngress(
+    ingress: CrossPlatformIngressMessage,
+    response: { approval_id: string; approved: boolean }
+  ): Promise<string> {
+    const broker = this.deps.approvalBroker;
+    if (!broker) {
+      return "Approval response could not be recorded because approval handling is unavailable.";
+    }
+    const origin = createApprovalOriginFromIngress(ingress);
+    if (!origin) {
+      return "Approval response could not be recorded because the conversation origin is incomplete.";
+    }
+    const resolved = await broker.resolveConversationalApproval(
+      response.approval_id,
+      response.approved,
+      origin
+    );
+    return resolved
+      ? "Approval response recorded."
+      : "Approval response did not match an active approval for this conversation.";
   }
 
   handleIncomingMessage(input: CrossPlatformIncomingChatMessage): Promise<string> {
@@ -474,9 +508,6 @@ export class CrossPlatformChatSessionManager {
     }
 
     const cwd = resolveGitRoot(cwdOverride?.trim() || process.cwd());
-    const runner = new ChatRunner(this.deps);
-    runner.startSession(cwd);
-
     const now = new Date().toISOString();
     const info: CrossPlatformChatSessionInfo = {
       session_key: sessionKey,
@@ -489,6 +520,13 @@ export class CrossPlatformChatSessionManager {
       last_used_at: now,
       metadata: {},
     };
+    const approvalFn = this.createApprovalFn(info);
+    const runner = new ChatRunner({
+      ...this.deps,
+      approvalFn: approvalFn ?? this.deps.approvalFn,
+      runtimeControlApprovalFn: approvalFn ?? this.deps.runtimeControlApprovalFn,
+    });
+    runner.startSession(cwd);
 
     const created: ManagedChatSession = {
       runner,
@@ -498,6 +536,55 @@ export class CrossPlatformChatSessionManager {
     };
     this.sessions.set(sessionKey, created);
     return created;
+  }
+
+  private createApprovalFn(info: CrossPlatformChatSessionInfo): ((description: string) => Promise<boolean>) | null {
+    const broker = this.deps.approvalBroker;
+    if (!broker) {
+      return null;
+    }
+    return async (description: string) => {
+      const origin = createApprovalOriginFromSessionInfo(info);
+      if (!origin) {
+        return false;
+      }
+      const goalId = typeof info.metadata.goal_id === "string" && info.metadata.goal_id.trim()
+        ? info.metadata.goal_id.trim()
+        : "chat";
+      return broker.requestConversationalApproval(goalId, {
+        id: info.last_message_id ?? info.session_key,
+        description,
+        action: "chat_approval",
+      }, {
+        origin,
+        deliverConversationalApproval: async ({ prompt }) => {
+          const handler = this.activeApprovalEventHandlers.get(info.session_key);
+          if (!handler) {
+            return {
+              delivered: false,
+              reason: "originating_conversation_unreachable",
+            };
+          }
+          try {
+            await handler({
+              type: "activity",
+              kind: "checkpoint",
+              message: prompt,
+              sourceId: `approval:${info.last_message_id ?? info.session_key}`,
+              runId: info.session_key,
+              turnId: info.last_message_id ?? info.session_key,
+              createdAt: new Date().toISOString(),
+            });
+            return { delivered: true };
+          } catch (err) {
+            return {
+              delivered: false,
+              reason: err instanceof Error ? err.message : "originating_conversation_unreachable",
+            };
+          }
+        },
+      });
+    };
   }
 
   private async executeInSession(
@@ -555,6 +642,7 @@ export class CrossPlatformChatSessionManager {
     const previousOnEvent = session.runner.onEvent;
     if (options.onEvent) {
       const handler = options.onEvent;
+      this.activeApprovalEventHandlers.set(session.info.session_key, handler);
       const upstream = this.deps.onEvent;
       session.runner.onEvent = (event: ChatEvent) => {
         safeInvoke(handler, event);
@@ -563,6 +651,7 @@ export class CrossPlatformChatSessionManager {
         }
       };
     } else {
+      this.activeApprovalEventHandlers.delete(session.info.session_key);
       session.runner.onEvent = undefined;
     }
 
@@ -574,9 +663,76 @@ export class CrossPlatformChatSessionManager {
         selectedRoute
       );
     } finally {
+      this.activeApprovalEventHandlers.delete(session.info.session_key);
       session.runner.onEvent = previousOnEvent;
     }
   }
+}
+
+export function createApprovalOriginFromSessionInfo(
+  info: CrossPlatformChatSessionInfo
+): ApprovalOrigin | null {
+  const replyTarget = info.active_reply_target;
+  const channel = normalizeIdentity(
+    replyTarget?.platform
+    ?? replyTarget?.channel
+    ?? replyTarget?.surface
+    ?? info.platform
+  );
+  const conversationId = normalizeIdentity(
+    replyTarget?.conversation_id
+    ?? info.conversation_id
+    ?? info.identity_key
+    ?? info.session_key
+  );
+  if (!channel || !conversationId) {
+    return null;
+  }
+  const userId = normalizeIdentity(replyTarget?.user_id ?? info.user_id) ?? undefined;
+  const turnId = normalizeIdentity(replyTarget?.message_id ?? info.last_message_id) ?? undefined;
+  return {
+    channel,
+    conversation_id: conversationId,
+    ...(userId ? { user_id: userId } : {}),
+    session_id: info.session_key,
+    ...(turnId ? { turn_id: turnId } : {}),
+    reply_target: {
+      ...replyTarget,
+      metadata: replyTarget?.metadata ? { ...replyTarget.metadata } : undefined,
+    },
+  };
+}
+
+function createApprovalOriginFromIngress(
+  ingress: CrossPlatformIngressMessage
+): ApprovalOrigin | null {
+  const channel = normalizeIdentity(
+    ingress.replyTarget.platform
+    ?? ingress.replyTarget.channel
+    ?? ingress.replyTarget.surface
+    ?? ingress.platform
+  );
+  const conversationId = normalizeIdentity(
+    ingress.replyTarget.conversation_id
+    ?? ingress.conversation_id
+    ?? ingress.identity_key
+  );
+  const userId = normalizeIdentity(ingress.replyTarget.user_id ?? ingress.user_id) ?? undefined;
+  const turnId = normalizeIdentity(ingress.replyTarget.message_id ?? ingress.message_id) ?? undefined;
+  if (!channel || !conversationId || !userId || !turnId) {
+    return null;
+  }
+  return {
+    channel,
+    conversation_id: conversationId,
+    user_id: userId,
+    session_id: buildSessionKeyFromParts(ingress),
+    turn_id: turnId,
+    reply_target: {
+      ...ingress.replyTarget,
+      metadata: cloneMetadata(ingress.replyTarget.metadata),
+    },
+  };
 }
 
 let globalManagerPromise: Promise<CrossPlatformChatSessionManager> | null = null;
@@ -673,6 +829,11 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
       })
     : undefined;
 
+  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const approvalBroker = new ApprovalBroker({
+    store: new ApprovalStore(createRuntimeStorePaths(runtimeRoot)),
+  });
+
   return new CrossPlatformChatSessionManager({
     stateManager,
     adapter,
@@ -681,8 +842,9 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     toolExecutor,
     chatAgentLoopRunner,
     reviewAgentLoopRunner,
+    approvalBroker,
     runtimeControlService: new RuntimeControlService({
-      runtimeRoot: path.join(stateManager.getBaseDir(), "runtime"),
+      runtimeRoot,
       stateManager,
       executor: createDaemonRuntimeControlExecutor({
         baseDir: stateManager.getBaseDir(),

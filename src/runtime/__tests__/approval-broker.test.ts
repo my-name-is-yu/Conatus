@@ -190,4 +190,244 @@ describe("ApprovalBroker", () => {
     expect(resolved.state).toBe("denied");
     expect(resolved.response_channel).toBe("http");
   });
+
+  it("routes conversational approvals to the originating channel with structured context", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const delivered = vi.fn(async () => ({ delivered: true }));
+    const broadcast = vi.fn();
+    const origin = {
+      channel: "slack",
+      conversation_id: "thread-1",
+      user_id: "user-1",
+      session_id: "session-1",
+      turn_id: "turn-1",
+      reply_target: { channel: "C1", thread_ts: "1700.1" },
+    };
+    const broker = new ApprovalBroker({
+      store,
+      broadcast,
+      deliverConversationalApproval: delivered,
+      createId: () => "approval-conversation",
+    });
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "task-3",
+      description: "Deploy production changes",
+      action: "deploy",
+    }, {
+      origin,
+    });
+
+    await waitForBroadcast(broadcast, "approval_required", "approval-conversation");
+    expect(delivered).toHaveBeenCalledWith({
+      record: expect.objectContaining({
+        approval_id: "approval-conversation",
+        origin,
+        payload: {
+          task: {
+            id: "task-3",
+            description: "Deploy production changes",
+            action: "deploy",
+          },
+        },
+      }),
+      origin,
+      prompt: expect.stringContaining("Deploy production changes"),
+    });
+    expect(broadcast).toHaveBeenCalledWith(
+      "approval_required",
+      expect.objectContaining({
+        requestId: "approval-conversation",
+        origin,
+        prompt: expect.stringContaining("Approval ID: approval-conversation"),
+      })
+    );
+
+    await expect(broker.resolveConversationalApproval("approval-conversation", true, origin)).resolves.toBe(true);
+    await expect(request).resolves.toBe(true);
+    const resolved = await store.loadResolved("approval-conversation");
+    expect(resolved).toMatchObject({
+      state: "approved",
+      response_channel: "slack",
+      origin,
+    });
+  });
+
+  it("does not resolve conversational approvals from stale or mismatched origins", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const origin = {
+      channel: "telegram",
+      conversation_id: "chat-1",
+      user_id: "user-1",
+      session_id: "session-current",
+      turn_id: "turn-current",
+    };
+    const broker = new ApprovalBroker({
+      store,
+      deliverConversationalApproval: async () => ({ delivered: true }),
+      createId: () => "approval-bound",
+    });
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "task-bound",
+      description: "Delete remote artifact",
+      action: "delete",
+    }, {
+      origin,
+    });
+    await waitForFile(createRuntimeStorePaths(tmpDir).approvalPendingPath("approval-bound"));
+
+    await expect(broker.resolveConversationalApproval("approval-bound", true, {
+      ...origin,
+      channel: "slack",
+    })).resolves.toBe(false);
+    await expect(broker.resolveConversationalApproval("approval-bound", true, {
+      ...origin,
+      user_id: "user-2",
+    })).resolves.toBe(false);
+    await expect(broker.resolveConversationalApproval("approval-bound", true, {
+      ...origin,
+      turn_id: "turn-previous",
+    })).resolves.toBe(false);
+    expect(await store.loadPending("approval-bound")).toMatchObject({ state: "pending", origin });
+
+    await expect(broker.resolveConversationalApproval("approval-bound", false, origin)).resolves.toBe(true);
+    await expect(request).resolves.toBe(false);
+  });
+
+  it("does not resolve conversational approvals when binding metadata is incomplete", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const broker = new ApprovalBroker({
+      store,
+      deliverConversationalApproval: async () => ({ delivered: true }),
+      createId: () => "approval-incomplete-origin",
+    });
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "task-incomplete-origin",
+      description: "Restart daemon",
+      action: "restart",
+    }, {
+      origin: {
+        channel: "slack",
+        conversation_id: "thread-1",
+      },
+    });
+    await waitForFile(createRuntimeStorePaths(tmpDir).approvalPendingPath("approval-incomplete-origin"));
+
+    await expect(broker.resolveConversationalApproval("approval-incomplete-origin", true, {
+      channel: "slack",
+      conversation_id: "thread-1",
+      user_id: "user-1",
+      session_id: "session-1",
+      turn_id: "turn-1",
+    })).resolves.toBe(false);
+    expect(await store.loadPending("approval-incomplete-origin")).toMatchObject({
+      state: "pending",
+      origin: {
+        channel: "slack",
+        conversation_id: "thread-1",
+      },
+    });
+
+    await expect(broker.resolveApproval("approval-incomplete-origin", false, "system")).resolves.toBe(false);
+    await broker.stop();
+    void request.catch(() => undefined);
+  });
+
+  it("does not let generic approval channels resolve origin-bound approvals", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const origin = {
+      channel: "slack",
+      conversation_id: "thread-1",
+      user_id: "user-1",
+      session_id: "session-1",
+      turn_id: "turn-1",
+    };
+    const broker = new ApprovalBroker({
+      store,
+      deliverConversationalApproval: async () => ({ delivered: true }),
+      createId: () => "approval-origin-only",
+    });
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "task-origin-only",
+      description: "Deploy production changes",
+      action: "deploy",
+    }, {
+      origin,
+    });
+    await waitForFile(createRuntimeStorePaths(tmpDir).approvalPendingPath("approval-origin-only"));
+
+    await expect(broker.resolveApproval("approval-origin-only", true, "http")).resolves.toBe(false);
+    expect(await store.loadPending("approval-origin-only")).toMatchObject({ state: "pending", origin });
+
+    await expect(broker.resolveConversationalApproval("approval-origin-only", false, origin)).resolves.toBe(true);
+    await expect(request).resolves.toBe(false);
+  });
+
+  it("denies conversational approvals when the originating channel is unreachable", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const broker = new ApprovalBroker({
+      store,
+      deliverConversationalApproval: async () => ({
+        delivered: false,
+        reason: "channel_unreachable",
+      }),
+      createId: () => "approval-undelivered",
+    });
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "task-undelivered",
+      description: "Publish external report",
+      action: "publish",
+    }, {
+      origin: {
+        channel: "discord",
+        conversation_id: "thread-1",
+        user_id: "user-1",
+      },
+    });
+
+    await expect(request).resolves.toBe(false);
+    const resolved = await store.loadResolved("approval-undelivered");
+    expect(resolved).toMatchObject({
+      state: "denied",
+      response_channel: "discord",
+    });
+  });
+
+  it("denies conversational approvals when no delivery surface is configured", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const broker = new ApprovalBroker({
+      store,
+      createId: () => "approval-no-delivery",
+    });
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "task-no-delivery",
+      description: "Rotate production secret",
+      action: "rotate_secret",
+    }, {
+      origin: {
+        channel: "slack",
+        conversation_id: "thread-1",
+        user_id: "user-1",
+        session_id: "session-1",
+        turn_id: "turn-1",
+      },
+    });
+
+    await expect(request).resolves.toBe(false);
+    expect(await store.loadResolved("approval-no-delivery")).toMatchObject({
+      state: "denied",
+      response_channel: "slack",
+    });
+  });
 });

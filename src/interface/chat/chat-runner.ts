@@ -30,6 +30,7 @@ import type { ChatEvent } from "./chat-events.js";
 import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
+import type { ApprovalBroker } from "../../runtime/approval-broker.js";
 import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
 import { classifyConfirmationDecision } from "../../runtime/confirmation-decision.js";
 import type {
@@ -105,6 +106,7 @@ export interface ChatRunnerDeps {
   chatAgentLoopRunner?: ChatAgentLoopRunner;
   reviewAgentLoopRunner?: Pick<ReviewAgentLoopRunner, "execute">;
   runtimeControlService?: Pick<RuntimeControlService, "request">;
+  approvalBroker?: Pick<ApprovalBroker, "requestConversationalApproval" | "resolveConversationalApproval">;
   runtimeControlApprovalFn?: (description: string) => Promise<boolean>;
   runtimeReplyTarget?: RuntimeControlReplyTarget;
   runtimeControlActor?: RuntimeControlActor;

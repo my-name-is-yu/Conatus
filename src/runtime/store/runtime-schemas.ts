@@ -100,6 +100,16 @@ export type GoalLeaseRecord = z.infer<typeof GoalLeaseRecordSchema>;
 export const ApprovalStateSchema = z.enum(["pending", "approved", "denied", "expired", "cancelled"]);
 export type ApprovalState = z.infer<typeof ApprovalStateSchema>;
 
+export const ApprovalOriginSchema = z.object({
+  channel: z.string().min(1),
+  conversation_id: z.string().min(1),
+  user_id: z.string().min(1).optional(),
+  session_id: z.string().min(1).optional(),
+  turn_id: z.string().min(1).optional(),
+  reply_target: z.unknown().optional(),
+});
+export type ApprovalOrigin = z.infer<typeof ApprovalOriginSchema>;
+
 export const ApprovalRecordSchema = z.object({
   approval_id: z.string(),
   goal_id: z.string().optional(),
@@ -110,6 +120,7 @@ export const ApprovalRecordSchema = z.object({
   expires_at: z.number().int().nonnegative(),
   resolved_at: z.number().int().nonnegative().optional(),
   response_channel: z.string().optional(),
+  origin: ApprovalOriginSchema.optional(),
   payload: z.unknown(),
 });
 export type ApprovalRecord = z.infer<typeof ApprovalRecordSchema>;
