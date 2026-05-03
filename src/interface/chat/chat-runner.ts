@@ -7,6 +7,8 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { IAdapter } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
+import { getGatewayChannelDir } from "../../base/utils/paths.js";
+import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import { getSelfIdentityResponseForBaseDir } from "../../base/config/identity-loader.js";
 import { ChatHistory, type ChatSession } from "./chat-history.js";
 import {
@@ -22,6 +24,7 @@ import type { ApprovalLevel } from "./mutation-tool-defs.js";
 import type { ToolRegistry } from "../../tools/registry.js";
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
+import type { GatewaySetupStatusProvider } from "./gateway-setup-status.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { ChatEvent } from "./chat-events.js";
 import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
@@ -47,6 +50,7 @@ import {
 } from "./chat-runner-commands.js";
 import { ChatRunnerEventBridge, type AssistantBuffer } from "./chat-runner-event-bridge.js";
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
+import type { TelegramGatewayConfig } from "../../runtime/gateway/telegram-gateway-adapter.js";
 import {
   buildRuntimeControlContextFromIngress,
   buildStandaloneIngressMessageFromContext,
@@ -92,6 +96,7 @@ export interface ChatRunnerDeps {
   runtimeControlApprovalFn?: (description: string) => Promise<boolean>;
   runtimeReplyTarget?: RuntimeControlReplyTarget;
   runtimeControlActor?: RuntimeControlActor;
+  gatewaySetupStatusProvider?: GatewaySetupStatusProvider;
 }
 
 export interface ChatRunResult {
@@ -163,6 +168,7 @@ export class ChatRunner {
   private sessionExecutionPolicy: ExecutionPolicy | null = null;
   private lastSelectedRoute: SelectedChatRoute | null = null;
   private setupSecretIntake: ReturnType<typeof intakeSetupSecrets> | null = null;
+  private pendingTelegramSetup: { token: string; createdAt: string } | null = null;
 
   constructor(private readonly deps: ChatRunnerDeps) {
     this.groundingGateway = createChatGroundingGateway({
@@ -338,6 +344,11 @@ export class ChatRunner {
     const persistedSecretIntake = setupSecretIntake.suppliedSecrets.map(({ value: _value, ...metadata }) => metadata);
     const runtimeControlContext = options.runtimeControlContext ?? this.runtimeControlContext;
     const executionGoalId = options.goalId ?? this.deps.goalId;
+
+    const pendingTelegramSetupResult = await this.handlePendingTelegramSetupConfirmation(safeInput, runtimeControlContext);
+    if (pendingTelegramSetupResult !== null) {
+      return this.finalizeNonPersistentResult(pendingTelegramSetupResult, eventContext);
+    }
 
     const commandResult = resumeOnly ? null : await this.commandHandler.handleCommand(safeInput, resolvedCwd);
     if (commandResult !== null) {
@@ -690,7 +701,11 @@ export class ChatRunner {
       getConversationSessionId: () => this.history?.getSessionId() ?? null,
       getSessionCwd: () => this.sessionCwd,
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
+      getProviderConfigBaseDir: () => this.providerConfigBaseDir(),
       getSetupSecretIntake: () => this.setupSecretIntake,
+      setPendingTelegramSetup: (token: string) => {
+        this.pendingTelegramSetup = { token, createdAt: new Date().toISOString() };
+      },
       getSessionExecutionPolicy: () => this.getSessionExecutionPolicy(),
       setSessionExecutionPolicy: (policy: ExecutionPolicy) => { this.sessionExecutionPolicy = policy; },
     };
@@ -699,6 +714,87 @@ export class ChatRunner {
   private providerConfigBaseDir(): string {
     const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
     return typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
+  }
+
+  private async handlePendingTelegramSetupConfirmation(
+    input: string,
+    runtimeControlContext: RuntimeControlChatContext | null
+  ): Promise<ChatRunResult | null> {
+    if (input.trim() !== "/confirm-telegram-setup") return null;
+    const pending = this.pendingTelegramSetup;
+    if (!pending) {
+      return {
+        success: false,
+        output: "No pending Telegram setup token is available. Paste the token again to start a protected setup turn.",
+        elapsed_ms: 0,
+      };
+    }
+    const approvalFn = runtimeControlContext
+      ? runtimeControlContext.approvalFn
+      : this.deps.runtimeControlApprovalFn ?? this.deps.approvalFn;
+    if (!approvalFn) {
+      return {
+        success: false,
+        output: "Telegram setup requires an approval-capable chat surface before writing config. Use `pulseed telegram setup` instead.",
+        elapsed_ms: 0,
+      };
+    }
+    const baseDir = this.providerConfigBaseDir();
+    const configDir = getGatewayChannelDir("telegram-bot", baseDir);
+    const configPath = `${configDir}/config.json`;
+    const current = await readJsonFileOrNull<Partial<TelegramGatewayConfig>>(configPath);
+    const nextAllowAll = typeof current?.allow_all === "boolean" ? current.allow_all : false;
+    const nextAllowedUserIds = Array.isArray(current?.allowed_user_ids) ? current.allowed_user_ids : [];
+    const nextRuntimeControlAllowedUserIds = Array.isArray(current?.runtime_control_allowed_user_ids)
+      ? current.runtime_control_allowed_user_ids
+      : [];
+    const accessClosedByDefault = !nextAllowAll && nextAllowedUserIds.length === 0 && nextRuntimeControlAllowedUserIds.length === 0;
+    const approved = await approvalFn([
+      "Write Telegram gateway config from the redacted chat-supplied bot token.",
+      accessClosedByDefault
+        ? "Access will remain closed by default with allow_all=false until allowed Telegram user IDs are configured."
+        : "Existing Telegram access policy will be preserved.",
+    ].join(" "));
+    if (!approved) {
+      this.pendingTelegramSetup = null;
+      return {
+        success: false,
+        output: "Telegram setup was not changed because approval was denied.",
+        elapsed_ms: 0,
+      };
+    }
+    const nextConfig: TelegramGatewayConfig = {
+      bot_token: pending.token,
+      ...(typeof current?.chat_id === "number" ? { chat_id: current.chat_id } : {}),
+      allowed_user_ids: nextAllowedUserIds,
+      denied_user_ids: Array.isArray(current?.denied_user_ids) ? current.denied_user_ids : [],
+      allowed_chat_ids: Array.isArray(current?.allowed_chat_ids) ? current.allowed_chat_ids : [],
+      denied_chat_ids: Array.isArray(current?.denied_chat_ids) ? current.denied_chat_ids : [],
+      runtime_control_allowed_user_ids: nextRuntimeControlAllowedUserIds,
+      chat_goal_map: current?.chat_goal_map ?? {},
+      user_goal_map: current?.user_goal_map ?? {},
+      ...(current?.default_goal_id ? { default_goal_id: current.default_goal_id } : {}),
+      allow_all: nextAllowAll,
+      polling_timeout: current?.polling_timeout ?? 30,
+      ...(current?.identity_key ? { identity_key: current.identity_key } : {}),
+    };
+    await writeJsonFileAtomic(configPath, nextConfig);
+    this.pendingTelegramSetup = null;
+    return {
+      success: true,
+      output: [
+        "Telegram gateway config was written from the redacted chat-supplied token.",
+        "",
+        "Next steps:",
+        "- Restart the daemon so the gateway loads the updated config.",
+        ...(accessClosedByDefault
+          ? ["- Access remains closed until you configure allowed Telegram user IDs or intentionally enable `allow_all` with `pulseed telegram setup`."]
+          : []),
+        "- Send `/sethome` from Telegram if no home chat is configured yet.",
+        "- Run `pulseed daemon status` to verify.",
+      ].join("\n"),
+      elapsed_ms: 0,
+    };
   }
 
   private finalizeNonPersistentResult(result: ChatRunResult, eventContext: Parameters<ChatRunnerEventBridge["eventBase"]>[0]): ChatRunResult {

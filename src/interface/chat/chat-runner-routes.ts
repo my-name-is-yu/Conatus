@@ -20,6 +20,7 @@ import type { AgentLoopSessionState } from "../../orchestrator/execution/agent-l
 import { resolveExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { AssistantBuffer, ChatRunnerEventBridge } from "./chat-runner-event-bridge.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
+import { createGatewaySetupStatusProvider, type TelegramSetupStatus } from "./gateway-setup-status.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -32,7 +33,9 @@ export interface ChatRunnerRouteHost {
   getConversationSessionId(): string | null;
   getSessionCwd(): string | null;
   getNativeAgentLoopStatePath(): string | null;
+  getProviderConfigBaseDir(): string;
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
+  setPendingTelegramSetup(token: string): void;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
   setSessionExecutionPolicy(policy: ExecutionPolicy): void;
 }
@@ -88,7 +91,7 @@ export async function executeConfigureRoute(
   if (route.kind !== "configure") {
     throw new Error(`executeConfigureRoute received route kind ${route.kind}`);
   }
-  const output = formatConfigureGuidance(route.intent.configure_target ?? "unknown", host.getSetupSecretIntake());
+  const output = await formatConfigureGuidance(host, route.intent.configure_target ?? "unknown", host.getSetupSecretIntake());
   return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
 }
 
@@ -622,28 +625,21 @@ async function persistDirectRouteResult(
   return { success: true, output, elapsed_ms };
 }
 
-function formatConfigureGuidance(
+async function formatConfigureGuidance(
+  host: ChatRunnerRouteHost,
   target: "telegram_gateway" | "gateway" | "provider" | "daemon" | "notification" | "slack" | "unknown",
   setupSecretIntake: SetupSecretIntakeResult | null = null,
-): string {
+): Promise<string> {
   const suppliedSecretKinds = setupSecretIntake?.suppliedSecrets.map((secret) => secret.kind) ?? [];
   if (target === "telegram_gateway") {
+    const provider = host.deps.gatewaySetupStatusProvider ?? createGatewaySetupStatusProvider();
+    const status = await provider.getTelegramStatus(host.getProviderConfigBaseDir());
     const suppliedTelegramToken = suppliedSecretKinds.includes("telegram_bot_token");
-    return [
-      "Telegram setup is a configuration flow, not a source-edit task.",
-      "",
-      "First-time setup:",
-      "1. Create or open a bot with @BotFather and copy the bot token.",
-      "2. Run `pulseed telegram setup`, then enter the token and allowed Telegram user IDs or home chat settings. You can leave the home chat blank and send `/sethome` later.",
-      "3. If you need to choose gateway channels, run `pulseed gateway setup` and select Telegram.",
-      "4. Start or restart PulSeed with `pulseed daemon start`.",
-      "5. Send a message to the Telegram bot.",
-      "6. Verify the daemon/gateway with `pulseed daemon status` and check logs if the message does not arrive.",
-      "",
-      suppliedTelegramToken
-        ? "I received a Telegram bot token in this turn and kept it redacted from chat history and activity. I can continue only after an explicit confirmation step."
-        : "The recommended path is the setup command. If you paste the token here, PulSeed will redact it from history and ask for confirmation before writing config.",
-    ].join("\n");
+    const telegramSecret = setupSecretIntake?.suppliedSecrets.find((secret) => secret.kind === "telegram_bot_token");
+    if (telegramSecret) {
+      host.setPendingTelegramSetup(telegramSecret.value);
+    }
+    return formatTelegramConfigureGuidance(status, suppliedTelegramToken, telegramSecret !== undefined);
   }
   if (target === "gateway") {
     return [
@@ -657,6 +653,81 @@ function formatConfigureGuidance(
     "",
     "Use `pulseed setup` for the main wizard, `pulseed gateway setup` for chat channels, or the channel-specific setup command when available.",
   ].join("\n");
+}
+
+function formatTelegramConfigureGuidance(
+  status: TelegramSetupStatus,
+  suppliedTelegramToken: boolean,
+  pendingActionCreated: boolean
+): string {
+  const lines = [
+    "Telegram gateway status",
+    "",
+    status.daemon.running
+      ? `- Daemon: running on port ${status.daemon.port}; gateway load state is not proven from chat status.`
+      : `- Daemon: not responding on port ${status.daemon.port}.`,
+  ];
+
+  if (status.state === "unconfigured") {
+    lines.push(
+      "- Telegram: not configured.",
+      "",
+      "Recommended command path:",
+      "```sh",
+      "pulseed telegram setup",
+      "pulseed gateway setup",
+      "pulseed daemon start",
+      "pulseed daemon status",
+      "```",
+      "",
+      "Create or open a bot with @BotFather, then enter the token in `pulseed telegram setup`."
+    );
+  } else if (status.state === "partially_configured") {
+    lines.push(
+      "- Telegram config: bot token is configured, but no home chat is set.",
+      "- Gateway loaded in daemon: unknown from chat status.",
+      "",
+      "Next step:",
+      "- Send `/sethome` to the Telegram bot from the chat that should receive PulSeed replies.",
+      "- Then run `pulseed daemon status` to verify the gateway."
+    );
+  } else {
+    lines.push(
+      "- Telegram config: configured.",
+      status.config.hasHomeChat
+        ? "- Home chat: configured."
+        : "- Home chat: not set; send `/sethome` if this bot should reply into a specific chat.",
+      "- Gateway loaded in daemon: unknown from chat status.",
+      "",
+      "Verification:",
+      "- Send a message to the Telegram bot.",
+      "- Run `pulseed daemon status` if delivery does not work.",
+      "- If this config was added or changed while the daemon was already running, restart the daemon so the gateway loads the updated config."
+    );
+  }
+
+  lines.push(
+    "",
+    suppliedTelegramToken
+      ? pendingActionCreated
+        ? "I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Reply `/confirm-telegram-setup` to request an approval-gated config write."
+        : "I received a Telegram bot token in this turn and kept it redacted from chat history and activity, but no setup action could be prepared."
+      : "If you prefer chat-assisted setup, paste the token here; PulSeed will redact it from history and prepare an approval-gated confirmation before writing config."
+  );
+
+  if (!status.daemon.running && status.state !== "unconfigured") {
+    lines.push(
+      "",
+      "The config will not take effect until the daemon is started or restarted."
+    );
+  } else if (status.daemon.running && status.state !== "unconfigured") {
+    lines.push(
+      "",
+      "If Telegram was configured or changed after this daemon started, restart the daemon so the gateway loads the latest config."
+    );
+  }
+
+  return lines.join("\n");
 }
 
 async function dispatchToolCall(
