@@ -1,0 +1,27 @@
+# Autonomous chat/setup UX status
+
+Updated: 2026-05-03
+
+## Initial refresh
+- Ran `git switch main && git pull --ff-only`: main was already up to date.
+- Ran `gh issue list --state open --limit 100`: #976, #975, #974 are open. New adjacent issues #970-#967 and #957/#956 exist, but current batch remains #976 -> #975 -> #974 unless they become blockers.
+
+## #976 language hint
+- Status: in progress.
+- Issue body read with `gh issue view 976`.
+- Plan: add a typed turn-level language hint at chat ingress, pass it through configure/direct route formatting, add same-language prompt guidance, and test Japanese/English direct configure through the production ChatRunner path without adding keyword/regex semantic routing.
+- Implemented typed `TurnLanguageHint` and routed it through ChatRunner direct configure/assist paths.
+- Added Japanese Telegram configure copy while preserving protocol tokens and commands.
+- Verification: `npx vitest run src/interface/chat/__tests__/turn-language.test.ts src/interface/chat/__tests__/chat-runner.test.ts -t "turn language hint|routes Japanese Telegram setup requests|routes English Telegram setup paraphrases"` passed.
+- Verification: `npm run typecheck` passed.
+- Verification: `npm run lint:boundaries` passed with existing warnings only (0 errors, 610 warnings).
+- Review agent reported two material #976 gaps: non-Telegram configure fallback copy ignored language hint, and activity events did not carry language hints.
+- Fixed both: direct configure fallbacks now render Japanese when hinted, and chat events carry `languageHint`; configure intent activity is localized for Japanese.
+- Re-verification: focused Vitest passed.
+- Re-verification: `npm run typecheck` passed.
+- Re-verification: `npm run test:changed` passed (21 files, 460 tests; 2 skipped).
+- Re-verification: `npm run lint:boundaries` passed with existing warnings only (0 errors, 610 warnings).
+- Re-review after fixes: no material findings.
+- PR #977 CI: `unit (22)` passed; `integration (24)` failed because `src/interface/tui/__tests__/app.test.ts` still expected the old English intent activity text.
+- Fixed the integration expectation to the localized Japanese activity text and verified `npx vitest run --config vitest.integration.config.ts src/interface/tui/__tests__/app.test.ts -t "routes Telegram setup freeform input"` passed.
+- Re-verification after CI fix: `npm run typecheck` passed.

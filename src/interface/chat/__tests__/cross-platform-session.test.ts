@@ -425,7 +425,7 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.output).toContain("pulseed daemon start");
     expect(result.output).toContain("pulseed daemon status");
     expect(result.output).toContain("Telegram gateway status");
-    expect(result.output).toContain("Telegram: not configured");
+    expect(result.output).toContain("Telegram: まだ設定されていません");
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });

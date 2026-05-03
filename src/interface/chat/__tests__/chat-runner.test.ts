@@ -418,11 +418,11 @@ describe("ChatRunner", () => {
 
       const result = await runner.execute("telegram繋げたい", "/repo");
 
-      expect(result.output).toContain("Daemon: running on port 41700; gateway load state is not proven");
-      expect(result.output).toContain("Telegram: not configured");
+      expect(result.output).toContain("Daemon: port 41700 で起動中です");
+      expect(result.output).toContain("Telegram: まだ設定されていません");
       expect(result.output).toContain("pulseed telegram setup");
       expect(result.output).toContain("pulseed gateway setup");
-      expect(result.output).toContain("If you prefer chat-assisted setup");
+      expect(result.output).toContain("chat-assisted setup を使う場合");
     });
 
     it("reports configured Telegram state and only points to verification when home chat exists", async () => {
@@ -446,11 +446,11 @@ describe("ChatRunner", () => {
 
       const result = await runner.execute("telegram繋げたい", "/repo");
 
-      expect(result.output).toContain("Telegram config: configured");
-      expect(result.output).toContain("Home chat: configured");
-      expect(result.output).toContain("Gateway loaded in daemon: unknown");
+      expect(result.output).toContain("Telegram config: 設定済みです");
+      expect(result.output).toContain("Home chat: 設定済みです");
+      expect(result.output).toContain("Gateway loaded in daemon: chat status からは未確認です");
       expect(result.output).toContain("Verification:");
-      expect(result.output).not.toContain("Send `/sethome`");
+      expect(result.output).not.toContain("`/sethome` を送ってください");
     });
 
     it("reports partially configured Telegram state and directs /sethome through the production configure route", async () => {
@@ -474,10 +474,10 @@ describe("ChatRunner", () => {
 
       const result = await runner.execute("telegram繋げたい", "/repo");
 
-      expect(result.output).toContain("Daemon: not responding on port 41700");
-      expect(result.output).toContain("bot token is configured, but no home chat is set");
-      expect(result.output).toContain("Send `/sethome`");
-      expect(result.output).toContain("The config will not take effect until the daemon is started or restarted");
+      expect(result.output).toContain("Daemon: port 41700 で応答していません");
+      expect(result.output).toContain("bot token は設定済みですが、home chat が未設定です");
+      expect(result.output).toContain("`/sethome` を送ってください");
+      expect(result.output).toContain("config は daemon を起動または再起動するまで反映されません");
     });
 
     it("keeps supplied setup secret facts available to the configure route without persisting raw assistant echoes", async () => {
@@ -3905,7 +3905,7 @@ describe("ChatRunner", () => {
       expect(result.output).toBe("Confirmed with tools");
     });
 
-    it("routes Japanese Telegram setup requests to guidance before agent-loop execution", async () => {
+    it("routes Japanese Telegram setup requests to Japanese guidance before agent-loop execution", async () => {
       const events: ChatEvent[] = [];
       const chatAgentLoopRunner = {
         execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
@@ -3924,21 +3924,22 @@ describe("ChatRunner", () => {
         onEvent: (event) => { events.push(event); },
       }));
 
-      const result = await runner.execute("telegramからseedyと会話できるようにしたい", "/repo");
+      const result = await runner.execute("telegram繋げたい", "/repo");
 
       expect(result.success).toBe(true);
       expect(result.output).toContain("Telegram gateway status");
-      expect(result.output).toContain("Telegram: not configured");
+      expect(result.output).toContain("Telegram: まだ設定されていません");
       expect(result.output).toContain("pulseed telegram setup");
       expect(result.output).toContain("pulseed gateway setup");
       expect(result.output).toContain("pulseed daemon start");
       expect(result.output).toContain("pulseed daemon status");
-      expect(result.output).toContain("If you prefer chat-assisted setup");
+      expect(result.output).toContain("chat-assisted setup を使う場合");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
       const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
         event.type === "activity" && event.sourceId === "intent:first-step"
       );
-      expect(intent?.message).toContain("prepare configuration guidance");
+      expect(intent?.message).toContain("設定ガイダンスを準備");
+      expect(intent?.languageHint).toMatchObject({ language: "ja" });
       expect(intent?.message).not.toContain("resume the saved agent loop state");
     });
 
