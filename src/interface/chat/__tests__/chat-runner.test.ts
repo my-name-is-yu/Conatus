@@ -4715,6 +4715,65 @@ describe("ChatRunner", () => {
       expect(stored.status).toBe("cancelled");
     });
 
+    it("does not reuse a previous goal or background run for a new natural-language request", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-fresh-run-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        daemonClient: daemonClient as never,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision({
+            objective: "Continue Kaggle optimization until score exceeds 0.98",
+          }),
+          runSpecConfirmationDecision("approve"),
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision({
+            objective: "Run a separate long-running benchmark until memory usage stays below target",
+            profile: "generic",
+            metric: {
+              name: "memory_usage",
+              direction: "minimize",
+              target: 512,
+              target_rank_percent: null,
+              datasource: "benchmark",
+              confidence: "high",
+            },
+            progress_contract: {
+              kind: "metric_target",
+              dimension: "memory_usage",
+              threshold: 512,
+              semantics: "Memory usage remains below target.",
+              confidence: "high",
+            },
+          }),
+          runSpecConfirmationDecision("approve"),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      await runner.execute("approve", "/repo/kaggle");
+      await runner.execute("Keep running the benchmark in the background until memory is below 512 MB", "/repo/bench");
+      await runner.execute("approve", "/repo/bench");
+
+      expect(daemonClient.startGoal).toHaveBeenCalledTimes(2);
+      const firstGoalId = daemonClient.startGoal.mock.calls[0][0];
+      const secondGoalId = daemonClient.startGoal.mock.calls[1][0];
+      const firstRunId = daemonClient.startGoal.mock.calls[0][1].backgroundRun.backgroundRunId;
+      const secondRunId = daemonClient.startGoal.mock.calls[1][1].backgroundRun.backgroundRunId;
+      expect(secondGoalId).not.toBe(firstGoalId);
+      expect(secondRunId).not.toBe(firstRunId);
+
+      const registry = createRuntimeSessionRegistry({ stateManager });
+      const snapshot = await registry.snapshot();
+      expect(snapshot.background_runs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: firstRunId, goal_id: firstGoalId, workspace: "/repo/kaggle" }),
+        expect.objectContaining({ id: secondRunId, goal_id: secondGoalId, workspace: "/repo/bench" }),
+      ]));
+    });
+
     it("preserves pending RunSpec confirmation across session reload before approval", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-reload-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
