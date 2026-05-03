@@ -14,6 +14,7 @@ import type { EscalationHandler, EscalationResult } from "../escalation.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import { RuntimeControlService } from "../../../runtime/control/index.js";
+import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-store.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
@@ -4468,11 +4469,11 @@ describe("ChatRunner", () => {
       });
     });
 
-    it("keeps a RunSpec pending until the next turn approves it", async () => {
+    it("starts a confirmed RunSpec only after next-turn approval", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-confirm-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
       const adapter = makeMockAdapter();
-      const daemonClient = { startGoal: vi.fn() };
+      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
       const runner = new ChatRunner(makeDeps({
         stateManager,
         adapter,
@@ -4486,17 +4487,78 @@ describe("ChatRunner", () => {
       }));
 
       const draftResult = await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      expect(draftResult.success).toBe(true);
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
       const approveResult = await runner.execute("承認します", "/repo/kaggle");
 
-      expect(draftResult.success).toBe(true);
       expect(approveResult.success).toBe(true);
       expect(approveResult.output).toContain("RunSpec confirmed:");
-      expect(approveResult.output).toContain("no background run has been started yet");
+      expect(approveResult.output).toContain("Started daemon-backed CoreLoop goal:");
+      expect(approveResult.output).toContain("Background run: run:coreloop:");
       expect(adapter.execute).not.toHaveBeenCalled();
-      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+      expect(daemonClient.startGoal).toHaveBeenCalledOnce();
+      expect(daemonClient.startGoal).toHaveBeenCalledWith(
+        expect.stringMatching(/^goal-runspec-/),
+        expect.objectContaining({
+          backgroundRun: expect.objectContaining({
+            backgroundRunId: expect.stringMatching(/^run:coreloop:/),
+            notifyPolicy: "done_only",
+            parentSessionId: expect.stringMatching(/^session:conversation:/),
+            replyTargetSource: "pinned_run",
+          }),
+        }),
+      );
       const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
       const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
       expect(stored.status).toBe("confirmed");
+      const runId = (daemonClient.startGoal as ReturnType<typeof vi.fn>).mock.calls[0][1].backgroundRun.backgroundRunId;
+      const run = JSON.parse(fs.readFileSync(path.join(baseDir, "runtime", "background-runs", `${encodeURIComponent(runId)}.json`), "utf8"));
+      expect(run).toMatchObject({
+        id: runId,
+        status: "queued",
+        workspace: "/repo/kaggle",
+        origin_metadata: {
+          run_spec_id: stored.id,
+        },
+      });
+      const registry = createRuntimeSessionRegistry({ stateManager });
+      const snapshot = await registry.snapshot();
+      expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
+        id: runId,
+        goal_id: expect.stringMatching(/^goal-runspec-/),
+        workspace: "/repo/kaggle",
+      }));
+    });
+
+    it("does not report started when daemon start fails after RunSpec approval", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-daemon-fail-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const daemonClient = { startGoal: vi.fn().mockRejectedValue(new Error("Connection refused")) };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        daemonClient: daemonClient as never,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision(),
+          runSpecConfirmationDecision("approve"),
+        ]),
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      const result = await runner.execute("approve", "/repo/kaggle");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Daemon start failed");
+      expect(result.output).toContain("no CoreLoop run was started");
+      expect(result.output).toContain("Connection refused");
+      expect(daemonClient.startGoal).toHaveBeenCalledOnce();
+      const registry = createRuntimeSessionRegistry({ stateManager });
+      const snapshot = await registry.snapshot();
+      expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
+        status: "failed",
+        error: "Connection refused",
+      }));
     });
 
     it("cancels a pending RunSpec without starting a background run", async () => {
@@ -4576,6 +4638,7 @@ describe("ChatRunner", () => {
 
       const reloadedRunner = new ChatRunner(makeDeps({
         stateManager,
+        daemonClient: { startGoal: vi.fn().mockResolvedValue({ ok: true }) } as never,
         llmClient: createSingleMockLLMClient(runSpecConfirmationDecision("approve")),
         chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
       }));
@@ -4595,6 +4658,7 @@ describe("ChatRunner", () => {
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
       const runner = new ChatRunner(makeDeps({
         stateManager,
+        daemonClient: { startGoal: vi.fn().mockResolvedValue({ ok: true }) } as never,
         llmClient: createMockLLMClient([
           freeformRouteDecision("run_spec"),
           runSpecDraftDecision(),

@@ -5,6 +5,7 @@ import { ChatSessionCatalog } from "../../interface/chat/chat-session-store.js";
 import { normalizeAgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
 import type { ProcessSessionManager, ProcessSessionSnapshot } from "../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
+import { resolveConfiguredDaemonRuntimeRoot } from "../daemon/runtime-root.js";
 import {
   BackgroundRunSchema,
   RuntimeSessionRegistrySnapshotSchema,
@@ -66,6 +67,29 @@ function chatLifecycleToRuntimeStatus(status: string | null | undefined): Runtim
 
 const PROCESS_SESSION_DIR = path.join("runtime", "process-sessions");
 
+class CompositeBackgroundRunLedger {
+  constructor(private readonly ledgers: Array<Pick<BackgroundRunLedger, "list">>) {}
+
+  async list(): Promise<BackgroundRun[]> {
+    const byId = new Map<string, BackgroundRun>();
+    for (const ledger of this.ledgers) {
+      const runs = await ledger.list();
+      for (const run of runs) {
+        byId.set(run.id, mergeLedgerRunWithProjection(run, byId.get(run.id)));
+      }
+    }
+    return [...byId.values()];
+  }
+}
+
+function createDefaultBackgroundRunLedger(stateBaseDir: string): Pick<BackgroundRunLedger, "list"> {
+  const stateRuntimeRoot = path.join(stateBaseDir, "runtime");
+  const configuredRuntimeRoot = resolveConfiguredDaemonRuntimeRoot(stateBaseDir);
+  const roots = [...new Set([stateRuntimeRoot, configuredRuntimeRoot])];
+  if (roots.length === 1) return new BackgroundRunLedger(roots[0]);
+  return new CompositeBackgroundRunLedger(roots.map((root) => new BackgroundRunLedger(root)));
+}
+
 export class RuntimeSessionRegistry {
   private readonly stateManager: StateManager;
   private readonly stateBaseDir: string;
@@ -80,7 +104,7 @@ export class RuntimeSessionRegistry {
     this.stateBaseDir = deps.stateBaseDir ?? deps.stateManager.getBaseDir();
     this.chatCatalog = new ChatSessionCatalog(this.stateManager);
     this.processSessionManager = deps.processSessionManager;
-    this.backgroundRunLedger = deps.backgroundRunLedger ?? new BackgroundRunLedger(path.join(this.stateBaseDir, "runtime"));
+    this.backgroundRunLedger = deps.backgroundRunLedger ?? createDefaultBackgroundRunLedger(this.stateBaseDir);
     this.now = deps.now ?? (() => new Date());
     this.isPidAlive = deps.isPidAlive ?? defaultIsPidAlive;
   }
