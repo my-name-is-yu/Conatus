@@ -49,6 +49,7 @@ export const SetupDialoguePublicStateSchema = z.object({
   updatedAt: z.string(),
   action: SetupDialogueActionSchema.optional(),
   pendingSecret: SetupDialogueSecretRefSchema.optional(),
+  replacesExistingSecret: z.boolean().optional(),
   note: z.string().optional(),
 }).passthrough();
 export type SetupDialoguePublicState = z.infer<typeof SetupDialoguePublicStateSchema>;
@@ -63,8 +64,9 @@ export const LEGACY_TELEGRAM_CONFIRM_COMMAND = "/confirm-telegram-setup";
 
 export function createTelegramConfirmWriteDialogue(
   secret: SetupSecretIntakeItem,
-  now = new Date().toISOString()
+  options: { replacesExistingSecret?: boolean; now?: string } = {}
 ): SetupDialogueRuntimeState {
+  const now = options.now ?? new Date().toISOString();
   return {
     publicState: {
       id: randomUUID(),
@@ -86,6 +88,7 @@ export function createTelegramConfirmWriteDialogue(
         secretKinds: [secret.kind],
         status: "pending",
       },
+      ...(options.replacesExistingSecret ? { replacesExistingSecret: true } : {}),
     },
     secretValue: secret.value,
   };

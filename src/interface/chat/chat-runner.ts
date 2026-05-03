@@ -31,6 +31,7 @@ import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loo
 import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
 import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
+import { classifyConfirmationDecision } from "../../runtime/confirmation-decision.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -52,6 +53,7 @@ import { ChatRunnerEventBridge, type AssistantBuffer } from "./chat-runner-event
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
 import {
   isSetupWriteConfirmCommand,
+  SETUP_WRITE_CONFIRM_COMMAND,
   type SetupDialogueRuntimeState,
 } from "./setup-dialogue.js";
 import {
@@ -158,6 +160,27 @@ function resolveSelfIdentityResponse(input: string, baseDir: string): string | n
 
   if (!isIdentityQuestion && !isEnglishIdentityQuestion) return null;
   return getSelfIdentityResponseForBaseDir(baseDir, isEnglishIdentityQuestion ? "en" : "ja");
+}
+
+function formatPendingSetupConfirmationSubject(publicState: SetupDialogueRuntimeState["publicState"]): string {
+  const lines = [
+    `Setup dialogue: ${publicState.selectedChannel}`,
+    `State: ${publicState.state}`,
+    `Action: ${publicState.action?.kind ?? "unknown"}`,
+    `Command fallback: ${publicState.action?.command ?? SETUP_WRITE_CONFIRM_COMMAND}`,
+    publicState.replacesExistingSecret
+      ? "Confirming will replace an existing configured Telegram bot token."
+      : "Confirming will write a Telegram gateway config from a redacted chat-supplied token.",
+    "Approval is still required before writing config.",
+  ];
+  return lines.join("\n");
+}
+
+function formatSetupConfirmationCancelled(languageHint: TurnLanguageHint): string {
+  if (languageHint.language === "ja") {
+    return "Telegram setup の config write はキャンセルしました。token は書き込んでいません。";
+  }
+  return "Telegram setup config write was cancelled. No token was written.";
 }
 
 export class ChatRunner {
@@ -451,7 +474,9 @@ export class ChatRunner {
       ? null
       : (options.selectedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext));
     this.lastSelectedRoute = selectedRoute;
-    this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
+    if (selectedRoute?.kind !== "configure") {
+      this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
+    }
 
     const start = Date.now();
     const assistantBuffer: AssistantBuffer = { text: "" };
@@ -737,7 +762,28 @@ export class ChatRunner {
     input: string,
     runtimeControlContext: RuntimeControlChatContext | null
   ): Promise<ChatRunResult | null> {
-    if (!isSetupWriteConfirmCommand(input)) return null;
+    const commandConfirmed = isSetupWriteConfirmCommand(input);
+    const pendingAtInput = this.pendingSetupDialogue;
+    if (!commandConfirmed) {
+      if (!pendingAtInput || pendingAtInput.publicState.state !== "confirm_write") return null;
+      const decision = await classifyConfirmationDecision(input, {
+        llmClient: this.deps.llmClient,
+        kind: "approval",
+        subject: formatPendingSetupConfirmationSubject(pendingAtInput.publicState),
+        allowedDecisions: ["approve", "cancel", "unknown"],
+      });
+      if (decision.decision === "cancel") {
+        this.pendingSetupDialogue = null;
+        this.history?.setSetupDialogue(null);
+        await this.history?.persist();
+        return {
+          success: false,
+          output: formatSetupConfirmationCancelled(this.turnLanguageHint),
+          elapsed_ms: 0,
+        };
+      }
+      if (decision.decision !== "approve") return null;
+    }
     const pending = this.pendingSetupDialogue;
     if (!pending) {
       return {
@@ -782,10 +828,13 @@ export class ChatRunner {
     const accessClosedByDefault = !nextAllowAll && nextAllowedUserIds.length === 0 && nextRuntimeControlAllowedUserIds.length === 0;
     const approved = await approvalFn([
       "Write Telegram gateway config from the redacted chat-supplied bot token.",
+      pending.publicState.replacesExistingSecret
+        ? "This will replace the existing configured Telegram bot token."
+        : "",
       accessClosedByDefault
         ? "Access will remain closed by default with allow_all=false until allowed Telegram user IDs are configured."
         : "Existing Telegram access policy will be preserved.",
-    ].join(" "));
+    ].filter(Boolean).join(" "));
     if (!approved) {
       this.pendingSetupDialogue = null;
       this.history?.setSetupDialogue(null);
@@ -827,15 +876,25 @@ export class ChatRunner {
     return {
       success: true,
       output: [
-        "Telegram gateway config was written from the redacted chat-supplied token.",
+        this.turnLanguageHint.language === "ja"
+          ? "redacted chat-supplied token から Telegram gateway config を書き込みました。"
+          : "Telegram gateway config was written from the redacted chat-supplied token.",
         "",
-        "Next steps:",
-        "- Restart the daemon so the gateway loads the updated config.",
+        this.turnLanguageHint.language === "ja" ? "Next steps:" : "Next steps:",
+        this.turnLanguageHint.language === "ja"
+          ? "- daemon を再起動して、gateway に updated config を読み込ませてください。"
+          : "- Restart the daemon so the gateway loads the updated config.",
         ...(accessClosedByDefault
-          ? ["- Access remains closed until you configure allowed Telegram user IDs or intentionally enable `allow_all` with `pulseed telegram setup`."]
+          ? [this.turnLanguageHint.language === "ja"
+            ? "- allowed Telegram user IDs を設定するか、`pulseed telegram setup` で意図的に `allow_all` を有効にするまで access は closed のままです。"
+            : "- Access remains closed until you configure allowed Telegram user IDs or intentionally enable `allow_all` with `pulseed telegram setup`."]
           : []),
-        "- Send `/sethome` from Telegram if no home chat is configured yet.",
-        "- Run `pulseed daemon status` to verify.",
+        this.turnLanguageHint.language === "ja"
+          ? "- home chat が未設定なら Telegram から `/sethome` を送ってください。"
+          : "- Send `/sethome` from Telegram if no home chat is configured yet.",
+        this.turnLanguageHint.language === "ja"
+          ? "- `pulseed daemon status` で確認してください。"
+          : "- Run `pulseed daemon status` to verify.",
       ].join("\n"),
       elapsed_ms: 0,
     };

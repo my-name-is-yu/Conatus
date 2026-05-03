@@ -697,7 +697,9 @@ async function formatConfigureGuidance(
     const suppliedTelegramToken = suppliedSecretKinds.includes("telegram_bot_token");
     const telegramSecret = setupSecretIntake?.suppliedSecrets.find((secret) => secret.kind === "telegram_bot_token");
     if (telegramSecret) {
-      await host.setPendingSetupDialogue(createTelegramConfirmWriteDialogue(telegramSecret));
+      await host.setPendingSetupDialogue(createTelegramConfirmWriteDialogue(telegramSecret, {
+        replacesExistingSecret: status.config.hasBotToken,
+      }));
     }
     host.eventBridge.emitOperationProgress(createOperationProgressItem({
       id: "telegram-configure:planned-action",
@@ -706,8 +708,12 @@ async function formatConfigureGuidance(
       title: shouldRenderJapanese(languageHint) ? "次の手順を準備しました" : "Prepared next setup step",
       detail: telegramSecret
         ? shouldRenderJapanese(languageHint)
-          ? "redacted token から approval-gated config write を準備しました。"
-          : "Prepared an approval-gated config write from the redacted token."
+          ? status.config.hasBotToken
+            ? "redacted token から approval-gated config write を準備しました。confirm すると既存 token を置き換えます。"
+            : "redacted token から approval-gated config write を準備しました。"
+          : status.config.hasBotToken
+            ? "Prepared an approval-gated config write from the redacted token. Confirming will replace the existing token."
+            : "Prepared an approval-gated config write from the redacted token."
         : shouldRenderJapanese(languageHint)
           ? "guidance を返します。token が貼られた場合は redaction 後に confirmation を準備します。"
           : "Returning guidance. If a token is pasted, PulSeed will redact it and prepare confirmation.",
@@ -858,7 +864,9 @@ function formatTelegramConfigureGuidance(
     "",
     suppliedTelegramToken
       ? pendingActionCreated
-        ? `I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Reply \`${SETUP_WRITE_CONFIRM_COMMAND}\` to request an approval-gated config write.`
+        ? status.config.hasBotToken
+          ? `I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Confirming will replace the existing configured token. Reply \`${SETUP_WRITE_CONFIRM_COMMAND}\` or approve in natural language to request an approval-gated config write.`
+          : `I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Reply \`${SETUP_WRITE_CONFIRM_COMMAND}\` or approve in natural language to request an approval-gated config write.`
         : "I received a Telegram bot token in this turn and kept it redacted from chat history and activity, but no setup action could be prepared."
       : "If you prefer chat-assisted setup, paste the token here; PulSeed will redact it from history and prepare an approval-gated confirmation before writing config."
   );
@@ -933,7 +941,9 @@ function formatTelegramConfigureGuidanceJa(
     "",
     suppliedTelegramToken
       ? pendingActionCreated
-        ? `この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しました。approval-gated config write を依頼するには \`${SETUP_WRITE_CONFIRM_COMMAND}\` と返信してください。`
+        ? status.config.hasBotToken
+          ? `この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しました。confirm すると既存の configured token を置き換えます。approval-gated config write を依頼するには \`${SETUP_WRITE_CONFIRM_COMMAND}\` または自然文で承認してください。`
+          : `この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しました。approval-gated config write を依頼するには \`${SETUP_WRITE_CONFIRM_COMMAND}\` または自然文で承認してください。`
         : "この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しましたが、setup action は準備できませんでした。"
       : "chat-assisted setup を使う場合は、ここに token を貼ってください。PulSeed は history から redaction し、config 書き込み前に approval-gated confirmation を準備します。"
   );

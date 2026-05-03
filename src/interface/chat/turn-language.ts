@@ -15,7 +15,8 @@ export const UNKNOWN_TURN_LANGUAGE_HINT: TurnLanguageHint = {
 };
 
 export function detectTurnLanguageHint(input: string): TurnLanguageHint {
-  const letters = Array.from(input).filter((char) => /\p{Letter}/u.test(char));
+  const languageText = input.replace(/\[REDACTED:[^\]]+\]/g, " ");
+  const letters = Array.from(languageText).filter((char) => /\p{Letter}/u.test(char));
   if (letters.length === 0) return UNKNOWN_TURN_LANGUAGE_HINT;
 
   const japanese = letters.filter((char) => /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(char)).length;

@@ -882,8 +882,11 @@ describe("standalone slash command routing", () => {
     expect(chatRunnerOutput).toContain("pulseed gateway setup");
     await vi.waitFor(() => {
       const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
-      expect(visibleText).toContain("設定ガイダンスを準備");
+      expect(visibleText).toContain("Telegram setup を開始しました");
       expect(visibleText).toContain("pulseed telegram setup");
+      expect(visibleText).not.toContain("I understand the request");
+      expect(visibleText).not.toContain("Next I will");
+      expect(visibleText).not.toContain("This is needed");
       expect(visibleText).not.toContain("resume the saved agent loop state");
     });
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
