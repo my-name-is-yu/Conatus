@@ -74,6 +74,7 @@ export interface BackgroundRunCreateInput {
   error?: string | null;
   artifacts?: RuntimeArtifactRef[];
   source_refs?: RuntimeSessionRef[];
+  origin_metadata?: Record<string, unknown>;
 }
 
 export interface BackgroundRunLinkInput {
@@ -150,6 +151,7 @@ export class BackgroundRunLedger {
       error: input.error ?? null,
       artifacts: input.artifacts ?? [],
       source_refs: input.source_refs ?? [],
+      ...(input.origin_metadata ? { origin_metadata: input.origin_metadata } : {}),
     });
   }
 

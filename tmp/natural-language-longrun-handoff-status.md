@@ -35,3 +35,19 @@
   - `npm run test:unit -- src/interface/chat/__tests__/chat-session-store.test.ts src/interface/chat/__tests__/chat-history.test.ts`: pass.
   - `git diff --check`: pass.
 - Review: first review found `runSpecConfirmation` was persisted in raw chat history but dropped through `LoadedChatSession`/resume conversion. Fixed by threading the field through session load/save conversion and adding a reload-before-approval test. Re-review: no material findings.
+
+## #999
+
+- Branch: `codex/issue-999-start-confirmed-runs`.
+- Plan: after typed approval, derive/save a CoreLoop goal from the confirmed RunSpec, create a durable `run:coreloop:*` background run record, then call `DaemonClient.startGoal` with the background-run metadata.
+- Current status: implemented locally.
+- Verification:
+  - `npm run typecheck`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/chat-runner.test.ts -t "natural-language RunSpec draft routing"`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/cross-platform-session.test.ts -t "RunSpec draft"`: pass.
+  - `npm run test:integration -- src/runtime/session-registry/__tests__/runtime-session-registry.test.ts`: pass.
+  - `npm run lint:boundaries`: pass with existing warnings.
+  - `git diff --check`: pass.
+  - `npm run test:unit -- src/runtime/session-registry/__tests__/runtime-session-registry.test.ts -t "background"`: not applicable in unit config because runtime tests are excluded.
+  - `npm run test:integration -- src/runtime/session-registry/__tests__/runtime-session-registry.test.ts -t "background"`: suite was skipped by filter/config.
+- Review: first review found configured daemon runtime ledger records could be invisible or stale in `/sessions`. Fixed by mirroring initial records and updating RuntimeSessionRegistry to read/merge both state-base and configured daemon runtime ledgers. Re-review: no material findings.

@@ -119,6 +119,7 @@ export const BackgroundRunSchema = z.object({
   error: z.string().nullable(),
   artifacts: z.array(RuntimeArtifactRefSchema),
   source_refs: z.array(RuntimeSessionRefSchema),
+  origin_metadata: z.record(z.unknown()).optional(),
 });
 export type BackgroundRun = z.infer<typeof BackgroundRunSchema>;
 
