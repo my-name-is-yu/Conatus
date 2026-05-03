@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { SqliteSoilRepository } from "../../platform/soil/sqlite-repository.js";
+import { buildStaticSystemPrompt } from "../../interface/chat/grounding.js";
 import { createGroundingGateway } from "../gateway.js";
 
 function makeStateManager(overrides: Partial<StateManager> = {}): StateManager {
@@ -78,6 +79,46 @@ describe("GroundingGateway", () => {
     expect(repoInstructions?.content).not.toContain("Node modules instruction");
     expect(bundle.warnings.some((warning) => warning.includes("Rejected repo instructions"))).toBe(true);
     expect(bundle.traces.source.some((source) => source.path?.endsWith("node_modules/pkg/AGENTS.md") && source.accepted === false)).toBe(true);
+  });
+
+  it("keeps raw USER.md out of agent-loop identity grounding while preserving chat identity", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-user-md-"));
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+    fs.writeFileSync(path.join(homeDir, "SEED.md"), "# Seedy\n\nAgent seed.", "utf-8");
+    fs.writeFileSync(path.join(homeDir, "ROOT.md"), "# Root\n\nRoot policy.", "utf-8");
+    fs.writeFileSync(path.join(homeDir, "USER.md"), "# About You\n\nPrefer verbose status reports.", "utf-8");
+
+    const gateway = createGroundingGateway({ stateManager: makeStateManager() });
+    const agentLoop = await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+    });
+    const chat = await gateway.build({
+      surface: "chat",
+      purpose: "general_turn",
+      homeDir,
+      workspaceRoot: "/repo",
+    });
+
+    const agentIdentity = agentLoop.staticSections.find((section) => section.key === "identity")?.content ?? "";
+    const chatIdentity = chat.staticSections.find((section) => section.key === "identity")?.content ?? "";
+    expect(agentIdentity).not.toContain("Prefer verbose status reports.");
+    expect(chatIdentity).toContain("Prefer verbose status reports.");
+  });
+
+  it("keeps raw USER.md out of fallback static system prompt", () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-static-user-md-"));
+    fs.writeFileSync(path.join(tmpRoot, "SEED.md"), "# Seedy\n\nAgent seed.", "utf-8");
+    fs.writeFileSync(path.join(tmpRoot, "ROOT.md"), "# Root\n\nRoot policy.", "utf-8");
+    fs.writeFileSync(path.join(tmpRoot, "USER.md"), "# About You\n\nPrefer verbose status reports.", "utf-8");
+
+    const prompt = buildStaticSystemPrompt(tmpRoot);
+
+    expect(prompt).toContain("Agent seed.");
+    expect(prompt).not.toContain("Prefer verbose status reports.");
   });
 
   it("prefers Soil knowledge over broader knowledge results when Soil hits exist", async () => {

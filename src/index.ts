@@ -267,6 +267,14 @@ export type {
   RelationshipProfileChangeProposal,
   RelationshipProfileProposalStore,
 } from "./platform/profile/profile-change-proposal.js";
+export {
+  parseRelationshipProfileCandidatesFromUserMd,
+  createRelationshipProfileProposalsFromUserMdImport,
+} from "./platform/profile/user-md-profile-import.js";
+export type {
+  UserMdRelationshipProfileCandidate,
+  UserMdProfileImportProposalResult,
+} from "./platform/profile/user-md-profile-import.js";
 export { CuriosityEngine } from "./platform/traits/curiosity-engine.js";
 export { GoalDependencyGraph } from "./orchestrator/goal/goal-dependency-graph.js";
 export { KnowledgeGraph } from "./platform/knowledge/knowledge-graph.js";

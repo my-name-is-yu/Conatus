@@ -151,14 +151,17 @@ function isUserContentMeaningful(user: string): boolean {
   return stripped.length > 0;
 }
 
-export function getUserFacingIdentity(): string {
-  return getUserFacingIdentityForIdentity(loadIdentity());
+export function getUserFacingIdentity(options: { includeUserContent?: boolean } = {}): string {
+  return getUserFacingIdentityForIdentity(loadIdentity(), options);
 }
 
-export function getUserFacingIdentityForIdentity(identity: Identity): string {
+export function getUserFacingIdentityForIdentity(
+  identity: Identity,
+  options: { includeUserContent?: boolean } = {}
+): string {
   const { name, seed, root, user } = identity;
   const parts = [getCoreIdentity(name), getRuntimeIdentitySlotContent(identity), seed.trim(), root.trim()];
-  if (isUserContentMeaningful(user)) {
+  if (options.includeUserContent !== false && isUserContentMeaningful(user)) {
     parts.push(user.trim());
   }
   return parts.join("\n\n---\n\n");

@@ -123,7 +123,7 @@ export async function buildChatAgentLoopSystemPrompt(options: GroundingOptions):
 
 export function buildStaticSystemPrompt(baseDir?: string): string {
   return [
-    `## Identity\n${buildIdentitySectionContent(baseDir)}`,
+    `## Identity\n${buildIdentitySectionContent(baseDir, { includeUserContent: false })}`,
     buildExecutionPolicySectionContent(),
     `## Safety And Approval\n${buildApprovalPolicySectionContent()}`,
   ].join("\n\n").trim();
