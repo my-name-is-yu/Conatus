@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
+import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { createEnvelope } from "../types/envelope.js";
 import {
   evaluateChannelAccess,
@@ -8,6 +8,7 @@ import {
   type ChannelRoutingPolicy,
 } from "./channel-policy.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
+import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
 
 export interface SlackChannelAdapterConfig {
   signingSecret: string;
@@ -37,6 +38,9 @@ const MAX_TIMESTAMP_AGE_SEC = 5 * 60;
  */
 export class SlackChannelAdapter implements ChannelAdapter {
   readonly name = "slack";
+  readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
+    "slack events adapter has no native bot typing indicator in the current API path"
+  );
   private handler: EnvelopeHandler | null = null;
   private readonly config: SlackChannelAdapterConfig;
   private readonly api: SlackAPI | null;

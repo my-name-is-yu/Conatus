@@ -1,11 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as http from "node:http";
-import { createHash, webcrypto } from "node:crypto";
-import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
+import { webcrypto } from "node:crypto";
+import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 const MAX_DISCORD_ACTIVITY_MESSAGES = 8;
@@ -82,6 +83,7 @@ export class DiscordGatewayNotifier implements INotifier {
 
 export class DiscordGatewayAdapter implements ChannelAdapter {
   readonly name = "discord";
+  readonly typingIndicator: TypingIndicatorCapability;
 
   private handler: EnvelopeHandler | null = null;
   private server: http.Server | null = null;
@@ -90,6 +92,17 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
 
   constructor(private readonly config: DiscordGatewayConfig) {
     this.api = new DiscordAPI(config.bot_token);
+    this.typingIndicator = createRefreshingTypingIndicator({
+      intervalMs: 8_000,
+      refresh: async (context) => {
+        const channelId = typeof context.metadata?.["channel_id"] === "string"
+          ? context.metadata["channel_id"]
+          : context.conversation_id;
+        if (!channelId) return;
+        await this.api.triggerTyping(channelId);
+      },
+      onError: (err) => console.warn("DiscordGatewayAdapter: typing indicator failed", err),
+    });
     this.notifier = new DiscordGatewayNotifier(this.api, config);
   }
 
@@ -234,25 +247,35 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
   ): Promise<void> {
     let sentActivityCount = 0;
     let lastActivity = "";
-    const reply = await dispatchGatewayChatInput({
-      ...input,
-      onEvent: async (event: unknown) => {
-        if (
-          !isActivityChatEvent(event) ||
-          (event.kind !== "tool" && event.kind !== "plugin" && event.kind !== "skill") ||
-          payload.application_id === undefined ||
-          payload.token === undefined ||
-          sentActivityCount >= MAX_DISCORD_ACTIVITY_MESSAGES
-        ) {
-          return;
-        }
-        const content = truncateDiscordActivity(event.message);
-        if (content === lastActivity) return;
-        lastActivity = content;
-        sentActivityCount++;
-        await this.api.sendInteractionFollowUp(payload.application_id, payload.token, content);
+    const reply = await withTypingIndicator(
+      this.typingIndicator,
+      {
+        platform: "discord",
+        conversation_id: input.conversation_id,
+        sender_id: input.sender_id,
+        message_id: input.message_id,
+        metadata: input.metadata,
       },
-    });
+      () => dispatchGatewayChatInput({
+        ...input,
+        onEvent: async (event: unknown) => {
+          if (
+            !isActivityChatEvent(event) ||
+            (event.kind !== "tool" && event.kind !== "plugin" && event.kind !== "skill") ||
+            payload.application_id === undefined ||
+            payload.token === undefined ||
+            sentActivityCount >= MAX_DISCORD_ACTIVITY_MESSAGES
+          ) {
+            return;
+          }
+          const content = truncateDiscordActivity(event.message);
+          if (content === lastActivity) return;
+          lastActivity = content;
+          sentActivityCount++;
+          await this.api.sendInteractionFollowUp(payload.application_id, payload.token, content);
+        },
+      })
+    );
     const content = reply ?? "Received.";
 
     if (payload.application_id !== undefined && payload.token !== undefined) {
@@ -347,6 +370,18 @@ class DiscordAPI {
     });
     if (!response.ok) {
       throw new Error(`discord-bot: follow-up send failed with ${response.status}`);
+    }
+  }
+
+  async triggerTyping(channelId: string): Promise<void> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/channels/${channelId}/typing`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bot ${this.botToken}`,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`discord-bot: typing failed with ${response.status}`);
     }
   }
 }

@@ -59,6 +59,9 @@ describe("TelegramGatewayAdapter", () => {
       if (method === "sendMessage") {
         return telegramResponse({ message_id: 9001 });
       }
+      if (method === "sendChatAction") {
+        return telegramResponse(true);
+      }
       throw new Error(`unexpected Telegram method: ${method}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -85,6 +88,15 @@ describe("TelegramGatewayAdapter", () => {
         }),
       }));
     });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.telegram.org/bottest-token/sendChatAction",
+      expect.objectContaining({
+        body: JSON.stringify({
+          chat_id: 314,
+          action: "typing",
+        }),
+      })
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.telegram.org/bottest-token/getUpdates",
       expect.objectContaining({
@@ -139,6 +151,9 @@ describe("TelegramGatewayAdapter", () => {
         const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
         sentMessages.push(body.text ?? "");
         return telegramResponse({ message_id: 9100 + sentMessages.length });
+      }
+      if (method === "sendChatAction") {
+        return telegramResponse(true);
       }
       throw new Error(`unexpected Telegram method: ${method}`);
     });
@@ -231,6 +246,9 @@ describe("TelegramGatewayAdapter", () => {
           await finalSendCanFinish.promise;
         }
         return telegramResponse({ message_id: 9000 + sentMessages.length });
+      }
+      if (method === "sendChatAction") {
+        return telegramResponse(true);
       }
       throw new Error(`unexpected Telegram method: ${method}`);
     });

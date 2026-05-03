@@ -1,10 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
+import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 export interface SignalGatewayConfig {
@@ -58,6 +59,9 @@ export class SignalGatewayNotifier implements INotifier {
 
 export class SignalGatewayAdapter implements ChannelAdapter {
   readonly name = "signal";
+  readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
+    "signal-bridge adapter has no configured typing endpoint"
+  );
 
   private handler: EnvelopeHandler | null = null;
   private readonly client: SignalBridgeClient;
@@ -130,22 +134,32 @@ export class SignalGatewayAdapter implements ChannelAdapter {
         },
         channelContext
       );
-      const reply = await dispatchGatewayChatInput({
-        text: normalized.text,
-        platform: "signal",
-        identity_key: route.identityKey ?? this.config.identity_key,
-        conversation_id: normalized.conversationId,
-        sender_id: normalized.senderId,
-        message_id: normalized.messageId,
-        goal_id: route.goalId,
-        metadata: {
-          ...route.metadata,
-          ...normalized.metadata,
-          ...(route.goalId ? { goal_id: route.goalId } : {}),
-          ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-          ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
+      const reply = await withTypingIndicator(
+        this.typingIndicator,
+        {
+          platform: "signal",
+          conversation_id: normalized.conversationId,
+          sender_id: normalized.senderId,
+          message_id: normalized.messageId,
+          metadata: normalized.metadata,
         },
-      });
+        () => dispatchGatewayChatInput({
+          text: normalized.text,
+          platform: "signal",
+          identity_key: route.identityKey ?? this.config.identity_key,
+          conversation_id: normalized.conversationId,
+          sender_id: normalized.senderId,
+          message_id: normalized.messageId,
+          goal_id: route.goalId,
+          metadata: {
+            ...route.metadata,
+            ...normalized.metadata,
+            ...(route.goalId ? { goal_id: route.goalId } : {}),
+            ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+            ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
+          },
+        })
+      );
 
       if (reply !== null) {
         await this.client.sendTextMessage({

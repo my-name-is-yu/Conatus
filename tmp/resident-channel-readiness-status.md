@@ -47,3 +47,16 @@
 - Review: separate review agent found daemon health was not included in readiness and Telegram configured channels could report ready before any inbound/outbound health evidence.
 - Fix after review: daemon readiness now requires `health=ok`; Telegram readiness requires recent inbound and outbound health with no last error before reporting ready.
 - Verification after review fixes: focused setup readiness tests passed (28 tests); `npm run typecheck` passed; `npm run lint:boundaries` exited 0 with existing warnings; `npm run test:changed` passed (17 files, 346 tests).
+- Review: second review agent reported no material findings.
+- CI: PR #1006 unit and integration checks passed; PR merged.
+
+## #994 Add typing indicators for all supported messaging input channels
+- Status: in progress
+- Branch: codex/issue-994-typing-indicators
+- Initial sync: main up to date; issue #994 is open as of 2026-05-03.
+- Open issue scan: newer long-running issues #997-#1001 are open but outside this target set; #986 remains out of scope.
+- Plan: add a typed optional typing indicator capability at the channel adapter boundary, use native Telegram `sendChatAction` and Discord typing endpoint refresh loops around gateway chat dispatch, and expose explicit unsupported no-op capability for Signal, WhatsApp, and Slack with focused adapter tests.
+- Implementation: added typed `TypingIndicatorCapability`, refresh/no-op helpers, Telegram `sendChatAction` refresh, Discord `/channels/{id}/typing` refresh, and explicit unsupported capabilities for Signal, WhatsApp, and Slack.
+- Verification: focused runtime gateway integration tests passed (6 files, 47 tests); `npm run typecheck` passed.
+- Verification: `npm run lint:boundaries` exited 0 with existing warnings; `npm run test:changed` passed related integration and smoke lanes.
+- Review: separate review agent reported no material findings.
