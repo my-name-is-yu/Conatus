@@ -18,6 +18,7 @@ import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
 import type { ChatEvent } from "../chat-events.js";
 import type { ChatIngressMessage, SelectedChatRoute } from "../ingress-router.js";
+import type { TelegramSetupStatus } from "../gateway-setup-status.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
@@ -85,6 +86,48 @@ function adapterRoute(): SelectedChatRoute {
     replyTargetPolicy: "turn_reply_target",
     eventProjectionPolicy: "turn_only",
     concurrencyPolicy: "session_serial",
+  };
+}
+
+type TelegramSetupStatusOverrides = Partial<Omit<TelegramSetupStatus, "daemon" | "config">> & {
+  daemon?: Partial<TelegramSetupStatus["daemon"]>;
+  config?: Partial<TelegramSetupStatus["config"]>;
+};
+
+function makeTelegramSetupStatus(overrides: TelegramSetupStatusOverrides = {}): TelegramSetupStatus {
+  const base: TelegramSetupStatus = {
+    channel: "telegram",
+    state: "unconfigured",
+    configPath: "/tmp/pulseed/gateway/channels/telegram-bot/config.json",
+    daemon: {
+      running: true,
+      port: 41700,
+    },
+    gateway: {
+      loadState: "unknown",
+    },
+    config: {
+      exists: false,
+      hasBotToken: false,
+      hasHomeChat: false,
+      allowAll: false,
+      allowedUserCount: 0,
+      runtimeControlAllowedUserCount: 0,
+      identityKeyConfigured: false,
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    daemon: { ...base.daemon, ...(overrides.daemon ?? {}) },
+    gateway: { ...base.gateway, ...(overrides.gateway ?? {}) },
+    config: { ...base.config, ...(overrides.config ?? {}) },
+  };
+}
+
+function makeTelegramStatusProvider(status: TelegramSetupStatus): NonNullable<ChatRunnerDeps["gatewaySetupStatusProvider"]> {
+  return {
+    getTelegramStatus: vi.fn().mockResolvedValue(status),
   };
 }
 
@@ -354,6 +397,89 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
+    it("reports daemon-running unconfigured Telegram state through the production configure route", async () => {
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "configure",
+          confidence: 0.94,
+          configure_target: "telegram_gateway",
+          rationale: "operator wants Telegram setup",
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        llmClient,
+        chatAgentLoopRunner: { execute: vi.fn() } as never,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          daemon: { running: true, port: 41700 },
+          config: { exists: false, hasBotToken: false, hasHomeChat: false },
+        })),
+      }));
+
+      const result = await runner.execute("telegram繋げたい", "/repo");
+
+      expect(result.output).toContain("Daemon: running on port 41700; gateway load state is not proven");
+      expect(result.output).toContain("Telegram: not configured");
+      expect(result.output).toContain("pulseed telegram setup");
+      expect(result.output).toContain("pulseed gateway setup");
+      expect(result.output).toContain("If you prefer chat-assisted setup");
+    });
+
+    it("reports configured Telegram state and only points to verification when home chat exists", async () => {
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "configure",
+          confidence: 0.94,
+          configure_target: "telegram_gateway",
+          rationale: "operator wants Telegram setup",
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        llmClient,
+        chatAgentLoopRunner: { execute: vi.fn() } as never,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "configured",
+          daemon: { running: true, port: 41700 },
+          config: { exists: true, hasBotToken: true, hasHomeChat: true },
+        })),
+      }));
+
+      const result = await runner.execute("telegram繋げたい", "/repo");
+
+      expect(result.output).toContain("Telegram config: configured");
+      expect(result.output).toContain("Home chat: configured");
+      expect(result.output).toContain("Gateway loaded in daemon: unknown");
+      expect(result.output).toContain("Verification:");
+      expect(result.output).not.toContain("Send `/sethome`");
+    });
+
+    it("reports partially configured Telegram state and directs /sethome through the production configure route", async () => {
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "configure",
+          confidence: 0.94,
+          configure_target: "telegram_gateway",
+          rationale: "operator wants Telegram setup",
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        llmClient,
+        chatAgentLoopRunner: { execute: vi.fn() } as never,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "partially_configured",
+          daemon: { running: false, port: 41700 },
+          config: { exists: true, hasBotToken: true, hasHomeChat: false },
+        })),
+      }));
+
+      const result = await runner.execute("telegram繋げたい", "/repo");
+
+      expect(result.output).toContain("Daemon: not responding on port 41700");
+      expect(result.output).toContain("bot token is configured, but no home chat is set");
+      expect(result.output).toContain("Send `/sethome`");
+      expect(result.output).toContain("The config will not take effect until the daemon is started or restarted");
+    });
+
     it("keeps supplied setup secret facts available to the configure route without persisting raw assistant echoes", async () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
       const echoedToken = "sk-proj_echoedsecretabcdefghijklmnopqrstuvwxyz";
@@ -383,6 +509,104 @@ describe("ChatRunner", () => {
       expect(JSON.stringify(persistedSession)).not.toContain(telegramToken);
       expect(JSON.stringify(persistedSession)).not.toContain(echoedToken);
       expect(JSON.stringify(persistedSession)).toContain("[REDACTED:openai_api_key:setup_secret_1]");
+    });
+
+    it("writes Telegram config only after explicit confirmation and approval", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        approvalFn,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          configPath: path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"),
+          daemon: { running: true, port: 41700 },
+        })),
+      }));
+
+      const intakeResult = await runner.execute(telegramToken, "/repo", 30_000);
+      const confirmResult = await runner.execute("/confirm-telegram-setup", "/repo", 30_000);
+
+      const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(intakeResult.output).toContain("/confirm-telegram-setup");
+      expect(confirmResult.success).toBe(true);
+      expect(approvalFn).toHaveBeenCalledOnce();
+      expect(config.bot_token).toBe(telegramToken);
+      expect(config.allow_all).toBe(false);
+      expect(confirmResult.output).toContain("Restart the daemon");
+      expect(confirmResult.output).toContain("Access remains closed");
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
+    it("uses runtime control approval for chat-assisted Telegram config confirmation", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-runtime-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const runtimeControlApprovalFn = vi.fn().mockResolvedValue(true);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        runtimeControlApprovalFn,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          configPath: path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"),
+          daemon: { running: true, port: 41700 },
+        })),
+      }));
+
+      await runner.execute(telegramToken, "/repo", 30_000);
+      const confirmResult = await runner.execute("/confirm-telegram-setup", "/repo", 30_000);
+
+      const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(confirmResult.success).toBe(true);
+      expect(runtimeControlApprovalFn).toHaveBeenCalledOnce();
+      expect(runtimeControlApprovalFn).toHaveBeenCalledWith(expect.stringContaining("allow_all=false"));
+      expect(config.bot_token).toBe(telegramToken);
+      expect(config.allow_all).toBe(false);
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
+    it("does not let disallowed gateway ingress confirm Telegram config through global approval", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-denied-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const runtimeControlApprovalFn = vi.fn().mockResolvedValue(true);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        runtimeControlApprovalFn,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          configPath: path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"),
+          daemon: { running: true, port: 41700 },
+        })),
+      }));
+
+      await runner.execute(telegramToken, "/repo", 30_000);
+      const confirmResult = await runner.executeIngressMessage(
+        makeIngress("/confirm-telegram-setup"),
+        "/repo",
+        30_000,
+        adapterRoute()
+      );
+
+      const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
+      expect(confirmResult.success).toBe(false);
+      expect(confirmResult.output).toContain("approval-capable chat surface");
+      expect(runtimeControlApprovalFn).not.toHaveBeenCalled();
+      expect(fs.existsSync(configPath)).toBe(false);
+      fs.rmSync(baseDir, { recursive: true, force: true });
     });
 
     it("calls adapter.execute with correct AgentTask shape", async () => {
@@ -3602,17 +3826,13 @@ describe("ChatRunner", () => {
       const result = await runner.execute("telegramからseedyと会話できるようにしたい", "/repo");
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("configuration flow, not a source-edit task");
-      expect(result.output).toContain("@BotFather");
-      expect(result.output).toContain("bot token");
+      expect(result.output).toContain("Telegram gateway status");
+      expect(result.output).toContain("Telegram: not configured");
       expect(result.output).toContain("pulseed telegram setup");
-      expect(result.output).toContain("allowed Telegram user IDs");
-      expect(result.output).toContain("/sethome");
       expect(result.output).toContain("pulseed gateway setup");
       expect(result.output).toContain("pulseed daemon start");
-      expect(result.output).toContain("Send a message to the Telegram bot");
       expect(result.output).toContain("pulseed daemon status");
-      expect(result.output).toContain("check logs");
+      expect(result.output).toContain("If you prefer chat-assisted setup");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
       const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
         event.type === "activity" && event.sourceId === "intent:first-step"
@@ -3643,7 +3863,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("pulseed gateway setup");
       expect(result.output).toContain("pulseed daemon start");
       expect(result.output).toContain("pulseed daemon status");
-      expect(result.output).toContain("If you paste the token here, PulSeed will redact it from history");
+      expect(result.output).toContain("If you prefer chat-assisted setup");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     });
 
