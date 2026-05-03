@@ -282,7 +282,7 @@ export class ChatRunner {
       output = [
         "Interrupted the active turn.",
         "",
-        "Recent activity",
+        "Activity before interruption",
         ...(activeTurn.recentEvents.length > 0
           ? activeTurn.recentEvents.slice(-6).map((event) => `- ${event}`)
           : ["- No activity was captured before the interrupt."]),

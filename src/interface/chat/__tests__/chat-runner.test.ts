@@ -2746,7 +2746,7 @@ describe("ChatRunner", () => {
       expect(capturedSignal?.aborted).toBe(true);
       expect(interrupted.success).toBe(true);
       expect(interrupted.output).toContain("Interrupted the active turn");
-      expect(interrupted.output).toContain("Recent activity");
+      expect(interrupted.output).toContain("Activity before interruption");
       await active;
     });
 
@@ -2841,7 +2841,7 @@ describe("ChatRunner", () => {
 
       expect(interruptible.getSignal()?.aborted).toBe(true);
       expect(interrupted.output).toContain("Interrupted the active turn");
-      expect(interrupted.output).toContain("Recent activity");
+      expect(interrupted.output).toContain("Activity before interruption");
       await active;
     });
 

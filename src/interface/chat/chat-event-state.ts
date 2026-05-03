@@ -22,8 +22,6 @@ export interface StreamChatMessage {
   toolActivities?: StreamToolActivity[];
 }
 
-const MAX_TOOL_ACTIVITIES = 5;
-
 function upsertMessage(
   messages: StreamChatMessage[],
   nextMessage: StreamChatMessage,
@@ -110,6 +108,11 @@ function renderTimelineItem(item: AgentTimelineItem): string {
     case "stopped":
       return item.reasonDetail ? `Stopped: ${item.reason} (${item.reasonDetail})` : `Stopped: ${item.reason}`;
   }
+}
+
+function isTransientTimelineItem(item: AgentTimelineItem): boolean {
+  if (item.kind === "final") return true;
+  return item.kind === "stopped" && item.reason === "completed";
 }
 
 function summarizeValue(value: unknown): string {
@@ -222,13 +225,12 @@ function formatToolActivityState(state: ToolActivityState): string {
   }
 }
 
-function renderToolActivityMessage(activities: StreamToolActivity[], current: boolean): string {
-  const heading = current ? "Current activity" : "Recent activity";
+function renderToolActivityMessage(activities: StreamToolActivity[]): string {
   const lines = activities.map((activity) => {
     const detail = activity.detail ? ` - ${activity.detail}` : "";
     return `- ${formatToolActivityState(activity.state)} ${activity.toolName}${detail}`;
   });
-  return [heading, ...lines].join("\n");
+  return lines.join("\n");
 }
 
 function closeToolActivityForTurn(messages: StreamChatMessage[], turnId: string): StreamChatMessage[] {
@@ -237,7 +239,7 @@ function closeToolActivityForTurn(messages: StreamChatMessage[], turnId: string)
     if (message.id !== toolLogId || !message.toolActivities) return message;
     return {
       ...message,
-      text: renderToolActivityMessage(message.toolActivities, false),
+      text: renderToolActivityMessage(message.toolActivities),
       transient: false,
     };
   });
@@ -275,12 +277,12 @@ function upsertToolActivity(
   const nextActivities = [
     ...previousActivities.filter((activity) => activity.id !== event.toolCallId),
     nextActivity,
-  ].slice(-MAX_TOOL_ACTIVITIES);
+  ];
 
   return upsertMessage(messages, {
     id: toolLogId,
     role: "pulseed",
-    text: renderToolActivityMessage(nextActivities, true),
+    text: renderToolActivityMessage(nextActivities),
     timestamp,
     messageType: "info",
     toolActivities: nextActivities,
@@ -336,7 +338,7 @@ export function applyChatEventToMessages(
       text,
       timestamp: new Date(event.item.createdAt),
       messageType: event.item.kind === "stopped" ? "warning" : "info",
-      transient: true,
+      transient: isTransientTimelineItem(event.item),
     }, maxMessages);
   }
 
@@ -358,14 +360,17 @@ export function applyChatEventToMessages(
   }
 
   if (event.type === "tool_start") {
+    if (event.presentation?.suppressTranscript) return messages;
     return upsertToolActivity(messages, event, maxMessages);
   }
 
   if (event.type === "tool_update") {
+    if (event.presentation?.suppressTranscript) return messages;
     return upsertToolActivity(messages, event, maxMessages);
   }
 
   if (event.type === "tool_end") {
+    if (event.presentation?.suppressTranscript) return messages;
     return upsertToolActivity(messages, event, maxMessages);
   }
 
