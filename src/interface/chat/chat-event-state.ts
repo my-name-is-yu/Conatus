@@ -1,6 +1,7 @@
 import type { ChatEvent } from "./chat-events.js";
 import { formatLifecycleFailureMessage } from "./failure-recovery.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
+import { renderOperationProgress } from "./operation-progress.js";
 import { redactSetupSecrets } from "./setup-secret-intake.js";
 
 type ToolActivityState = "reading" | "planning" | "editing" | "verifying" | "waiting" | "running" | "completed" | "failed";
@@ -76,6 +77,10 @@ function getActivityMessageId(event: Extract<ChatEvent, { type: "activity" }>): 
 
 function getTimelineMessageId(chatTurnId: string, item: AgentTimelineItem): string {
   return `agent-timeline:${chatTurnId}:${item.sourceEventId}`;
+}
+
+function getOperationProgressMessageId(turnId: string, itemId: string): string {
+  return `operation-progress:${turnId}:${itemId}`;
 }
 
 function renderTimelineItem(item: AgentTimelineItem): string {
@@ -342,6 +347,18 @@ export function applyChatEventToMessages(
       timestamp: new Date(event.item.createdAt),
       messageType: event.item.kind === "stopped" ? "warning" : "info",
       transient: isTransientTimelineItem(event.item),
+    }, maxMessages);
+  }
+
+  if (event.type === "operation_progress") {
+    const text = renderOperationProgress(event.item).trim();
+    if (!text) return messages;
+    return upsertMessage(messages, {
+      id: getOperationProgressMessageId(event.turnId, event.item.id),
+      role: "pulseed",
+      text,
+      timestamp: new Date(event.item.createdAt),
+      messageType: event.item.kind === "blocked" ? "warning" : "info",
     }, maxMessages);
   }
 

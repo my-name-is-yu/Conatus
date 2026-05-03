@@ -25,6 +25,11 @@ import {
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { redactSetupSecrets, redactSetupSecretsDeep } from "./setup-secret-intake.js";
 import { shouldRenderJapanese } from "./turn-language.js";
+import {
+  createOperationProgressItem,
+  operationProgressFromAgentActivitySummary,
+  type OperationProgressItem,
+} from "./operation-progress.js";
 
 export interface AssistantBuffer {
   text: string;
@@ -318,9 +323,22 @@ export class ChatRunnerEventBridge {
     });
     if (!summary) return;
     this.timelineActivityItemsByRun.delete(eventContext.runId);
+    this.emitOperationProgress(operationProgressFromAgentActivitySummary(summary, eventContext.languageHint), eventContext);
     this.emitEvent({
       type: "agent_timeline",
       item: summary,
+      ...this.eventBase(eventContext),
+    });
+  }
+
+  emitOperationProgress(item: OperationProgressItem, eventContext: ChatEventContext): void {
+    const safeItem = createOperationProgressItem({
+      ...item,
+      ...(eventContext.languageHint && !item.languageHint ? { languageHint: eventContext.languageHint } : {}),
+    });
+    this.emitEvent({
+      type: "operation_progress",
+      item: safeItem,
       ...this.eventBase(eventContext),
     });
   }
