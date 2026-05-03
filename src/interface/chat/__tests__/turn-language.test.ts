@@ -20,4 +20,10 @@ describe("turn language hint", () => {
     expect(sameLanguageResponseInstruction({ language: "ja", confidence: 0.9, source: "input_script" }))
       .toContain("Do not translate command names");
   });
+
+  it("ignores setup secret redaction markers when detecting the user's language", () => {
+    const hint = detectTurnLanguageHint("このtokenで進めて [REDACTED:telegram_bot_token:setup_secret_1]");
+
+    expect(hint).toMatchObject({ language: "ja", source: "input_script" });
+  });
 });

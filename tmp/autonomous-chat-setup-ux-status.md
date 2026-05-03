@@ -51,3 +51,23 @@ Updated: 2026-05-03
 - Re-verification: `npm run test:changed` passed, including related unit/integration and smoke lanes.
 - Re-verification: `npm run lint:boundaries` passed with existing warnings only (0 errors, 610 warnings).
 - Re-review after Telegram gateway fix: no material findings.
+
+## #975 shared operation progress timeline
+- Status: merged.
+- PR: #978 (`feat(chat): add shared operation progress`).
+- CI: `unit (22)` passed; `integration (24)` passed.
+
+## #974 setup copy and natural-language confirmation
+- Status: in progress.
+- Issue body read with `gh issue view 974`.
+- Plan: suppress internal setup preamble in rendered chat output, add typed setup confirmation intent via LLM/classifier state rather than phrase tables, explicitly mark replacement when an existing token is configured, keep slash fallback, and verify Japanese/English production chat route plus redaction.
+- Implemented direct configure preamble suppression by keeping configure progress on the shared `operation_progress` surface without emitting the generic `intent:first-step` activity.
+- Added natural-language confirmation for pending Telegram setup writes through `classifyConfirmationDecision` using the typed setup dialogue state as the subject; `/confirm-setup-write` remains the deterministic fallback command.
+- Added `replacesExistingSecret` to setup dialogue public state, surfaced replacement warnings before confirmation, and included replacement risk in the approval reason.
+- Preserved secret redaction in rendered output, persisted setup dialogue state, progress metadata, and approval text.
+- Added Japanese/English production ChatRunner coverage for natural-language confirmation, replacement warning coverage, and TUI coverage that rejects the internal preamble.
+- Verification: focused Vitest for turn language and chat-runner setup confirmation passed.
+- Verification: `npm run typecheck` passed.
+- Verification: `npm run test:changed` passed, including related unit/integration and smoke lanes.
+- Verification: `npm run lint:boundaries` passed with existing warnings only (0 errors, 610 warnings).
+- Review agent reported no high-confidence material findings. Residual risk: natural-language confirmation quality depends on the production LLM confirmation classifier.

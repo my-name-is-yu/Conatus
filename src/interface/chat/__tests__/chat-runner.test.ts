@@ -595,6 +595,133 @@ describe("ChatRunner", () => {
       fs.rmSync(baseDir, { recursive: true, force: true });
     });
 
+    it("confirms pending Telegram setup write from Japanese natural language through the production route", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-ja-confirm-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const llmClient = createMockLLMClient([
+        JSON.stringify({ decision: "approve", confidence: 0.94, rationale: "user approved pending setup write" }),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        approvalFn,
+        llmClient,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          configPath: path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"),
+          daemon: { running: true, port: 41700 },
+        })),
+      }));
+
+      const intakeResult = await runner.execute(`このtokenで進めて ${telegramToken}`, "/repo", 30_000);
+      const confirmResult = await runner.execute("設定して", "/repo", 30_000);
+
+      const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(intakeResult.output).toContain("自然文で承認");
+      expect(confirmResult.success).toBe(true);
+      expect(confirmResult.output).toContain("Telegram gateway config を書き込みました");
+      expect(confirmResult.output).not.toContain(telegramToken);
+      expect(JSON.stringify((stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(telegramToken);
+      expect(config.bot_token).toBe(telegramToken);
+      expect(approvalFn).toHaveBeenCalledOnce();
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
+    it("confirms pending Telegram setup write from English natural language through the production route", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-en-confirm-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const llmClient = createMockLLMClient([
+        JSON.stringify({ decision: "approve", confidence: 0.95, rationale: "user approved pending setup write" }),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        approvalFn,
+        llmClient,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          configPath: path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"),
+          daemon: { running: true, port: 41700 },
+        })),
+      }));
+
+      const intakeResult = await runner.execute(`configure it with ${telegramToken}`, "/repo", 30_000);
+      const confirmResult = await runner.execute("yes, configure it", "/repo", 30_000);
+
+      const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(intakeResult.output).toContain("approve in natural language");
+      expect(confirmResult.success).toBe(true);
+      expect(confirmResult.output).toContain("Telegram gateway config was written");
+      expect(confirmResult.output).not.toContain(telegramToken);
+      expect(config.bot_token).toBe(telegramToken);
+      expect(approvalFn).toHaveBeenCalledOnce();
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
+    it("warns that confirming a new Telegram token replaces the existing configured token", async () => {
+      const oldToken = "111111111:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const newToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-replace-"));
+      const configDir = path.join(baseDir, "gateway", "channels", "telegram-bot");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({
+        bot_token: oldToken,
+        allowed_user_ids: [],
+        denied_user_ids: [],
+        allowed_chat_ids: [],
+        denied_chat_ids: [],
+        runtime_control_allowed_user_ids: [],
+        chat_goal_map: {},
+        user_goal_map: {},
+        allow_all: false,
+        polling_timeout: 30,
+      }), "utf-8");
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const llmClient = createMockLLMClient([
+        JSON.stringify({ decision: "approve", confidence: 0.95, rationale: "user approved replacement" }),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        approvalFn,
+        llmClient,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "configured",
+          configPath: path.join(configDir, "config.json"),
+          daemon: { running: true, port: 41700 },
+          config: { exists: true, hasBotToken: true, hasHomeChat: false },
+        })),
+      }));
+
+      const intakeResult = await runner.execute(`use this new token ${newToken}`, "/repo", 30_000);
+      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
+        .map(([, value]) => value)
+        .find((value) => value?.setupDialogue?.selectedChannel === "telegram");
+      const confirmResult = await runner.execute("yes, configure it", "/repo", 30_000);
+
+      const config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf-8"));
+      expect(intakeResult.output).toContain("replace the existing configured token");
+      expect(persistedSession.setupDialogue).toMatchObject({ replacesExistingSecret: true });
+      expect(approvalFn).toHaveBeenCalledWith(expect.stringContaining("replace the existing configured Telegram bot token"));
+      expect(confirmResult.success).toBe(true);
+      expect(config.bot_token).toBe(newToken);
+      expect(JSON.stringify(persistedSession)).not.toContain(newToken);
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
     it("does not let disallowed gateway ingress confirm Telegram config through global approval", async () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-denied-"));
@@ -3943,9 +4070,9 @@ describe("ChatRunner", () => {
       const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
         event.type === "activity" && event.sourceId === "intent:first-step"
       );
-      expect(intent?.message).toContain("設定ガイダンスを準備");
-      expect(intent?.languageHint).toMatchObject({ language: "ja" });
-      expect(intent?.message).not.toContain("resume the saved agent loop state");
+      expect(intent).toBeUndefined();
+      expect(events.map((event) => event.type === "activity" ? event.message : "").join("\n"))
+        .not.toContain("I understand the request");
       const progressEvents = events.filter((event): event is Extract<ChatEvent, { type: "operation_progress" }> =>
         event.type === "operation_progress"
       );
