@@ -10,6 +10,17 @@ export {
 export { HttpChannelAdapter } from "./http-channel-adapter.js";
 export { SlackChannelAdapter } from "./slack-channel-adapter.js";
 export type { ChannelAdapter, EnvelopeHandler, ReplyChannel } from "./channel-adapter.js";
+export type {
+  TypingIndicatorCapability,
+  TypingIndicatorContext,
+  TypingIndicatorSession,
+  TypingIndicatorStatus,
+} from "./channel-adapter.js";
+export {
+  createRefreshingTypingIndicator,
+  createUnsupportedTypingIndicator,
+  withTypingIndicator,
+} from "./typing-indicator.js";
 export type { SlackChannelAdapterConfig, SlackResponse } from "./slack-channel-adapter.js";
 export { WsChannelAdapter } from "./ws-channel-adapter.js";
 export type { WsLike, WsSocketLike } from "./ws-channel-adapter.js";

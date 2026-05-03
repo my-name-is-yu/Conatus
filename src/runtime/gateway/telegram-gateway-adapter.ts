@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
+import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
@@ -8,6 +8,7 @@ import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { renderOperationProgress } from "../../interface/chat/operation-progress.js";
 import { formatLifecycleFailureMessage } from "../../interface/chat/failure-recovery.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
@@ -51,6 +52,7 @@ export class TelegramGatewayNotifier implements INotifier {
 
 export class TelegramGatewayAdapter implements ChannelAdapter {
   readonly name = "telegram";
+  readonly typingIndicator: TypingIndicatorCapability;
 
   private handler: EnvelopeHandler | null = null;
   private readonly api: TelegramAPI;
@@ -67,6 +69,15 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     this.pluginDir = pluginDir;
     this.config = config;
     this.api = new TelegramAPI(config.bot_token);
+    this.typingIndicator = createRefreshingTypingIndicator({
+      intervalMs: 4_000,
+      refresh: async (context) => {
+        const chatId = Number(context.conversation_id);
+        if (!Number.isInteger(chatId)) return;
+        await this.api.sendChatAction(chatId, "typing");
+      },
+      onError: (err) => console.warn("TelegramGatewayAdapter: typing indicator failed", err),
+    });
     this.homeChatStore = new TelegramHomeChatStore(pluginDir, config.chat_id);
     this.notifier = new TelegramGatewayNotifier(this.api, this.homeChatStore);
   }
@@ -188,24 +199,33 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       return;
     }
 
-    const reply = await dispatchGatewayChatInput({
-      text,
-      platform: "telegram",
-      identity_key: route.identityKey ?? this.config.identity_key,
-      conversation_id: String(chatId),
-      sender_id: String(fromUserId),
-      message_id: String(messageId),
-      goal_id: route.goalId,
-      cwd: process.cwd(),
-      onEvent: (event) => eventAdapter.handle(event),
-      metadata: {
-        ...route.metadata,
-        chat_id: chatId,
-        ...(route.goalId ? { goal_id: route.goalId } : {}),
-        ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-        ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
+    const reply = await withTypingIndicator(
+      this.typingIndicator,
+      {
+        platform: "telegram",
+        conversation_id: String(chatId),
+        sender_id: String(fromUserId),
+        message_id: String(messageId),
       },
-    });
+      () => dispatchGatewayChatInput({
+        text,
+        platform: "telegram",
+        identity_key: route.identityKey ?? this.config.identity_key,
+        conversation_id: String(chatId),
+        sender_id: String(fromUserId),
+        message_id: String(messageId),
+        goal_id: route.goalId,
+        cwd: process.cwd(),
+        onEvent: (event) => eventAdapter.handle(event),
+        metadata: {
+          ...route.metadata,
+          chat_id: chatId,
+          ...(route.goalId ? { goal_id: route.goalId } : {}),
+          ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+          ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
+        },
+      })
+    );
 
     if (!eventAdapter.renderedAssistantOutput) {
       await eventAdapter.sendFinalFallback(reply ?? "Received.");
@@ -279,6 +299,13 @@ class TelegramAPI {
 
   async sendPlainMessage(chatId: number, text: string): Promise<number> {
     return this.sendMessageInternal(chatId, text, null);
+  }
+
+  async sendChatAction(chatId: number, action: "typing"): Promise<void> {
+    await this.call("sendChatAction", {
+      chat_id: chatId,
+      action,
+    });
   }
 
   async editMessageText(chatId: number, messageId: number, text: string): Promise<void> {

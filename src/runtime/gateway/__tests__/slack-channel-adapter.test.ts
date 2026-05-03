@@ -47,6 +47,18 @@ describe("SlackChannelAdapter — properties", () => {
     expect(makeAdapter().name).toBe("slack");
   });
 
+  it("exposes explicit unsupported typing capability", async () => {
+    const adapter = makeAdapter();
+    const session = await adapter.typingIndicator.start({
+      platform: "slack",
+      conversation_id: "C_GENERAL",
+    });
+
+    expect(adapter.typingIndicator.status).toBe("unsupported");
+    expect(adapter.typingIndicator.reason).toContain("no native bot typing indicator");
+    expect(session.status).toBe("unsupported");
+  });
+
   it("start() resolves without error", async () => {
     await expect(makeAdapter().start()).resolves.toBeUndefined();
   });

@@ -20,6 +20,18 @@ function makeConfig(): SignalGatewayConfig {
 }
 
 describe("SignalGatewayAdapter", () => {
+  it("exposes explicit unsupported typing capability", async () => {
+    const adapter = new SignalGatewayAdapter(makeConfig());
+    const session = await adapter.typingIndicator.start({
+      platform: "signal",
+      conversation_id: "+10000000002",
+    });
+
+    expect(adapter.typingIndicator.status).toBe("unsupported");
+    expect(adapter.typingIndicator.reason).toContain("no configured typing endpoint");
+    expect(session.status).toBe("unsupported");
+  });
+
   it("does not include token-only message text in fallback message ids", () => {
     const token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
     const adapter = new SignalGatewayAdapter(makeConfig());

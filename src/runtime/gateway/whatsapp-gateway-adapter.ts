@@ -2,10 +2,11 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
-import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
+import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 interface WhatsAppWebhookPayload {
@@ -63,6 +64,9 @@ export class WhatsAppGatewayNotifier implements INotifier {
 
 export class WhatsAppGatewayAdapter implements ChannelAdapter {
   readonly name = "whatsapp";
+  readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
+    "whatsapp cloud adapter has no native typing endpoint in the current contract"
+  );
 
   private handler: EnvelopeHandler | null = null;
   private server: http.Server | null = null;
@@ -162,10 +166,12 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
     if (message.from === undefined || message.text?.body === undefined || message.text.body.trim().length === 0) {
       return;
     }
+    const senderId = message.from;
+    const text = message.text.body;
     const channelContext = {
       platform: "whatsapp",
-      senderId: message.from,
-      conversationId: message.from,
+      senderId,
+      conversationId: senderId,
     };
     const access = evaluateChannelAccess(
       {
@@ -185,26 +191,39 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
       },
       channelContext
     );
-    const reply = await dispatchGatewayChatInput({
-      text: message.text.body,
-      platform: "whatsapp",
-      identity_key: route.identityKey ?? this.config.identity_key,
-      conversation_id: message.from,
-      sender_id: message.from,
-      message_id: message.id,
-      goal_id: route.goalId,
-      metadata: {
-        ...route.metadata,
-        message_type: message.type,
-        timestamp: message.timestamp,
-        ...(route.goalId ? { goal_id: route.goalId } : {}),
-        ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-        ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
+    const reply = await withTypingIndicator(
+      this.typingIndicator,
+      {
+        platform: "whatsapp",
+        conversation_id: senderId,
+        sender_id: senderId,
+        message_id: message.id,
+        metadata: {
+          message_type: message.type,
+          timestamp: message.timestamp,
+        },
       },
-    });
+      () => dispatchGatewayChatInput({
+        text,
+        platform: "whatsapp",
+        identity_key: route.identityKey ?? this.config.identity_key,
+        conversation_id: senderId,
+        sender_id: senderId,
+        message_id: message.id,
+        goal_id: route.goalId,
+        metadata: {
+          ...route.metadata,
+          message_type: message.type,
+          timestamp: message.timestamp,
+          ...(route.goalId ? { goal_id: route.goalId } : {}),
+          ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+          ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
+        },
+      })
+    );
 
     await this.client.sendTextMessage({
-      to: message.from,
+      to: senderId,
       body: reply ?? "Received.",
     });
   }
