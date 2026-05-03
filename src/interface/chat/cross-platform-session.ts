@@ -45,6 +45,7 @@ import {
 } from "../../runtime/control/index.js";
 import { ApprovalBroker } from "../../runtime/approval-broker.js";
 import { ApprovalStore, createRuntimeStorePaths } from "../../runtime/store/index.js";
+import { classifyConversationalApprovalDecision } from "../../runtime/conversational-approval-decision.js";
 import { registerGlobalCrossPlatformChatSessionManager } from "./cross-platform-session-global.js";
 import type { RuntimeControlActor } from "../../runtime/store/runtime-operation-schemas.js";
 import type { ApprovalOrigin } from "../../runtime/store/runtime-schemas.js";
@@ -354,6 +355,10 @@ export class CrossPlatformChatSessionManager {
     if (input.approvalResponse) {
       return this.resolveConversationalApprovalIngress(ingress, input.approvalResponse);
     }
+    const approvalReply = await this.tryResolveConversationalApprovalReply(ingress);
+    if (approvalReply) {
+      return approvalReply;
+    }
     const result = await this.executeIngress(ingress, input);
     return result.output;
   }
@@ -409,6 +414,54 @@ export class CrossPlatformChatSessionManager {
     return resolved
       ? "Approval response recorded."
       : "Approval response did not match an active approval for this conversation.";
+  }
+
+  private async tryResolveConversationalApprovalReply(
+    ingress: CrossPlatformIngressMessage
+  ): Promise<string | null> {
+    const broker = this.deps.approvalBroker;
+    if (!broker) {
+      return null;
+    }
+    const origin = createApprovalOriginFromIngress(ingress);
+    if (!origin) {
+      return null;
+    }
+    const lookup = await broker.findPendingConversationalApproval(origin);
+    if (lookup.status === "none") {
+      return null;
+    }
+    if (lookup.status === "ambiguous") {
+      return "Multiple active approvals match this conversation. Please use the specific approval response.";
+    }
+    const approval = lookup.approval;
+
+    const decision = await classifyConversationalApprovalDecision(ingress.text, {
+      approval,
+      replyOrigin: origin,
+      llmClient: this.deps.llmClient,
+      priorTurnState: this.describeLastRouteForApproval(ingress),
+    });
+    if (decision.decision === "approve" || decision.decision === "reject") {
+      const resolved = await broker.resolveConversationalApproval(
+        approval.approval_id,
+        decision.decision === "approve",
+        approval.origin ?? origin
+      );
+      return resolved
+        ? "Approval response recorded."
+        : "Approval response did not match an active approval for this conversation.";
+    }
+    if (decision.decision === "clarify") {
+      return decision.clarification ?? "Approval is still pending. Please clarify what you need before approving or rejecting.";
+    }
+    return decision.clarification ?? "Approval reply was ambiguous. The approval remains pending.";
+  }
+
+  private describeLastRouteForApproval(ingress: CrossPlatformIngressMessage): string {
+    const session = this.sessions.get(buildSessionKeyFromParts(ingress));
+    const route = session?.lastRoute;
+    return route ? JSON.stringify(route) : "none";
   }
 
   handleIncomingMessage(input: CrossPlatformIncomingChatMessage): Promise<string> {

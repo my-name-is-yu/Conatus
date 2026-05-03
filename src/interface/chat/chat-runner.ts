@@ -106,7 +106,10 @@ export interface ChatRunnerDeps {
   chatAgentLoopRunner?: ChatAgentLoopRunner;
   reviewAgentLoopRunner?: Pick<ReviewAgentLoopRunner, "execute">;
   runtimeControlService?: Pick<RuntimeControlService, "request">;
-  approvalBroker?: Pick<ApprovalBroker, "requestConversationalApproval" | "resolveConversationalApproval">;
+  approvalBroker?: Pick<
+    ApprovalBroker,
+    "requestConversationalApproval" | "resolveConversationalApproval" | "findPendingConversationalApproval"
+  >;
   runtimeControlApprovalFn?: (description: string) => Promise<boolean>;
   runtimeReplyTarget?: RuntimeControlReplyTarget;
   runtimeControlActor?: RuntimeControlActor;
