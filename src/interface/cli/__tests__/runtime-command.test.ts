@@ -13,6 +13,8 @@ import { BackgroundRunLedger } from "../../../runtime/store/background-run-store
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 import { RuntimeExperimentQueueStore } from "../../../runtime/store/experiment-queue-store.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
+import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
+import * as daemonClient from "../../../runtime/daemon/client.js";
 
 describe("runtime registry CLI commands", () => {
   let tmpDir: string;
@@ -110,6 +112,182 @@ describe("runtime registry CLI commands", () => {
         status: "failed",
       }),
     ]);
+  });
+
+  it("surfaces operator channel bindings, runtime-control warnings, and pinned reply targets", async () => {
+    vi.spyOn(daemonClient, "isDaemonRunning").mockResolvedValue({ running: true, port: 47321 });
+    const runtimeRoot = path.join(tmpDir, "resident-runtime");
+    await stateManager.writeRaw("daemon.json", { runtime_root: "resident-runtime" });
+    await new RuntimeHealthStore(runtimeRoot).saveSnapshot({
+      status: "ok",
+      leader: true,
+      checked_at: Date.parse("2026-05-03T00:00:00.000Z"),
+      components: {
+        gateway: "ok",
+        queue: "ok",
+        leases: "ok",
+        approval: "ok",
+        outbox: "ok",
+        supervisor: "ok",
+      },
+    });
+    await stateManager.writeRaw("gateway/channels/telegram-bot/config.json", {
+      bot_token: "token",
+      chat_id: 12345,
+      allowed_user_ids: [67890],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [],
+      chat_goal_map: { "12345": "goal-home" },
+      user_goal_map: {},
+      default_goal_id: "goal-home",
+      allow_all: false,
+      polling_timeout: 20,
+      identity_key: "personal",
+    });
+    await stateManager.writeRaw("gateway/channels/discord-bot/config.json", {
+      application_id: "app",
+      bot_token: "token",
+      channel_id: "channel-1",
+      identity_key: "discord:team",
+      command_name: "pulseed",
+      host: "127.0.0.1",
+      port: 9000,
+      ephemeral: false,
+      runtime_control_allowed_sender_ids: ["user-1"],
+      allowed_sender_ids: ["user-1"],
+      denied_sender_ids: [],
+      allowed_conversation_ids: [],
+      denied_conversation_ids: [],
+      conversation_goal_map: {},
+      sender_goal_map: {},
+    });
+    await new BackgroundRunLedger(runtimeRoot).create({
+      id: "run:coreloop:pinned",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "done_only",
+      reply_target_source: "pinned_run",
+      pinned_reply_target: { channel: "telegram", target_id: "12345" },
+      parent_session_id: "session:conversation:chat-a",
+      goal_id: "goal-home",
+      title: "Pinned home run",
+      workspace: "/repo",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await runCLI("runtime", "bindings", "--json");
+    const output = logSpy.mock.calls.map((call) => call.join("\n")).join("\n");
+    const parsed = JSON.parse(output) as {
+      daemon: { running: boolean; runtime_root: string };
+      channels: Array<{
+        name: string;
+        state: string;
+        home_target: { target_id?: string } | null;
+        goal_bindings: Array<{ scope: string; subject_id: string | null; goal_id: string }>;
+        runtime_control: { state: string };
+      }>;
+      background_runs: Array<{ id: string; pinned_reply_target: { channel: string; target_id?: string } | null }>;
+      warnings: string[];
+    };
+
+    expect(code).toBe(0);
+    expect(parsed.daemon.running).toBe(true);
+    expect(parsed.channels).toContainEqual(expect.objectContaining({
+      name: "telegram-bot",
+      state: "active",
+      home_target: expect.objectContaining({ target_id: "12345" }),
+      goal_bindings: expect.arrayContaining([
+        { scope: "conversation", subject_id: "12345", goal_id: "goal-home" },
+        { scope: "default", subject_id: null, goal_id: "goal-home" },
+      ]),
+      runtime_control: { state: "missing_allowlist", allowed_count: 0 },
+    }));
+    expect(parsed.daemon.runtime_root).toBe(runtimeRoot);
+    expect(parsed.channels).toContainEqual(expect.objectContaining({
+      name: "discord-bot",
+      state: "active",
+      runtime_control: { state: "allowed", allowed_count: 1 },
+    }));
+    expect(parsed.channels).toContainEqual(expect.objectContaining({
+      name: "signal-bridge",
+      state: "missing",
+    }));
+    expect(parsed.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:coreloop:pinned",
+      pinned_reply_target: expect.objectContaining({ channel: "telegram", target_id: "12345" }),
+    }));
+    expect(parsed.warnings).toContain("telegram-bot: Missing Telegram runtime-control allowed user list.");
+  });
+
+  it("marks configured channels inactive when daemon health is missing", async () => {
+    vi.spyOn(daemonClient, "isDaemonRunning").mockResolvedValue({ running: false, port: 0 });
+    await stateManager.writeRaw("gateway/channels/telegram-bot/config.json", {
+      bot_token: "token",
+      allowed_user_ids: [67890],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [67890],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: false,
+      polling_timeout: 20,
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await runCLI("runtime", "bindings", "--json");
+    const parsed = JSON.parse(logSpy.mock.calls.map((call) => call.join("\n")).join("\n")) as {
+      channels: Array<{ name: string; state: string; home_target: unknown }>;
+      warnings: string[];
+    };
+
+    expect(code).toBe(0);
+    expect(parsed.channels).toContainEqual(expect.objectContaining({
+      name: "telegram-bot",
+      state: "configured",
+      home_target: null,
+    }));
+    expect(parsed.warnings).toContain("telegram-bot: Missing Telegram home chat. Send /sethome from the target chat.");
+    expect(parsed.warnings).toContain("Daemon is not running.");
+  });
+
+  it("marks partially invalid non-Telegram channel config as degraded", async () => {
+    vi.spyOn(daemonClient, "isDaemonRunning").mockResolvedValue({ running: true, port: 47321 });
+    await new RuntimeHealthStore(path.join(tmpDir, "runtime")).saveSnapshot({
+      status: "ok",
+      leader: true,
+      checked_at: Date.parse("2026-05-03T00:00:00.000Z"),
+      components: {
+        gateway: "ok",
+        queue: "ok",
+        leases: "ok",
+        approval: "ok",
+        outbox: "ok",
+        supervisor: "ok",
+      },
+    });
+    await stateManager.writeRaw("gateway/channels/discord-bot/config.json", {
+      channel_id: "channel-1",
+      identity_key: "discord:team",
+      runtime_control_allowed_sender_ids: ["user-1"],
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await runCLI("runtime", "bindings", "--json");
+    const parsed = JSON.parse(logSpy.mock.calls.map((call) => call.join("\n")).join("\n")) as {
+      channels: Array<{ name: string; state: string; degraded: boolean }>;
+      warnings: string[];
+    };
+
+    expect(code).toBe(0);
+    expect(parsed.channels).toContainEqual(expect.objectContaining({
+      name: "discord-bot",
+      state: "degraded",
+      degraded: true,
+    }));
+    expect(parsed.warnings).toContain("discord-bot: Invalid discord-bot config: missing application_id, bot_token, command_name, host.");
   });
 
   it("shows one runtime session as JSON", async () => {

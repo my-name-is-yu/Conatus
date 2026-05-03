@@ -40,6 +40,7 @@ import type {
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../../runtime/daemon/runtime-root.js";
+import { collectOperatorBindingStatus, printOperatorBindingStatus } from "./operator-binding-status.js";
 
 const ID_WIDTH = 34;
 const KIND_WIDTH = 12;
@@ -425,11 +426,18 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback");
+    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback");
     return 1;
   }
 
   const registry = createRuntimeSessionRegistry({ stateManager });
+
+  if (runtimeSubcommand === "bindings") {
+    const values = parseListArgs(args.slice(1), "bindings");
+    const status = await collectOperatorBindingStatus(stateManager);
+    values.json ? printJson(status) : printOperatorBindingStatus(status);
+    return 0;
+  }
 
   if (runtimeSubcommand === "sessions") {
     const values = parseListArgs(args.slice(1), "sessions");
