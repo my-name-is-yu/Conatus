@@ -421,6 +421,186 @@ describe("CrossPlatformChatSessionManager", () => {
     }
   });
 
+  it("parses a same-conversation natural-language approval reply through the production ingress path", async () => {
+    const tmpDir = makeTempDir();
+    const events: string[] = [];
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-natural-language",
+      });
+      const runtimeControlService = {
+        request: vi.fn(async (request: {
+          approvalFn?: (description: string) => Promise<boolean>;
+        }) => {
+          const approved = await request.approvalFn?.("Restart the resident daemon.");
+          return {
+            success: approved === true,
+            message: approved === true ? "restart queued" : "not approved",
+            operationId: "op-natural-language",
+            state: approved === true ? "acknowledged" as const : "blocked" as const,
+          };
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+          JSON.stringify({
+            decision: "approve",
+            confidence: 0.94,
+            rationale: "The reply explicitly authorizes the active restart request.",
+          }),
+        ]),
+        runtimeControlService,
+        approvalBroker,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "PulSeed を再起動して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: (event) => {
+          if (event.type === "activity") {
+            events.push(event.message);
+          }
+        },
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && !events.some((message) => message.includes("approval-natural-language"))) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await expect(manager.processIncomingMessage({
+        text: "問題ありません。進めてください",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toBe("Approval response recorded.");
+
+      await expect(resultPromise).resolves.toBe("restart queued");
+      await expect(store.loadResolved("approval-natural-language")).resolves.toMatchObject({
+        state: "approved",
+        response_channel: "slack",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("keeps approvals pending for clarification replies and rejects wrong-context replies", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-clarify",
+      });
+      const runtimeControlService = {
+        request: vi.fn(async (request: {
+          approvalFn?: (description: string) => Promise<boolean>;
+        }) => {
+          const approved = await request.approvalFn?.("Restart the resident daemon.");
+          return {
+            success: approved === true,
+            message: approved === true ? "restart queued" : "not approved",
+            operationId: "op-clarify",
+            state: approved === true ? "acknowledged" as const : "blocked" as const,
+          };
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+          JSON.stringify({
+            decision: "clarify",
+            confidence: 0.92,
+            clarification: "Approval is still pending while the restart target is clarified.",
+          }),
+        ]),
+        runtimeControlService,
+        approvalBroker,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "PulSeed を再起動して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: () => undefined,
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-clarify")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await expect(manager.processIncomingMessage({
+        text: "Before deciding, which daemon will restart?",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toBe("Approval is still pending while the restart target is clarified.");
+      await expect(store.loadPending("approval-clarify")).resolves.toMatchObject({
+        state: "pending",
+      });
+
+      await expect(manager.processIncomingMessage({
+        text: "",
+        platform: "slack",
+        identity_key: "workspace:U999",
+        conversation_id: "C123:1700.1",
+        sender_id: "U999",
+        message_id: "1700.4",
+        cwd: "/repo",
+        approvalResponse: {
+          approval_id: "approval-clarify",
+          approved: true,
+        },
+      })).resolves.toBe("Approval response did not match an active approval for this conversation.");
+      await expect(store.loadPending("approval-clarify")).resolves.toMatchObject({
+        state: "pending",
+      });
+
+      await approvalBroker.resolveConversationalApproval("approval-clarify", false, {
+        channel: "slack",
+        conversation_id: "C123:1700.1",
+        user_id: "U123",
+        session_id: "identity:workspace:U123",
+        turn_id: "1700.2",
+      });
+      await expect(resultPromise).resolves.toContain("not approved");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("fails closed when the originating conversation delivery handler rejects", async () => {
     const tmpDir = makeTempDir();
     try {

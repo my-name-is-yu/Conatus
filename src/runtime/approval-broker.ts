@@ -38,6 +38,11 @@ export interface ConversationalApprovalOptions {
   ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery;
 }
 
+export type PendingConversationalApprovalLookup =
+  | { status: "found"; approval: ApprovalRecord }
+  | { status: "none" }
+  | { status: "ambiguous" };
+
 export interface ApprovalBrokerOptions {
   store: ApprovalStore;
   logger?: Logger;
@@ -196,6 +201,20 @@ export class ApprovalBroker {
       responseChannel: origin.channel,
     });
     return resolved !== null;
+  }
+
+  async findPendingConversationalApproval(origin: ApprovalOrigin): Promise<PendingConversationalApprovalLookup> {
+    await this.start();
+    const matches = (await this.store.listPending())
+      .filter((record) => conversationalApprovalOriginMatches(record.origin, origin))
+      .sort((a, b) => b.created_at - a.created_at);
+    if (matches.length === 0) {
+      return { status: "none" };
+    }
+    if (matches.length > 1) {
+      return { status: "ambiguous" };
+    }
+    return { status: "found", approval: matches[0]! };
   }
 
   getPendingApprovalEvents(): ApprovalRequiredEvent[] {
@@ -407,4 +426,14 @@ function approvalOriginMatches(expected: ApprovalOrigin | undefined, actual: App
 
 function requiredFieldMatches(expected: string | undefined, actual: string | undefined): boolean {
   return expected !== undefined && expected === actual;
+}
+
+function conversationalApprovalOriginMatches(expected: ApprovalOrigin | undefined, actual: ApprovalOrigin): boolean {
+  if (!expected) {
+    return false;
+  }
+  return expected.channel === actual.channel
+    && expected.conversation_id === actual.conversation_id
+    && requiredFieldMatches(expected.user_id, actual.user_id)
+    && requiredFieldMatches(expected.session_id, actual.session_id);
 }
