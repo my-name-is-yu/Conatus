@@ -25,6 +25,7 @@ import {
   ProactiveOverreachIndicatorSchema,
   type ProactiveInterventionSummary,
 } from "../../../runtime/store/proactive-intervention-store.js";
+import { createRelationshipProfileProposalsFromProactiveFeedback } from "../../../platform/profile/proactive-feedback-proposals.js";
 import {
   createRuntimeDreamSidecarReview,
   RuntimeDreamSidecarReviewError,
@@ -644,11 +645,15 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
       followThroughSuccess: values.followThroughSuccess,
       channel: "cli",
     });
+    const proposalResult = await createRelationshipProfileProposalsFromProactiveFeedback(stateManager.getBaseDir(), event);
     const summary = await store.summarize();
     if (values.json) {
-      printJson({ event, summary });
+      printJson({ event, proposals: proposalResult.proposals, summary });
     } else {
       console.log(`Recorded proactive feedback: ${event.outcome} for ${event.intervention_id}`);
+      if (proposalResult.proposals.length > 0) {
+        console.log(`Created ${proposalResult.proposals.length} relationship profile proposal(s).`);
+      }
       if (event.policy_adjustment_recommendation) {
         console.log(`Policy recommendation: ${event.policy_adjustment_recommendation.suggested_action} for ${event.policy_adjustment_recommendation.relationship_profile_key}`);
       }

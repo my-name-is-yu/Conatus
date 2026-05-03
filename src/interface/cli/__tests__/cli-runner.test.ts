@@ -1729,6 +1729,16 @@ describe("runtime proactive feedback commands", () => {
     );
     expect(feedbackCode).toBe(0);
 
+    const proposalStore = JSON.parse(fs.readFileSync(path.join(tmpDir, "relationship-profile-proposals.json"), "utf-8"));
+    expect(proposalStore.proposals[0]).toMatchObject({
+      source: "proactive_feedback",
+      approval_state: "pending",
+      proposed_item: {
+        stable_key: "user.intervention.proactivity",
+        kind: "intervention_policy",
+      },
+    });
+
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const qualityCode = await runCLI("runtime", "proactive-quality");
     const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
