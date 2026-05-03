@@ -23,6 +23,7 @@ import {
   type FailureRecoverySignal,
 } from "./failure-recovery.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
+import { redactSetupSecrets, redactSetupSecretsDeep } from "./setup-secret-intake.js";
 
 export interface AssistantBuffer {
   text: string;
@@ -289,8 +290,9 @@ export class ChatRunnerEventBridge {
   }
 
   emitEvent(event: ChatEvent): void {
-    this.rememberActiveTurnEvent(event);
-    this.onEventGetter()?.(event);
+    const safeEvent = redactChatEvent(event);
+    this.rememberActiveTurnEvent(safeEvent);
+    this.onEventGetter()?.(safeEvent);
   }
 
   private rememberTimelineActivityItem(eventContext: ChatEventContext, item: AgentTimelineItem): void {
@@ -329,11 +331,12 @@ export class ChatRunnerEventBridge {
     sourceId?: string,
     transient = true
   ): void {
-    if (!message.trim()) return;
+    const safeMessage = redactSetupSecrets(message);
+    if (!safeMessage.trim()) return;
     this.emitEvent({
       type: "activity",
       kind,
-      message,
+      message: safeMessage,
       ...(sourceId ? { sourceId } : {}),
       transient,
       ...this.eventBase(eventContext),
@@ -418,10 +421,11 @@ export class ChatRunnerEventBridge {
     eventContext: ChatEventContext
   ): void {
     if (!delta) return;
-    assistantBuffer.text += delta;
+    const safeDelta = redactSetupSecrets(delta);
+    assistantBuffer.text += safeDelta;
     this.emitEvent({
       type: "assistant_delta",
-      delta,
+      delta: safeDelta,
       text: assistantBuffer.text,
       ...this.eventBase(eventContext),
     });
@@ -536,6 +540,10 @@ export class ChatRunnerEventBridge {
     } catch {
       // fall through
     }
-    return preview ? { preview } : {};
+    return preview ? { preview: redactSetupSecrets(preview) } : {};
   }
+}
+
+function redactChatEvent(event: ChatEvent): ChatEvent {
+  return redactSetupSecretsDeep(event);
 }

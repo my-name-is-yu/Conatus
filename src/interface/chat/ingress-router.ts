@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatEventHandler } from "./chat-events.js";
 import type { RuntimeControlIntent } from "../../runtime/control/index.js";
 import type { FreeformRouteIntent } from "./freeform-route-classifier.js";
+import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -80,6 +81,7 @@ export interface IngressRouterCapabilities {
   hasRuntimeControlService?: boolean;
   runtimeControlIntent?: RuntimeControlIntent | null;
   freeformRouteIntent?: FreeformRouteIntent | null;
+  setupSecretIntake?: SetupSecretIntakeResult | null;
 }
 
 function selectRouteForText(
@@ -116,6 +118,21 @@ function selectRouteForText(
         ...runtimeControlPolicy,
       };
     }
+  }
+
+  const setupSecretKinds = new Set((deps.setupSecretIntake?.suppliedSecrets ?? []).map((secret) => secret.kind));
+  if (setupSecretKinds.has("telegram_bot_token")) {
+    return {
+      kind: "configure",
+      reason: "freeform_semantic_route",
+      intent: {
+        kind: "configure",
+        confidence: 1,
+        configure_target: "telegram_gateway",
+        rationale: "typed setup secret intake detected a Telegram bot token",
+      },
+      ...baseTurnPolicy,
+    };
   }
 
   const freeformIntent = deps.freeformRouteIntent ?? null;

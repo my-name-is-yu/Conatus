@@ -1,6 +1,7 @@
 import type { ChatEvent } from "./chat-events.js";
 import { formatLifecycleFailureMessage } from "./failure-recovery.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
+import { redactSetupSecrets } from "./setup-secret-intake.js";
 
 type ToolActivityState = "reading" | "planning" | "editing" | "verifying" | "waiting" | "running" | "completed" | "failed";
 
@@ -89,26 +90,26 @@ function renderTimelineItem(item: AgentTimelineItem): string {
     case "model_request":
       return `Asked ${item.model} for the next step with ${item.toolCount} available tool(s).`;
     case "assistant_message":
-      return item.text;
+      return redactSetupSecrets(item.text);
     case "tool": {
       const detail = item.status === "started" ? item.inputPreview : item.outputPreview;
       const label = item.status === "started" ? "Started" : item.success ? "Finished" : "Failed";
-      return detail ? `${label} ${item.toolName}: ${detail}` : `${label} ${item.toolName}.`;
+      return detail ? `${label} ${item.toolName}: ${redactSetupSecrets(detail)}` : `${label} ${item.toolName}.`;
     }
     case "plan":
-      return `Plan changed: ${item.summary}`;
+      return `Plan changed: ${redactSetupSecrets(item.summary)}`;
     case "approval":
       return item.status === "requested"
-        ? `Approval requested for ${item.toolName}: ${item.reason}`
-        : `Approval denied for ${item.toolName}: ${item.reason}`;
+        ? `Approval requested for ${item.toolName}: ${redactSetupSecrets(item.reason)}`
+        : `Approval denied for ${item.toolName}: ${redactSetupSecrets(item.reason)}`;
     case "compaction":
       return `Compacted context (${item.phase}, ${item.reason}): ${item.inputMessages} -> ${item.outputMessages}.`;
     case "activity_summary":
-      return item.text;
+      return redactSetupSecrets(item.text);
     case "final":
-      return item.outputPreview;
+      return redactSetupSecrets(item.outputPreview);
     case "stopped":
-      return item.reasonDetail ? `Stopped: ${item.reason} (${item.reasonDetail})` : `Stopped: ${item.reason}`;
+      return item.reasonDetail ? `Stopped: ${item.reason} (${redactSetupSecrets(item.reasonDetail)})` : `Stopped: ${item.reason}`;
   }
 }
 
@@ -119,7 +120,7 @@ function isTransientTimelineItem(item: AgentTimelineItem): boolean {
 
 function summarizeValue(value: unknown): string {
   if (typeof value === "string") {
-    const normalized = value.replace(/\s+/g, " ").trim();
+    const normalized = redactSetupSecrets(value).replace(/\s+/g, " ").trim();
     return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
   }
   if (typeof value === "number" || typeof value === "boolean") {

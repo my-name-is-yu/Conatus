@@ -17,6 +17,7 @@ import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-
 import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
 import type { ChatEvent } from "../chat-events.js";
+import type { ChatIngressMessage, SelectedChatRoute } from "../ingress-router.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
@@ -48,6 +49,59 @@ function makeMockStateManager(): StateManager {
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
   } as unknown as StateManager;
+}
+
+function makeIngress(text: string): ChatIngressMessage {
+  return {
+    channel: "plugin_gateway",
+    platform: "telegram",
+    identity_key: "telegram:user-1",
+    conversation_id: "chat-1",
+    message_id: "message-1",
+    text,
+    actor: {
+      surface: "gateway",
+      identity_key: "telegram:user-1",
+    },
+    runtimeControl: {
+      allowed: false,
+      approvalMode: "disallowed",
+    },
+    metadata: {},
+    replyTarget: {
+      surface: "gateway",
+      channel: "plugin_gateway",
+      identity_key: "telegram:user-1",
+      conversation_id: "chat-1",
+      deliveryMode: "reply",
+    },
+  };
+}
+
+function adapterRoute(): SelectedChatRoute {
+  return {
+    kind: "adapter",
+    reason: "adapter_fallback",
+    replyTargetPolicy: "turn_reply_target",
+    eventProjectionPolicy: "turn_only",
+    concurrencyPolicy: "session_serial",
+  };
+}
+
+function telegramConfigureRoute(): SelectedChatRoute {
+  return {
+    kind: "configure",
+    reason: "freeform_semantic_route",
+    intent: {
+      kind: "configure",
+      confidence: 0.95,
+      configure_target: "telegram_gateway",
+      rationale: "test configure route",
+    },
+    replyTargetPolicy: "turn_reply_target",
+    eventProjectionPolicy: "turn_only",
+    concurrencyPolicy: "session_serial",
+  };
 }
 
 function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
@@ -237,6 +291,100 @@ function makeTask(id: string, goalId: string, overrides: Partial<Task> = {}): Ta
 
 describe("ChatRunner", () => {
   describe("normal execution", () => {
+    it("redacts setup secrets through the production ingress entrypoint before persistence, events, and adapter prompts", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const stateManager = makeMockStateManager();
+      const adapter = makeMockAdapter();
+      const events: ChatEvent[] = [];
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter,
+        onEvent: (event) => events.push(event),
+      }));
+
+      await runner.executeIngressMessage(
+        makeIngress(`telegram setup token ${telegramToken}`),
+        "/repo",
+        30_000,
+        adapterRoute()
+      );
+
+      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
+        .map(([, value]) => value)
+        .find((value) => value && typeof value === "object" && Array.isArray(value.messages));
+      expect(JSON.stringify(persistedSession)).not.toContain(telegramToken);
+      expect(persistedSession.messages[0].content).toContain("[REDACTED:telegram_bot_token:setup_secret_1]");
+      expect(persistedSession.messages[0].setupSecretIntake).toEqual([
+        expect.objectContaining({
+          id: "setup_secret_1",
+          kind: "telegram_bot_token",
+          redaction: "[REDACTED:telegram_bot_token:setup_secret_1]",
+        }),
+      ]);
+      expect(JSON.stringify(events)).not.toContain(telegramToken);
+      expect(JSON.stringify((adapter.execute as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(telegramToken);
+    });
+
+    it("redacts non-Telegram setup secret shapes through the production chat entrypoint", async () => {
+      const apiKey = "sk-proj_abcdefghijklmnopqrstuvwxyz1234567890";
+      const stateManager = makeMockStateManager();
+      const runner = new ChatRunner(makeDeps({ stateManager }));
+
+      await runner.execute(`provider key is ${apiKey}`, "/repo", 30_000);
+
+      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
+        .map(([, value]) => value)
+        .find((value) => value && typeof value === "object" && Array.isArray(value.messages));
+      expect(JSON.stringify(persistedSession)).not.toContain(apiKey);
+      expect(persistedSession.messages[0].setupSecretIntake).toEqual([
+        expect.objectContaining({ kind: "openai_api_key" }),
+      ]);
+    });
+
+    it("routes token-only setup input through standalone ChatRunner typed intake", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      const result = await runner.execute(telegramToken, "/repo", 30_000);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("I received a Telegram bot token");
+      expect(result.output).not.toContain(telegramToken);
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("keeps supplied setup secret facts available to the configure route without persisting raw assistant echoes", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const echoedToken = "sk-proj_echoedsecretabcdefghijklmnopqrstuvwxyz";
+      const stateManager = makeMockStateManager();
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter: makeMockAdapter({
+          ...CANNED_RESULT,
+          output: `adapter echoed ${echoedToken}`,
+        }),
+      }));
+
+      const configureResult = await runner.executeIngressMessage(
+        makeIngress(`telegram setup token ${telegramToken}`),
+        "/repo",
+        30_000,
+        telegramConfigureRoute()
+      );
+      await runner.execute(`regular turn ${echoedToken}`, "/repo", 30_000);
+
+      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
+        .map(([, value]) => value)
+        .filter((value) => value && typeof value === "object" && Array.isArray(value.messages))
+        .at(-1);
+      expect(configureResult.output).not.toContain(telegramToken);
+      expect(configureResult.output).toContain("I received a Telegram bot token");
+      expect(JSON.stringify(persistedSession)).not.toContain(telegramToken);
+      expect(JSON.stringify(persistedSession)).not.toContain(echoedToken);
+      expect(JSON.stringify(persistedSession)).toContain("[REDACTED:openai_api_key:setup_secret_1]");
+    });
+
     it("calls adapter.execute with correct AgentTask shape", async () => {
       const adapter = makeMockAdapter();
       const runner = new ChatRunner(makeDeps({ adapter }));
@@ -3495,7 +3643,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("pulseed gateway setup");
       expect(result.output).toContain("pulseed daemon start");
       expect(result.output).toContain("pulseed daemon status");
-      expect(result.output).toContain("Do not paste the token into chat");
+      expect(result.output).toContain("If you paste the token here, PulSeed will redact it from history");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     });
 

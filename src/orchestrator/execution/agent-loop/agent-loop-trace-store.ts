@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AgentLoopEvent } from "./agent-loop-events.js";
+import { redactSetupSecretsDeep } from "../../../interface/chat/setup-secret-intake.js";
 
 export interface AgentLoopTraceStore {
   append(event: AgentLoopEvent): Promise<void>;
@@ -11,7 +12,7 @@ export class InMemoryAgentLoopTraceStore implements AgentLoopTraceStore {
   private readonly events: AgentLoopEvent[] = [];
 
   async append(event: AgentLoopEvent): Promise<void> {
-    this.events.push(event);
+    this.events.push(redactSetupSecretsDeep(event));
   }
 
   async list(traceId?: string): Promise<AgentLoopEvent[]> {
@@ -27,9 +28,10 @@ export class JsonlAgentLoopTraceStore implements AgentLoopTraceStore {
   constructor(private readonly filePath: string) {}
 
   async append(event: AgentLoopEvent): Promise<void> {
-    this.events.push(event);
+    const safeEvent = redactSetupSecretsDeep(event);
+    this.events.push(safeEvent);
     await mkdir(dirname(this.filePath), { recursive: true });
-    await appendFile(this.filePath, `${JSON.stringify(event)}\n`, "utf-8");
+    await appendFile(this.filePath, `${JSON.stringify(safeEvent)}\n`, "utf-8");
   }
 
   async list(traceId?: string): Promise<AgentLoopEvent[]> {

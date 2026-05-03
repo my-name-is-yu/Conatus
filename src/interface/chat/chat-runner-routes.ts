@@ -19,6 +19,7 @@ import type { ChatEventContext } from "./chat-events.js";
 import type { AgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
 import { resolveExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { AssistantBuffer, ChatRunnerEventBridge } from "./chat-runner-event-bridge.js";
+import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -31,6 +32,7 @@ export interface ChatRunnerRouteHost {
   getConversationSessionId(): string | null;
   getSessionCwd(): string | null;
   getNativeAgentLoopStatePath(): string | null;
+  getSetupSecretIntake(): SetupSecretIntakeResult | null;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
   setSessionExecutionPolicy(policy: ExecutionPolicy): void;
 }
@@ -86,7 +88,7 @@ export async function executeConfigureRoute(
   if (route.kind !== "configure") {
     throw new Error(`executeConfigureRoute received route kind ${route.kind}`);
   }
-  const output = formatConfigureGuidance(route.intent.configure_target ?? "unknown");
+  const output = formatConfigureGuidance(route.intent.configure_target ?? "unknown", host.getSetupSecretIntake());
   return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
 }
 
@@ -620,8 +622,13 @@ async function persistDirectRouteResult(
   return { success: true, output, elapsed_ms };
 }
 
-function formatConfigureGuidance(target: "telegram_gateway" | "gateway" | "provider" | "daemon" | "notification" | "slack" | "unknown"): string {
+function formatConfigureGuidance(
+  target: "telegram_gateway" | "gateway" | "provider" | "daemon" | "notification" | "slack" | "unknown",
+  setupSecretIntake: SetupSecretIntakeResult | null = null,
+): string {
+  const suppliedSecretKinds = setupSecretIntake?.suppliedSecrets.map((secret) => secret.kind) ?? [];
   if (target === "telegram_gateway") {
+    const suppliedTelegramToken = suppliedSecretKinds.includes("telegram_bot_token");
     return [
       "Telegram setup is a configuration flow, not a source-edit task.",
       "",
@@ -633,7 +640,9 @@ function formatConfigureGuidance(target: "telegram_gateway" | "gateway" | "provi
       "5. Send a message to the Telegram bot.",
       "6. Verify the daemon/gateway with `pulseed daemon status` and check logs if the message does not arrive.",
       "",
-      "Do not paste the token into chat; enter it only in the setup command.",
+      suppliedTelegramToken
+        ? "I received a Telegram bot token in this turn and kept it redacted from chat history and activity. I can continue only after an explicit confirmation step."
+        : "The recommended path is the setup command. If you paste the token here, PulSeed will redact it from history and ask for confirmation before writing config.",
     ].join("\n");
   }
   if (target === "gateway") {
