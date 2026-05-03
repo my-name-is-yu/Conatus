@@ -159,7 +159,43 @@ function interruptDecision(kind: "diff" | "review" | "summary" | "background" | 
   return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
 }
 
-function freeformRouteDecision(kind: "assist" | "configure" | "execute" | "clarify", confidence = 0.93): string {
+function runSpecDraftDecision(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    decision: "run_spec_request",
+    confidence: 0.92,
+    profile: "kaggle",
+    objective: "Kaggle score 0.98を超えるまで長期で改善する",
+    execution_target: { kind: "daemon", remote_host: null, confidence: "medium" },
+    metric: {
+      name: "kaggle_score",
+      direction: "maximize",
+      target: 0.98,
+      target_rank_percent: null,
+      datasource: "kaggle_leaderboard",
+      confidence: "high",
+    },
+    progress_contract: {
+      kind: "metric_target",
+      dimension: "kaggle_score",
+      threshold: 0.98,
+      semantics: "Kaggle score exceeds 0.98.",
+      confidence: "high",
+    },
+    deadline: null,
+    budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
+    approval_policy: {
+      submit: "approval_required",
+      publish: "unspecified",
+      secret: "approval_required",
+      external_action: "approval_required",
+      irreversible_action: "approval_required",
+    },
+    missing_fields: [],
+    ...overrides,
+  });
+}
+
+function freeformRouteDecision(kind: "assist" | "configure" | "execute" | "run_spec" | "clarify", confidence = 0.93): string {
   return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
 }
 
@@ -4373,6 +4409,117 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Tool-aware response");
+    });
+  });
+
+  describe("natural-language RunSpec draft routing", () => {
+    it("derives and persists a typed RunSpec draft through the production chat route", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const adapter = makeMockAdapter();
+      const llmClient = createMockLLMClient([
+        freeformRouteDecision("run_spec"),
+        runSpecDraftDecision(),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter,
+        llmClient,
+        chatAgentLoopRunner: {
+          execute: vi.fn(),
+        } as unknown as ChatAgentLoopRunner,
+      }));
+
+      const result = await runner.execute(
+        "Kaggle score 0.98を超えるまで長期で回して",
+        "/repo/kaggle",
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Proposed long-running run:");
+      expect(result.output).toContain("Kaggle score 0.98");
+      expect(result.output).toContain("It has not started a daemon run.");
+      expect(adapter.execute).not.toHaveBeenCalled();
+      const runSpecDir = path.join(baseDir, "run-specs");
+      const [fileName] = fs.readdirSync(runSpecDir);
+      const stored = JSON.parse(fs.readFileSync(path.join(runSpecDir, fileName), "utf8"));
+      expect(stored.status).toBe("draft");
+      expect(stored.source_text).toBe("Kaggle score 0.98を超えるまで長期で回して");
+      expect(stored.workspace).toMatchObject({ path: "/repo/kaggle", source: "context" });
+      expect(stored.origin).toMatchObject({
+        channel: "cli",
+        session_id: expect.any(String),
+      });
+    });
+
+    it("keeps explanatory long-running questions on the ordinary chat path", async () => {
+      const adapter = makeMockAdapter();
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "assist",
+          confidence: 0.91,
+          rationale: "Explanation question",
+          requires_action: false,
+        }),
+        "Long-running tasks usually fail because constraints, state, or dependencies change.",
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        adapter,
+        llmClient,
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+
+      const result = await runner.execute("Why do long-running tasks fail?", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Long-running tasks usually fail");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("preserves gateway reply target metadata on a RunSpec draft route", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-gateway-runspec-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const llmClient = createMockLLMClient([
+        freeformRouteDecision("run_spec"),
+        runSpecDraftDecision({
+          objective: "Continue Kaggle optimization until score exceeds 0.98",
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient,
+        chatAgentLoopRunner: { execute: vi.fn() } as unknown as ChatAgentLoopRunner,
+      }));
+      const ingress = {
+        ...makeIngress("Please keep improving this Kaggle run until score exceeds 0.98."),
+        cwd: "/repo/kaggle",
+        runtimeControl: { allowed: true, approvalMode: "interactive" as const },
+        metadata: { routed_goal_id: "goal-current", gateway_message: true },
+        replyTarget: {
+          ...makeIngress("").replyTarget,
+          response_channel: "telegram-chat-1",
+          metadata: { gateway_message: true },
+        },
+      };
+
+      const selectedRoute = await (runner as unknown as {
+        resolveRouteFromIngress(message: ChatIngressMessage): Promise<SelectedChatRoute>;
+      }).resolveRouteFromIngress(ingress);
+      expect(selectedRoute.kind).toBe("run_spec_draft");
+      const result = await runner.executeIngressMessage(ingress, "/repo/kaggle", 120_000, selectedRoute);
+
+      expect(result.success).toBe(true);
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.origin.channel).toBe("plugin_gateway");
+      expect(stored.origin.reply_target).toMatchObject({
+        conversation_id: "chat-1",
+        response_channel: "telegram-chat-1",
+      });
+      expect(stored.origin.metadata).toMatchObject({
+        platform: "telegram",
+        message_id: "message-1",
+      });
     });
   });
 });

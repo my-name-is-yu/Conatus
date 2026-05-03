@@ -1,0 +1,24 @@
+# Natural-language Longrun Handoff Status
+
+## 2026-05-03
+
+- Start state: `/Users/yuyoshimuta/Documents/dev/SeedPulse` did not exist in this environment, so work continues in `/Users/yuyoshimuta/PulSeed`.
+- Ran `git switch main && git pull --ff-only`: main was current.
+- Ran `gh issue list --state open --limit 100`: #997, #998, #999, #1000, #1001, and parent #986 are open.
+- Scope guard: not touching resident channel readiness issues #984/#985/#987/#994.
+
+## #997
+
+- Branch: `codex/issue-997-runspec-draft-route`.
+- Plan: reuse existing structured `runtime/run-spec` LLM derivation, extend RunSpec origin metadata, add a typed `run_spec_draft` chat route, and persist/display the draft without starting daemon work.
+- Current status: implemented locally.
+- Verification:
+  - `npm run typecheck`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/chat-runner.test.ts -t "natural-language RunSpec draft routing"`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/cross-platform-session.test.ts -t "RunSpec draft"`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/ingress-router.test.ts src/runtime/run-spec/__tests__/run-spec.test.ts`: pass.
+  - `npm run lint:boundaries`: pass with existing warnings only.
+  - `git diff --check`: pass.
+  - `npm run test:unit -- src/interface/chat/__tests__/chat-runner.test.ts`: 119 pass, 2 local Telegram setup expectation failures observed; failures assert unconfigured setup guidance while the local status provider reports configured Telegram config/home chat.
+  - `npm run test:changed`: failed only on 4 Telegram setup guidance expectations (`chat-runner.test.ts` x2, `cross-platform-session.test.ts` x2) for the same local configured-Telegram status reason; related non-setup tests passed.
+- Review: first review found CrossPlatformChatSessionManager bypassed the new draft route because it preselected routes before ChatRunner. Fixed by deriving/passing `runSpecDraft` in the cross-platform route selection path and adding a gateway production-path test.

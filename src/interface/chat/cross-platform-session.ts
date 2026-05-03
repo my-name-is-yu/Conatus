@@ -13,6 +13,7 @@ import {
 } from "./ingress-router.js";
 import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
 import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
+import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { buildAdapterRegistry, buildLLMClient } from "../../base/llm/provider-factory.js";
@@ -728,11 +729,33 @@ export class CrossPlatformChatSessionManager {
     if (freeformRouteIntent === null && runtimeControlIntent === null && capabilities.hasAgentLoop) {
       freeformRouteIntent = await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient);
     }
+    const shouldDeriveRunSpecDraft =
+      runtimeControlIntent === null
+      && freeformRouteIntent?.kind === "run_spec"
+      && freeformRouteIntent.confidence >= 0.7;
+    const runSpecDraft = shouldDeriveRunSpecDraft
+      ? await deriveRunSpecFromText(safeIngressText, {
+        cwd: ingress.cwd ?? session.info.cwd,
+        conversationId: ingress.conversation_id ?? null,
+        channel: ingress.channel,
+        sessionId: session.runner.getSessionId() ?? ingress.conversation_id ?? null,
+        replyTarget: ingress.replyTarget as unknown as Record<string, unknown>,
+        originMetadata: {
+          ingress_id: ingress.ingress_id ?? null,
+          platform: ingress.platform ?? null,
+          message_id: ingress.message_id ?? null,
+          deliveryMode: ingress.deliveryMode ?? null,
+          metadata: ingress.metadata,
+        },
+        llmClient: this.deps.llmClient,
+      })
+      : null;
     const selectedRoute = this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
       freeformRouteIntent,
       setupSecretIntake,
+      runSpecDraft,
     });
     session.lastRoute = selectedRoute;
 

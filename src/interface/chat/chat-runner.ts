@@ -77,6 +77,7 @@ import {
   executeAssistRoute,
   executeClarifyRoute,
   executeConfigureRoute,
+  executeRunSpecDraftRoute,
   executeAgentLoopRoute,
   formatBlockedRuntimeControlRoute,
   executeRuntimeControlRoute,
@@ -84,6 +85,7 @@ import {
   resolveSessionExecutionPolicy,
 } from "./chat-runner-routes.js";
 import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
+import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 
 export interface ChatRunnerDeps {
   stateManager: StateManager;
@@ -498,7 +500,7 @@ export class ChatRunner {
 
     const selectedRoute = resumeOnly
       ? null
-      : (options.selectedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext));
+      : (options.selectedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
     this.lastSelectedRoute = selectedRoute;
     if (selectedRoute?.kind !== "configure") {
       this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
@@ -576,6 +578,11 @@ export class ChatRunner {
         output,
         elapsed_ms,
       };
+    }
+
+    if (selectedRoute?.kind === "run_spec_draft") {
+      const result = await executeRunSpecDraftRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
+      return result;
     }
 
     if (selectedRoute?.kind === "configure") {
@@ -762,21 +769,43 @@ export class ChatRunner {
     if (freeformRouteIntent === null && runtimeControlIntent === null && capabilities.hasAgentLoop) {
       freeformRouteIntent = await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient);
     }
+    const shouldDeriveRunSpecDraft =
+      runtimeControlIntent === null
+      && freeformRouteIntent?.kind === "run_spec"
+      && freeformRouteIntent.confidence >= 0.7;
+    const runSpecDraft = shouldDeriveRunSpecDraft
+      ? await deriveRunSpecFromText(ingress.text, {
+        cwd: ingress.cwd ?? this.sessionCwd ?? undefined,
+        conversationId: ingress.conversation_id ?? null,
+        channel: ingress.channel,
+        sessionId: this.history?.getSessionId() ?? ingress.conversation_id ?? null,
+        replyTarget: ingress.replyTarget as unknown as Record<string, unknown>,
+        originMetadata: {
+          ingress_id: ingress.ingress_id ?? null,
+          platform: ingress.platform ?? null,
+          message_id: ingress.message_id ?? null,
+          deliveryMode: ingress.deliveryMode ?? null,
+          metadata: ingress.metadata,
+        },
+        llmClient: this.deps.llmClient,
+      })
+      : null;
     return standaloneIngressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
       freeformRouteIntent,
       setupSecretIntake: this.setupSecretIntake,
+      runSpecDraft,
     });
   }
 
   private async resolveRouteFromInput(
     input: string,
-    runtimeControlContext: RuntimeControlChatContext | null
+    runtimeControlContext: RuntimeControlChatContext | null,
+    cwd?: string
   ): Promise<SelectedChatRoute> {
-    return this.resolveRouteFromIngress(
-      buildStandaloneIngressMessageFromContext(input, runtimeControlContext, this.deps)
-    );
+    const ingress = buildStandaloneIngressMessageFromContext(input, runtimeControlContext, this.deps);
+    return this.resolveRouteFromIngress(cwd ? { ...ingress, cwd } : ingress);
   }
 
   private loadedSessionToChatSession(session: LoadedChatSession): ChatSession {

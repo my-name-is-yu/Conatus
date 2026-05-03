@@ -3,7 +3,7 @@ import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
 
 export const FreeformRouteIntentSchema = z.object({
-  kind: z.enum(["assist", "configure", "execute", "clarify"]),
+  kind: z.enum(["assist", "configure", "execute", "run_spec", "clarify"]),
   confidence: z.number().min(0).max(1),
   configure_target: z.enum(["telegram_gateway", "gateway", "provider", "daemon", "notification", "slack", "unknown"]).optional(),
   rationale: z.string().max(240),
@@ -33,7 +33,7 @@ function getFreeformRoutePrompt(): string {
 
 Return only JSON:
 {
-  "kind": "assist" | "configure" | "execute" | "clarify",
+  "kind": "assist" | "configure" | "execute" | "run_spec" | "clarify",
   "confidence": 0.0-1.0,
   "configure_target": "telegram_gateway" | "gateway" | "provider" | "daemon" | "notification" | "slack" | "unknown",
   "rationale": "short"
@@ -43,6 +43,7 @@ Routing contract:
 - assist: questions, how-to, status explanation, read-only guidance.
 - configure: setup/configuration of Telegram, Slack, daemon, provider, notifications, gateway, or channels.
 - execute: concrete repo edits, tests, implementation, commands, or goal execution that should enter the coding agent loop.
+- run_spec: clear natural-language requests for PulSeed to run, continue, optimize, evaluate, monitor, or work toward an outcome over time as a long-running background/CoreLoop run.
 - clarify: ambiguous or underspecified input where executing code would be unsafe.
 
 Use semantic intent, not literal phrase matching. Multilingual paraphrases should route by meaning.
