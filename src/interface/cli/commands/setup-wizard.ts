@@ -17,6 +17,7 @@ import { createRelationshipProfileProposalsFromUserMdImport } from "../../../pla
 import { updateGlobalConfig } from "../../../base/config/global-config.js";
 import { readCodexOAuthToken } from "../../../base/llm/provider-config.js";
 import { isDaemonRunning } from "../../../runtime/daemon/client.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { ROOT_PRESETS } from "./presets/root-presets.js";
 import { MODEL_REGISTRY, detectApiKeys, getAdaptersForModel, maskKey } from "./setup-shared.js";
 import type { Provider } from "./setup-shared.js";
@@ -34,6 +35,7 @@ import { guardCancel } from "./setup/utils.js";
 import { applySetupImportSelection } from "./setup/import/apply.js";
 import { providerConfigPatchFromImport, stepSetupImport } from "./setup/import/flow.js";
 import type { SetupImportSelection } from "./setup/import/types.js";
+import { collectOperatorBindingStatus, type OperatorBindingStatus } from "./operator-binding-status.js";
 
 type SetupAnswers = {
   userName: string;
@@ -54,6 +56,12 @@ type IdentityAnswers = Pick<SetupAnswers, "userName" | "agentName" | "rootPreset
 type ExecutionAnswers = Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">;
 type RuntimeAnswers = Pick<SetupAnswers, "startDaemon" | "daemonPort" | "notificationConfig" | "gatewaySetup">;
 type FullSetupSection = "identity" | "execution" | "runtime" | "review";
+type ResidentReadinessState = "ready" | "partial" | "blocked";
+
+interface ResidentReadinessReport {
+  state: ResidentReadinessState;
+  checks: Array<{ name: string; ok: boolean; detail: string; recovery?: string }>;
+}
 type IdentityConfigOptions = {
   skipRootPreset?: boolean;
   skipUserName?: boolean;
@@ -508,6 +516,86 @@ async function startDaemonAfterSetup(baseDir: string, port: number): Promise<voi
   p.log.success(`Daemon and gateway started${pid ? ` (PID: ${pid})` : ""} on port ${port}.`);
 }
 
+export function buildResidentReadinessReport(
+  answers: Pick<SetupAnswers, "startDaemon" | "daemonPort" | "notificationConfig" | "gatewaySetup">,
+  status: OperatorBindingStatus,
+  daemonStartupError: string | null
+): ResidentReadinessReport {
+  const configuredChannels = status.channels.filter((channel) => channel.configured);
+  const checks: ResidentReadinessReport["checks"] = [];
+  const daemonReady = status.daemon.running && status.daemon.health === "ok" && (!answers.startDaemon || status.daemon.port === answers.daemonPort);
+  checks.push({
+    name: "daemon",
+    ok: daemonReady,
+    detail: daemonStartupError ?? (daemonReady ? `daemon responding on port ${status.daemon.port} with ok health` : `daemon is not ready (running=${status.daemon.running}, port=${status.daemon.port || "-"}, health=${status.daemon.health})`),
+    recovery: daemonReady ? undefined : "pulseed daemon start --detach",
+  });
+  checks.push({
+    name: "gateway",
+    ok: configuredChannels.length === 0 || configuredChannels.every((channel) => channel.state === "active"),
+    detail: configuredChannels.length === 0
+      ? "no messaging channels configured"
+      : configuredChannels.map((channel) => `${channel.name}:${channel.state}`).join(", "),
+    recovery: configuredChannels.some((channel) => channel.degraded) ? "pulseed gateway setup" : undefined,
+  });
+  checks.push({
+    name: "notification routing",
+    ok: answers.notificationConfig !== null || configuredChannels.some((channel) => channel.home_target !== null),
+    detail: answers.notificationConfig !== null
+      ? "notification config saved"
+      : configuredChannels.some((channel) => channel.home_target !== null)
+        ? "gateway home/default reply target available"
+        : "no notification config or gateway home/default reply target",
+    recovery: "pulseed notify add <slack|webhook|email> or send /sethome to the Telegram bot",
+  });
+  for (const channel of configuredChannels) {
+    checks.push({
+      name: `${channel.name} reply target`,
+      ok: channel.home_target !== null,
+      detail: channel.home_target ? "home/default reply target configured" : "missing home/default reply target",
+      recovery: channel.name === "telegram-bot" ? "send /sethome to the Telegram bot" : "pulseed gateway setup",
+    });
+    checks.push({
+      name: `${channel.name} runtime-control`,
+      ok: channel.runtime_control.state === "allowed",
+      detail: `${channel.runtime_control.allowed_count} runtime-control user/sender id(s) configured`,
+      recovery: "pulseed gateway setup",
+    });
+    if (channel.name === "telegram-bot") {
+      const roundTripOk = channel.recent_health.inbound_at !== null
+        && channel.recent_health.outbound_at !== null
+        && channel.recent_health.last_error === null;
+      checks.push({
+        name: "telegram-bot channel round trip",
+        ok: roundTripOk,
+        detail: roundTripOk
+          ? `last inbound ${channel.recent_health.inbound_at}, last outbound ${channel.recent_health.outbound_at}`
+          : `last inbound ${channel.recent_health.inbound_at ?? "-"}, last outbound ${channel.recent_health.outbound_at ?? "-"}, last error ${channel.recent_health.last_error ?? "-"}`,
+        recovery: "send a message to the Telegram bot after daemon start",
+      });
+    }
+  }
+  const failed = checks.filter((check) => !check.ok);
+  const state: ResidentReadinessState = daemonStartupError !== null || failed.some((check) => check.name === "daemon")
+    ? "blocked"
+    : failed.length > 0
+      ? "partial"
+      : "ready";
+  return { state, checks };
+}
+
+function printResidentReadinessReport(report: ResidentReadinessReport): void {
+  const line = `Resident readiness: ${report.state}`;
+  if (report.state === "ready") p.log.success(line);
+  else if (report.state === "partial") p.log.warn(line);
+  else p.log.error(line);
+  for (const check of report.checks) {
+    const prefix = check.ok ? "ok" : "failed";
+    const recovery = !check.ok && check.recovery ? ` Recovery: ${check.recovery}` : "";
+    p.log.info(`- ${prefix}: ${check.name} - ${check.detail}.${recovery}`);
+  }
+}
+
 export async function runSetupWizard(): Promise<number> {
   console.log(getBanner());
   p.intro("PulSeed Setup");
@@ -734,6 +822,7 @@ export async function runSetupWizard(): Promise<number> {
   }
   clearIdentityCache();
 
+  let daemonStartupError: string | null = null;
   if (finalAnswers.startDaemon) {
     const daemonConfigPath = path.join(dir, "daemon.json");
     try {
@@ -791,11 +880,23 @@ export async function runSetupWizard(): Promise<number> {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      daemonStartupError = message;
       p.log.warn(
         `Setup saved, but daemon/gateway did not start: ${message}. ` +
           "Run `pulseed daemon start --detach` to try again."
       );
     }
+  }
+
+  try {
+    const readiness = buildResidentReadinessReport(
+      finalAnswers,
+      await collectOperatorBindingStatus(new StateManager(dir)),
+      daemonStartupError
+    );
+    printResidentReadinessReport(readiness);
+  } catch (err) {
+    p.log.warn(`Setup saved, but resident readiness check failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   p.outro("\ud83c\udf31 Seeds planted. Time to grow.");

@@ -64,6 +64,182 @@ describe("setup notification step", () => {
     multiselectMock.mockResolvedValue([]);
   });
 
+  it("classifies resident readiness as ready when daemon and Telegram bindings are complete", async () => {
+    const { buildResidentReadinessReport } = await import("../commands/setup-wizard.js");
+    const report = buildResidentReadinessReport(
+      {
+        startDaemon: true,
+        daemonPort: 41701,
+        notificationConfig: null,
+        gatewaySetup: null,
+      },
+      makeBindingStatus({
+        daemon: { running: true, port: 41701, health: "ok", runtime_root: "/tmp/runtime" },
+        channels: [{
+          name: "telegram-bot",
+          state: "active",
+          configured: true,
+          active: true,
+          degraded: false,
+          home_target: { channel: "telegram", target_id: "123" },
+          runtime_control: { state: "allowed", allowed_count: 1 },
+          recent_health: {
+            inbound_at: "2026-05-03T00:01:00.000Z",
+            outbound_at: "2026-05-03T00:02:00.000Z",
+            last_error: null,
+          },
+        }],
+      }),
+      null
+    );
+
+    expect(report.state).toBe("ready");
+    expect(report.checks.every((check) => check.ok)).toBe(true);
+  });
+
+  it("classifies resident readiness as blocked when daemon startup failed", async () => {
+    const { buildResidentReadinessReport } = await import("../commands/setup-wizard.js");
+    const report = buildResidentReadinessReport(
+      {
+        startDaemon: true,
+        daemonPort: 41701,
+        notificationConfig: null,
+        gatewaySetup: null,
+      },
+      makeBindingStatus({
+        daemon: { running: false, port: 0, health: "missing", runtime_root: "/tmp/runtime" },
+      }),
+      "Daemon did not respond on port 41701 within 10000ms."
+    );
+
+    expect(report.state).toBe("blocked");
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "daemon",
+      ok: false,
+      recovery: "pulseed daemon start --detach",
+    }));
+  });
+
+  it("does not report ready when daemon health is degraded", async () => {
+    const { buildResidentReadinessReport } = await import("../commands/setup-wizard.js");
+    const report = buildResidentReadinessReport(
+      {
+        startDaemon: true,
+        daemonPort: 41701,
+        notificationConfig: null,
+        gatewaySetup: null,
+      },
+      makeBindingStatus({
+        daemon: { running: true, port: 41701, health: "degraded", runtime_root: "/tmp/runtime" },
+      }),
+      null
+    );
+
+    expect(report.state).toBe("blocked");
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "daemon",
+      ok: false,
+      detail: expect.stringContaining("health=degraded"),
+    }));
+  });
+
+  it("does not report ready for Telegram before channel round trip evidence exists", async () => {
+    const { buildResidentReadinessReport } = await import("../commands/setup-wizard.js");
+    const report = buildResidentReadinessReport(
+      {
+        startDaemon: true,
+        daemonPort: 41701,
+        notificationConfig: null,
+        gatewaySetup: null,
+      },
+      makeBindingStatus({
+        daemon: { running: true, port: 41701, health: "ok", runtime_root: "/tmp/runtime" },
+        channels: [{
+          name: "telegram-bot",
+          state: "active",
+          configured: true,
+          active: true,
+          degraded: false,
+          home_target: { channel: "telegram", target_id: "123" },
+          runtime_control: { state: "allowed", allowed_count: 1 },
+          recent_health: { inbound_at: null, outbound_at: null, last_error: null },
+        }],
+      }),
+      null
+    );
+
+    expect(report.state).toBe("partial");
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "telegram-bot channel round trip",
+      ok: false,
+      recovery: "send a message to the Telegram bot after daemon start",
+    }));
+  });
+
+  it("classifies resident readiness as partial when Telegram lacks home chat and runtime-control permission", async () => {
+    const { buildResidentReadinessReport } = await import("../commands/setup-wizard.js");
+    const report = buildResidentReadinessReport(
+      {
+        startDaemon: true,
+        daemonPort: 41701,
+        notificationConfig: null,
+        gatewaySetup: null,
+      },
+      makeBindingStatus({
+        daemon: { running: true, port: 41701, health: "ok", runtime_root: "/tmp/runtime" },
+        channels: [{
+          name: "telegram-bot",
+          state: "active",
+          configured: true,
+          active: true,
+          degraded: false,
+          home_target: null,
+          runtime_control: { state: "missing_allowlist", allowed_count: 0 },
+        }],
+      }),
+      null
+    );
+
+    expect(report.state).toBe("partial");
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "telegram-bot reply target",
+      ok: false,
+      recovery: "send /sethome to the Telegram bot",
+    }));
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "telegram-bot runtime-control",
+      ok: false,
+    }));
+  });
+
+  it("classifies saved gateway config without daemon readiness as blocked", async () => {
+    const { buildResidentReadinessReport } = await import("../commands/setup-wizard.js");
+    const report = buildResidentReadinessReport(
+      {
+        startDaemon: false,
+        daemonPort: 41701,
+        notificationConfig: null,
+        gatewaySetup: null,
+      },
+      makeBindingStatus({
+        daemon: { running: false, port: 0, health: "missing", runtime_root: "/tmp/runtime" },
+        channels: [{
+          name: "telegram-bot",
+          state: "configured",
+          configured: true,
+          active: false,
+          degraded: false,
+          home_target: { channel: "telegram", target_id: "123" },
+          runtime_control: { state: "allowed", allowed_count: 1 },
+        }],
+      }),
+      null
+    );
+
+    expect(report.state).toBe("blocked");
+    expect(report.checks).toContainEqual(expect.objectContaining({ name: "daemon", ok: false }));
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -1683,3 +1859,43 @@ describe("setup notification step", () => {
     );
   });
 });
+
+function makeBindingStatus(overrides: {
+  daemon?: { running: boolean; port: number; health: "ok" | "degraded" | "failed" | "missing"; runtime_root: string };
+    channels?: Array<Partial<{
+    name: "telegram-bot";
+    state: "missing" | "configured" | "active" | "degraded";
+    configured: boolean;
+    active: boolean;
+    degraded: boolean;
+    home_target: { channel: string; target_id?: string } | null;
+    runtime_control: { state: "allowed" | "missing_allowlist" | "unrestricted" | "unsupported"; allowed_count: number };
+    recent_health: { inbound_at: string | null; outbound_at: string | null; last_error: string | null };
+  }>>;
+}) {
+  return {
+    schema_version: "operator-binding-status-v1" as const,
+    generated_at: "2026-05-03T00:00:00.000Z",
+    daemon: overrides.daemon ?? { running: false, port: 0, health: "missing" as const, runtime_root: "/tmp/runtime" },
+    channels: (overrides.channels ?? []).map((channel) => ({
+      name: channel.name ?? "telegram-bot",
+      state: channel.state ?? "missing",
+      config_path: "/tmp/telegram/config.json",
+      configured: channel.configured ?? false,
+      active: channel.active ?? false,
+      degraded: channel.degraded ?? false,
+      home_target: channel.home_target ?? null,
+      identity_key: null,
+      default_goal_id: null,
+      goal_bindings: [],
+      runtime_control: channel.runtime_control ?? { state: "unsupported", allowed_count: 0 },
+      access: { allow_all: false, allowed_count: 0 },
+      health: { daemon_running: overrides.daemon?.running ?? false, gateway: "ok" as const, checked_at: null },
+      recent_health: channel.recent_health ?? { inbound_at: null, outbound_at: null, last_error: null },
+      warnings: [],
+    })),
+    sessions: [],
+    background_runs: [],
+    warnings: [],
+  };
+}
