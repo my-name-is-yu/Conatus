@@ -46,7 +46,7 @@ describe("cmdTelegramSetup", () => {
   });
 
   it("writes optional identity_key for cross-platform continuation", async () => {
-    readlineState.answers = ["test-token", "777,888", "", "personal"];
+    readlineState.answers = ["test-token", "777,888", "999", "", "personal"];
     const { cmdTelegramSetup } = await import("../commands/telegram.js");
 
     const result = await cmdTelegramSetup([]);
@@ -60,10 +60,43 @@ describe("cmdTelegramSetup", () => {
     expect(config).toMatchObject({
       bot_token: "test-token",
       allowed_user_ids: [777, 888],
+      runtime_control_allowed_user_ids: [999],
       allow_all: false,
       polling_timeout: 30,
       identity_key: "personal",
     });
     expect(config.chat_id).toBeUndefined();
+  });
+
+  it("requires explicit unrestricted-mode confirmation when allowed users are blank", async () => {
+    readlineState.answers = ["test-token", "", "ALLOW ALL", "", "", ""];
+    const { cmdTelegramSetup } = await import("../commands/telegram.js");
+
+    const result = await cmdTelegramSetup([]);
+
+    expect(result).toBe(0);
+    const configPath = path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json");
+    const config = JSON.parse(await fsp.readFile(configPath, "utf-8")) as Record<string, unknown>;
+    expect(config).toMatchObject({
+      allowed_user_ids: [],
+      runtime_control_allowed_user_ids: [],
+      allow_all: true,
+    });
+  });
+
+  it("keeps access closed for first-use /sethome binding when unrestricted mode is not confirmed", async () => {
+    readlineState.answers = ["test-token", "", "", "", "", ""];
+    const { cmdTelegramSetup } = await import("../commands/telegram.js");
+
+    const result = await cmdTelegramSetup([]);
+
+    expect(result).toBe(0);
+    const configPath = path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json");
+    const config = JSON.parse(await fsp.readFile(configPath, "utf-8")) as Record<string, unknown>;
+    expect(config).toMatchObject({
+      allowed_user_ids: [],
+      runtime_control_allowed_user_ids: [],
+      allow_all: false,
+    });
   });
 });

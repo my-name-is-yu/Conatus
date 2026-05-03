@@ -18,3 +18,20 @@
 - Verification after required-fields fix: `npm run lint:boundaries` exited 0 with existing warnings only.
 - Verification: `npm run test:changed` passed (11 files, 246 tests).
 - Status: implementation complete; preparing commit and PR.
+
+## #985 Polish Telegram daily-use onboarding and safe home-chat binding
+- Status: in progress
+- Branch: codex/issue-985-telegram-onboarding
+- Initial sync: main up to date; issue #985 is open as of 2026-05-03.
+- Plan: inspect Telegram setup/gateway paths, make unrestricted setup explicit, add safe first sender/home binding state, expose Telegram permissions/home/runtime-control through runtime bindings, and add focused production-path tests.
+- Implementation: Telegram setup now keeps access closed when allowed users are blank unless unrestricted mode is explicitly confirmed; CLI config writes runtime-control allowlist separately.
+- Implementation: first locked `/sethome` from Telegram binds home chat and the first normal-chat allowed user without granting runtime-control permission.
+- Implementation: `runtime bindings` now exposes normal chat access allow_all/allowed count alongside runtime-control count.
+- Verification: focused Telegram/setup/runtime status tests passed; `npm run typecheck` passed.
+- Review: separate review agent found runtime-control status/permissions were not separated enough and last inbound/outbound health was missing.
+- Fix after review: runtime-control allowlist now has separate prompts/config; `allow_all` no longer implies runtime-control; Telegram adapter persists last inbound/outbound/error health next to config and `runtime bindings` exposes it.
+- Verification after review fixes: focused Telegram/gateway/setup/runtime tests passed (46 tests).
+- Verification after runtime-control/health fixes: `npm run typecheck` passed; `npm run lint:boundaries` exited 0 with existing warnings only.
+- Verification: `npm run test:changed` passed after adapter stop/health cleanup fix.
+- Review: second review agent reported no material findings after runtime-control and health fixes.
+- Status: implementation complete; preparing commit and PR.

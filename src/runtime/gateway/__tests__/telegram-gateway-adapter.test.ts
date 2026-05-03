@@ -259,6 +259,56 @@ describe("TelegramGatewayAdapter", () => {
       expect(sentMessages.filter((message) => message === "Final setup guidance.")).toHaveLength(1);
     });
   });
+
+  it("binds first /sethome sender without enabling runtime control", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: false,
+      polling_timeout: 30,
+    });
+    const sentMessages: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "getMe") return telegramResponse({ id: 1, username: "pulseed_test_bot" });
+      if (method === "getUpdates") {
+        return telegramResponse([{
+          update_id: 100,
+          message: { message_id: 2718, from: { id: 42 }, chat: { id: 314 }, text: "/sethome" },
+        }]);
+      }
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        await adapter.stop();
+        return telegramResponse({ message_id: 9001 });
+      }
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+
+    await adapter.start();
+
+    await vi.waitFor(async () => {
+      const config = JSON.parse(await fs.readFile(path.join(configDir, "config.json"), "utf-8")) as Record<string, unknown>;
+      expect(config).toMatchObject({
+        chat_id: 314,
+        allowed_user_ids: [42],
+        runtime_control_allowed_user_ids: [],
+        allow_all: false,
+      });
+    });
+    expect(dispatchGatewayChatInput).not.toHaveBeenCalled();
+    expect(sentMessages[0]).toContain("Runtime control still requires its own allow list.");
+  });
 });
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {

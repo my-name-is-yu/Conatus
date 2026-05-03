@@ -55,12 +55,16 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private handler: EnvelopeHandler | null = null;
   private readonly api: TelegramAPI;
   private readonly config: TelegramGatewayConfig;
+  private readonly pluginDir: string;
   private readonly homeChatStore: TelegramHomeChatStore;
   private readonly notifier: TelegramGatewayNotifier;
   private running = false;
+  private loopPromise: Promise<void> | null = null;
+  private handlingUpdate = false;
   private offset = 0;
 
   constructor(pluginDir: string, config: TelegramGatewayConfig) {
+    this.pluginDir = pluginDir;
     this.config = config;
     this.api = new TelegramAPI(config.bot_token);
     this.homeChatStore = new TelegramHomeChatStore(pluginDir, config.chat_id);
@@ -83,11 +87,14 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     if (this.running) return;
     await this.api.getMe();
     this.running = true;
-    void this.loop().catch(() => undefined);
+    this.loopPromise = this.loop().catch(() => undefined);
   }
 
   async stop(): Promise<void> {
     this.running = false;
+    if (this.handlingUpdate) return;
+    await this.loopPromise;
+    this.loopPromise = null;
   }
 
   private async loop(): Promise<void> {
@@ -106,10 +113,22 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
           if (this.config.denied_user_ids.includes(fromId)) continue;
           if (this.config.denied_chat_ids.includes(chatId)) continue;
           if (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId)) continue;
-          if (!this.config.allow_all && !this.config.allowed_user_ids.includes(fromId)) continue;
-          await this.processMessage(msg.text, fromId, chatId, msg.message_id);
+          this.handlingUpdate = true;
+          try {
+            if (this.isFirstHomeBindingCommand(msg.text, fromId)) {
+              await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
+              await this.processMessage(msg.text, fromId, chatId, msg.message_id);
+              continue;
+            }
+            if (!this.config.allow_all && !this.config.allowed_user_ids.includes(fromId)) continue;
+            await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
+            await this.processMessage(msg.text, fromId, chatId, msg.message_id);
+          } finally {
+            this.handlingUpdate = false;
+          }
         }
-      } catch {
+      } catch (err) {
+        await this.recordHealth({ last_error: err instanceof Error ? err.message : String(err) });
         if (!this.running) break;
         const delay = BACKOFF_STEPS_MS[Math.min(backoffIndex, BACKOFF_STEPS_MS.length - 1)];
         backoffIndex++;
@@ -121,8 +140,17 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private async processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void> {
     const normalized = text.trim().toLowerCase();
     if (normalized === "/sethome" || normalized.startsWith("/sethome@")) {
-      await this.homeChatStore.set(chatId);
-      await this.api.sendPlainMessage(chatId, "This chat is now the home channel for PulSeed notifications.");
+      const firstBinding = this.config.allowed_user_ids.length === 0 && this.config.chat_id === undefined && !this.config.allow_all;
+      await this.homeChatStore.set(chatId, firstBinding ? fromUserId : undefined);
+      this.config.chat_id = chatId;
+      if (firstBinding) this.config.allowed_user_ids.push(fromUserId);
+      await this.api.sendPlainMessage(
+        chatId,
+        firstBinding
+          ? "This chat is now the home channel for PulSeed notifications, and this Telegram user is allowed for normal chat. Runtime control still requires its own allow list."
+          : "This chat is now the home channel for PulSeed notifications."
+      );
+      await this.recordHealth({ last_outbound_at: new Date().toISOString(), last_error: null });
       return;
     }
 
@@ -182,6 +210,31 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     if (!eventAdapter.renderedAssistantOutput) {
       await eventAdapter.sendFinalFallback(reply ?? "Received.");
     }
+    await this.recordHealth({ last_outbound_at: new Date().toISOString(), last_error: null });
+  }
+
+  private isFirstHomeBindingCommand(text: string, fromUserId: number): boolean {
+    const normalized = text.trim().toLowerCase();
+    return (normalized === "/sethome" || normalized.startsWith("/sethome@"))
+      && !this.config.allow_all
+      && this.config.chat_id === undefined
+      && this.config.allowed_user_ids.length === 0
+      && !this.config.denied_user_ids.includes(fromUserId);
+  }
+
+  private async recordHealth(update: Partial<{ last_inbound_at: string; last_outbound_at: string; last_error: string | null }>): Promise<void> {
+    const healthPath = path.join(this.pluginDir, "health.json");
+    let current: Record<string, unknown> = {};
+    try {
+      current = JSON.parse(fs.readFileSync(healthPath, "utf-8")) as Record<string, unknown>;
+    } catch {
+      current = {};
+    }
+    await writeJsonFileAtomic(healthPath, {
+      ...current,
+      ...update,
+      updated_at: new Date().toISOString(),
+    });
   }
 }
 
@@ -291,7 +344,7 @@ class TelegramHomeChatStore {
     return this.chatId;
   }
 
-  async set(chatId: number): Promise<void> {
+  async set(chatId: number, firstAllowedUserId?: number): Promise<void> {
     this.chatId = chatId;
     let current: Record<string, unknown> = {};
     try {
@@ -300,6 +353,12 @@ class TelegramHomeChatStore {
       current = {};
     }
     current["chat_id"] = chatId;
+    if (firstAllowedUserId !== undefined && !Array.isArray(current["allowed_user_ids"])) {
+      current["allowed_user_ids"] = [firstAllowedUserId];
+    } else if (firstAllowedUserId !== undefined) {
+      const ids = current["allowed_user_ids"] as unknown[];
+      if (!ids.includes(firstAllowedUserId)) current["allowed_user_ids"] = [...ids, firstAllowedUserId];
+    }
     await writeJsonFileAtomic(this.configPath, current);
   }
 }
