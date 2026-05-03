@@ -195,6 +195,17 @@ describe("cmdPluginInstall", () => {
     expect(fs.existsSync(path.join(pluginsDir, "my-plugin"))).toBe(true);
   });
 
+  it("stores a local scoped plugin in a discoverable one-level directory", async () => {
+    const sourceDir = path.join(tmpDir, "source", "scoped-plugin");
+    writePluginManifest(sourceDir, { name: "@pulseed-plugins/local-scoped", version: "1.0.0" });
+
+    const exitCode = await cmdPluginInstall(pluginsDir, [sourceDir]);
+
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(path.join(pluginsDir, "pulseed-plugins__local-scoped", "plugin.yaml"))).toBe(true);
+    expect(fs.existsSync(path.join(pluginsDir, "@pulseed-plugins", "local-scoped"))).toBe(false);
+  });
+
   it("returns 1 when plugin already exists and --force not given", async () => {
     const sourceDir = path.join(tmpDir, "source", "existing-plugin");
     writePluginManifest(sourceDir, { name: "existing-plugin" });

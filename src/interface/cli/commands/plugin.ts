@@ -162,9 +162,16 @@ async function readNpmSourceMetadata(pluginDir: string): Promise<{ packageName: 
   return null;
 }
 
+function pluginStorageDirName(pluginName: string): string {
+  return pluginName.replace(/\//g, "__").replace(/@/g, "") || "unknown";
+}
+
 async function findPluginDirByName(pluginsDir: string, name: string): Promise<string | null> {
-  const direct = path.join(pluginsDir, name);
-  if (await pathExists(direct)) return direct;
+  const storageDirect = path.join(pluginsDir, pluginStorageDirName(name));
+  if (await pathExists(storageDirect)) return storageDirect;
+
+  const legacyDirect = path.join(pluginsDir, name);
+  if (await pathExists(legacyDirect)) return legacyDirect;
 
   let entries: string[];
   try {
@@ -242,7 +249,7 @@ export async function cmdPluginInstall(
   // ── npm package install ──────────────────────────────────────────────────
   if (!isLocalPath(source) && isNpmPackage(source)) {
     const packageName = source;
-    const pluginDir = path.join(dir, packageName.replace(/\//g, "__").replace(/@/g, ""));
+    const pluginDir = path.join(dir, pluginStorageDirName(packageName));
 
     if ((await pathExists(pluginDir)) && !force) {
       logger.error(`Error: plugin "${packageName}" is already installed. Use --force to overwrite.`);
@@ -322,7 +329,7 @@ export async function cmdPluginInstall(
   }
 
   const manifest = result.data;
-  const destDir = path.join(dir, manifest.name);
+  const destDir = path.join(dir, pluginStorageDirName(manifest.name));
 
   if ((await pathExists(destDir)) && !force) {
     logger.error(`Error: plugin "${manifest.name}" is already installed. Use --force to overwrite.`);

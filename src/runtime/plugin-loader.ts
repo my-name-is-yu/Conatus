@@ -37,6 +37,7 @@ export class PluginLoader {
   private notifierRegistry: NotifierRegistry;
   private pluginsDir: string;
   private pluginStates: Map<string, PluginState> = new Map();
+  private pluginDirsByName: Map<string, string> = new Map();
   private scheduleSources: Map<string, IScheduleSource> = new Map();
   private readonly logger?: Logger;
 
@@ -83,6 +84,7 @@ export class PluginLoader {
   async loadOne(pluginDir: string): Promise<PluginState> {
     // 1. Read and validate manifest
     const manifest = await this.loadManifest(pluginDir);
+    this.pluginDirsByName.set(manifest.name, pluginDir);
 
     // 1b. Semver compatibility check
     const pulseedVersion = getPulseedVersion();
@@ -379,8 +381,8 @@ export class PluginLoader {
     const updated = PluginStateSchema.parse({ ...existing, ...updates });
     this.pluginStates.set(pluginName, updated);
 
-    // Persist to disk: ~/.pulseed/plugins/<name>/state.json
-    const statePath = path.join(this.pluginsDir, pluginName, "state.json");
+    const pluginDir = this.pluginDirsByName.get(pluginName) ?? path.join(this.pluginsDir, pluginStorageDirName(pluginName));
+    const statePath = path.join(pluginDir, "state.json");
     await writeJsonFileAtomic(statePath, updated);
   }
 
@@ -456,4 +458,8 @@ function sanitizeName(dirName: string): string {
     .replace(/^-+|-+$/g, "") // trim leading/trailing hyphens
     .replace(/-{2,}/g, "-"); // collapse consecutive hyphens
   return sanitized || "unknown";
+}
+
+function pluginStorageDirName(pluginName: string): string {
+  return pluginName.replace(/\//g, "__").replace(/@/g, "") || "unknown";
 }
