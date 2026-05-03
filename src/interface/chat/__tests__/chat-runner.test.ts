@@ -342,7 +342,9 @@ describe("ChatRunner", () => {
       const runner = new ChatRunner(makeDeps({
         stateManager,
         adapter,
-        onEvent: (event) => events.push(event),
+        onEvent: (event) => {
+          events.push(event);
+        },
       }));
 
       await runner.executeIngressMessage(
