@@ -188,6 +188,26 @@ function formatSetupConfirmationCancelled(languageHint: TurnLanguageHint): strin
   return "Telegram setup config write was cancelled. No token was written.";
 }
 
+function formatTelegramSetupRefreshResult(
+  result: { success: boolean; message: string; operationId?: string; state?: string; unavailable?: boolean },
+  languageHint: TurnLanguageHint
+): string {
+  if (result.success) {
+    const suffix = result.operationId ? ` (${result.operationId})` : "";
+    return languageHint.language === "ja"
+      ? `PulSeed は更新済み Telegram gateway config を反映するため、internal gateway refresh を要求しました${suffix}: ${result.message}`
+      : `PulSeed requested an internal gateway refresh for the updated Telegram config${suffix}: ${result.message}`;
+  }
+  if (result.unavailable) {
+    return languageHint.language === "ja"
+      ? `PulSeed は internal gateway refresh を試みましたが、この chat surface では runtime control service が利用できません: ${result.message}`
+      : `PulSeed attempted an internal gateway refresh, but runtime control is unavailable in this chat surface: ${result.message}`;
+  }
+  return languageHint.language === "ja"
+    ? `PulSeed は internal gateway refresh を試みましたが失敗しました: ${result.message}`
+    : `PulSeed attempted an internal gateway refresh, but it failed: ${result.message}`;
+}
+
 export class ChatRunner {
   private readonly groundingGateway: GroundingGateway;
   private readonly eventBridge: ChatRunnerEventBridge;
@@ -866,10 +886,11 @@ export class ChatRunner {
       ...(current?.identity_key ? { identity_key: current.identity_key } : {}),
     };
     await writeJsonFileAtomic(configPath, nextConfig);
+    const refreshResult = await this.requestTelegramGatewayRefreshAfterSetup(runtimeControlContext, approvalFn, baseDir);
     this.pendingSetupDialogue = {
       publicState: {
         ...pending.publicState,
-        state: "restart_offer",
+        state: refreshResult.success ? "verify" : "restart_offer",
         updatedAt: new Date().toISOString(),
         action: pending.publicState.action
           ? { ...pending.publicState.action, status: "completed" }
@@ -885,10 +906,9 @@ export class ChatRunner {
           ? "redacted chat-supplied token から Telegram gateway config を書き込みました。"
           : "Telegram gateway config was written from the redacted chat-supplied token.",
         "",
+        formatTelegramSetupRefreshResult(refreshResult, this.turnLanguageHint),
+        "",
         this.turnLanguageHint.language === "ja" ? "Next steps:" : "Next steps:",
-        this.turnLanguageHint.language === "ja"
-          ? "- daemon を再起動して、gateway に updated config を読み込ませてください。"
-          : "- Restart the daemon so the gateway loads the updated config.",
         ...(accessClosedByDefault
           ? [this.turnLanguageHint.language === "ja"
             ? "- allowed Telegram user IDs を設定するか、`pulseed telegram setup` で意図的に `allow_all` を有効にするまで access は closed のままです。"
@@ -897,11 +917,45 @@ export class ChatRunner {
         this.turnLanguageHint.language === "ja"
           ? "- home chat が未設定なら Telegram から `/sethome` を送ってください。"
           : "- Send `/sethome` from Telegram if no home chat is configured yet.",
-        this.turnLanguageHint.language === "ja"
-          ? "- `pulseed daemon status` で確認してください。"
-          : "- Run `pulseed daemon status` to verify.",
+        refreshResult.success
+          ? this.turnLanguageHint.language === "ja"
+            ? "- Telegram bot にメッセージを送って動作確認してください。"
+            : "- Send a message to the Telegram bot to verify delivery."
+          : this.turnLanguageHint.language === "ja"
+            ? "- 自動反映できなかったため、fallback として `pulseed daemon restart` を実行してから `pulseed daemon status` で確認してください。"
+            : "- Automatic refresh was not applied; as a fallback, run `pulseed daemon restart`, then `pulseed daemon status`.",
       ].join("\n"),
       elapsed_ms: 0,
+    };
+  }
+
+  private async requestTelegramGatewayRefreshAfterSetup(
+    runtimeControlContext: RuntimeControlChatContext | null,
+    approvalFn: ((description: string) => Promise<boolean>) | undefined,
+    baseDir: string
+  ): Promise<{ success: boolean; message: string; operationId?: string; state?: string; unavailable?: boolean }> {
+    if (!this.deps.runtimeControlService) {
+      return {
+        success: false,
+        unavailable: true,
+        message: "Runtime control service is not available in this chat surface.",
+      };
+    }
+    const result = await this.deps.runtimeControlService.request({
+      intent: {
+        kind: "restart_gateway",
+        reason: "Apply updated Telegram gateway config after approved setup write.",
+      },
+      cwd: baseDir,
+      ...(runtimeControlContext?.actor ? { requestedBy: runtimeControlContext.actor } : {}),
+      ...(runtimeControlContext?.replyTarget ? { replyTarget: runtimeControlContext.replyTarget } : {}),
+      ...(approvalFn ? { approvalFn } : {}),
+    });
+    return {
+      success: result.success,
+      message: result.message,
+      ...(result.operationId ? { operationId: result.operationId } : {}),
+      ...(result.state ? { state: result.state } : {}),
     };
   }
 

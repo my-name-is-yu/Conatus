@@ -561,8 +561,97 @@ describe("ChatRunner", () => {
       expect(JSON.stringify(persistedDialogue)).not.toContain(telegramToken);
       expect(config.bot_token).toBe(telegramToken);
       expect(config.allow_all).toBe(false);
-      expect(confirmResult.output).toContain("Restart the daemon");
+      expect(confirmResult.output).toContain("runtime control is unavailable");
+      expect(confirmResult.output).toContain("pulseed daemon restart");
       expect(confirmResult.output).toContain("Access remains closed");
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
+    it("requests an internal gateway refresh after approved Telegram config write", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-refresh-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const runtimeControlService = {
+        request: vi.fn(async (request: { approvalFn?: (description: string) => Promise<boolean> }) => {
+          await request.approvalFn?.("Runtime control restart_gateway: Apply updated Telegram gateway config after approved setup write.");
+          return {
+            success: true,
+            message: "gateway restart is being handled by a daemon restart because the gateway runs in-process.",
+            operationId: "op-refresh-1",
+            state: "acknowledged" as const,
+          };
+        }),
+      };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        approvalFn,
+        runtimeControlService,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          configPath: path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"),
+          daemon: { running: true, port: 41700 },
+        })),
+      }));
+
+      await runner.execute(telegramToken, "/repo", 30_000);
+      const confirmResult = await runner.execute("/confirm-setup-write", "/repo", 30_000);
+
+      expect(confirmResult.success).toBe(true);
+      expect(confirmResult.output).toContain("Telegram gateway config was written");
+      expect(confirmResult.output).toContain("PulSeed requested an internal gateway refresh");
+      expect(confirmResult.output).toContain("op-refresh-1");
+      expect(confirmResult.output).not.toContain("Restart the daemon so the gateway loads");
+      expect(runtimeControlService.request).toHaveBeenCalledWith(expect.objectContaining({
+        cwd: baseDir,
+        intent: {
+          kind: "restart_gateway",
+          reason: "Apply updated Telegram gateway config after approved setup write.",
+        },
+        approvalFn,
+      }));
+      expect(approvalFn).toHaveBeenCalledTimes(2);
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
+    it("reports refresh failure with a manual fallback after Telegram config write", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-refresh-fail-"));
+      const stateManager = {
+        ...makeMockStateManager(),
+        getBaseDir: () => baseDir,
+      } as unknown as StateManager;
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const runtimeControlService = {
+        request: vi.fn().mockResolvedValue({
+          success: false,
+          message: "Runtime control executor is not configured; operation was recorded but not started.",
+          operationId: "op-refresh-failed",
+          state: "failed" as const,
+        }),
+      };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        approvalFn,
+        runtimeControlService,
+        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+          state: "unconfigured",
+          configPath: path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"),
+          daemon: { running: true, port: 41700 },
+        })),
+      }));
+
+      await runner.execute(telegramToken, "/repo", 30_000);
+      const confirmResult = await runner.execute("/confirm-setup-write", "/repo", 30_000);
+
+      expect(confirmResult.success).toBe(true);
+      expect(confirmResult.output).toContain("PulSeed attempted an internal gateway refresh, but it failed");
+      expect(confirmResult.output).toContain("pulseed daemon restart");
+      expect(confirmResult.output).toContain("pulseed daemon status");
+      expect(runtimeControlService.request).toHaveBeenCalledOnce();
       fs.rmSync(baseDir, { recursive: true, force: true });
     });
 
