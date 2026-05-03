@@ -8,9 +8,12 @@ import {
   saveProviderConfig,
   validateProviderConfig,
 } from "../../../base/llm/provider-config.js";
+import { buildLLMClient } from "../../../base/llm/provider-factory.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import { seedRelationshipProfileFromSetup } from "../../../platform/profile/relationship-profile.js";
+import { createRelationshipProfileProposalsFromUserMdImport } from "../../../platform/profile/user-md-profile-import.js";
 import { updateGlobalConfig } from "../../../base/config/global-config.js";
 import { readCodexOAuthToken } from "../../../base/llm/provider-config.js";
 import { isDaemonRunning } from "../../../runtime/daemon/client.js";
@@ -710,6 +713,22 @@ export async function runSetupWizard(): Promise<number> {
       userName: finalAnswers.userName,
       importedUserContent: finalAnswers.importedUserContent,
     });
+    if (finalAnswers.importedUserContent !== undefined) {
+      let importLlmClient: ILLMClient | undefined;
+      try {
+        importLlmClient = await buildLLMClient();
+      } catch (err) {
+        p.log.warn(`USER.md profile extraction will use review-only fallback: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      const proposalResult = await createRelationshipProfileProposalsFromUserMdImport({
+        baseDir: dir,
+        importedUserContent: finalAnswers.importedUserContent,
+        llmClient: importLlmClient,
+      });
+      if (proposalResult.proposals.length > 0) {
+        p.log.info(`Created ${proposalResult.proposals.length} relationship profile proposal(s) from imported USER.md.`);
+      }
+    }
   } catch (err) {
     p.log.warn(`Setup saved, but could not seed relationship profile: ${err instanceof Error ? err.message : String(err)}`);
   }

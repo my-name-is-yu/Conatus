@@ -381,6 +381,16 @@ export async function applyRelationshipProfileChangeProposal(
   if (proposal.approval_state !== "approved") {
     throw new Error(`only approved proposals can be applied: ${proposalId}`);
   }
+  if (proposal.source === "setup_import") {
+    const newerActiveItem = profileStore.items.find((item) =>
+      item.stable_key === proposal.proposed_item.stable_key &&
+      item.status === "active" &&
+      item.created_at > proposal.created_at
+    );
+    if (newerActiveItem) {
+      throw new Error(`stale setup import proposal cannot overwrite newer active profile item: ${proposal.id}`);
+    }
+  }
   let profileResult;
   if (proposal.operation === "upsert_item") {
     const kind = proposal.proposed_item.kind;

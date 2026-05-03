@@ -7,7 +7,7 @@ import {
 import type { GroundingProvider } from "../contracts.js";
 import { makeSection, makeSource, resolveStateManagerBaseDir } from "./helpers.js";
 
-export function buildIdentitySectionContent(baseDir?: string): string {
+export function buildIdentitySectionContent(baseDir?: string, options: { includeUserContent?: boolean } = {}): string {
   const identity = baseDir ? loadIdentityFromBaseDir(baseDir) : loadIdentity();
   const { name } = identity;
 
@@ -21,7 +21,7 @@ export function buildIdentitySectionContent(baseDir?: string): string {
     "Your role is to help the user make concrete progress by inspecting the workspace, using tools directly when appropriate, delegating work when useful, and executing the next valid step.",
     "",
     "### Persona And Customization",
-    getUserFacingIdentityForIdentity(identity).trim(),
+    getUserFacingIdentityForIdentity(identity, { includeUserContent: options.includeUserContent }).trim(),
   ].join("\n");
 }
 
@@ -70,7 +70,8 @@ export const identityProvider: GroundingProvider = {
   kind: "static",
   async build(context) {
     const baseDir = context.request.homeDir ?? resolveStateManagerBaseDir(context.deps.stateManager);
-    return makeSection("identity", buildIdentitySectionContent(baseDir), [
+    const includeUserContent = context.profile.surface === "chat";
+    return makeSection("identity", buildIdentitySectionContent(baseDir, { includeUserContent }), [
       makeSource("identity", "identity-loader", { type: "derived", trusted: true, accepted: true }),
     ]);
   },
