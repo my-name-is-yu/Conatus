@@ -855,8 +855,7 @@ function formatTelegramConfigureGuidance(
       "",
       "Verification:",
       "- Send a message to the Telegram bot.",
-      "- Run `pulseed daemon status` if delivery does not work.",
-      "- If this config was added or changed while the daemon was already running, restart the daemon so the gateway loads the updated config."
+      "- Run `pulseed daemon status` if delivery does not work."
     );
   }
 
@@ -879,7 +878,8 @@ function formatTelegramConfigureGuidance(
   } else if (status.daemon.running && status.state !== "unconfigured") {
     lines.push(
       "",
-      "If Telegram was configured or changed after this daemon started, restart the daemon so the gateway loads the latest config."
+      "If Telegram was configured or changed through chat-assisted setup, PulSeed will request an internal gateway refresh after the approved write.",
+      "For config changes made outside PulSeed chat setup, run `pulseed daemon restart` if delivery does not pick up the updated gateway config."
     );
   }
 
@@ -932,8 +932,7 @@ function formatTelegramConfigureGuidanceJa(
       "",
       "Verification:",
       "- Telegram bot にメッセージを送ってください。",
-      "- 配信されない場合は `pulseed daemon status` を実行してください。",
-      "- daemon 起動後に config を追加または変更した場合は、daemon を再起動して gateway に最新 config を読み込ませてください。"
+      "- 配信されない場合は `pulseed daemon status` を実行してください。"
     );
   }
 
@@ -956,7 +955,8 @@ function formatTelegramConfigureGuidanceJa(
   } else if (status.daemon.running && status.state !== "unconfigured") {
     lines.push(
       "",
-      "Telegram config を daemon 起動後に追加または変更した場合は、daemon を再起動して最新 config を読み込ませてください。"
+      "chat-assisted setup で Telegram config を追加または変更した場合は、承認済み write 後に PulSeed が internal gateway refresh を要求します。",
+      "PulSeed chat setup 以外で config を変更した場合、配信が最新 gateway config を拾わなければ `pulseed daemon restart` を実行してください。"
     );
   }
 
