@@ -3433,6 +3433,7 @@ describe("ChatRunner", () => {
     });
 
     it("routes Japanese Telegram setup requests to guidance before agent-loop execution", async () => {
+      const events: ChatEvent[] = [];
       const chatAgentLoopRunner = {
         execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
       } as unknown as ChatAgentLoopRunner;
@@ -3444,7 +3445,11 @@ describe("ChatRunner", () => {
           rationale: "operator wants Telegram chat setup",
         }),
       ]);
-      const runner = new ChatRunner(makeDeps({ chatAgentLoopRunner, llmClient }));
+      const runner = new ChatRunner(makeDeps({
+        chatAgentLoopRunner,
+        llmClient,
+        onEvent: (event) => { events.push(event); },
+      }));
 
       const result = await runner.execute("telegramからseedyと会話できるようにしたい", "/repo");
 
@@ -3452,6 +3457,11 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("pulseed telegram setup");
       expect(result.output).toContain("pulseed gateway setup");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
+        event.type === "activity" && event.sourceId === "intent:first-step"
+      );
+      expect(intent?.message).toContain("prepare configuration guidance");
+      expect(intent?.message).not.toContain("resume the saved agent loop state");
     });
 
     it("routes English Telegram setup paraphrases to guidance before agent-loop execution", async () => {
@@ -3477,6 +3487,7 @@ describe("ChatRunner", () => {
     });
 
     it("asks for clarification on ambiguous freeform input instead of editing code", async () => {
+      const events: ChatEvent[] = [];
       const chatAgentLoopRunner = {
         execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
       } as unknown as ChatAgentLoopRunner;
@@ -3488,16 +3499,26 @@ describe("ChatRunner", () => {
           rationale: "unclear desired action",
         }),
       ]);
-      const runner = new ChatRunner(makeDeps({ chatAgentLoopRunner, llmClient }));
+      const runner = new ChatRunner(makeDeps({
+        chatAgentLoopRunner,
+        llmClient,
+        onEvent: (event) => { events.push(event); },
+      }));
 
       const result = await runner.execute("いい感じにして", "/repo");
 
       expect(result.success).toBe(true);
       expect(result.output).toContain("one more detail");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
+        event.type === "activity" && event.sourceId === "intent:first-step"
+      );
+      expect(intent?.message).toContain("ask for the missing detail");
+      expect(intent?.message).not.toContain("resume the saved agent loop state");
     });
 
     it("continues explicit implementation requests into the coding agent-loop", async () => {
+      const events: ChatEvent[] = [];
       const chatAgentLoopRunner = {
         execute: vi.fn().mockResolvedValue({
           success: true,
@@ -3515,13 +3536,52 @@ describe("ChatRunner", () => {
           rationale: "explicit code implementation request",
         }),
       ]);
-      const runner = new ChatRunner(makeDeps({ chatAgentLoopRunner, llmClient }));
+      const runner = new ChatRunner(makeDeps({
+        chatAgentLoopRunner,
+        llmClient,
+        onEvent: (event) => { events.push(event); },
+      }));
 
       const result = await runner.execute("Implement the failing tests fix in this repo.", "/repo");
 
       expect(result.success).toBe(true);
       expect(result.output).toBe("Implementation done");
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+      const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
+        event.type === "activity" && event.sourceId === "intent:first-step"
+      );
+      expect(intent?.message).toContain("let the agent loop inspect or change files");
+    });
+
+    it("routes direct assist without agent-loop resume intent copy", async () => {
+      const events: ChatEvent[] = [];
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "assist",
+          confidence: 0.91,
+          rationale: "operator asks for explanatory help",
+        }),
+        "Here is the explanation.",
+      ]);
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        chatAgentLoopRunner,
+        llmClient,
+        onEvent: (event) => { events.push(event); },
+      }));
+
+      const result = await runner.execute("Explain how this works.", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe("Here is the explanation.");
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
+        event.type === "activity" && event.sourceId === "intent:first-step"
+      );
+      expect(intent?.message).toContain("answer directly from the current conversation context");
+      expect(intent?.message).not.toContain("resume the saved agent loop state");
     });
 
     it("keeps non-native-tool clients on the local LLM/tool loop instead of the adapter fallback", async () => {
