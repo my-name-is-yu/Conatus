@@ -92,7 +92,13 @@ function runSpecDraftDecision(): string {
       semantics: "Kaggle score exceeds 0.98.",
       confidence: "high",
     },
-    deadline: null,
+    deadline: {
+      raw: "tomorrow morning",
+      iso_at: "2026-05-04T00:00:00.000Z",
+      timezone: "Asia/Tokyo",
+      finalization_buffer_minutes: 30,
+      confidence: "high",
+    },
     budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
     approval_policy: {
       submit: "approval_required",
@@ -102,6 +108,14 @@ function runSpecDraftDecision(): string {
       irreversible_action: "approval_required",
     },
     missing_fields: [],
+  });
+}
+
+function runSpecConfirmationDecision(decision: "approve" | "cancel" | "unknown" | "revise"): string {
+  return JSON.stringify({
+    decision,
+    confidence: 0.94,
+    rationale: "Typed RunSpec confirmation",
   });
 }
 
@@ -146,6 +160,100 @@ describe("CrossPlatformChatSessionManager", () => {
         message_id: "message-1",
         identity_key: "telegram:user-1",
       });
+    } finally {
+      cleanupTempDir(baseDir);
+    }
+  });
+
+  it("starts a gateway natural-language RunSpec after approval and retains reply target metadata", async () => {
+    const baseDir = makeTempDir();
+    try {
+      const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
+      const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = { execute: vi.fn() };
+      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        adapter,
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        daemonClient: daemonClient as never,
+        llmClient: createMockLLMClient([
+          runSpecFreeformDecision(),
+          runSpecDraftDecision(),
+          JSON.stringify({ kind: "assist", confidence: 0.9, rationale: "Approval turn is handled by pending confirmation." }),
+          runSpecConfirmationDecision("approve"),
+        ]),
+      }));
+
+      const draft = await manager.execute("Kaggle score 0.98を超えるまで長期で回して", {
+        identity_key: "telegram:user-longrun",
+        platform: "telegram",
+        conversation_id: "telegram-chat-longrun",
+        user_id: "user-longrun",
+        message_id: "message-draft",
+        cwd: "/repo/kaggle",
+        metadata: { gateway_message: true, request_id: "gateway-req-1" },
+      });
+      const approved = await manager.execute("承認します", {
+        identity_key: "telegram:user-longrun",
+        platform: "telegram",
+        conversation_id: "telegram-chat-longrun",
+        user_id: "user-longrun",
+        message_id: "message-approve",
+        cwd: "/repo/kaggle",
+        metadata: { gateway_message: true, request_id: "gateway-req-2" },
+      });
+
+      expect(draft.success).toBe(true);
+      expect(draft.output).toContain("It has not started a daemon run.");
+      expect(approved.success).toBe(true);
+      expect(approved.output).toContain("Started daemon-backed CoreLoop goal:");
+      expect(daemonClient.startGoal).toHaveBeenCalledOnce();
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+
+      const [runFileName] = fs.readdirSync(`${baseDir}/runtime/background-runs`);
+      const run = JSON.parse(fs.readFileSync(`${baseDir}/runtime/background-runs/${runFileName}`, "utf8"));
+      expect(run).toMatchObject({
+        status: "queued",
+        workspace: "/repo/kaggle",
+        parent_session_id: expect.stringMatching(/^session:conversation:/),
+        reply_target_source: "pinned_run",
+        pinned_reply_target: {
+          channel: "gateway",
+          target_id: "telegram-chat-longrun",
+          thread_id: "message-draft",
+          metadata: {
+            conversation_id: "telegram-chat-longrun",
+            message_id: "message-draft",
+            identity_key: "telegram:user-longrun",
+            request_id: "gateway-req-1",
+          },
+        },
+        origin_metadata: {
+          run_spec_origin: {
+            channel: "plugin_gateway",
+            reply_target: {
+              conversation_id: "telegram-chat-longrun",
+              message_id: "message-draft",
+              identity_key: "telegram:user-longrun",
+            },
+          },
+        },
+      });
+      expect(daemonClient.startGoal).toHaveBeenCalledWith(
+        expect.stringMatching(/^goal-runspec-/),
+        expect.objectContaining({
+          backgroundRun: expect.objectContaining({
+            backgroundRunId: run.id,
+            parentSessionId: run.parent_session_id,
+            replyTargetSource: "pinned_run",
+            pinnedReplyTarget: expect.objectContaining({
+              target_id: "telegram-chat-longrun",
+            }),
+          }),
+        }),
+      );
     } finally {
       cleanupTempDir(baseDir);
     }

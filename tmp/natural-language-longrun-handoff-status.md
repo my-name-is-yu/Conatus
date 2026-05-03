@@ -63,4 +63,17 @@
   - `npm run typecheck`: pass.
   - `npm run lint:boundaries`: pass with existing warnings only.
   - `git diff --check`: pass.
+- Review: fresh review found no material issues; new tests exercise real ChatRunner/CrossPlatform flows with appropriate mocked LLM/daemon boundaries and no brittle semantic decision logic.
 - Review: first review found safety-blocked approvals were persisted as confirmed and low-confidence workspaces were not treated as ambiguous. Fixed by keeping safety-blocked specs pending/draft and blocking low-confidence workspaces before daemon start.
+
+## #1001
+
+- Branch: `codex/issue-1001-production-path-tests`.
+- Plan: strengthen production caller-path tests for natural-language RunSpec handoff by asserting ChatRunner routes natural language through draft -> confirmation -> approved daemon start, CrossPlatform/gateway reply target metadata survives into the background run after approval, stale approvals do not reuse cancelled specs, and non-run questions stay on ordinary chat.
+- Current status: implemented locally; review pending.
+- Verification:
+  - `npm run test:unit -- src/interface/chat/__tests__/chat-runner.test.ts -t "natural-language RunSpec draft routing"`: pass (13 pass, 118 skipped).
+  - `npm run test:unit -- src/interface/chat/__tests__/cross-platform-session.test.ts -t "RunSpec"`: pass (2 pass, 22 skipped).
+  - `npm run typecheck`: pass.
+  - `npm run lint:boundaries`: pass with existing warnings only.
+  - `git diff --check`: pass.
