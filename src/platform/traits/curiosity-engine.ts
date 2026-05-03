@@ -358,7 +358,8 @@ export class CuriosityEngine {
    */
   async generateProposals(
     triggers: CuriosityTrigger[],
-    goals: Goal[]
+    goals: Goal[],
+    options: { relationshipProfileContext?: string } = {}
   ): Promise<CuriosityProposal[]> {
     await this.ensureStateLoaded();
     const activeProposals = this.getActiveProposals();
@@ -374,6 +375,9 @@ export class CuriosityEngine {
         vectorIndex: this.vectorIndex,
         knowledgeTransfer: this.knowledgeTransfer,
         config: this.config,
+      },
+      {
+        relationshipProfileContext: options.relationshipProfileContext,
       }
     );
 

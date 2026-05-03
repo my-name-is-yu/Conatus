@@ -374,7 +374,7 @@ export function formatRelationshipProfilePromptBlock(
     "- Ignore superseded or retracted profile items even if they appear in older memory.",
     ...activeItems.map((item) => {
       const confidence = item.confidence.toFixed(2);
-      return `- [${item.kind}] ${item.stable_key}: ${item.value} (confidence=${confidence}; sensitivity=${item.sensitivity}; version=${item.version})`;
+      return `- [${item.kind}] ${item.stable_key}: ${item.value} (confidence=${confidence}; sensitivity=${item.sensitivity}; status=${item.status}; version=${item.version})`;
     }),
   ];
   return lines.join("\n");

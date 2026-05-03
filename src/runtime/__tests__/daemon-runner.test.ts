@@ -17,6 +17,7 @@ import { createEnvelope } from "../types/envelope.js";
 import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
+import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -554,6 +555,23 @@ describe("DaemonRunner durable runtime", () => {
   });
 
   it("runs resident curiosity investigation from idle proactive ticks", async () => {
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.intervention.curiosity",
+      kind: "intervention_policy",
+      value: "Ask for confirmation before resident curiosity creates non-urgent proposals.",
+      source: "cli_update",
+      allowedScopes: ["resident_behavior", "user_facing_review"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.intervention.health",
+      kind: "intervention_policy",
+      value: "Use sensitive health context for curiosity timing.",
+      source: "cli_update",
+      sensitivity: "sensitive",
+      allowedScopes: ["resident_behavior", "user_facing_review"],
+      now: "2026-05-03T00:01:00.000Z",
+    });
     const curiosityEngine = {
       evaluateTriggers: vi.fn().mockResolvedValue([
         {
@@ -639,7 +657,18 @@ describe("DaemonRunner durable runtime", () => {
       suggestion_title: "Explore weak spots in idle daemon resident behavior.",
     }));
     expect(curiosityEngine.evaluateTriggers).toHaveBeenCalledOnce();
-    expect(curiosityEngine.generateProposals).toHaveBeenCalledOnce();
+    expect(curiosityEngine.generateProposals).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Array),
+      expect.objectContaining({
+        relationshipProfileContext: expect.stringContaining(
+          "Ask for confirmation before resident curiosity creates non-urgent proposals."
+        ),
+      })
+    );
+    const relationshipProfileContext = curiosityEngine.generateProposals.mock.calls[0]?.[2]?.relationshipProfileContext ?? "";
+    expect(relationshipProfileContext).toContain("status=active; version=1");
+    expect(relationshipProfileContext).not.toContain("sensitive health context");
     expect(llmClient.sendMessage).not.toHaveBeenCalled();
 
     daemon.stop();
