@@ -15,7 +15,10 @@ export type ConfigField = z.infer<typeof ConfigFieldSchema>;
 // ─── Plugin manifest schema ───
 
 export const PluginManifestSchema = z.object({
-  name: z.string().regex(/^[a-z0-9-]+$/, "プラグイン名は小文字英数字とハイフンのみ"),
+  name: z.string().regex(
+    /^(?:@[a-z0-9-]+\/)?[a-z0-9-]+$/,
+    "プラグイン名は小文字英数字とハイフン、または @scope/name 形式のみ",
+  ),
   version: z.string().regex(/^\d+\.\d+\.\d+$/),
   type: z.enum(["adapter", "data_source", "notifier", "schedule_source"]),
 

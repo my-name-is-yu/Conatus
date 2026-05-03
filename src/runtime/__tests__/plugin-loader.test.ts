@@ -96,6 +96,12 @@ describe("PluginManifestSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts a scoped npm package name", () => {
+    const data = makeValidManifestData({ name: "@pulseed-plugins/scoped" });
+    const result = PluginManifestSchema.safeParse(data);
+    expect(result.success).toBe(true);
+  });
+
   it("accepts a valid data_source manifest with dimensions", () => {
     const data = makeValidManifestData({
       type: "data_source",
@@ -577,6 +583,15 @@ describe("PluginLoader.getPluginState and updatePluginState", () => {
     const content = JSON.parse(fsSync.readFileSync(statePath, "utf-8"));
     expect(content.trust_score).toBe(25);
     expect(content.success_count).toBe(3);
+  });
+
+  it("updatePluginState persists scoped plugin state under the storage directory", async () => {
+    const manifest = makeValidManifest({ name: "@pulseed-plugins/scoped" });
+    loader.buildSuccessState(manifest);
+    await loader.updatePluginState("@pulseed-plugins/scoped", { trust_score: 25 });
+    const statePath = path.join(tmpDir, "pulseed-plugins__scoped", "state.json");
+    expect(fsSync.existsSync(statePath)).toBe(true);
+    expect(fsSync.existsSync(path.join(tmpDir, "@pulseed-plugins", "scoped", "state.json"))).toBe(false);
   });
 
   it("updatePluginState does nothing for unknown plugin", async () => {
