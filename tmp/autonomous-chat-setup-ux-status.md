@@ -25,3 +25,29 @@ Updated: 2026-05-03
 - PR #977 CI: `unit (22)` passed; `integration (24)` failed because `src/interface/tui/__tests__/app.test.ts` still expected the old English intent activity text.
 - Fixed the integration expectation to the localized Japanese activity text and verified `npx vitest run --config vitest.integration.config.ts src/interface/tui/__tests__/app.test.ts -t "routes Telegram setup freeform input"` passed.
 - Re-verification after CI fix: `npm run typecheck` passed.
+
+## #976 language hint
+- Status: merged.
+- PR: #977 (`feat(chat): add turn language hints`).
+- CI: `unit (22)` passed; `integration (24)` passed after updating the TUI integration expectation.
+
+## #975 shared operation progress timeline
+- Status: in progress.
+- Issue body read with `gh issue view 975`.
+- Plan: define typed `operation_progress` chat event/model, adapt agent-loop timeline summaries into it without breaking #949, emit deterministic setup/configure progress from direct Telegram route, render it through the existing chat event reducer/TUI path, and cover secret redaction.
+- Implemented typed `operation_progress` chat events and `OperationProgressItem` model.
+- Added direct Telegram configure progress producer for started/status/config/next-step states, with language hints and setup-secret redaction.
+- Adapted agent-loop activity summary into the same operation progress model while preserving existing `agent_timeline` behavior.
+- Added chat reducer rendering so progress remains separate from final assistant output.
+- Verification: focused Vitest for operation progress/direct route/agent-loop adapter passed.
+- Verification: `npm run typecheck` passed.
+- Verification: `npm run test:changed` passed (20 files, 459 tests; 2 skipped).
+- Verification: `npm run lint:boundaries` passed with existing warnings only (0 errors, 610 warnings).
+- Review agent found P1: Telegram gateway adapter ignored `operation_progress`, so gateway users would not see incremental progress.
+- Fixed Telegram gateway event adapter to render `operation_progress` via the shared renderer before final replies.
+- Added Telegram gateway integration coverage for progress plus final guidance dispatch.
+- Re-verification: focused Vitest for chat progress and Telegram gateway progress passed.
+- Re-verification: `npm run typecheck` passed.
+- Re-verification: `npm run test:changed` passed, including related unit/integration and smoke lanes.
+- Re-verification: `npm run lint:boundaries` passed with existing warnings only (0 errors, 610 warnings).
+- Re-review after Telegram gateway fix: no material findings.

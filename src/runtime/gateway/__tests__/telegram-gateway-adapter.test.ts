@@ -96,6 +96,96 @@ describe("TelegramGatewayAdapter", () => {
       })
     );
   });
+
+  it("renders operation progress events before the final Telegram reply", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const sentMessages: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "getMe") {
+        return telegramResponse({ id: 1, username: "pulseed_test_bot" });
+      }
+      if (method === "getUpdates") {
+        return telegramResponse([
+          {
+            update_id: 100,
+            message: {
+              message_id: 2718,
+              from: { id: 42 },
+              chat: { id: 314 },
+              text: "telegram setup",
+            },
+          },
+        ]);
+      }
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        return telegramResponse({ message_id: 9000 + sentMessages.length });
+      }
+      if (method === "editMessageText") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        return telegramResponse({ message_id: 9100 + sentMessages.length });
+      }
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({
+        type: "lifecycle_start",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        input: "telegram setup",
+      });
+      await input.onEvent?.({
+        type: "operation_progress",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:01.000Z",
+        item: {
+          id: "telegram-configure:read-config",
+          kind: "read_config",
+          operation: "telegram_setup",
+          title: "Read Telegram config",
+          detail: "Config file does not exist yet.",
+          createdAt: "2026-04-08T00:00:01.000Z",
+        },
+      });
+      await input.onEvent?.({
+        type: "assistant_final",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:02.000Z",
+        text: "Final setup guidance.",
+        persisted: true,
+      });
+      await adapter.stop();
+      return "Final setup guidance.";
+    });
+
+    await adapter.start();
+
+    await vi.waitFor(() => {
+      expect(sentMessages).toContain("Read Telegram config: Config file does not exist yet.");
+      expect(sentMessages).toContain("Final setup guidance.");
+    });
+  });
 });
 
 async function writeConfig(config: Record<string, unknown>): Promise<string> {

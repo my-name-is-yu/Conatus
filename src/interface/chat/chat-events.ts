@@ -1,6 +1,7 @@
 import type { FailureRecoveryGuidance } from "./failure-recovery.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 import type { TurnLanguageHint } from "./turn-language.js";
+import type { OperationProgressItem } from "./operation-progress.js";
 
 export interface ChatEventBase {
   runId: string;
@@ -74,6 +75,11 @@ export interface AgentTimelineEvent extends ChatEventBase {
   item: AgentTimelineItem;
 }
 
+export interface OperationProgressEvent extends ChatEventBase {
+  type: "operation_progress";
+  item: OperationProgressItem;
+}
+
 export interface LifecycleEndEvent extends ChatEventBase {
   type: "lifecycle_end";
   status: "completed" | "error";
@@ -95,6 +101,7 @@ export type ChatEvent =
   | AssistantFinalEvent
   | ActivityEvent
   | AgentTimelineEvent
+  | OperationProgressEvent
   | ToolStartEvent
   | ToolUpdateEvent
   | ToolEndEvent

@@ -37,6 +37,59 @@ describe("applyChatEventToMessages", () => {
     });
   });
 
+  it("renders operation progress separately from the final assistant answer", () => {
+    const progress = applyChatEventToMessages([], {
+      type: "operation_progress",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      item: {
+        id: "telegram-configure:read-config",
+        kind: "read_config",
+        operation: "telegram_setup",
+        title: "Read Telegram config",
+        detail: "Bot token is configured, but no home chat is set.",
+        createdAt: "2026-04-08T00:00:00.000Z",
+      },
+    }, 20);
+
+    const final = applyChatEventToMessages(progress, {
+      type: "assistant_final",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:01.000Z",
+      text: "Final setup guidance.",
+      persisted: true,
+    }, 20);
+
+    expect(final.map((message) => message.text)).toEqual([
+      "Read Telegram config: Bot token is configured, but no home chat is set.",
+      "Final setup guidance.",
+    ]);
+  });
+
+  it("redacts setup secrets from rendered operation progress", () => {
+    const token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+    const messages = applyChatEventToMessages([], {
+      type: "operation_progress",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      item: {
+        id: "secret-progress",
+        kind: "awaiting_approval",
+        operation: "telegram_setup",
+        title: "Prepared config write",
+        detail: `Token ${token} is ready.`,
+        createdAt: "2026-04-08T00:00:00.000Z",
+        metadata: { token },
+      },
+    }, 20);
+
+    expect(JSON.stringify(messages)).not.toContain(token);
+    expect(messages[0]!.text).toContain("[REDACTED:telegram_bot_token");
+  });
+
   it("shows raw tool events without current/recent activity headings", () => {
     const messages = applyChatEventToMessages([], {
       type: "tool_start",
@@ -282,6 +335,7 @@ describe("applyChatEventToMessages", () => {
       [] as ReturnType<typeof applyChatEventToMessages>
     );
     const timelineMessages = messages.filter((message) => message.id.startsWith("agent-timeline:turn-1:"));
+    const operationProgressMessages = messages.filter((message) => message.id.startsWith("operation-progress:turn-1:"));
 
     expect(timelineMessages.map((message) => message.text)).toEqual([
       "I will inspect the entrypoint first.",
@@ -293,6 +347,9 @@ describe("applyChatEventToMessages", () => {
       "Stopped: completed",
     ]);
     expect(timelineMessages.filter((message) => message.text === "searched 1 search")).toHaveLength(1);
+    expect(operationProgressMessages.map((message) => message.text)).toEqual([
+      "Agent-loop activity summarized: searched 1 search",
+    ]);
   });
 
   it("renders shared timeline tool and approval rows chronologically without a latest-five cap", () => {

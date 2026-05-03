@@ -32,6 +32,7 @@ import {
   shouldRenderJapanese,
   type TurnLanguageHint,
 } from "./turn-language.js";
+import { createOperationProgressItem } from "./operation-progress.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -103,7 +104,7 @@ export async function executeConfigureRoute(
   if (route.kind !== "configure") {
     throw new Error(`executeConfigureRoute received route kind ${route.kind}`);
   }
-  const output = await formatConfigureGuidance(host, route.intent.configure_target ?? "unknown", host.getSetupSecretIntake(), host.getTurnLanguageHint());
+  const output = await formatConfigureGuidance(host, route.intent.configure_target ?? "unknown", host.getSetupSecretIntake(), host.getTurnLanguageHint(), eventContext);
   return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
 }
 
@@ -645,16 +646,77 @@ async function formatConfigureGuidance(
   target: "telegram_gateway" | "gateway" | "provider" | "daemon" | "notification" | "slack" | "unknown",
   setupSecretIntake: SetupSecretIntakeResult | null = null,
   languageHint: TurnLanguageHint,
+  eventContext: ChatEventContext,
 ): Promise<string> {
   const suppliedSecretKinds = setupSecretIntake?.suppliedSecrets.map((secret) => secret.kind) ?? [];
   if (target === "telegram_gateway") {
     const provider = host.deps.gatewaySetupStatusProvider ?? createGatewaySetupStatusProvider();
+    host.eventBridge.emitOperationProgress(createOperationProgressItem({
+      id: "telegram-configure:started",
+      kind: "started",
+      operation: "telegram_setup",
+      title: shouldRenderJapanese(languageHint) ? "Telegram setup を開始しました" : "Started Telegram setup",
+      detail: shouldRenderJapanese(languageHint) ? "daemon と gateway config の状態を確認します。" : "Checking daemon and gateway config state.",
+      createdAt: new Date().toISOString(),
+      languageHint,
+    }), eventContext);
     const status = await provider.getTelegramStatus(host.getProviderConfigBaseDir());
+    host.eventBridge.emitOperationProgress(createOperationProgressItem({
+      id: "telegram-configure:checked-status",
+      kind: "checked_status",
+      operation: "telegram_setup",
+      title: shouldRenderJapanese(languageHint) ? "Daemon status を確認しました" : "Checked daemon status",
+      detail: status.daemon.running
+        ? shouldRenderJapanese(languageHint)
+          ? `port ${status.daemon.port} で起動中です。`
+          : `Running on port ${status.daemon.port}.`
+        : shouldRenderJapanese(languageHint)
+          ? `port ${status.daemon.port} で応答していません。`
+          : `Not responding on port ${status.daemon.port}.`,
+      createdAt: new Date().toISOString(),
+      languageHint,
+      metadata: {
+        daemon_running: status.daemon.running,
+        daemon_port: status.daemon.port,
+      },
+    }), eventContext);
+    host.eventBridge.emitOperationProgress(createOperationProgressItem({
+      id: "telegram-configure:read-config",
+      kind: "read_config",
+      operation: "telegram_setup",
+      title: shouldRenderJapanese(languageHint) ? "Telegram config を読み取りました" : "Read Telegram config",
+      detail: formatTelegramConfigProgressDetail(status, languageHint),
+      createdAt: new Date().toISOString(),
+      languageHint,
+      metadata: {
+        config_exists: status.config.exists,
+        has_bot_token: status.config.hasBotToken,
+        has_home_chat: status.config.hasHomeChat,
+      },
+    }), eventContext);
     const suppliedTelegramToken = suppliedSecretKinds.includes("telegram_bot_token");
     const telegramSecret = setupSecretIntake?.suppliedSecrets.find((secret) => secret.kind === "telegram_bot_token");
     if (telegramSecret) {
       await host.setPendingSetupDialogue(createTelegramConfirmWriteDialogue(telegramSecret));
     }
+    host.eventBridge.emitOperationProgress(createOperationProgressItem({
+      id: "telegram-configure:planned-action",
+      kind: telegramSecret ? "awaiting_approval" : "planned_action",
+      operation: "telegram_setup",
+      title: shouldRenderJapanese(languageHint) ? "次の手順を準備しました" : "Prepared next setup step",
+      detail: telegramSecret
+        ? shouldRenderJapanese(languageHint)
+          ? "redacted token から approval-gated config write を準備しました。"
+          : "Prepared an approval-gated config write from the redacted token."
+        : shouldRenderJapanese(languageHint)
+          ? "guidance を返します。token が貼られた場合は redaction 後に confirmation を準備します。"
+          : "Returning guidance. If a token is pasted, PulSeed will redact it and prepare confirmation.",
+      createdAt: new Date().toISOString(),
+      languageHint,
+      metadata: {
+        pending_write: telegramSecret !== undefined,
+      },
+    }), eventContext);
     return formatTelegramConfigureGuidance(status, suppliedTelegramToken, telegramSecret !== undefined, languageHint);
   }
   if (target === "gateway") {
@@ -722,6 +784,19 @@ async function formatConfigureGuidance(
     "",
     "Use `pulseed setup` for the main wizard, `pulseed gateway setup` for chat channels, or the channel-specific setup command when available.",
   ].join("\n");
+}
+
+function formatTelegramConfigProgressDetail(status: TelegramSetupStatus, languageHint: TurnLanguageHint): string {
+  if (shouldRenderJapanese(languageHint)) {
+    if (!status.config.exists) return "config file はまだありません。";
+    if (!status.config.hasBotToken) return "config file はありますが bot token が未設定です。";
+    if (!status.config.hasHomeChat) return "bot token は設定済みですが home chat が未設定です。";
+    return "bot token と home chat は設定済みです。";
+  }
+  if (!status.config.exists) return "Config file does not exist yet.";
+  if (!status.config.hasBotToken) return "Config file exists, but no bot token is configured.";
+  if (!status.config.hasHomeChat) return "Bot token is configured, but no home chat is set.";
+  return "Bot token and home chat are configured.";
 }
 
 function formatTelegramConfigureGuidance(

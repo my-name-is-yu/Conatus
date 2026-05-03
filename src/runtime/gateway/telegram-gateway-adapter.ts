@@ -5,6 +5,7 @@ import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
+import { renderOperationProgress } from "../../interface/chat/operation-progress.js";
 import { formatLifecycleFailureMessage } from "../../interface/chat/failure-recovery.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
@@ -333,6 +334,9 @@ class TelegramChatEventAdapter {
         if (event.kind === "plugin" || event.kind === "skill") {
           await this.upsertActivityMessage(event.sourceId ?? event.kind, `[${event.kind}] ${event.message}`);
         }
+        return;
+      case "operation_progress":
+        await this.upsertActivityMessage(event.item.id, renderOperationProgress(event.item));
         return;
       case "tool_start":
         await this.upsertToolMessage(event.toolCallId, `[tool] ${event.toolName} started`);

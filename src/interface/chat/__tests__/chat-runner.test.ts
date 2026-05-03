@@ -484,8 +484,10 @@ describe("ChatRunner", () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
       const echoedToken = "sk-proj_echoedsecretabcdefghijklmnopqrstuvwxyz";
       const stateManager = makeMockStateManager();
+      const events: ChatEvent[] = [];
       const runner = new ChatRunner(makeDeps({
         stateManager,
+        onEvent: (event) => { events.push(event); },
         adapter: makeMockAdapter({
           ...CANNED_RESULT,
           output: `adapter echoed ${echoedToken}`,
@@ -509,6 +511,9 @@ describe("ChatRunner", () => {
       expect(JSON.stringify(persistedSession)).not.toContain(telegramToken);
       expect(JSON.stringify(persistedSession)).not.toContain(echoedToken);
       expect(JSON.stringify(persistedSession)).toContain("[REDACTED:openai_api_key:setup_secret_1]");
+      const progressEvents = events.filter((event) => event.type === "operation_progress");
+      expect(progressEvents.map((event) => event.item.kind)).toContain("awaiting_approval");
+      expect(JSON.stringify(progressEvents)).not.toContain(telegramToken);
     });
 
     it("writes Telegram config only after explicit confirmation and approval", async () => {
@@ -3941,6 +3946,17 @@ describe("ChatRunner", () => {
       expect(intent?.message).toContain("設定ガイダンスを準備");
       expect(intent?.languageHint).toMatchObject({ language: "ja" });
       expect(intent?.message).not.toContain("resume the saved agent loop state");
+      const progressEvents = events.filter((event): event is Extract<ChatEvent, { type: "operation_progress" }> =>
+        event.type === "operation_progress"
+      );
+      expect(progressEvents.map((event) => event.item.kind)).toEqual([
+        "started",
+        "checked_status",
+        "read_config",
+        "planned_action",
+      ]);
+      expect(progressEvents.map((event) => event.item.title).join("\n")).toContain("Daemon status を確認しました");
+      expect(JSON.stringify(progressEvents)).not.toContain("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi");
     });
 
     it("routes English Telegram setup paraphrases to guidance before agent-loop execution", async () => {
