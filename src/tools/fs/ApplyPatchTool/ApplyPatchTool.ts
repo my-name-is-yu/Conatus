@@ -3,6 +3,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
+import { validateProtectedPath } from "../FileValidationTool/protected-path-policy.js";
 
 export const ApplyPatchInputSchema = z.object({
   patch: z.string().min(1),
@@ -35,11 +36,22 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
     const started = Date.now();
     const cwd = input.cwd ?? context.cwd;
     if (input.patch.trimStart().startsWith("*** Begin Patch")) {
-      return this.callCodexPatch(input, cwd, started);
+      return this.callCodexPatch(input, cwd, started, context.executionPolicy?.protectedPaths);
+    }
+    const changedPaths = extractPatchPaths(input.patch);
+    const blockedPath = findBlockedPatchPath(changedPaths, cwd, context.executionPolicy?.protectedPaths);
+    if (blockedPath) {
+      return {
+        success: false,
+        data: { changedPaths, stdout: "", stderr: blockedPath.error, checkOnly: input.checkOnly },
+        summary: `Patch blocked: ${blockedPath.error}`,
+        error: blockedPath.error,
+        durationMs: Date.now() - started,
+        artifacts: changedPaths,
+      };
     }
     const args = input.checkOnly ? ["apply", "--check", "--whitespace=nowarn", "-"] : ["apply", "--whitespace=nowarn", "-"];
     const result = await runGitApply(args, input.patch, cwd);
-    const changedPaths = extractPatchPaths(input.patch);
     return {
       success: result.exitCode === 0,
       data: {
@@ -57,9 +69,14 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
     };
   }
 
-  private async callCodexPatch(input: ApplyPatchInput, cwd: string, started: number): Promise<ToolResult> {
+  private async callCodexPatch(input: ApplyPatchInput, cwd: string, started: number, protectedPaths?: string[]): Promise<ToolResult> {
     try {
       const operations = parseCodexPatch(input.patch);
+      const changedPaths = operations.map((operation) => operation.filePath);
+      const blockedPath = findBlockedPatchPath(changedPaths, cwd, protectedPaths);
+      if (blockedPath) {
+        throw new Error(blockedPath.error);
+      }
       if (input.checkOnly) {
         for (const operation of operations) {
           await validateCodexPatchOperation(operation, cwd);
@@ -69,7 +86,6 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
           await applyCodexPatchOperation(operation, cwd);
         }
       }
-      const changedPaths = operations.map((operation) => operation.filePath);
       return {
         success: true,
         data: {
@@ -132,8 +148,30 @@ function extractPatchPaths(patch: string): string[] {
     if (match?.[1] && match[1] !== "/dev/null") {
       paths.add(match[1]);
     }
+    const deletedMatch = line.match(/^---\s+a\/(.+)$/);
+    if (deletedMatch?.[1] && deletedMatch[1] !== "/dev/null") {
+      paths.add(deletedMatch[1]);
+    }
   }
   return [...paths];
+}
+
+function findBlockedPatchPath(
+  changedPaths: string[],
+  cwd: string,
+  protectedPaths?: string[],
+): { path: string; error: string } | null {
+  for (const changedPath of changedPaths) {
+    const validation = validateProtectedPath(changedPath, {
+      cwd,
+      workspaceRoot: cwd,
+      protectedPaths,
+    });
+    if (!validation.valid) {
+      return { path: changedPath, error: validation.error ?? `Blocked patch path: ${changedPath}` };
+    }
+  }
+  return null;
 }
 
 type CodexPatchOperation =

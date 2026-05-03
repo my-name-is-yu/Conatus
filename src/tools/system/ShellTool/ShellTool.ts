@@ -56,7 +56,12 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
   }
 
   async checkPermissions(input: ShellInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
-    const assessment = assessShellCommand(input.command, context?.executionPolicy, context?.trusted === true);
+    const assessment = assessShellCommand(
+      input.command,
+      context?.executionPolicy,
+      context?.trusted === true,
+      input.cwd ?? context?.cwd,
+    );
     if (assessment.status === "allowed") return { status: "allowed" };
     if (assessment.status === "needs_approval") {
       return { status: "needs_approval", reason: assessment.reason ?? "Shell command requires approval" };

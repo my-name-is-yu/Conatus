@@ -51,6 +51,19 @@ export function validateProtectedPath(
   ];
   const normalized = normalizeForMatch(pathFromWorkspace === "" ? "." : pathFromWorkspace);
   for (const pattern of protectedPatterns) {
+    const expandedPattern = expandTildePath(pattern);
+    if (isAbsolute(expandedPattern)) {
+      const protectedRoot = canonicalPath(expandedPattern);
+      if (resolved === protectedRoot || resolved.startsWith(`${protectedRoot}${sep}`)) {
+        return {
+          valid: false,
+          resolved,
+          error: `Blocked: path targets protected area "${pattern}"`,
+        };
+      }
+      continue;
+    }
+
     const protectedPattern = normalizeForMatch(pattern);
     const isBroadToken = !protectedPattern.includes("/") && !protectedPattern.startsWith(".");
     if (
