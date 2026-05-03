@@ -22,7 +22,13 @@ import {
   getSelectedBodyText,
   shouldCollapsePastedText,
 } from "../fullscreen-chat.js";
-import { estimateMarkdownHeight, estimateWrappedLineCount, wrapTextToRows } from "../markdown-renderer.js";
+import {
+  estimateMarkdownHeight,
+  estimateWrappedLineCount,
+  renderMarkdownLines,
+  splitMarkdownLineToRows,
+  wrapTextToRows,
+} from "../markdown-renderer.js";
 import { measureTextWidth } from "../text-width.js";
 import { extractBashCommand, isBashModeInput, isSafeBashCommand, createShellApprovalTask, formatShellOutput } from "../bash-mode.js";
 import {
@@ -129,6 +135,31 @@ describe("markdown sizing helpers", () => {
     expect(wrapTextToRows("abcdefghij", 5)).toEqual(["abcde", "fghij"]);
   });
 
+  it("preserves spaces inside inline code commands in lists and paragraphs", () => {
+    const lines = renderMarkdownLines([
+      "1. `pulseed telegram setup`",
+      "- `pulseed gateway setup`",
+      "Run `pulseed daemon start` after setup.",
+    ].join("\n"));
+
+    expect(lines.map((line) => line.text)).toEqual([
+      "  1. pulseed telegram setup",
+      "  • pulseed gateway setup",
+      "Run pulseed daemon start after setup.",
+    ]);
+    expect(lines[0].segments?.find((segment) => segment.code)?.text).toBe("pulseed telegram setup");
+    expect(lines[1].segments?.find((segment) => segment.code)?.text).toBe("pulseed gateway setup");
+    expect(lines[2].segments?.find((segment) => segment.code)?.text).toBe("pulseed daemon start");
+  });
+
+  it("preserves inline code spaces through markdown row wrapping", () => {
+    const [line] = renderMarkdownLines("1. `pulseed telegram setup`");
+    const wrapped = splitMarkdownLineToRows(line, 14);
+
+    expect(wrapped.map((row) => row.text).join("")).toBe("  1. pulseed telegram setup");
+    expect(wrapped.map((row) => row.segments ?? []).flat().filter((segment) => segment.code).map((segment) => segment.text).join("")).toBe("pulseed telegram setup");
+  });
+
   it("wraps full-width unbroken text by terminal display width", () => {
     const rows = wrapTextToRows("これは改行のない長い日本語文章です".repeat(3), 20);
 
@@ -212,6 +243,30 @@ describe("chat viewport", () => {
 
     expect(userRows.length).toBeGreaterThan(1);
     expect(userRows.every((row) => measureTextWidth(row.text) <= 26)).toBe(true);
+  });
+
+  it("preserves inline code command spaces through the chat viewport", () => {
+    const viewport = buildChatViewport([
+      {
+        id: "m1",
+        role: "pulseed" as const,
+        text: [
+          "1. `pulseed telegram setup`",
+          "- `pulseed gateway setup`",
+          "Run `pulseed daemon start`.",
+        ].join("\n"),
+        timestamp: new Date(),
+      },
+    ], 34, 20, 0);
+
+    const visibleText = viewport.rows.map((row) => row.text).join("");
+
+    expect(visibleText).toContain("pulseed telegram setup");
+    expect(visibleText).toContain("pulseed gateway setup");
+    expect(visibleText).toContain("pulseed daemon start");
+    expect(visibleText).not.toContain("pulseedtelegramsetup");
+    expect(visibleText).not.toContain("pulseedgatewaysetup");
+    expect(visibleText).not.toContain("pulseeddaemonstart");
   });
 });
 
