@@ -37,7 +37,7 @@ describe("applyChatEventToMessages", () => {
     });
   });
 
-  it("shows raw tool events as a current activity row", () => {
+  it("shows raw tool events without current/recent activity headings", () => {
     const messages = applyChatEventToMessages([], {
       type: "tool_start",
       runId: "run-1",
@@ -54,7 +54,8 @@ describe("applyChatEventToMessages", () => {
       role: "pulseed",
       messageType: "info",
     });
-    expect(messages[0]!.text).toContain("Current activity");
+    expect(messages[0]!.text).not.toContain("Current activity");
+    expect(messages[0]!.text).not.toContain("Recent activity");
     expect(messages[0]!.text).toContain("Reading shell_command - command=rg ChatEvent src/interface/chat");
   });
 
@@ -165,8 +166,13 @@ describe("applyChatEventToMessages", () => {
       persisted: true,
     }, 20);
 
-    expect(afterFinal.map((message) => message.id)).toEqual(["turn-1"]);
-    expect(afterFinal[0]!.text).toBe("Done");
+    expect(afterFinal.map((message) => message.id)).toEqual([
+      "agent-timeline:turn-1:commentary-1",
+      "agent-timeline:turn-1:tool-start-1",
+      "agent-timeline:turn-1:tool-finish-1",
+      "turn-1",
+    ]);
+    expect(afterFinal.at(-1)!.text).toBe("Done");
   });
 
   it("drops transient timeline overflow before evicting durable chat messages", () => {
@@ -186,19 +192,18 @@ describe("applyChatEventToMessages", () => {
         turnId: "turn-1",
         createdAt: `2026-04-08T00:00:0${index}.000Z`,
         item: {
-          id: `agent-timeline:commentary-${index}`,
-          sourceEventId: `commentary-${index}`,
-          sourceType: "assistant_message",
+          id: `agent-timeline:final-${index}`,
+          sourceEventId: `final-${index}`,
+          sourceType: "final",
           sessionId: "session-1",
           traceId: "trace-1",
           turnId: "agent-turn-1",
           goalId: "goal-1",
           createdAt: `2026-04-08T00:00:0${index}.000Z`,
           visibility: "user",
-          kind: "assistant_message",
-          phase: "commentary",
-          text: `Working step ${index}`,
-          toolCallCount: 0,
+          kind: "final",
+          success: true,
+          outputPreview: `Candidate final ${index}`,
         },
       }, 3);
     }
@@ -278,6 +283,108 @@ describe("applyChatEventToMessages", () => {
       "I found the bridge path, so I will update the contract test next.",
       "Done",
     ]);
+  });
+
+  it("renders shared timeline tool and approval rows chronologically without a latest-five cap", () => {
+    const base = {
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    };
+    const timelineBase = {
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      visibility: "user" as const,
+    };
+    const events = [
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:commentary-1",
+          sourceEventId: "commentary-1",
+          sourceType: "assistant_message" as const,
+          createdAt: "2026-04-08T00:00:01.000Z",
+          kind: "assistant_message" as const,
+          phase: "commentary" as const,
+          text: "I will inspect the files first.",
+          toolCallCount: 6,
+        },
+      },
+      ...Array.from({ length: 6 }, (_, offset) => {
+        const index = offset + 1;
+        return {
+          type: "agent_timeline" as const,
+          ...base,
+          item: {
+            ...timelineBase,
+            id: `agent-timeline:tool-start-${index}`,
+            sourceEventId: `tool-start-${index}`,
+            sourceType: "tool_call_started" as const,
+            createdAt: `2026-04-08T00:00:0${index + 1}.000Z`,
+            kind: "tool" as const,
+            status: "started" as const,
+            callId: `call-${index}`,
+            toolName: "read_file",
+            inputPreview: `src/file-${index}.ts`,
+          },
+        };
+      }),
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:approval-1",
+          sourceEventId: "approval-1",
+          sourceType: "approval_request" as const,
+          createdAt: "2026-04-08T00:00:08.000Z",
+          kind: "approval" as const,
+          status: "requested" as const,
+          callId: "call-approval",
+          toolName: "apply_patch",
+          reason: "modify src/example.ts",
+          permissionLevel: "workspace-write",
+          isDestructive: false,
+        },
+      },
+      {
+        type: "agent_timeline" as const,
+        ...base,
+        item: {
+          ...timelineBase,
+          id: "agent-timeline:final-1",
+          sourceEventId: "final-1",
+          sourceType: "final" as const,
+          createdAt: "2026-04-08T00:00:09.000Z",
+          kind: "final" as const,
+          success: true,
+          outputPreview: "Done",
+        },
+      },
+    ];
+
+    const messages = events.reduce(
+      (current, event) => applyChatEventToMessages(current, event, 20),
+      [] as ReturnType<typeof applyChatEventToMessages>
+    );
+
+    expect(messages.map((message) => message.text)).toEqual([
+      "I will inspect the files first.",
+      "Started read_file: src/file-1.ts",
+      "Started read_file: src/file-2.ts",
+      "Started read_file: src/file-3.ts",
+      "Started read_file: src/file-4.ts",
+      "Started read_file: src/file-5.ts",
+      "Started read_file: src/file-6.ts",
+      "Approval requested for apply_patch: modify src/example.ts",
+      "Done",
+    ]);
+    expect(messages.map((message) => message.text).join("\n")).not.toContain("Current activity");
+    expect(messages.map((message) => message.text).join("\n")).not.toContain("Recent activity");
   });
 
   it("keeps shared timeline rendering compatible when no commentary is emitted", async () => {
@@ -546,7 +653,7 @@ describe("applyChatEventToMessages", () => {
     });
   });
 
-  it("preserves the latest few tool events and keeps tool logs after the turn ends", () => {
+  it("keeps all raw tool activities visible without current/recent headings", () => {
     let messages = [] as ReturnType<typeof applyChatEventToMessages>;
     for (let index = 1; index <= 6; index += 1) {
       messages = applyChatEventToMessages(messages, {
@@ -561,9 +668,11 @@ describe("applyChatEventToMessages", () => {
     }
 
     const toolLog = messages.find((message) => message.id === "tool-log:turn-1");
-    expect(toolLog?.text).not.toContain("file-1.ts");
+    expect(toolLog?.text).toContain("file-1.ts");
     expect(toolLog?.text).toContain("file-2.ts");
     expect(toolLog?.text).toContain("file-6.ts");
+    expect(toolLog?.text).not.toContain("Current activity");
+    expect(toolLog?.text).not.toContain("Recent activity");
 
     const afterEnd = applyChatEventToMessages(messages, {
       type: "lifecycle_end",
@@ -575,7 +684,8 @@ describe("applyChatEventToMessages", () => {
       persisted: true,
     }, 20);
 
-    expect(afterEnd.find((message) => message.id === "tool-log:turn-1")?.text).toContain("Recent activity");
+    expect(afterEnd.find((message) => message.id === "tool-log:turn-1")?.text).not.toContain("Recent activity");
+    expect(afterEnd.find((message) => message.id === "tool-log:turn-1")?.text).toContain("file-1.ts");
   });
 
   it("keeps tool intent categories across updates and distinguishes waiting for approval", () => {

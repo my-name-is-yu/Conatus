@@ -39,6 +39,9 @@ export interface ToolStartEvent extends ChatEventBase {
   toolCallId: string;
   toolName: string;
   args: Record<string, unknown>;
+  presentation?: {
+    suppressTranscript?: boolean;
+  };
 }
 
 export interface ToolUpdateEvent extends ChatEventBase {
@@ -47,6 +50,9 @@ export interface ToolUpdateEvent extends ChatEventBase {
   toolName: string;
   status: "awaiting_approval" | "running" | "result";
   message: string;
+  presentation?: {
+    suppressTranscript?: boolean;
+  };
 }
 
 export interface ToolEndEvent extends ChatEventBase {
@@ -56,6 +62,9 @@ export interface ToolEndEvent extends ChatEventBase {
   success: boolean;
   summary: string;
   durationMs: number;
+  presentation?: {
+    suppressTranscript?: boolean;
+  };
 }
 
 export interface AgentTimelineEvent extends ChatEventBase {

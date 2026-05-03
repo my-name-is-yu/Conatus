@@ -19,3 +19,10 @@
 - Keep commentary as `assistant_message` / shared timeline `assistant_message` items, separate from tool rows and future deterministic summaries.
 - Add caller-path coverage for `commentary -> tool start -> tool result -> commentary -> final` through the chat event bridge and chat state consumer, plus no-commentary compatibility.
 - #946 verification: focused commentary/chat prompt tests passed (28 tests), `npm run typecheck` passed, `npm run lint:boundaries` exited 0 with existing warnings, review agent LGTM, `npm run test:changed` passed (31 files passed, 3 skipped; 476 tests passed, 3 skipped).
+
+## #947 plan
+- Confirmed #947 is open after syncing main.
+- Remove user-facing `Current activity` / `Recent activity` aggregation from chat/TUI state.
+- Render shared timeline tool/commentary/approval/final items as chronological transcript rows with normal retention, not latest-five activity retention.
+- Keep raw/debug events available by continuing to emit structured chat events, while normal transcript rendering uses shared timeline rows.
+- #947 verification: focused chat state/chat runner tests passed (117 tests), `npm run typecheck` passed, `npm run lint:boundaries` exited 0 with existing warnings, review agent LGTM, `npm run test:changed` passed (20 files passed, 2 skipped; 441 tests passed, 2 skipped).

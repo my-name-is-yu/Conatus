@@ -135,6 +135,7 @@ export class ChatRunnerEventBridge {
             toolCallId: event.callId,
             toolName: event.toolName,
             args: this.parseAgentLoopPreview(event.inputPreview),
+            presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
           this.emitEvent({
@@ -143,6 +144,7 @@ export class ChatRunnerEventBridge {
             toolName: event.toolName,
             status: "running",
             message: "started",
+            presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
           return;
@@ -174,6 +176,7 @@ export class ChatRunnerEventBridge {
             success: event.success,
             summary: event.outputPreview,
             durationMs: event.durationMs,
+            presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
           return;
@@ -193,6 +196,7 @@ export class ChatRunnerEventBridge {
             toolName: "update_plan",
             status: "result",
             message: event.summary,
+            presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
           return;
@@ -214,6 +218,7 @@ export class ChatRunnerEventBridge {
             toolName: event.toolName,
             status: "awaiting_approval",
             message: event.reason,
+            presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
           return;
@@ -232,6 +237,7 @@ export class ChatRunnerEventBridge {
             toolName: event.toolName,
             status: "result",
             message: `approval ${event.status}: ${event.reason}`,
+            presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
           return;
@@ -244,6 +250,7 @@ export class ChatRunnerEventBridge {
             toolName: "agentloop_resume",
             status: "result",
             message: `resumed ${event.restoredMessages} message(s) from ${event.fromUpdatedAt}`,
+            presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
           return;
@@ -256,6 +263,7 @@ export class ChatRunnerEventBridge {
             toolName: "context_compaction",
             status: "result",
             message: `${event.phase} ${event.reason}: ${event.inputMessages} -> ${event.outputMessages}`,
+            presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
         }
