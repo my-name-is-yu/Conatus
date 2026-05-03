@@ -1,9 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ChatRunnerDeps } from "../../chat/chat-runner.js";
 import { SharedManagerTuiChatSurface } from "../chat-surface.js";
-import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { ApprovalBroker } from "../../../runtime/approval-broker.js";
+import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -49,6 +52,14 @@ function getSessionPaths(stateManager: StateManager): string[] {
 }
 
 describe("SharedManagerTuiChatSurface", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      cleanupTempDir(tempDirs.pop()!);
+    }
+  });
+
 	  it("keeps a stable TUI conversation id when executeIngressMessage omits one", async () => {
     const stateManager = makeMockStateManager();
     const surface = new SharedManagerTuiChatSurface(makeDeps({ stateManager }));
@@ -116,4 +127,78 @@ describe("SharedManagerTuiChatSurface", () => {
 	      })
 	    );
 	  });
+
+  it("routes local TUI approval-required turns through conversational approval", async () => {
+    const tmpDir = makeTempDir();
+    tempDirs.push(tmpDir);
+    const store = new ApprovalStore(tmpDir);
+    const approvalBroker = new ApprovalBroker({
+      store,
+      createId: () => "approval-tui-local",
+    });
+    const events: string[] = [];
+    const runtimeControlService = {
+      request: vi.fn(async (request: {
+        approvalFn?: (description: string) => Promise<boolean>;
+      }) => {
+        const approved = await request.approvalFn?.("Restart the resident daemon.");
+        return {
+          success: approved === true,
+          message: approved === true ? "restart queued" : "not approved",
+          operationId: "op-tui-approval",
+          state: approved === true ? "acknowledged" as const : "blocked" as const,
+        };
+      }),
+    };
+    const surface = new SharedManagerTuiChatSurface(makeDeps({
+      llmClient: createMockLLMClient([
+        JSON.stringify({
+          intent: "restart_daemon",
+          reason: "PulSeed を再起動して",
+        }),
+        JSON.stringify({
+          decision: "approve",
+          confidence: 0.94,
+          rationale: "The same TUI conversation authorizes the pending restart.",
+        }),
+      ]),
+      runtimeControlService,
+      approvalBroker,
+    }));
+    surface.onEvent = (event) => {
+      if (event.type === "activity") {
+        events.push(event.message);
+      }
+    };
+    surface.startSession("/repo");
+
+    const resultPromise = surface.execute("PulSeed を再起動して", "/repo");
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline && !events.some((message) => message.includes("Approval ID: approval-tui-local"))) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(events.some((message) =>
+      message.includes("Approval required.")
+      && message.includes("Restart the resident daemon.")
+      && message.includes("Approval ID: approval-tui-local")
+    )).toBe(true);
+
+    await expect(surface.interruptAndRedirect("承認します。進めてください", "/repo")).resolves.toMatchObject({
+      success: true,
+      output: "Approval response recorded.",
+    });
+    await expect(resultPromise).resolves.toMatchObject({
+      success: true,
+      output: "restart queued",
+    });
+    await expect(store.loadResolved("approval-tui-local")).resolves.toMatchObject({
+      state: "approved",
+      response_channel: "local_tui",
+      origin: expect.objectContaining({
+        channel: "local_tui",
+        conversation_id: surface.getConversationId(),
+      }),
+    });
+  });
 	});

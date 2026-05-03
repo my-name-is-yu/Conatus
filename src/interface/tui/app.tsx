@@ -9,7 +9,7 @@
 // - Daemon mode: daemonClient is provided, coreLoop is absent. Events come via SSE.
 // - Standalone mode: coreLoop is provided, runs in-process.
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { Box, Text, useInput, useStdout } from "ink";
@@ -19,7 +19,6 @@ import { Chat, type ChatMessage } from "./chat.js";
 import { FullscreenChat } from "./fullscreen-chat.js";
 import { HelpOverlay } from "./help-overlay.js";
 import { SettingsOverlay } from "./settings-overlay.js";
-import { ApprovalOverlay } from "./approval-overlay.js";
 import { ReportView } from "./report-view.js";
 import { SEEDY_PIXEL } from "./seedy-art.js";
 import { extractBashCommand, formatShellOutput } from "./bash-mode.js";
@@ -52,7 +51,6 @@ import {
   type RunSpec,
 } from "../../runtime/run-spec/index.js";
 import { answerRuntimeEvidenceQuestion } from "../../runtime/evidence-answer.js";
-import { classifyConfirmationDecision } from "../../runtime/confirmation-decision.js";
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
@@ -116,14 +114,13 @@ function normalizeApprovalTask(data: Record<string, unknown>): Task {
   };
 }
 
-function formatApprovalDecisionContext(task: Task): string {
+function formatApprovalNotice(task: Task): string {
   return [
+    "Approval required.",
     `Work: ${task.work_description}`,
     `Rationale: ${task.rationale}`,
     `Approach: ${task.approach}`,
-    `Constraints: ${task.constraints.join(", ")}`,
-    `Reversibility: ${task.reversibility}`,
-    `Category: ${task.task_category}`,
+    "Approval decisions are handled in the originating conversation channel.",
   ].join("\n");
 }
 
@@ -380,13 +377,13 @@ export function App({
       const goalId = String(d.goalId ?? d.goal_id ?? task.goal_id);
       if (!requestId || !goalId) return;
 
-      approvalRequestRef.current = {
-        task,
-        resolve: (approved: boolean) => {
-          daemonClient.approve(goalId, requestId, approved).catch(() => {});
-        },
-      };
-      setApprovalRequest(approvalRequestRef.current);
+      setMessages((prev) => [...prev, {
+        id: randomUUID(),
+        role: "pulseed" as const,
+        text: formatApprovalNotice(task),
+        timestamp: new Date(),
+        messageType: "warning" as const,
+      }].slice(-MAX_MESSAGES));
     };
 
     daemonClient.on("_connected", onConnected);
@@ -421,8 +418,6 @@ export function App({
 
   const [goalNames, setGoalNames] = useState<string[]>([]);
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
-  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
-  const approvalRequestRef = useRef<ApprovalRequest | null>(null);
   const [pendingRunSpec, setPendingRunSpec] = useState<RunSpec | null>(null);
 
   // Ctrl-C double-press exit state
@@ -430,8 +425,14 @@ export function App({
 
   // Expose setApprovalRequest to entry.ts via callback prop (standalone mode)
   const showApprovalRequest = useCallback((req: ApprovalRequest) => {
-    approvalRequestRef.current = req;
-    setApprovalRequest(req);
+    setMessages((prev) => [...prev, {
+      id: randomUUID(),
+      role: "pulseed" as const,
+      text: formatApprovalNotice(req.task),
+      timestamp: new Date(),
+      messageType: "warning" as const,
+    }].slice(-MAX_MESSAGES));
+    req.resolve(false);
   }, []);
 
   useEffect(() => {
@@ -554,7 +555,7 @@ export function App({
     ) {
       setShowHelp((prev) => !prev);
     }
-  }, { isActive: reportToShow === null && approvalRequest === null });
+  }, { isActive: reportToShow === null });
 
   const handleClear = useCallback(() => {
     setMessages([
@@ -570,42 +571,6 @@ export function App({
 
   const handleInput = useCallback(
     async (input: string) => {
-      if (approvalRequestRef.current) {
-        const request = approvalRequestRef.current;
-        setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
-        const approvalDecision = await classifyConfirmationDecision(input, {
-          kind: "approval",
-          llmClient,
-          allowedDecisions: ["approve", "cancel", "unknown"],
-          subject: formatApprovalDecisionContext(request.task),
-        });
-        if (approvalRequestRef.current !== request) {
-          return;
-        }
-        if (approvalDecision.decision === "approve" || approvalDecision.decision === "cancel") {
-          const approved = approvalDecision.decision === "approve";
-          request.resolve(approved);
-          approvalRequestRef.current = null;
-          setApprovalRequest(null);
-          setMessages((prev) => [...prev, {
-            id: randomUUID(),
-            role: "pulseed" as const,
-            text: approved ? "Approval confirmed." : "Approval cancelled.",
-            timestamp: new Date(),
-            messageType: "info" as const,
-          }].slice(-MAX_MESSAGES));
-          return;
-        }
-        setMessages((prev) => [...prev, {
-          id: randomUUID(),
-          role: "pulseed" as const,
-          text: approvalDecision.clarification ?? "Approval is still pending. Please approve or cancel explicitly.",
-          timestamp: new Date(),
-          messageType: "warning" as const,
-        }].slice(-MAX_MESSAGES));
-        return;
-      }
-
       if (isProcessing) {
         if (!chatRunner) return;
         setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
@@ -748,12 +713,6 @@ export function App({
             startLoop(result.startLoop.goalId);
           }
           if (result.stopLoop) {
-            const pendingApproval = approvalRequestRef.current as ApprovalRequest | null;
-            if (pendingApproval) {
-              pendingApproval.resolve(false);
-              approvalRequestRef.current = null;
-              setApprovalRequest(null);
-            }
             stopLoop();
           }
         } else if (input.startsWith("/") && isDaemonMode) {
@@ -884,7 +843,6 @@ export function App({
   const sidebarCols = showSidebar ? Math.floor(termCols * 0.3) : 0;
   const chatAvailableCols = Math.max(20, termCols - sidebarCols);
   const showingOverlay =
-    approvalRequest !== null ||
     showSettings ||
     reportToShow !== null ||
     showHelp;
@@ -940,16 +898,7 @@ export function App({
 
         {/* ── Right pane: Chat / overlays ── */}
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
-          {approvalRequest !== null ? (
-            <ApprovalOverlay
-              task={approvalRequest.task}
-              onDecision={(approved) => {
-                approvalRequest.resolve(approved);
-                approvalRequestRef.current = null;
-                setApprovalRequest(null);
-              }}
-            />
-          ) : showSettings ? (
+          {showSettings ? (
             <SettingsOverlay onClose={() => setShowSettings(false)} />
           ) : reportToShow !== null ? (
             <ReportView report={reportToShow} onDismiss={() => setReportToShow(null)} />

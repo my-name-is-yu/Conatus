@@ -40,10 +40,10 @@ export function createChatToolApprovalTask(description: string): Task {
     primary_dimension: "approval",
     work_description: description,
     rationale: "Requested by chat tool execution",
-    approach: "Wait for explicit approval before continuing the chat tool call.",
+    approach: "Route the approval decision through the originating conversation before continuing the chat tool call.",
     success_criteria: [],
     scope_boundary: {
-      in_scope: ["Approve or reject the pending chat tool action."],
+      in_scope: ["Resolve the pending chat tool action through conversational approval."],
       out_of_scope: ["Execute any work beyond the requested chat tool action."],
       blast_radius: "Limited to whether the pending chat tool call proceeds.",
     },
