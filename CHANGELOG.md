@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2026-05-03
+
+### Added
+- Added shared agent timeline contracts and transcript rendering so agent progress, commentary, and deterministic summaries stay visible in chat sessions (#951, #952, #953, #955)
+- Added relationship/profile memory governance flows, including governed proposal contracts, lifecycle commands, USER.md import proposals, retrieval profile context, resident intervention policy, proactive feedback proposals, correction ledgers, quarantine controls, and memory usage outcomes (#899, #900, #901, #902, #903, #910, #911, #937, #938, #939, #940, #941, #942, #943)
+- Added long-run runtime and evaluation coverage for evidence indexing, best-evidence edges, degradation lanes, memory correction retrieval, lifelong agent memory simulation, and proactive intervention quality (#904, #906, #907, #908, #920, #925)
+
+### Changed
+- Routed setup intents before the agent loop so setup requests use the intended setup path instead of being handled as ordinary chat work (#950)
+- Clarified PulSeed positioning and public achievement copy
+- Bumped the package version to `0.6.1`
+
+### Fixed
+- Fixed Telegram message-id preservation, doctor watchdog regression coverage, and plugin npm documentation/discovery alignment (#905, #933, #934)
+- Protected PulSeed self-source writes and hid internal labels from chat transcript output (#944, #954)
+
 ## [0.6.0] - 2026-05-02
 
 ### Added
