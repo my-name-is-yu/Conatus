@@ -14,6 +14,7 @@ import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
 import type { ToolRegistry } from "../../tools/registry.js";
 import type { MetricTrendContext } from "../../platform/drive/metric-history.js";
+import type { RuntimeFailedLineageContext } from "../../runtime/store/evidence-ledger.js";
 import {
   applySmokeResult,
   buildDivergentRecoveryPortfolio,
@@ -167,6 +168,7 @@ export class StrategyManagerBase {
         minNoveltyScore: number;
         activeStrategy?: Strategy | null;
         stallCount: number;
+        failedLineages?: RuntimeFailedLineageContext[];
       };
     },
     enrichment?: { templatesBlock?: string; lessonsBlock?: string },
@@ -264,6 +266,7 @@ export class StrategyManagerBase {
         stallCount: context.divergentExploration.stallCount,
         trigger: context.divergentExploration.trigger,
         metricTrendContext: context.metricTrendContext,
+        failedLineages: context.divergentExploration.failedLineages,
         minDivergentCandidates: context.divergentExploration.minDivergentCandidates,
         minNoveltyScore: context.divergentExploration.minNoveltyScore,
       });
@@ -442,6 +445,7 @@ export class StrategyManagerBase {
       stallCount: number;
       trigger: "sustained_stall" | "predicted_plateau" | "predicted_regression";
       metricTrendContext?: MetricTrendContext;
+      failedLineages?: RuntimeFailedLineageContext[];
     }
   ): Promise<Strategy[]> {
     if (!shouldRequestDivergentExploration(input)) {
@@ -463,6 +467,7 @@ export class StrategyManagerBase {
           minNoveltyScore: 0.72,
           activeStrategy: active,
           stallCount: input.stallCount,
+          failedLineages: input.failedLineages,
         },
       }
     );
@@ -583,7 +588,8 @@ export class StrategyManagerBase {
     stallCount: number,
     goalType?: string,
     activationContext?: WaitStrategyActivationContext,
-    metricTrendContext?: MetricTrendContext
+    metricTrendContext?: MetricTrendContext,
+    failedLineages?: RuntimeFailedLineageContext[]
   ): Promise<Strategy | null> {
     if (stallCount < 2) {
       return null;
@@ -638,6 +644,7 @@ export class StrategyManagerBase {
           minNoveltyScore: 0.72,
           activeStrategy: active,
           stallCount,
+          failedLineages,
         }
       : undefined;
     try {

@@ -476,6 +476,20 @@ describe("detectStallsAndRebalance — reRefineLeaf on observation-failure stall
     deps.evidenceLedger = {
       append: vi.fn().mockResolvedValue([{ id: "evidence-divergent" }]),
       readByGoal: vi.fn().mockResolvedValue({ entries: [], warnings: [] }),
+      summarizeGoal: vi.fn().mockResolvedValue({
+        failed_lineages: [{
+          fingerprint: "threshold_sweep|dim1|threshold_sweep",
+          count: 2,
+          first_seen_at: "2026-04-30T00:00:00.000Z",
+          last_seen_at: "2026-04-30T00:05:00.000Z",
+          strategy_family: "threshold_sweep",
+          primary_dimension: "dim1",
+          task_action: "threshold_sweep",
+          representative_entry_id: "evidence-failed-latest",
+          representative_summary: "Threshold sweeps repeatedly failed.",
+          evidence_entry_ids: ["evidence-failed-1", "evidence-failed-2"],
+        }],
+      }),
     };
     const stallReport = makeStallReport({
       stall_type: "predicted_plateau",
@@ -513,6 +527,10 @@ describe("detectStallsAndRebalance — reRefineLeaf on observation-failure stall
       trigger: "predicted_plateau",
       stallCount: 2,
       primaryDimension: "dim1",
+      failedLineages: [expect.objectContaining({
+        fingerprint: "threshold_sweep|dim1|threshold_sweep",
+        strategy_family: "threshold_sweep",
+      })],
     }));
     expect(deps.strategyManager.onStallDetected).not.toHaveBeenCalled();
     expect(deps.evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({

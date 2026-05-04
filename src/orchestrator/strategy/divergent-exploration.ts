@@ -4,11 +4,14 @@ import type {
   Strategy,
   StrategyExplorationExpectedCost,
   StrategyExplorationRole,
-  StrategyLineageRelationship,
+  StrategyLineageAssessment,
   StrategySmokeStatus,
 } from "../../base/types/strategy.js";
 import type { MetricTrendContext } from "../../platform/drive/metric-history.js";
-import type { RuntimeEvidenceDivergentHypothesis } from "../../runtime/store/evidence-ledger.js";
+import type {
+  RuntimeEvidenceDivergentHypothesis,
+  RuntimeFailedLineageContext,
+} from "../../runtime/store/evidence-ledger.js";
 
 export interface DivergentRecoveryInput {
   goalId: string;
@@ -20,6 +23,7 @@ export interface DivergentRecoveryInput {
   stallCount: number;
   trigger?: "sustained_stall" | "predicted_plateau" | "predicted_regression";
   metricTrendContext?: MetricTrendContext;
+  failedLineages?: RuntimeFailedLineageContext[];
   minDivergentCandidates?: number;
   minNoveltyScore?: number;
 }
@@ -39,6 +43,7 @@ export interface DivergentSmokeResultInput {
 
 const DEFAULT_MIN_DIVERGENT_CANDIDATES = 1;
 const DEFAULT_MIN_NOVELTY_SCORE = 0.72;
+const LOW_CONFIDENCE_DIVERGENCE_THRESHOLD = 0.65;
 const TOKEN_STOP_WORDS = new Set([
   "a",
   "an",
@@ -127,7 +132,7 @@ export function applySmokeResult(strategy: Strategy, input: DivergentSmokeResult
         schema_version: "strategy-exploration-v1",
         phase: "divergent_stall_recovery",
         role: "adjacent_exploration",
-        strategy_family: inferStrategyFamily(strategy.hypothesis),
+        strategy_family: strategy.exploration?.strategy_family ?? "unclassified",
         novelty_score: 0.5,
         similarity_to_recent_failures: 0,
         expected_cost: inferExpectedCost(strategy),
@@ -188,22 +193,26 @@ function annotateCandidate(
   lineage: Strategy[],
   minNoveltyScore: number
 ): Strategy {
-  const maxSimilarity = Math.max(0, ...lineage.map((strategy) => similarity(candidate.hypothesis, strategy.hypothesis)));
-  const family = candidate.exploration?.strategy_family ?? inferStrategyFamily(candidate.hypothesis);
-  const lineageFamilies = new Set(lineage.map((strategy) => inferStrategyFamily(strategy.hypothesis)));
+  const assessment = assessStrategyLineage(candidate, input, lineage);
+  const family = candidate.exploration?.strategy_family ?? "unclassified";
   const hasNewEvidence = Boolean(candidate.exploration?.prior_evidence)
     || input.metricTrendContext?.trend === "breakthrough"
     || candidate.exploration?.smoke.status === "promote";
-  const noveltyScore = clamp01(
-    candidate.exploration?.novelty_score
-    ?? (1 - maxSimilarity + (lineageFamilies.has(family) ? -0.1 : 0.15))
-  );
-  const relationship = candidate.exploration?.relationship_to_lineage
-    ?? inferRelationship(maxSimilarity, family, lineageFamilies);
-  const role = candidate.exploration?.role ?? roleFromNovelty(noveltyScore, minNoveltyScore);
+  const lowConfidence = assessment.confidence < LOW_CONFIDENCE_DIVERGENCE_THRESHOLD;
+  const noveltyScore = lowConfidence
+    ? Math.min(candidate.exploration?.novelty_score ?? 0.5, minNoveltyScore - 0.01)
+    : assessment.relationship_to_lineage === "failed_lineage"
+      ? noveltyFromAssessment(assessment)
+    : clamp01(candidate.exploration?.novelty_score ?? noveltyFromAssessment(assessment));
+  const relationship = assessment.relationship_to_lineage;
+  const role = lowConfidence
+    ? "adjacent_exploration"
+    : candidate.exploration?.role ?? roleFromNovelty(noveltyScore, minNoveltyScore);
   const downrankReason = candidate.exploration?.downrank_reason
-    ?? (!hasNewEvidence && (maxSimilarity >= 0.5 || relationship === "failed_lineage")
+    ?? (!hasNewEvidence && (assessment.matched_failed_lineage_fingerprints.length > 0 || relationship === "failed_lineage")
       ? "similar_to_recent_failed_lineage_without_new_evidence"
+      : lowConfidence
+        ? "low_confidence_lineage_assessment"
       : undefined);
 
   return parseStrategy({
@@ -217,7 +226,7 @@ function annotateCandidate(
       role,
       strategy_family: family,
       novelty_score: noveltyScore,
-      similarity_to_recent_failures: clamp01(maxSimilarity),
+      similarity_to_recent_failures: assessment.relationship_to_lineage === "failed_lineage" ? assessment.confidence : 0,
       expected_cost: candidate.exploration?.expected_cost ?? inferExpectedCost(candidate),
       relationship_to_lineage: relationship,
       prior_evidence: candidate.exploration?.prior_evidence ?? input.metricTrendContext?.summary,
@@ -230,6 +239,7 @@ function annotateCandidate(
       },
       speculative: true,
       evidence_authority: "speculative_hypothesis",
+      lineage_assessment: assessment,
     },
   });
 }
@@ -239,7 +249,10 @@ function buildFallbackDivergentCandidate(
   lineage: Strategy[],
   minNoveltyScore: number
 ): Strategy {
-  const failedFamilies = [...new Set(lineage.map((strategy) => inferStrategyFamily(strategy.hypothesis)))]
+  const failedFamilies = [...new Set([
+    ...(input.failedLineages ?? []).map((lineageContext) => lineageContext.strategy_family),
+    ...lineage.map((strategy) => strategy.exploration?.strategy_family),
+  ])]
     .filter(Boolean)
     .slice(0, 3);
   const dimension = input.primaryDimension || input.targetDimensions[0] || "primary_outcome";
@@ -287,6 +300,17 @@ function buildFallbackDivergentCandidate(
       },
       speculative: true,
       evidence_authority: "speculative_hypothesis",
+      lineage_assessment: {
+        schema_version: "strategy-lineage-assessment-v1",
+        confidence: 0.8,
+        relationship_to_lineage: "different_assumption",
+        novelty_basis: input.metricTrendContext ? "metric_trend_context" : "typed_lineage_evidence",
+        matched_failed_lineage_fingerprints: [],
+        matched_strategy_ids: lineage.map((strategy) => strategy.id).filter(Boolean),
+        evidence_refs: (input.failedLineages ?? []).flatMap((failed) => failed.evidence_entry_ids).slice(0, 5),
+        ...(input.metricTrendContext ? { metric_trend: input.metricTrendContext.trend } : {}),
+        summary: "Fallback smoke audit is intentionally separated from recorded failed lineage keys.",
+      },
     },
   });
 }
@@ -326,15 +350,90 @@ function scoreCandidate(strategy: Strategy): number {
   return roleScore + smokeScore + downrank + costPenalty + exploration.novelty_score - exploration.similarity_to_recent_failures;
 }
 
-function inferStrategyFamily(hypothesis: string): string {
-  const normalized = hypothesis.toLowerCase();
-  if (/\b(stack|ensemble|blend|multi[- ]model|probability)\b/.test(normalized)) return "model-stack";
-  if (/\b(feature|cross|interaction|encoding|embedding)\b/.test(normalized)) return "feature-engineering";
-  if (/\b(audit|distribution|leakage|label|noise|data)\b/.test(normalized)) return "data-audit";
-  if (/\b(calibration|threshold|bias|class[- ]weight|weight)\b/.test(normalized)) return "calibration-threshold";
-  if (/\b(catboost|xgboost|lightgbm|model|classifier)\b/.test(normalized)) return "model-family";
-  if (/\b(research|public|paper|writeup|source)\b/.test(normalized)) return "source-research";
-  return tokens(hypothesis).slice(0, 3).join("-") || "general";
+function assessStrategyLineage(
+  candidate: Strategy,
+  input: DivergentRecoveryInput,
+  lineage: Strategy[]
+): StrategyLineageAssessment {
+  const family = candidate.exploration?.strategy_family;
+  const relationship = candidate.exploration?.relationship_to_lineage;
+  const smoke = candidate.exploration?.smoke;
+  const matchedFailedLineages = (input.failedLineages ?? []).filter((failed) =>
+    (family && failed.strategy_family === family)
+    || failed.fingerprint === candidate.id
+    || (candidate.source_template_id !== null && failed.fingerprint === candidate.source_template_id)
+  );
+  const matchedStrategyIds = lineage
+    .filter((strategy) =>
+      strategy.id === candidate.id
+      || (family && strategy.exploration?.strategy_family === family)
+      || (candidate.source_template_id !== null && strategy.source_template_id === candidate.source_template_id)
+    )
+    .map((strategy) => strategy.id);
+  const lexicalDiagnostic = Math.max(0, ...lineage.map((strategy) => similarity(candidate.hypothesis, strategy.hypothesis)));
+  const evidenceRefs = [
+    ...matchedFailedLineages.flatMap((failed) => failed.evidence_entry_ids),
+    ...(smoke?.evidence_ref ? [smoke.evidence_ref] : []),
+    ...(input.metricTrendContext?.source_refs.map((ref) => ref.entry_id).filter((ref): ref is string => Boolean(ref)) ?? []),
+  ];
+
+  if (matchedFailedLineages.length > 0) {
+    return {
+      schema_version: "strategy-lineage-assessment-v1",
+      confidence: 0.9,
+      relationship_to_lineage: "failed_lineage",
+      novelty_basis: "typed_lineage_evidence",
+      matched_failed_lineage_fingerprints: matchedFailedLineages.map((failed) => failed.fingerprint),
+      matched_strategy_ids: matchedStrategyIds,
+      evidence_refs: [...new Set(evidenceRefs)].slice(0, 8),
+      ...(input.metricTrendContext ? { metric_trend: input.metricTrendContext.trend } : {}),
+      lexical_similarity_diagnostic: lexicalDiagnostic,
+      summary: "Candidate matches failed lineage keys from the evidence ledger.",
+    };
+  }
+
+  if (smoke?.status === "promote") {
+    return {
+      schema_version: "strategy-lineage-assessment-v1",
+      confidence: 0.82,
+      relationship_to_lineage: relationship ?? "different_mechanism",
+      novelty_basis: "smoke_evidence",
+      matched_failed_lineage_fingerprints: [],
+      matched_strategy_ids: matchedStrategyIds,
+      evidence_refs: [...new Set(evidenceRefs)].slice(0, 8),
+      ...(input.metricTrendContext ? { metric_trend: input.metricTrendContext.trend } : {}),
+      lexical_similarity_diagnostic: lexicalDiagnostic,
+      summary: "Smoke evidence provides typed support for the proposed lineage relationship.",
+    };
+  }
+
+  if (family && relationship && relationship !== "unknown") {
+    return {
+      schema_version: "strategy-lineage-assessment-v1",
+      confidence: 0.72,
+      relationship_to_lineage: relationship,
+      novelty_basis: "strategy_metadata",
+      matched_failed_lineage_fingerprints: [],
+      matched_strategy_ids: matchedStrategyIds,
+      evidence_refs: [...new Set(evidenceRefs)].slice(0, 8),
+      ...(input.metricTrendContext ? { metric_trend: input.metricTrendContext.trend } : {}),
+      lexical_similarity_diagnostic: lexicalDiagnostic,
+      summary: "Candidate supplied typed exploration metadata for lineage assessment.",
+    };
+  }
+
+  return {
+    schema_version: "strategy-lineage-assessment-v1",
+    confidence: 0.35,
+    relationship_to_lineage: "unknown",
+    novelty_basis: lexicalDiagnostic > 0 ? "diagnostic_text_overlap" : "unknown",
+    matched_failed_lineage_fingerprints: [],
+    matched_strategy_ids: matchedStrategyIds,
+    evidence_refs: [...new Set(evidenceRefs)].slice(0, 8),
+    ...(input.metricTrendContext ? { metric_trend: input.metricTrendContext.trend } : {}),
+    lexical_similarity_diagnostic: lexicalDiagnostic,
+    summary: "No authoritative typed lineage evidence was available; text overlap is diagnostic only.",
+  };
 }
 
 function inferExpectedCost(strategy: Strategy): StrategyExplorationExpectedCost {
@@ -350,15 +449,13 @@ function inferExpectedCost(strategy: Strategy): StrategyExplorationExpectedCost 
   return "medium";
 }
 
-function inferRelationship(
-  maxSimilarity: number,
-  family: string,
-  lineageFamilies: ReadonlySet<string>
-): StrategyLineageRelationship {
-  if (maxSimilarity >= 0.7) return "failed_lineage";
-  if (maxSimilarity >= 0.45 || lineageFamilies.has(family)) return "neighbor";
-  if (/audit|research|framing/.test(family)) return "different_assumption";
-  return "different_mechanism";
+function noveltyFromAssessment(assessment: StrategyLineageAssessment): number {
+  if (assessment.relationship_to_lineage === "different_assumption") return 0.84;
+  if (assessment.relationship_to_lineage === "different_mechanism") return 0.78;
+  if (assessment.relationship_to_lineage === "neighbor") return 0.55;
+  if (assessment.relationship_to_lineage === "current_best") return 0.35;
+  if (assessment.relationship_to_lineage === "failed_lineage") return 0.2;
+  return 0.45;
 }
 
 function roleFromNovelty(noveltyScore: number, minNoveltyScore: number): StrategyExplorationRole {
