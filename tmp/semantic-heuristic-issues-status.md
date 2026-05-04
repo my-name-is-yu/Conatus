@@ -16,3 +16,10 @@
 - Plan: extend `DecisionRecord` with typed lineage metadata, record lineage metadata from active strategies in the durable stall path, and replace exact-hypothesis ranking in `StrategyManagerBase` with typed lineage-key scoring. Exact hypothesis remains diagnostic-only.
 - Review: fresh review agent reported no material findings.
 - Verification: `npm run typecheck`; `npx vitest run src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts src/orchestrator/loop/__tests__/core-loop-stall-refine.test.ts src/platform/knowledge/__tests__/decision-record.test.ts`; `npm run test:changed`; `npm run lint:boundaries` (warnings only, pre-existing).
+- Result: PR #1037 merged; CI unit (22) and integration (24) passed.
+
+## #1030
+- Status: implementation verified locally; preparing PR.
+- Plan: deprecate `*_hypothesis_includes` as production selectors, add typed Dream decision heuristic selectors, keep `verifiedPlannerHintsOnly` as the caller-path gate, and cover direct heuristic behavior plus `StrategyManagerBase.generateCandidates()`.
+- Review: fresh review agent reported no material findings.
+- Verification: `npm run typecheck`; `npx vitest run src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`; `npm run test:changed`; `npm run lint:boundaries` (warnings only, pre-existing).

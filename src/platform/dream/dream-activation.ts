@@ -18,10 +18,24 @@ export interface DreamActivationRuntimeState {
   flags: Awaited<ReturnType<typeof loadDreamConfig>>["activation"];
 }
 
+export const DreamStrategySelectorSchema = z.object({
+  strategy_id: z.string().optional(),
+  source_template_id: z.string().optional(),
+  strategy_family: z.string().optional(),
+  exploration_role: z.enum(["exploitation", "adjacent_exploration", "divergent_exploration"]).optional(),
+  smoke_status: z.enum(["not_run", "promote", "defer", "retire"]).optional(),
+  metric_trend: z.enum(["improving", "stalled", "noisy", "regressing", "breakthrough"]).optional(),
+  failed_lineage_fingerprint: z.string().optional(),
+}).strict();
+export type DreamStrategySelector = z.infer<typeof DreamStrategySelectorSchema>;
+
 export const DreamDecisionHeuristicSchema = z.object({
   id: z.string(),
   if_stall_count_gte: z.number().int().nonnegative().optional(),
   strategy_id: z.string().optional(),
+  candidate_selector: DreamStrategySelectorSchema.optional(),
+  prefer_candidate_selector: DreamStrategySelectorSchema.optional(),
+  avoid_candidate_selector: DreamStrategySelectorSchema.optional(),
   strategy_hypothesis_includes: z.string().optional(),
   prefer_strategy_hypothesis_includes: z.string().optional(),
   avoid_strategy_hypothesis_includes: z.string().optional(),
@@ -275,33 +289,44 @@ export function applyDecisionHeuristicsToCandidates(
       if (heuristic.strategy_id && heuristic.strategy_id !== context.activeStrategyId) {
         continue;
       }
-      if (
-        heuristic.strategy_hypothesis_includes &&
-        !candidate.hypothesis.toLowerCase().includes(heuristic.strategy_hypothesis_includes.toLowerCase())
-      ) {
+      if (heuristic.candidate_selector && !matchesStrategySelector(candidate, heuristic.candidate_selector)) {
         continue;
       }
-      if (
-        heuristic.prefer_strategy_hypothesis_includes &&
-        candidate.hypothesis.toLowerCase().includes(heuristic.prefer_strategy_hypothesis_includes.toLowerCase())
-      ) {
+      if (heuristic.prefer_candidate_selector && matchesStrategySelector(candidate, heuristic.prefer_candidate_selector)) {
         score += Math.abs(heuristic.score_delta || 0.15);
         continue;
       }
-      if (
-        heuristic.avoid_strategy_hypothesis_includes &&
-        candidate.hypothesis.toLowerCase().includes(heuristic.avoid_strategy_hypothesis_includes.toLowerCase())
-      ) {
+      if (heuristic.avoid_candidate_selector && matchesStrategySelector(candidate, heuristic.avoid_candidate_selector)) {
         score -= Math.abs(heuristic.score_delta || 0.15);
         continue;
       }
-      score += heuristic.score_delta;
+      if (heuristic.candidate_selector) {
+        score += heuristic.score_delta;
+      }
     }
     return { candidate, score, index };
   });
 
   scored.sort((a, b) => b.score - a.score || a.index - b.index);
   return scored.map(({ candidate }) => candidate);
+}
+
+function matchesStrategySelector(candidate: Strategy, selector: DreamStrategySelector): boolean {
+  if (selector.strategy_id && selector.strategy_id !== candidate.id) return false;
+  if (selector.source_template_id && selector.source_template_id !== candidate.source_template_id) return false;
+  if (selector.strategy_family && selector.strategy_family !== candidate.exploration?.strategy_family) return false;
+  if (selector.exploration_role && selector.exploration_role !== candidate.exploration?.role) return false;
+  if (selector.smoke_status && selector.smoke_status !== candidate.exploration?.smoke.status) return false;
+  if (selector.metric_trend && selector.metric_trend !== candidate.exploration?.lineage_assessment?.metric_trend) {
+    return false;
+  }
+  if (
+    selector.failed_lineage_fingerprint &&
+    !candidate.exploration?.lineage_assessment?.matched_failed_lineage_fingerprints.includes(selector.failed_lineage_fingerprint)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export function mergeUniqueKnowledgeEntries(
