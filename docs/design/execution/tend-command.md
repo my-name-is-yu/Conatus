@@ -1,10 +1,10 @@
-# `/tend` — Chat-to-CoreLoop Handoff Command
+# `/tend` — Chat-to-DurableLoop Handoff Command
 
 > Current implementation note: chat/TUI are now built on a stronger native AgentLoop path, and daemon/runtime ownership has evolved since this document was written. Treat `/tend` here as a handoff pattern from bounded chat execution into long-lived goal control, not as a precise wire-level description of the current UI/runtime code.
 
 ## 1. Overview
 
-`/tend` is a slash command within PulSeed's chat/TUI mode that transitions a conversational context into autonomous CoreLoop execution via the daemon.
+`/tend` is a slash command within PulSeed's chat/TUI mode that transitions a conversational context into autonomous DurableLoop execution via the daemon.
 
 **Metaphor**: "Tend to this goal" — let PulSeed autonomously nurture a goal, like a gardener tending seedlings.
 
@@ -16,7 +16,7 @@ User chats in TUI
   → Auto-generates a Goal from the summary
   → "テストカバレッジ90%達成 で開始します。いいですか？"
   → User approves
-  → Daemon starts CoreLoop for the goal (background)
+  → Daemon starts DurableLoop for the goal (background)
   → Chat remains interactive — not blocked
   → Progress notifications flow into chat:
       🌱 [tend] goal-abc: Iteration 3/10 — gap 0.72→0.45
@@ -78,7 +78,7 @@ Display the generated goal to the user:
 If user declines, return to chat. User can refine via conversation and retry `/tend`.
 
 ### Step 4: Daemon Launch
-Start CoreLoop for the goal as a daemon process:
+Start DurableLoop for the goal as a daemon process:
 ```typescript
 // Reuse existing daemon infrastructure
 await daemonClient.start({ goalId: goal.id, maxIterations });
@@ -125,7 +125,7 @@ Tasks executed:
 
 | Command | Purpose | Execution |
 |---------|---------|-----------|
-| `pulseed run --goal <id>` | CLI one-shot CoreLoop | Foreground, blocking |
+| `pulseed run --goal <id>` | CLI one-shot DurableLoop | Foreground, blocking |
 | `pulseed start --goal <id>` | Start daemon | Background, no chat |
 | `/tend` | Chat→daemon handoff | Background, with chat notifications |
 | `pulseed improve` | Analyze + suggest + optionally run | Foreground, blocking |
@@ -166,7 +166,7 @@ Tasks executed:
 ┌─────────────────────────────────────────┐
 │  Daemon Process                         │
 │  ┌───────────────────────────────────┐  │
-│  │  CoreLoop.run(goalId)             │  │
+│  │  DurableLoop.run(goalId)             │  │
 │  │  observe→gap→score→task→execute   │  │
 │  └──────────┬────────────────────────┘  │
 │             │ emits                     │
@@ -209,7 +209,7 @@ Tasks executed:
 | Scenario | Behavior |
 |----------|----------|
 | Daemon already running for goal | Show status, ask if user wants to restart |
-| Daemon not installed/available | Fall back to in-process CoreLoop (blocking, with warning) |
+| Daemon not installed/available | Fall back to in-process DurableLoop (blocking, with warning) |
 | No chat history (empty `/tend`) | Ask user to describe what they want first |
 | Goal generation fails (LLM error) | Show error, suggest manual goal creation |
 | EventServer unreachable | Degrade gracefully — no notifications, suggest `pulseed status` |

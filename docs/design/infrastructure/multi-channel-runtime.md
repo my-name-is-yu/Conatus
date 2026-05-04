@@ -173,7 +173,7 @@ The Executor replaces the sequential goal loop in `daemon-runner.ts` with a supe
 
 The **LoopSupervisor** is the entry point. It starts when the daemon starts and stops when the daemon stops. Its responsibilities: maintain the worker pool, pull activation events from the Queue, assign events to workers, restart crashed workers, and report health.
 
-A **GoalWorker** wraps exactly one `CoreLoop` instance running against one goal. When the LoopSupervisor assigns a `goal_activated` event to a worker, the worker calls `coreLoop.run(goalId)` and waits for the result. While the worker is running, it is unavailable for other events. When it finishes, it signals readiness back to the Supervisor, which assigns the next pending activation.
+A **GoalWorker** wraps exactly one `DurableLoop` instance running against one goal. When the LoopSupervisor assigns a `goal_activated` event to a worker, the worker calls `coreLoop.run(goalId)` and waits for the result. While the worker is running, it is unavailable for other events. When it finishes, it signals readiness back to the Supervisor, which assigns the next pending activation.
 
 ### Goal Exclusivity Invariant
 
@@ -183,7 +183,7 @@ A **GoalWorker** wraps exactly one `CoreLoop` instance running against one goal.
 
 **Coalescing**: If a `goal_activated` event arrives for an already-running goal, the event is coalesced: the existing worker is notified to extend its run (e.g., reset its iteration cap), rather than a duplicate worker being spawned. The event is not re-queued.
 
-This invariant is distinct from the per-goal advisory locks in the State layer (section 6). The State locks protect concurrent file writes within a single goal's directory. The Goal Exclusivity Invariant prevents a higher-level problem: two CoreLoop instances issuing conflicting decisions about the same goal simultaneously.
+This invariant is distinct from the per-goal advisory locks in the State layer (section 6). The State locks protect concurrent file writes within a single goal's directory. The Goal Exclusivity Invariant prevents a higher-level problem: two DurableLoop instances issuing conflicting decisions about the same goal simultaneously.
 
 GoalWorkers are **pool-allocated**: the Supervisor spawns a generic worker and assigns it a goal at activation time. When the goal's loop iteration completes and no immediate re-activation is pending, the worker is returned to the pool. There is no persistent affinity between a worker instance and a goal.
 

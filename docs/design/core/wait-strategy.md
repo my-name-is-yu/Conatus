@@ -6,7 +6,7 @@
 > the integration seams. For schema details see portfolio-management.md §7; for
 > stall suppression see stall-detection.md §2.5.
 
-> Current implementation note: file paths and loop-phase names in this document predate parts of the CoreLoop redesign. Read the intent as current, but verify exact ownership against `src/orchestrator/strategy/`, `src/orchestrator/loop/`, and `src/platform/drive/`.
+> Current implementation note: file paths and loop-phase names in this document predate parts of the DurableLoop redesign. Read the intent as current, but verify exact ownership against `src/orchestrator/strategy/`, `src/orchestrator/loop/`, and `src/platform/drive/`.
 
 ---
 
@@ -29,7 +29,7 @@ for meaningful results — this sense of timing is also part of strategy.")
 | **PortfolioManager** | "Should we wait?" — expiry handling via `handleWaitStrategyExpiry`, duck-type check via `isWaitStrategy` (portfolio-management.md §7) |
 | **StallDetector** | Evaluates `isSuppressed(plateauUntil)` when the loop decides whether a dimension should participate in stall detection (stall-detection.md §2.5) |
 | **StrategyManager** | Creates WaitStrategy instances via `createWaitStrategy()` with `state=candidate`, `allocation=0`, and mirrors `wait_until` into the active task's `plateau_until` on activation |
-| **CoreLoop task cycle** | Collects active WaitStrategies, suppresses stalled dimensions whose wait window is still open, and later calls expiry handling |
+| **DurableLoop task cycle** | Collects active WaitStrategies, suppresses stalled dimensions whose wait window is still open, and later calls expiry handling |
 
 No single module owns the full wait lifecycle. This is intentional — each module
 answers exactly one question.
@@ -110,9 +110,9 @@ See portfolio-management.md §7.3 for the full wait execution flow.
 
 ---
 
-## 5. CoreLoop Integration
+## 5. DurableLoop Integration
 
-In the current CoreLoop implementation, `iteration-kernel.ts` first checks
+In the current DurableLoop implementation, `iteration-kernel.ts` first checks
 whether an active wait should keep the loop in observe-only mode. If the loop
 does proceed, `task-cycle.ts` performs stall suppression and
 `portfolio-manager.ts` handles WaitStrategy expiry:
@@ -142,7 +142,7 @@ and expiry judgment are all anchored to one canonical dimension. The task field
 portfolio. Suppression lifts automatically once the wait timestamp becomes past.
 
 **Current gap**: The `canAffordWait` gate from TimeHorizonEngine is now wired
-through CoreLoop stall recovery and wait-expiry fallback activation using
+through DurableLoop stall recovery and wait-expiry fallback activation using
 dimension-specific gap history. The remaining limitation is architectural:
 external/manual activation paths can still omit the hook, and goals without
 usable per-dimension history currently fail closed (the wait cannot be afforded)
@@ -154,9 +154,9 @@ rather than falling back to a softer heuristic.
 
 | Gap | Description |
 |-----|-------------|
-| **canAffordWait coverage outside CoreLoop** | CoreLoop now passes a dimension-specific `canAffordWait` closure into wait activation and fallback activation, but callers outside that path can still invoke activation without supplying the hook. |
+| **canAffordWait coverage outside DurableLoop** | DurableLoop now passes a dimension-specific `canAffordWait` closure into wait activation and fallback activation, but callers outside that path can still invoke activation without supplying the hook. |
 | **History-poor wait activation policy** | When a wait candidate has insufficient per-dimension gap history to estimate velocity, the current policy is fail-closed (`canAffordWait` returns false). This is safer than silently allowing waits, but it may be too strict for very new goals. |
-| **Authoritative wait state is split across portfolio + task mirror** | The portfolio WaitStrategy is authoritative for CoreLoop suppression and expiry, while `task.plateau_until` is a best-effort mirror for task-local consumers. Consumers that only read task state must tolerate stale mirrors. |
+| **Authoritative wait state is split across portfolio + task mirror** | The portfolio WaitStrategy is authoritative for DurableLoop suppression and expiry, while `task.plateau_until` is a best-effort mirror for task-local consumers. Consumers that only read task state must tolerate stale mirrors. |
 | **Effect latency estimation** | Heuristic categorization of action types (e.g., "deploy" → hours, "marketing" → days) to auto-suggest `wait_until` durations. Currently the LLM proposes durations without structured guidance. |
 | **Adaptive observation frequency** | Reducing observation frequency during waits to save tokens. `TimeHorizonEngine.suggestObservationInterval` exists (time-horizon.md §7) but is not connected to wait state. |
 | **LLM-assisted duration estimation** | Using the LLM to estimate effect latency based on action type and domain context. |
@@ -176,7 +176,7 @@ rather than falling back to a softer heuristic.
 | `canAffordWait` closure | `src/platform/time/time-horizon-engine.ts` (`getTimeBudget` return value) |
 | `TimeBudgetWithWait` type | `src/base/types/time-horizon.ts` |
 | `isSuppressed` (plateau_until) | `src/platform/drive/stall-detector.ts` |
-| CoreLoop wait iteration + stall suppression | `src/orchestrator/loop/core-loop/task-cycle.ts` / `src/orchestrator/loop/core-loop/iteration-kernel.ts` |
+| DurableLoop wait iteration + stall suppression | `src/orchestrator/loop/durable-loop/task-cycle.ts` / `src/orchestrator/loop/durable-loop/iteration-kernel.ts` |
 
 ---
 

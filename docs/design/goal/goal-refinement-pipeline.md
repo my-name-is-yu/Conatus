@@ -51,7 +51,7 @@ refine(goal, config):
      b. config.tokenBudget exhausted → force leaf
      c. Already has validated dimensions (manual or prior negotiate) → skip
 
-  5. Runtime fallback (called from CoreLoop, not during initial refine):
+  5. Runtime fallback (called from DurableLoop, not during initial refine):
      Observation failure on a leaf → re-refine that leaf with updated context
 ```
 
@@ -166,7 +166,7 @@ class GoalRefiner {
 | Caller | Current | After |
 |--------|---------|-------|
 | `goal add "desc"` CLI | `--negotiate` flag → `negotiate()`, `--tree` flag → `decomposeGoal()` | Single `refine()` call. `--no-refine` to skip. |
-| `run --tree` (CoreLoop) | Auto-calls `decomposeGoal()` if no children | Calls `refine()` if goal has no validated leaves |
+| `run --tree` (DurableLoop) | Auto-calls `decomposeGoal()` if no children | Calls `refine()` if goal has no validated leaves |
 | `renegotiate()` | Standalone 6-step flow | Unchanged (renegotiation is for existing goals with prior observations) |
 | Stall detection | Triggers `renegotiate()` | Triggers `reRefineLeaf()` for observation-failure stalls, `renegotiate()` for progress stalls |
 
@@ -183,7 +183,7 @@ Each step is independently testable and deployable. No breaking changes until st
 3. **Add GoalRefiner** — `src/orchestrator/goal/goal-refiner.ts` implementing `refine()`. Calls GoalNegotiator and GoalTreeManager internally. Integration tests against mock LLM. Old paths still work.
 4. **Wire CLI** — `goal add` calls `refine()` by default. `--negotiate` and `--tree` flags become aliases / deprecated. `--no-refine` skips refinement entirely.
 
-5. **Wire CoreLoop** — `tree-loop-runner` calls `refine()` instead of raw `decomposeGoal()`. Add `reRefineLeaf()` path to stall handler.
+5. **Wire DurableLoop** — `tree-loop-runner` calls `refine()` instead of raw `decomposeGoal()`. Add `reRefineLeaf()` path to stall handler.
 
 6. **Deprecation** — Mark standalone `negotiate()` for new goals and standalone `decomposeGoal()` as internal. Keep them callable for backward compat and renegotiation.
 

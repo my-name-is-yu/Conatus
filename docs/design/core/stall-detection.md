@@ -117,7 +117,7 @@ plateau_until is set AND current_time < plateau_until
   → None of the detection types from §2.1–§2.4 are triggered
 ```
 
-**WaitStrategy mapping**: In the current CoreLoop integration, an active
+**WaitStrategy mapping**: In the current DurableLoop integration, an active
 `WaitStrategy` contributes suppression only for its `primary_dimension`. Its
 `target_dimensions` are not suppressed automatically. This matches wait expiry,
 which also evaluates a single canonical dimension rather than a bundle of

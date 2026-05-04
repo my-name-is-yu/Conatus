@@ -3,7 +3,7 @@
 > Issue #33. Defines how PulSeed delegates a single task across multiple agents with divided responsibilities.
 > Core principle: **Define appropriate roles and delegate to appropriate capabilities. Roles are domain-agnostic and extensible.**
 
-> Current implementation note: the codebase layout referenced below has since moved under `src/orchestrator/` and `src/interface/`. Also, native `agent_loop` now covers a substantial part of bounded execution. Read this document as a design for larger multi-agent/task-group orchestration on top of the current CoreLoop + AgentLoop baseline.
+> Current implementation note: the codebase layout referenced below has since moved under `src/orchestrator/` and `src/interface/`. Also, native `agent_loop` now covers a substantial part of bounded execution. Read this document as a design for larger multi-agent/task-group orchestration on top of the current DurableLoop + AgentLoop baseline.
 
 ---
 
@@ -187,7 +187,7 @@ If a task has the `irreversible: true` flag, approval must be obtained before ex
 
 ### Pipeline persistence
 
-`PipelineExecutor` writes `PipelineState` to disk via `StateManager` after each stage completes. On restart, `CoreLoop` detects pipelines with `status: "interrupted"` and resumes from `current_stage_index`.
+`PipelineExecutor` writes `PipelineState` to disk via `StateManager` after each stage completes. On restart, `DurableLoop` detects pipelines with `status: "interrupted"` and resumes from `current_stage_index`.
 
 Idempotency guarantee: before executing a stage, check whether the `idempotency_key` (`${task_id}:${stage_index}:${attempt}`) already exists in `completed_stages`; if so, skip.
 
@@ -244,7 +244,7 @@ Flow of `runPipelineTaskCycle()`:
 
 **Modified files:**
 - `src/orchestrator/execution/task/task-generation.ts` — TaskGroup + plan generation. LLM evaluates task complexity and decides between single task vs TaskGroup.
-- `src/orchestrator/loop/core-loop.ts` — `runOneIteration()` detects TaskGroup and hands it to `ParallelExecutor`
+- `src/orchestrator/loop/durable-loop.ts` — `runOneIteration()` detects TaskGroup and hands it to `ParallelExecutor`
 - `src/orchestrator/execution/pipeline-executor.ts` — Plan Approval Gate + three-strike escalation + `strategy_id` feedback
 
 **Tests:** `tests/execution/parallel-executor.test.ts`

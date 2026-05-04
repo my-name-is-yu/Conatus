@@ -2,7 +2,7 @@
 
 > Token cost is the primary barrier to PulSeed adoption. A single loop iteration makes 3-7 LLM calls, meaning a goal with 3 dimensions and 10 iterations costs 50-70 API calls before any real work is done. This document defines three independent optimization pillars that together reduce LLM token consumption by an estimated 60-80% without degrading observation quality or loop correctness.
 
-> Current implementation note: this document predates the current dual-loop architecture and the reorganized source tree. Optimizations here now apply across CoreLoop, bounded AgentLoop phases, chat compaction, and native task execution rather than only a single flat loop body.
+> Current implementation note: this document predates the current dual-loop architecture and the reorganized source tree. Optimizations here now apply across DurableLoop, bounded AgentLoop phases, chat compaction, and native task execution rather than only a single flat loop body.
 
 ---
 
@@ -219,7 +219,7 @@ After 5 consecutive skips, the full loop runs regardless of state diff. This int
 
 **Files to change:**
 - `src/loop/state-diff.ts` -- NEW file, implements `StateDiffCalculator`
-- `src/orchestrator/loop/core-loop.ts` -- add diff check after observation phase, before gap calculation
+- `src/orchestrator/loop/durable-loop.ts` -- add diff check after observation phase, before gap calculation
 - `src/types/loop.ts` -- add `IterationSnapshot` and `StateDiffThresholds` schemas
 **Integration point in `runOneIteration`:**
 
@@ -439,7 +439,7 @@ Estimated effort: 2-3 days. Requires integration tests with real file-system cha
 
 Scope:
 1. Implement `StateDiffCalculator`
-2. Integrate into `core-loop.ts` after observation phase
+2. Integrate into `durable-loop.ts` after observation phase
 3. Add consecutive skip limit and interaction with stall detection
 4. Add integration tests for skip behavior
 

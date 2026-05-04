@@ -68,7 +68,7 @@ New boundary: "PulSeed does LLM calls, state I/O, and read-only tool invocations
 **In scope (this document)**:
 - Tool system core (registry, executor, permission, concurrency)
 - Read-only built-in tools (Glob, Grep, Read, Shell for metrics, HttpFetch GET, JsonQuery)
-- Integration with ObservationEngine, GapCalculator, KnowledgeManager, StrategyManager, CoreLoop verification
+- Integration with ObservationEngine, GapCalculator, KnowledgeManager, StrategyManager, DurableLoop verification
 - Permission model for read-only and read-with-side-effects (Shell) tools
 
 **Future work (not this document)**:
@@ -85,7 +85,7 @@ New boundary: "PulSeed does LLM calls, state I/O, and read-only tool invocations
 
 ```
                               +----------------------------------------------+
-                              |              CoreLoop                         |
+                              |              DurableLoop                         |
                               |  observe -> gap -> score -> task -> verify    |
                               +-------+------+------+------+------+----------+
                                       |      |      |      |      |
@@ -126,7 +126,7 @@ New boundary: "PulSeed does LLM calls, state I/O, and read-only tool invocations
 
 **Before: Observation cycle**
 ```
-CoreLoop -> ObservationEngine -> LLM call (interpret what to observe)
+DurableLoop -> ObservationEngine -> LLM call (interpret what to observe)
          -> SessionManager -> AdapterLayer -> Agent session (do the observation)
          -> Agent runs commands, reads files, calls APIs
          -> Agent returns results
@@ -138,7 +138,7 @@ Cost: ~30s, ~10,000 tokens, agent session overhead
 
 **After: Observation cycle (tool-enhanced)**
 ```
-CoreLoop -> ObservationEngine -> Tool calls (Glob, Read, Shell, HttpFetch)
+DurableLoop -> ObservationEngine -> Tool calls (Glob, Read, Shell, HttpFetch)
          -> Direct results (file contents, command output, API responses)
          -> LLM call (interpret results)
          -> State update
@@ -149,17 +149,17 @@ Cost: ~2s, ~2,000 tokens, no agent session for common cases
 
 **Before: Verification cycle**
 ```
-CoreLoop -> Spawn verification agent session
+DurableLoop -> Spawn verification agent session
          -> Agent runs tests, checks files
          -> Agent reports results
-         -> CoreLoop interprets
+         -> DurableLoop interprets
 
 Cost: ~30s, ~8,000 tokens
 ```
 
 **After: Verification cycle (tool-enhanced)**
 ```
-CoreLoop -> Shell tool (run tests) + Glob tool (check outputs) + Read tool (check content)
+DurableLoop -> Shell tool (run tests) + Glob tool (check outputs) + Read tool (check content)
          -> Direct results
          -> LLM call (interpret if needed, or pure mechanical check)
 
@@ -1746,7 +1746,7 @@ With workspace context, the LLM generates more specific strategies:
 
 ### 7.4 Workspace Context Caching
 
-WorkspaceContext is relatively expensive to build (5 parallel tool calls). It should be cached per CoreLoop iteration and invalidated when:
+WorkspaceContext is relatively expensive to build (5 parallel tool calls). It should be cached per DurableLoop iteration and invalidated when:
 
 1. A task execution completes (files may have changed)
 2. An observation detects external changes
@@ -1786,7 +1786,7 @@ class WorkspaceContextCache {
 The task verification flow (task-lifecycle.md Section 5) currently uses a 3-layer structure: mechanical verification, task reviewer, executor self-report. The tool system dramatically improves Layer 1 (mechanical verification) by making it direct rather than requiring a verification agent session.
 
 ```
-CoreLoop.verify(taskResult)
+DurableLoop.verify(taskResult)
   |
   +-- Layer 1: Mechanical Verification via Tools (ENHANCED)
   |   +-- Shell: run test suite -> pass/fail + coverage numbers
@@ -1871,10 +1871,10 @@ function mapCriteriaToToolCalls(
 }
 ```
 
-### 8.4 Verification Integration in CoreLoop
+### 8.4 Verification Integration in DurableLoop
 
 ```typescript
-// Addition to CoreLoop verification phase
+// Addition to DurableLoop verification phase
 
 async verifyWithTools(
   task: Task,
@@ -1918,7 +1918,7 @@ interface VerificationDetail {
 
 ### 8.5 Reduced Iteration Latency
 
-With tool-based verification, the CoreLoop completes iterations significantly faster:
+With tool-based verification, the DurableLoop completes iterations significantly faster:
 
 | Phase | Before | After | Savings |
 |-------|--------|-------|---------|
@@ -2844,24 +2844,24 @@ permissionManager.addDenyRule({
 | **GapCalculator** | Add `measureDirectly()` for stale-data refresh | Small (optional path, no existing logic changes) |
 | **KnowledgeManager** | Add tool-based research before agent delegation | Medium (new method + priority ordering) |
 | **StrategyManager** | Accept workspace context from tools | Small (context injection, no logic changes) |
-| **CoreLoop** | Wire ToolExecutor into deps; use tools in verify phase | Medium (new dep + verification enhancement) |
+| **DurableLoop** | Wire ToolExecutor into deps; use tools in verify phase | Medium (new dep + verification enhancement) |
 | **TaskLifecycle** | No changes (agent delegation path unchanged) | None |
 | **EthicsGate** | No changes (tools call EthicsGate, not the reverse) | None |
 | **TrustManager** | No changes (tools call TrustManager, not the reverse) | None |
 | **AdapterLayer** | No changes (agent path remains intact) | None |
 | **SessionManager** | Minor: include tool-gathered context in sessions | Small |
 | **ReportingEngine** | Add tool execution events to reports | Small |
-| **CoreLoopDeps** | Add `toolExecutor?: ToolExecutor` field | Trivial |
+| **DurableLoopDeps** | Add `toolExecutor?: ToolExecutor` field | Trivial |
 
-### 12.2 CoreLoopDeps Extension
+### 12.2 DurableLoopDeps Extension
 
 ```typescript
-export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, TaskCycleDeps {
+export interface DurableLoopDeps extends ObservationDeps, TreeDeps, StallDeps, TaskCycleDeps {
   // ... existing fields ...
 
   /**
    * Optional ToolExecutor for direct tool-based operations.
-   * When provided, CoreLoop uses tools for observation, verification,
+   * When provided, DurableLoop uses tools for observation, verification,
    * and knowledge acquisition. When absent, all operations fall through
    * to agent delegation (backward-compatible).
    */
@@ -2888,11 +2888,11 @@ This means the tool system provides incremental value: even with just Glob + Rea
 
 ### 12.4 Backward Compatibility
 
-The `toolExecutor` field on CoreLoopDeps is optional. When not provided:
+The `toolExecutor` field on DurableLoopDeps is optional. When not provided:
 - ObservationEngine skips `observeWithTools()` and uses existing paths.
 - GapCalculator skips `measureDirectly()` and uses stored values only.
 - KnowledgeManager skips tool-based research and delegates to agents.
-- CoreLoop verification uses existing agent-based verification.
+- DurableLoop verification uses existing agent-based verification.
 
 This means the tool system is a **purely additive** change. No existing behavior is modified. Tools only activate when explicitly provided.
 
@@ -2985,7 +2985,7 @@ This means the tool system is a **purely additive** change. No existing behavior
 - ObservationEngine: `observeWithTools()` method + tool-first fallback chain
 - KnowledgeManager: tool-based research path (`acquireWithTools()`)
 - Observation allow-list auto-registration from dimension configs
-- CoreLoopDeps: add `toolExecutor` and `toolRegistry` fields
+- DurableLoopDeps: add `toolExecutor` and `toolRegistry` fields
 - Integration tests: observation with tools, knowledge acquisition with tools
 
 **Estimated size**: ~800 lines production, ~600 lines tests
@@ -3000,7 +3000,7 @@ This means the tool system is a **purely additive** change. No existing behavior
 
 **Deliverables**:
 - GapCalculator: `measureDirectly()` for stale-data refresh
-- CoreLoop verification: tool-based Layer 1 mechanical verification
+- DurableLoop verification: tool-based Layer 1 mechanical verification
 - StrategyManager: workspace context gathering (`buildWorkspaceContext()`)
 - WorkspaceContextCache for per-iteration caching
 - Integration tests: verification with tools, strategy with workspace context
@@ -3055,7 +3055,7 @@ This means the tool system is a **purely additive** change. No existing behavior
 
 ### 15.3 Caching
 
-**Decision** (resolved): Implement per-iteration cache keyed by `(toolName, JSON.stringify(input))`. Cache expires at end of each CoreLoop iteration. All read-only tools are cacheable. ShellTool results cacheable only for safe-list commands. This is a PulSeed differentiation — CC does NOT cache tool results (only API-level prompt caching). PulSeed's core loop calls the same tools multiple times per iteration (observe → gap → verify), making caching high-value.
+**Decision** (resolved): Implement per-iteration cache keyed by `(toolName, JSON.stringify(input))`. Cache expires at end of each DurableLoop iteration. All read-only tools are cacheable. ShellTool results cacheable only for safe-list commands. This is a PulSeed differentiation — CC does NOT cache tool results (only API-level prompt caching). PulSeed's core loop calls the same tools multiple times per iteration (observe → gap → verify), making caching high-value.
 
 **CC Reference**: CC performs API-level prompt caching only. No tool result caching. PulSeed's multi-phase iteration pattern (observe → gap → verify) makes in-iteration caching significantly more valuable than in CC's single-pass model.
 

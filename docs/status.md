@@ -9,7 +9,7 @@ For broader navigation, see [Architecture Map](architecture-map.md).
 
 ## In active use
 
-- long-lived `CoreLoop` control
+- long-lived `DurableLoop` control
 - bounded `AgentLoop` execution
 - shared tool substrate
 - Soil as a long-lived memory surface

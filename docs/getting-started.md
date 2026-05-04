@@ -87,7 +87,7 @@ The default public path is `pulseed` plus natural language. Lower-level subcomma
 
 ## 4. What runs where
 
-- `CoreLoop` handles goal-level control, including continuation, refinement, verification, and completion checks
+- `DurableLoop` handles goal-level control, including continuation, refinement, verification, and completion checks
 - `AgentLoop` handles bounded tool use for tasks, chat, and runtime phases that need a short-lived executor
 - Local state lives under `~/.pulseed/`
 

@@ -2,13 +2,13 @@
 
 > Related: `portfolio-management.md`, `gap-calculation.md`, `satisficing.md`, `drive-scoring.md`, `session-and-context.md`
 
-> Current implementation note: the goal tree is now scheduled by CoreLoop together with next-iteration directives emitted from bounded agentic phases. Tree nodes are not just passive decomposition artifacts; the scheduler can prefer nodes that carry pending knowledge-refresh or replanning intent.
+> Current implementation note: the goal tree is now scheduled by DurableLoop together with next-iteration directives emitted from bounded agentic phases. Tree nodes are not just passive decomposition artifacts; the scheduler can prefer nodes that carry pending knowledge-refresh or replanning intent.
 
 ---
 
 ## 1. Overview
 
-The goal tree is an **N-layer automatic goal decomposition system**. It recursively decomposes ambiguous top-level goals into concrete sub-goals, while CoreLoop schedules which node should receive the next bounded iteration.
+The goal tree is an **N-layer automatic goal decomposition system**. It recursively decomposes ambiguous top-level goals into concrete sub-goals, while DurableLoop schedules which node should receive the next bounded iteration.
 
 ```
 User goal (root)
@@ -21,7 +21,7 @@ User goal (root)
         └── Sub-goal B-1 (depth 2 / leaf)
 ```
 
-**Purpose of decomposition**: Passing an abstract top-level goal directly to bounded task execution makes task generation too vague. The goal tree resolves goal ambiguity into nodes that CoreLoop can schedule, verify, and aggregate over time.
+**Purpose of decomposition**: Passing an abstract top-level goal directly to bounded task execution makes task generation too vague. The goal tree resolves goal ambiguity into nodes that DurableLoop can schedule, verify, and aggregate over time.
 
 ---
 

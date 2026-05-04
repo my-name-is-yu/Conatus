@@ -16,7 +16,7 @@
 
 In Claude Code and legacy tool-centric systems, plugins are "tools the user explicitly calls." The user runs a command and the tool responds. The user is the active agent.
 
-PulSeed plugins are different. PulSeed's long-lived control runtime runs autonomously without user instructions. Therefore, plugins must also be things **PulSeed autonomously selects and integrates into CoreLoop, AgentLoop, or runtime services**. Not requiring user instructions like "please call this plugin" is the starting point of PulSeed's plugin design.
+PulSeed plugins are different. PulSeed's long-lived control runtime runs autonomously without user instructions. Therefore, plugins must also be things **PulSeed autonomously selects and integrates into DurableLoop, AgentLoop, or runtime services**. Not requiring user instructions like "please call this plugin" is the starting point of PulSeed's plugin design.
 ```
 Claude Code / legacy tool plugins:
   User → "Search Jira" → Jira plugin → returns result to user
@@ -34,7 +34,7 @@ What belongs in PulSeed's core should be minimal. Use the following criteria:
 
 | Criterion | Location | Example |
 |-----------|----------|----|
-| Essential to the core control/execution substrate | Core | CoreLoop, AgentLoop, ToolRegistry, GapCalculator, DriveScorer |
+| Essential to the core control/execution substrate | Core | DurableLoop, AgentLoop, ToolRegistry, GapCalculator, DriveScorer |
 | Zero external dependencies, highly generic | Can be bundled with core | FileDataSourceAdapter, FileExistenceDataSourceAdapter |
 | Depends on specific external services or SaaS | Plugin | JiraAdapter, SlackNotifier, LinearDataSource |
 | Future expansion expected but not currently needed | Plugin candidate | Webhook adapter, custom LLM backend |
@@ -702,7 +702,7 @@ Clarifying how each existing module connects to the plugin architecture.
 
 | Module | Changes | Connection method |
 |--------|---------|------------------|
-| `CoreLoop` | No change | Used indirectly via registered adapters and data sources |
+| `DurableLoop` | No change | Used indirectly via registered adapters and data sources |
 | `ObservationEngine` | Add plugin matching to `findDataSourceForDimension()` | Via `DataSourceRegistry` (extended in Phase 2) |
 | `TaskLifecycle` | No change | Via `AdapterRegistry` (plugins auto-registered) |
 | `NotificationDispatcher` | Add routing from `NotifierRegistry` | Calls `NotifierRegistry.findForEvent()` |
@@ -710,10 +710,10 @@ Clarifying how each existing module connects to the plugin architecture.
 | `TrustManager` | Add plugin trust_score tracking | Updates `PluginState.trust_score` (Phase 3) |
 | `KnowledgeManager` | Record and share plugin effectiveness | Receives `onPluginSuccess/Failure()` hooks (Phase 3) |
 
-### Full picture from CoreLoop
+### Full picture from DurableLoop
 
 ```
-CoreLoop (unchanged)
+DurableLoop (unchanged)
     │
     ├── ObservationEngine
     │     └── DataSourceRegistry (includes plugin data_sources)

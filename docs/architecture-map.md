@@ -10,7 +10,7 @@ user / daemon / chat / tui
     interface layer
           |
           v
-      CoreLoop
+      DurableLoop
           |
     +-----+-------------------+
     |                         |
@@ -55,7 +55,7 @@ Cross-cutting domain services:
 
 Long-lived orchestration logic:
 
-- `loop/`: CoreLoop, iteration kernel, tree/multi-goal runners
+- `loop/`: DurableLoop, iteration kernel, tree/multi-goal runners
 - `execution/`: task lifecycle, session management, native AgentLoop runtime
 - `goal/`: goal negotiation, tree orchestration, aggregation
 - `strategy/`: strategy and portfolio management
@@ -92,18 +92,18 @@ Resident runtime support:
 - schedule engine
 - runtime health store
 
-## 3. CoreLoop map
+## 3. DurableLoop map
 
-CoreLoop is the main long-lived controller.
+DurableLoop is the main long-lived controller.
 
 Important public subparts:
 
-- `src/orchestrator/loop/core-loop.ts`
-- `src/orchestrator/loop/core-loop/iteration-kernel.ts`
+- `src/orchestrator/loop/durable-loop.ts`
+- `src/orchestrator/loop/durable-loop/iteration-kernel.ts`
 - `src/orchestrator/loop/tree-loop-runner.ts`
 - `src/orchestrator/goal/tree-loop-orchestrator.ts`
 
-What CoreLoop owns:
+What DurableLoop owns:
 
 - observation to completion flow
 - tree-mode and multi-goal scheduling
@@ -132,9 +132,9 @@ What AgentLoop owns:
 - repeated tool loop detection
 - task/chat session traces
 
-## 5. How CoreLoop and AgentLoop connect
+## 5. How DurableLoop and AgentLoop connect
 
-CoreLoop uses AgentLoop in two ways.
+DurableLoop uses AgentLoop in two ways.
 
 ### Task execution path
 
@@ -142,7 +142,7 @@ When the active adapter is `agent_loop`, `TaskLifecycle` routes execution throug
 
 ### Core phase path
 
-CoreLoop can run bounded agentic phases such as:
+DurableLoop can run bounded agentic phases such as:
 
 - `knowledge_refresh`
 - `replanning_options`
@@ -183,7 +183,7 @@ Good for:
 
 - bounded interactive work
 - tool-driven conversations
-- operating CoreLoop through tools
+- operating DurableLoop through tools
 
 ### TUI
 

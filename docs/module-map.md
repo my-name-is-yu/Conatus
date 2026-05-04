@@ -11,7 +11,7 @@ It is intentionally oriented around stable directories and major entry points ra
 
 Main exported surfaces include:
 
-- `CoreLoop`
+- `DurableLoop`
 - `TaskLifecycle`
 - `TaskAgentLoopRunner`
 - `ChatAgentLoopRunner`
@@ -79,18 +79,18 @@ Use this area for long-lived orchestration and control.
 
 #### `src/orchestrator/loop`
 
-CoreLoop and scheduling logic.
+DurableLoop and scheduling logic.
 
 Important files:
 
-- `core-loop.ts`
+- `durable-loop.ts`
 - `tree-loop-runner.ts`
 - `iteration-budget.ts`
 - `loop-result-types.ts`
-- `core-loop/iteration-kernel.ts`
-- `core-loop/decision-engine.ts`
-- `core-loop/phase-policy.ts`
-- `core-loop/phase-runtime.ts`
+- `durable-loop/iteration-kernel.ts`
+- `durable-loop/decision-engine.ts`
+- `durable-loop/phase-policy.ts`
+- `durable-loop/phase-runtime.ts`
 
 #### `src/orchestrator/execution`
 
@@ -172,10 +172,10 @@ Important subdirectories:
 
 ## 3. Where to look by feature
 
-### CoreLoop behavior
+### DurableLoop behavior
 
-- `src/orchestrator/loop/core-loop.ts`
-- `src/orchestrator/loop/core-loop/`
+- `src/orchestrator/loop/durable-loop.ts`
+- `src/orchestrator/loop/durable-loop/`
 - `src/orchestrator/loop/tree-loop-runner.ts`
 
 ### AgentLoop behavior
@@ -244,7 +244,7 @@ High-signal suites for current architecture:
 
 ## 5. Current naming conventions
 
-- `CoreLoop` means long-lived control
+- `DurableLoop` means long-lived control
 - `AgentLoop` means bounded tool-using execution
 - `TaskLifecycle` is the task generation/execution/verification pipeline
 - `Soil` means the readable derived memory surface
