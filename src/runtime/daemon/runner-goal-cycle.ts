@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
-import type { ProgressEvent } from "../../orchestrator/loop/core-loop.js";
+import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
+import type { ProgressEvent } from "../../orchestrator/loop/durable-loop.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import { errorMessage } from "./runner-errors.js";
 import { getDueWaitGoalIds } from "./wait-deadline-resolver.js";

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { CorePhaseRuntime } from "../core-loop/phase-runtime.js";
-import { StaticCorePhasePolicyRegistry } from "../core-loop/phase-policy.js";
-import { buildObserveEvidenceSpec } from "../core-loop/phase-specs.js";
+import { CorePhaseRuntime } from "../durable-loop/phase-runtime.js";
+import { StaticCorePhasePolicyRegistry } from "../durable-loop/phase-policy.js";
+import { buildObserveEvidenceSpec } from "../durable-loop/phase-specs.js";
 
 describe("CorePhaseRuntime", () => {
   it("returns skipped when no corePhaseRunner is configured", async () => {

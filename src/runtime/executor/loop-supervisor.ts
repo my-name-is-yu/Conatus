@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync, renameSync, existsSync, readFileSync } from '
 import { dirname, join } from 'node:path';
 import { GoalWorker, type GoalWorkerConfig, type WorkerResult } from './goal-worker.js';
 import { createEnvelope } from '../types/envelope.js';
-import type { CoreLoop } from '../../orchestrator/loop/core-loop.js';
+import type { CoreLoop } from '../../orchestrator/loop/durable-loop.js';
 import type { DriveSystem } from '../../platform/drive/drive-system.js';
 import type { StateManager } from '../../base/state/state-manager.js';
 import type { Logger } from '../logger.js';
@@ -13,7 +13,7 @@ import { getPulseedDirPath } from '../../base/utils/paths.js';
 import type { BackgroundRunLedger } from '../store/background-run-store.js';
 import type { BackgroundRun, RuntimeSessionRef } from '../session-registry/types.js';
 import type { WaitResumeActivation } from '../../base/types/goal-activation.js';
-import type { LoopRunPolicyMode } from '../../orchestrator/loop/core-loop.js';
+import type { LoopRunPolicyMode } from '../../orchestrator/loop/durable-loop.js';
 
 export interface SupervisorConfig {
   concurrency: number;

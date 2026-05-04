@@ -20,7 +20,7 @@ import { SessionManager } from "../../src/orchestrator/execution/session-manager
 import { TrustManager } from "../../src/platform/traits/trust-manager.js";
 import { StrategyManager } from "../../src/orchestrator/strategy/strategy-manager.js";
 import { StallDetector } from "../../src/platform/drive/stall-detector.js";
-import { CoreLoop, type CoreLoopDeps } from "../../src/orchestrator/loop/core-loop.js";
+import { CoreLoop, type CoreLoopDeps } from "../../src/orchestrator/loop/durable-loop.js";
 import { AdapterRegistry } from "../../src/orchestrator/execution/adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../src/orchestrator/execution/adapter-layer.js";
 import type { Goal } from "../../src/base/types/goal.js";

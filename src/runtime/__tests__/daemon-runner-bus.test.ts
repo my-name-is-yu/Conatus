@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import { DaemonRunner } from "../daemon-runner.js";
 import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
-import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
+import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
 import type { DaemonDeps } from "../daemon-runner.js";
 import { createEnvelope } from "../types/envelope.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";

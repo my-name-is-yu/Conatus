@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import {
   CoreLoop,
-} from "../core-loop.js";
+} from "../durable-loop.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";

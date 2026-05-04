@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CoreDecisionEngine } from "../core-loop/decision-engine.js";
+import { CoreDecisionEngine } from "../durable-loop/decision-engine.js";
 import type { LoopIterationResult } from "../loop-result-types.js";
 
 function makeIterationResult(overrides: Partial<LoopIterationResult> = {}): LoopIterationResult {

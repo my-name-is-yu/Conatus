@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GoalWorker } from "../executor/goal-worker.js";
-import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
+import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   return {

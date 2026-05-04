@@ -1,5 +1,5 @@
-import type { CoreLoopDeps, ResolvedLoopConfig, LoopIterationResult } from "./core-loop/contracts.js";
-import { makeEmptyIterationResult } from "./core-loop/contracts.js";
+import type { CoreLoopDeps, ResolvedLoopConfig, LoopIterationResult } from "./durable-loop/contracts.js";
+import { makeEmptyIterationResult } from "./durable-loop/contracts.js";
 import type { Logger } from "../../runtime/logger.js";
 import type { IterationBudget } from "./iteration-budget.js";
 import type { NextIterationDirective } from "./loop-result-types.js";

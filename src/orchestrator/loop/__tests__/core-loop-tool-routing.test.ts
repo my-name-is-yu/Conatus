@@ -11,8 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { observeAndReload, buildLoopToolContext } from "../core-loop/preparation.js";
-import type { PhaseCtx } from "../core-loop/preparation.js";
+import { observeAndReload, buildLoopToolContext } from "../durable-loop/preparation.js";
+import type { PhaseCtx } from "../durable-loop/preparation.js";
 import { GoalSchema } from "../../../base/types/goal.js";
 import type { Goal } from "../../../base/types/goal.js";
 

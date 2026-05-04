@@ -31,7 +31,7 @@ import { StrategyManager } from "../../src/orchestrator/strategy/strategy-manage
 import { ReportingEngine } from "../../src/reporting/reporting-engine.js";
 import { DriveSystem } from "../../src/platform/drive/drive-system.js";
 import { TrustManager } from "../../src/platform/traits/trust-manager.js";
-import { CoreLoop } from "../../src/orchestrator/loop/core-loop.js";
+import { CoreLoop } from "../../src/orchestrator/loop/durable-loop.js";
 import { AdapterRegistry } from "../../src/orchestrator/execution/adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../src/orchestrator/execution/adapter-layer.js";
 import * as GapCalculator from "../../src/platform/drive/gap-calculator.js";

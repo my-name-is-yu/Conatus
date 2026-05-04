@@ -138,7 +138,7 @@ import {
   createCoreLoopControlTools,
   createDaemonBackedCoreLoopControlToolset,
   type CoreLoopControlToolset,
-} from "../../orchestrator/execution/agent-loop/core-loop-control-tools.js";
+} from "../../orchestrator/execution/agent-loop/durable-loop-control-tools.js";
 import type { BrowserSessionStore } from "../../runtime/interactive-automation/index.js";
 import {
   BackpressureController as RuntimeBackpressureController,

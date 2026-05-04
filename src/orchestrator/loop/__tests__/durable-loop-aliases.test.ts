@@ -4,7 +4,7 @@ import {
   DurableLoop,
   type CoreLoopDeps,
   type DurableLoopDeps,
-} from "../core-loop.js";
+} from "../durable-loop.js";
 import {
   createCoreLoopControlTools,
   createDaemonBackedCoreLoopControlToolset,
@@ -12,7 +12,7 @@ import {
   createDurableLoopControlTools,
   type CoreLoopControlToolset,
   type DurableLoopControlToolset,
-} from "../../execution/agent-loop/core-loop-control-tools.js";
+} from "../../execution/agent-loop/durable-loop-control-tools.js";
 
 function makeDeps(): DurableLoopDeps {
   return {

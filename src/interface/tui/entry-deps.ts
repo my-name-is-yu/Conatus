@@ -35,7 +35,7 @@ export async function buildStandaloneTuiDeps() {
   const { GoalNegotiator } = await import("../../orchestrator/goal/goal-negotiator.js");
   const { TaskLifecycle } = await import("../../orchestrator/execution/task/task-lifecycle.js");
   const { ReportingEngine } = await import("../../reporting/reporting-engine.js");
-  const { CoreLoop } = await import("../../orchestrator/loop/core-loop.js");
+  const { CoreLoop } = await import("../../orchestrator/loop/durable-loop.js");
   const { GoalTreeManager } = await import("../../orchestrator/goal/goal-tree-manager.js");
   const { StateAggregator } = await import("../../orchestrator/goal/state-aggregator.js");
   const { GoalDependencyGraph } = await import("../../orchestrator/goal/goal-dependency-graph.js");

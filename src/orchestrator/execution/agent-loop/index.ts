@@ -25,7 +25,7 @@ export * from "./agent-loop-trace-store.js";
 export * from "./agent-loop-turn-context.js";
 export * from "./bounded-agent-loop-runner.js";
 export * from "./chat-agent-loop-runner.js";
-export * from "./core-loop-control-tools.js";
+export * from "./durable-loop-control-tools.js";
 export * from "./core-phase-runner.js";
 export * from "./openai-responses-agent-loop-model-client.js";
 export * from "./agent-loop-prompts.js";

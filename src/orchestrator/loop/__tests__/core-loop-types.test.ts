@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { makeEmptyIterationResult } from "../core-loop/contracts.js";
-import type { LoopIterationResult } from "../core-loop/contracts.js";
+import { makeEmptyIterationResult } from "../durable-loop/contracts.js";
+import type { LoopIterationResult } from "../durable-loop/contracts.js";
 
 describe("LoopIterationResult — wait telemetry fields (Gap 6)", () => {
   it("accepts waitSuppressed field", () => {

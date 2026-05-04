@@ -32,7 +32,7 @@
 import { getCliLogger } from "./cli-logger.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../platform/traits/character-config.js";
-import type { CoreLoop } from "../../orchestrator/loop/core-loop.js";
+import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
 import { dispatchCommand } from "./cli-command-registry.js";
 import { formatOperationError } from "./utils.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";

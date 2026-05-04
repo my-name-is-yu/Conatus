@@ -6,7 +6,7 @@ import {
   type GapCalculatorModule,
   type DriveScorerModule,
   type ReportingEngine,
-} from "../core-loop.js";
+} from "../durable-loop.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";

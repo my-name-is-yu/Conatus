@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import type { CoreLoop } from "../../orchestrator/loop/core-loop.js";
+import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { Goal } from "../../base/types/goal.js";
 import type { DriveSystem } from "../../platform/drive/drive-system.js";

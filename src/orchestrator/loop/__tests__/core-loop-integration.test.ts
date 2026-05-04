@@ -22,7 +22,7 @@ import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import { DriveSystem } from "../../../platform/drive/drive-system.js";
 import { SessionManager } from "../../execution/session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
-import { CoreLoop } from "../core-loop.js";
+import { CoreLoop } from "../durable-loop.js";
 import { AdapterRegistry } from "../../execution/adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
 import { HookManager } from "../../../runtime/hook-manager.js";

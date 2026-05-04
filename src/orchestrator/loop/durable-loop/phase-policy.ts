@@ -1,0 +1,175 @@
+import type { CorePhaseKind } from "../../execution/agent-loop/core-phase-runner.js";
+import type { AgentLoopBudget } from "../../execution/agent-loop/agent-loop-budget.js";
+
+export interface CorePhasePolicy {
+  enabled: boolean;
+  maxInvocationsPerIteration: number;
+  budget: Partial<AgentLoopBudget>;
+  allowedTools: readonly string[];
+  requiredTools: readonly string[];
+  failPolicy: "return_low_confidence" | "fallback_deterministic" | "fail_cycle";
+}
+
+export interface CorePhasePolicyRegistry {
+  get(phase: CorePhaseKind): CorePhasePolicy;
+}
+
+const DEFAULT_POLICY: CorePhasePolicy = {
+  enabled: false,
+  maxInvocationsPerIteration: 1,
+  budget: {
+    maxModelTurns: 6,
+    maxToolCalls: 12,
+    maxWallClockMs: 90_000,
+    maxConsecutiveToolErrors: 2,
+    maxRepeatedToolCalls: 2,
+    maxSchemaRepairAttempts: 1,
+    maxCompletionValidationAttempts: 1,
+    maxCompactions: 1,
+    compactionMaxMessages: 6,
+  },
+  allowedTools: [],
+  requiredTools: [],
+  failPolicy: "fallback_deterministic",
+};
+
+export const defaultCorePhasePolicies: Record<CorePhaseKind, CorePhasePolicy> = {
+  observe_evidence: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    allowedTools: [
+      "read-pulseed-file",
+      "glob",
+      "grep",
+      "git_log",
+      "shell_command",
+      "soil_query",
+      "tool_search",
+    ],
+  },
+  wait_observation: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    budget: {
+      ...DEFAULT_POLICY.budget,
+      maxModelTurns: 3,
+      maxToolCalls: 8,
+      maxWallClockMs: 45_000,
+      maxRepeatedToolCalls: 1,
+    },
+    allowedTools: [
+      "process_session_read",
+      "process_session_list",
+      "kaggle_experiment_read",
+      "kaggle_experiment_list",
+      "kaggle_metric_report",
+      "process-status",
+      "goal_state",
+      "task_get",
+      "progress_history",
+      "read-pulseed-file",
+      "json_query",
+      "glob",
+    ],
+    requiredTools: ["process_session_read", "process_session_list"],
+    failPolicy: "return_low_confidence",
+  },
+  knowledge_refresh: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    allowedTools: [
+      "soil_query",
+      "knowledge_query",
+      "memory_recall",
+      "glob",
+      "grep",
+      "read-pulseed-file",
+    ],
+    requiredTools: ["soil_query"],
+    failPolicy: "return_low_confidence",
+  },
+  stall_investigation: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    allowedTools: [
+      "progress_history",
+      "session_history",
+      "git_log",
+      "shell_command",
+      "soil_query",
+      "task_get",
+    ],
+    failPolicy: "return_low_confidence",
+  },
+  replanning_options: {
+    ...DEFAULT_POLICY,
+    enabled: false,
+    allowedTools: [
+      "task_get",
+      "goal_state",
+      "soil_query",
+      "read-plan",
+      "session_history",
+      "memory_recall",
+    ],
+    failPolicy: "fallback_deterministic",
+  },
+  public_research: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    budget: {
+      ...DEFAULT_POLICY.budget,
+      maxModelTurns: 4,
+      maxToolCalls: 4,
+      maxWallClockMs: 60_000,
+      maxRepeatedToolCalls: 1,
+    },
+    allowedTools: [
+      "research_web",
+      "research_answer_with_sources",
+    ],
+    requiredTools: ["research_answer_with_sources"],
+    failPolicy: "return_low_confidence",
+  },
+  dream_review_checkpoint: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    budget: {
+      ...DEFAULT_POLICY.budget,
+      maxModelTurns: 3,
+      maxToolCalls: 5,
+      maxWallClockMs: 45_000,
+      maxRepeatedToolCalls: 1,
+    },
+    allowedTools: [
+      "soil_query",
+      "knowledge_query",
+      "memory_recall",
+    ],
+    requiredTools: ["soil_query"],
+    failPolicy: "return_low_confidence",
+  },
+  verification_evidence: {
+    ...DEFAULT_POLICY,
+    enabled: true,
+    allowedTools: [
+      "test-runner",
+      "shell_command",
+      "git_diff",
+      "read-pulseed-file",
+      "grep",
+      "soil_query",
+    ],
+    failPolicy: "fallback_deterministic",
+  },
+};
+
+export class StaticCorePhasePolicyRegistry implements CorePhasePolicyRegistry {
+  constructor(
+    private readonly policies: Partial<Record<CorePhaseKind, CorePhasePolicy>> = defaultCorePhasePolicies,
+  ) {}
+
+  get(phase: CorePhaseKind): CorePhasePolicy {
+    return this.policies[phase] ?? DEFAULT_POLICY;
+  }
+}

@@ -19,7 +19,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 
-import { CoreLoop, type CoreLoopDeps } from "../../src/orchestrator/loop/core-loop.js";
+import { CoreLoop, type CoreLoopDeps } from "../../src/orchestrator/loop/durable-loop.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../src/orchestrator/execution/adapter-layer.js";
 import type { Goal } from "../../src/base/types/goal.js";
