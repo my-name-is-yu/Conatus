@@ -83,7 +83,7 @@ function getOperationProgressMessageId(turnId: string, itemId: string): string {
   return `operation-progress:${turnId}:${itemId}`;
 }
 
-function renderTimelineItem(item: AgentTimelineItem): string {
+export function renderAgentTimelineItemForChat(item: AgentTimelineItem): string {
   switch (item.kind) {
     case "lifecycle":
       if (item.status === "resumed") {
@@ -338,7 +338,7 @@ export function applyChatEventToMessages(
 
   if (event.type === "agent_timeline") {
     if (event.item.visibility !== "user") return messages;
-    const text = renderTimelineItem(event.item).trim();
+    const text = renderAgentTimelineItemForChat(event.item).trim();
     if (!text) return messages;
     return upsertMessage(messages, {
       id: getTimelineMessageId(event.turnId, event.item),
