@@ -129,20 +129,26 @@ function runSpecConfirmationDecision(decision: "approve" | "cancel" | "unknown" 
 }
 
 describe("CrossPlatformChatSessionManager", () => {
-  it("routes gateway natural-language long-running requests into a typed RunSpec draft", async () => {
+  it("routes gateway natural-language long-running requests into the native AgentLoop", async () => {
     const baseDir = makeTempDir();
     try {
       const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
       const adapter = makeMockAdapter();
-      const chatAgentLoopRunner = { execute: vi.fn() };
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "AgentLoop received long-running Kaggle request.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      };
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         stateManager,
         adapter,
         chatAgentLoopRunner: chatAgentLoopRunner as never,
-        llmClient: createMockLLMClient([
-          runSpecFreeformDecision(),
-          runSpecDraftDecision(),
-        ]),
+        llmClient: createMockLLMClient([]),
       }));
 
       const result = await manager.execute("Please keep improving this Kaggle run until score exceeds 0.98.", {
@@ -156,30 +162,33 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running run:");
-      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).toContain("AgentLoop received long-running Kaggle request.");
       expect(adapter.execute).not.toHaveBeenCalled();
-      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
-      const [fileName] = fs.readdirSync(`${baseDir}/run-specs`);
-      const stored = JSON.parse(fs.readFileSync(`${baseDir}/run-specs/${fileName}`, "utf8"));
-      expect(stored.status).toBe("draft");
-      expect(stored.origin.channel).toBe("plugin_gateway");
-      expect(stored.origin.reply_target).toMatchObject({
-        conversation_id: "telegram-chat-1",
-        message_id: "message-1",
-        identity_key: "telegram:user-1",
-      });
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledWith(expect.objectContaining({
+        message: "Please keep improving this Kaggle run until score exceeds 0.98.",
+        cwd: "/repo/kaggle",
+      }));
+      expect(fs.existsSync(`${baseDir}/run-specs`)).toBe(false);
     } finally {
       cleanupTempDir(baseDir);
     }
   });
 
-  it("keeps gateway long-running requests on RunSpec when freeform routing over-classifies configuration", async () => {
+  it("routes Japanese DurableLoop/Kaggle text into AgentLoop despite legacy configure over-classification", async () => {
     const baseDir = makeTempDir();
     try {
       const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
       const adapter = makeMockAdapter();
-      const chatAgentLoopRunner = { execute: vi.fn() };
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "AgentLoop handles Japanese DurableLoop request.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      };
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         stateManager,
         adapter,
@@ -199,12 +208,14 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running run:");
-      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).toContain("AgentLoop handles Japanese DurableLoop request.");
       expect(result.output).not.toContain("setup/configuration");
       expect(adapter.execute).not.toHaveBeenCalled();
-      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
-      expect(fs.readdirSync(`${baseDir}/run-specs`)).toHaveLength(1);
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledWith(expect.objectContaining({
+        message: "DurableloopのほうでKaggleのタスクに取り組んで",
+        cwd: "/repo/kaggle",
+      }));
+      expect(fs.existsSync(`${baseDir}/run-specs`)).toBe(false);
     } finally {
       cleanupTempDir(baseDir);
     }
@@ -215,12 +226,10 @@ describe("CrossPlatformChatSessionManager", () => {
     try {
       const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
       const adapter = makeMockAdapter();
-      const chatAgentLoopRunner = { execute: vi.fn() };
       const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         stateManager,
         adapter,
-        chatAgentLoopRunner: chatAgentLoopRunner as never,
         daemonClient: daemonClient as never,
         llmClient: createMockLLMClient([
           runSpecFreeformDecision(),
@@ -255,7 +264,6 @@ describe("CrossPlatformChatSessionManager", () => {
       expect(approved.output).toContain("Started daemon-backed DurableLoop goal:");
       expect(daemonClient.startGoal).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
-      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
 
       const [runFileName] = fs.readdirSync(`${baseDir}/runtime/background-runs`);
       const run = JSON.parse(fs.readFileSync(`${baseDir}/runtime/background-runs/${runFileName}`, "utf8"));
@@ -674,7 +682,7 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
-  it("does not preempt ordinary disallowed gateway setup when runtime-control service is wired", async () => {
+  it("routes ordinary disallowed gateway setup through AgentLoop when no runtime-control intent is present", async () => {
     const stateManager = makeMockStateManager();
     const adapter = makeMockAdapter();
     const runtimeControlService = {
@@ -686,7 +694,7 @@ describe("CrossPlatformChatSessionManager", () => {
     const chatAgentLoopRunner = {
       execute: vi.fn().mockResolvedValue({
         success: true,
-        output: "agent loop should not run",
+        output: "AgentLoop can choose setup tools.",
         error: null,
         exit_code: null,
         elapsed_ms: 42,
@@ -713,10 +721,12 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain("Telegram gateway status");
-    expect(result.output).toContain("chat-assisted setup");
+    expect(result.output).toContain("AgentLoop can choose setup tools.");
     expect(runtimeControlService.request).not.toHaveBeenCalled();
-    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(chatAgentLoopRunner.execute).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Telegram bot setup help",
+      cwd: "/repo",
+    }));
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
@@ -744,7 +754,6 @@ describe("CrossPlatformChatSessionManager", () => {
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
       llmClient: createMockLLMClient([
-        "not a freeform route decision",
         JSON.stringify({
           intent: "restart_daemon",
           reason: "PulSeed を再起動して",
@@ -1214,13 +1223,13 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(runtimeControlService.request).not.toHaveBeenCalled();
   });
 
-  it("routes gateway Telegram setup requests to configure guidance before agent-loop execution", async () => {
+  it("routes non-exact gateway setup phrasing through AgentLoop when no secret is supplied", async () => {
     const stateManager = makeMockStateManager();
     const adapter = makeMockAdapter();
     const chatAgentLoopRunner = {
       execute: vi.fn().mockResolvedValue({
         success: true,
-        output: "agent loop should not run",
+        output: "AgentLoop can choose setup tools.",
         error: null,
         exit_code: null,
         elapsed_ms: 42,
@@ -1250,10 +1259,11 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain("Telegram gateway status");
-    expect(result.output).toContain("chat-assisted setup");
-    expect(result.output).toContain("pulseed daemon status");
-    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(result.output).toContain("AgentLoop can choose setup tools.");
+    expect(chatAgentLoopRunner.execute).toHaveBeenCalledWith(expect.objectContaining({
+      message: "telegramからseedyと会話できるようにしたい",
+      cwd: "/repo",
+    }));
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 

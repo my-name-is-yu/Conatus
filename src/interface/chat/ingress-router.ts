@@ -87,8 +87,8 @@ export type SelectedChatRoute =
     }
   | {
       kind: "runtime_control_blocked";
-      reason: "runtime_control_unavailable" | "runtime_control_disallowed";
-      intent: RuntimeControlIntent;
+      reason: "runtime_control_unavailable" | "runtime_control_disallowed" | "runtime_control_unclassified";
+      intent?: RuntimeControlIntent;
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
@@ -102,6 +102,7 @@ export interface IngressRouterCapabilities {
   freeformRouteIntent?: FreeformRouteIntent | null;
   setupSecretIntake?: SetupSecretIntakeResult | null;
   runSpecDraft?: RunSpec | null;
+  runtimeControlExplicitButUnclassified?: boolean;
 }
 
 function selectRouteForText(
@@ -121,6 +122,14 @@ function selectRouteForText(
   };
   const canUseRuntimeControlRoute =
     runtimeControl.allowed && runtimeControl.approvalMode !== "disallowed";
+
+  if (deps.runtimeControlExplicitButUnclassified === true) {
+    return {
+      kind: "runtime_control_blocked",
+      reason: "runtime_control_unclassified",
+      ...runtimeControlPolicy,
+    };
+  }
 
   if (canUseRuntimeControlRoute) {
     const intent = deps.runtimeControlIntent ?? null;
@@ -190,6 +199,14 @@ function selectRouteForText(
     };
   }
 
+  if (deps.hasAgentLoop) {
+    return {
+      kind: "agent_loop",
+      reason: "agent_loop_available",
+      ...baseTurnPolicy,
+    };
+  }
+
   const freeformIntent = deps.freeformRouteIntent ?? null;
   if (freeformIntent && freeformIntent.confidence >= 0.7) {
     if (freeformIntent.kind === "assist" || freeformIntent.kind === "configure" || freeformIntent.kind === "clarify") {
@@ -206,14 +223,6 @@ function selectRouteForText(
       kind: "clarify",
       reason: "freeform_semantic_route",
       intent: { ...freeformIntent, kind: "clarify" },
-      ...baseTurnPolicy,
-    };
-  }
-
-  if (deps.hasAgentLoop) {
-    return {
-      kind: "agent_loop",
-      reason: "agent_loop_available",
       ...baseTurnPolicy,
     };
   }

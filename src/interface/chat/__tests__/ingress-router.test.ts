@@ -118,6 +118,30 @@ describe("IngressRouter", () => {
     expect(route.reason).toBe("runtime_control_disallowed");
   });
 
+  it("fails closed for explicit runtime-control metadata when intent is unclassified", () => {
+    const route = router.selectRoute(
+      buildStandaloneIngressMessage({
+        text: "do the protected lifecycle thing",
+        channel: "plugin_gateway",
+        platform: "telegram",
+        runtimeControl: {
+          allowed: false,
+          approvalMode: "disallowed",
+        },
+        metadata: { runtime_control_explicit: true },
+      }),
+      {
+        hasAgentLoop: true,
+        hasToolLoop: true,
+        hasRuntimeControlService: true,
+        runtimeControlExplicitButUnclassified: true,
+      }
+    );
+
+    expect(route.kind).toBe("runtime_control_blocked");
+    expect(route.reason).toBe("runtime_control_unclassified");
+  });
+
   it("keeps long-running natural-language work on agent_loop so tools can decide handoff", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({

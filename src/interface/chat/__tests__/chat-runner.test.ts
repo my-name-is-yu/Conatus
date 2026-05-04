@@ -3195,7 +3195,7 @@ describe("ChatRunner", () => {
       const result = await runner.execute("Do something", "/repo");
 
       expect((chatAgentLoopRunner.execute as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
-      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
+      expect(llmClient.sendMessage).not.toHaveBeenCalled();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Native agentloop response");
@@ -3275,7 +3275,7 @@ describe("ChatRunner", () => {
       const result = await runner.execute("What route should answer this?", "/repo");
 
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
+      expect(llmClient.sendMessage).not.toHaveBeenCalled();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Agentloop direct answer");
@@ -4434,9 +4434,6 @@ describe("ChatRunner", () => {
         stateManager,
         adapter,
         llmClient,
-        chatAgentLoopRunner: {
-          execute: vi.fn(),
-        } as unknown as ChatAgentLoopRunner,
       }));
 
       const result = await runner.execute(
@@ -4462,12 +4459,19 @@ describe("ChatRunner", () => {
       });
     });
 
-    it("lets typed RunSpec derivation override an over-broad configure route", async () => {
+    it("routes Japanese DurableLoop/Kaggle text into AgentLoop despite legacy configure over-classification", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-configure-override-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
       const adapter = makeMockAdapter();
       const chatAgentLoopRunner = {
-        execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "AgentLoop received Japanese DurableLoop request.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
       } as unknown as ChatAgentLoopRunner;
       const llmClient = createMockLLMClient([
         JSON.stringify({
@@ -4491,15 +4495,14 @@ describe("ChatRunner", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running run:");
-      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).toContain("AgentLoop received Japanese DurableLoop request.");
       expect(result.output).not.toContain("setup/configuration");
       expect(adapter.execute).not.toHaveBeenCalled();
-      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
-      expect(stored.status).toBe("draft");
-      expect(stored.profile).toBe("kaggle");
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledWith(expect.objectContaining({
+        message: "DurableloopのほうでKaggleのタスクに取り組んで",
+        cwd: "/repo/kaggle",
+      }));
+      expect(fs.existsSync(path.join(baseDir, "run-specs"))).toBe(false);
     });
 
     it("starts a confirmed RunSpec only after next-turn approval", async () => {

@@ -88,7 +88,6 @@ import {
   executeToolLoopRoute,
   resolveSessionExecutionPolicy,
 } from "./chat-runner-routes.js";
-import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import {
   createRunSpecStore,
@@ -864,25 +863,19 @@ export class ChatRunner {
 
   private async resolveRouteFromIngress(ingress: ChatIngressMessage): Promise<SelectedChatRoute> {
     const capabilities = getRouteCapabilities(this.deps);
-    const shouldPreferFreeformBeforeDeniedRuntimeControl =
-      ingress.metadata["runtime_control_denied"] === true
-      && ingress.metadata["runtime_control_approved"] !== true
-      && ingress.metadata["runtime_control_explicit"] !== true
-      && capabilities.hasAgentLoop;
-    let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
-      ? await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient)
-      : null;
     const shouldClassifyRuntimeControl =
       (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
       || ingress.metadata["runtime_control_approved"] === true
       || ingress.metadata["runtime_control_denied"] === true
       || ingress.metadata["runtime_control_explicit"] === true;
-    const runtimeControlIntent = freeformRouteIntent === null && shouldClassifyRuntimeControl
+    const runtimeControlIntent = shouldClassifyRuntimeControl
       ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
       : null;
-    if (freeformRouteIntent === null && runtimeControlIntent === null && capabilities.hasAgentLoop) {
-      freeformRouteIntent = await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient);
-    }
+    const runtimeControlExplicitButUnclassified =
+      runtimeControlIntent === null
+      && ingress.metadata["runtime_control_explicit"] === true
+      && ingress.runtimeControl.approvalMode === "disallowed";
+    const freeformRouteIntent = null;
     const shouldDeriveRunSpecDraft =
       runtimeControlIntent === null
       && freeformRouteIntent !== null
@@ -912,6 +905,7 @@ export class ChatRunner {
     return standaloneIngressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
+      runtimeControlExplicitButUnclassified,
       freeformRouteIntent,
       setupSecretIntake: this.setupSecretIntake,
       runSpecDraft,

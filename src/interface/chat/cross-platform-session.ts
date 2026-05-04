@@ -12,7 +12,6 @@ import {
   type SelectedChatRoute,
 } from "./ingress-router.js";
 import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
-import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
 import { StateManager } from "../../base/state/state-manager.js";
@@ -815,25 +814,19 @@ export class CrossPlatformChatSessionManager {
     };
     const setupSecretIntake = intakeSetupSecrets(ingress.text);
     const safeIngressText = setupSecretIntake.redactedText;
-    const shouldPreferFreeformBeforeDeniedRuntimeControl =
-      ingress.metadata["runtime_control_denied"] === true
-      && ingress.metadata["runtime_control_approved"] !== true
-      && ingress.metadata["runtime_control_explicit"] !== true
-      && capabilities.hasAgentLoop;
-    let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
-      ? await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient)
-      : null;
     const shouldClassifyRuntimeControl =
       (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
       || ingress.metadata["runtime_control_approved"] === true
       || ingress.metadata["runtime_control_denied"] === true
       || ingress.metadata["runtime_control_explicit"] === true;
-    const runtimeControlIntent = freeformRouteIntent === null && shouldClassifyRuntimeControl
+    const runtimeControlIntent = shouldClassifyRuntimeControl
       ? await recognizeRuntimeControlIntent(safeIngressText, this.deps.llmClient)
       : null;
-    if (freeformRouteIntent === null && runtimeControlIntent === null && capabilities.hasAgentLoop) {
-      freeformRouteIntent = await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient);
-    }
+    const runtimeControlExplicitButUnclassified =
+      runtimeControlIntent === null
+      && ingress.metadata["runtime_control_explicit"] === true
+      && ingress.runtimeControl.approvalMode === "disallowed";
+    const freeformRouteIntent = null;
     const shouldDeriveRunSpecDraft =
       runtimeControlIntent === null
       && freeformRouteIntent !== null
@@ -863,6 +856,7 @@ export class CrossPlatformChatSessionManager {
     const selectedRoute = this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
+      runtimeControlExplicitButUnclassified,
       freeformRouteIntent,
       setupSecretIntake,
       runSpecDraft,
