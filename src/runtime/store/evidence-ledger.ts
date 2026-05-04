@@ -23,7 +23,12 @@ import {
   MemoryVerificationStatusSchema,
   type MemoryProvenance,
 } from "../../platform/corrections/memory-quarantine.js";
-import { summarizeEvidenceMetricTrends, type MetricTrendContext } from "./metric-history.js";
+import {
+  extractMetricObservationsFromEvidence,
+  summarizeEvidenceMetricTrends,
+  type MetricObservation,
+  type MetricTrendContext,
+} from "./metric-history.js";
 import {
   summarizeEvidenceEvaluatorResults,
   type RuntimeEvaluatorCalibrationContext,
@@ -718,7 +723,44 @@ export interface RuntimeEvidenceSummaryIndex {
   canonical_log_size: number;
   canonical_log_mtime_ms: number;
   summary: RuntimeEvidenceSummary;
+  append_state?: RuntimeEvidenceSummaryAppendState;
   checkpoint?: RuntimeEvidenceSummaryCheckpoint;
+}
+
+interface RuntimeEvidenceSummaryAppendState {
+  schema_version: "runtime-evidence-summary-append-state-v1";
+  warnings: RuntimeEvidenceReadWarning[];
+  primary_metric?: ComparableMetricKey;
+  metric_observations?: RuntimeEvidenceSummaryMetricObservationState[];
+}
+
+interface RuntimeEvidenceSummaryMetricObservationState {
+  metric_key: string;
+  direction: "maximize" | "minimize";
+  count: number;
+  confidence_sum: number;
+  first_value: number;
+  first_normalized: number;
+  first_observed_at: string;
+  latest_value: number;
+  latest_normalized: number;
+  latest_observed_at: string;
+  best_value: number;
+  best_normalized: number;
+  best_observed_at: string;
+  previous_best_normalized: number;
+  last_meaningful_improvement_delta: number | null;
+  last_meaningful_improvement_observed_at: string | null;
+  last_meaningful_improvement_index: number | null;
+  last_breakthrough_delta: number | null;
+  post_improvement_min_normalized: number;
+  post_improvement_max_normalized: number;
+  recent: Array<{
+    value: number;
+    normalized: number;
+    observed_at: string;
+    source: MetricObservation["source"];
+  }>;
 }
 
 interface RuntimeEvidenceSummaryCheckpoint {
@@ -788,9 +830,9 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
     await Promise.all([...targets].map(async (target) => {
       await withSummaryIndexUpdateLock(target, async () => {
         await fsp.mkdir(path.dirname(target), { recursive: true });
-        const preAppendCheckpoint = await readPreAppendCheckpoint(target);
+        const preAppendIndex = await readPreAppendSummaryIndex(target);
         await fsp.appendFile(target, `${JSON.stringify(entry)}\n`, "utf8");
-        await updateSummaryIndexAfterAppend(target, this.paths, [entry], preAppendCheckpoint);
+        await updateSummaryIndexAfterAppend(target, this.paths, [entry], preAppendIndex);
       });
     }));
     return [entry];
@@ -861,7 +903,14 @@ async function rebuildSummaryIndex(canonicalPath: string, paths: RuntimeStorePat
   const read = await readEvidenceFile(canonicalPath);
   const manifests = await readReproducibilityManifests(paths, scope);
   const summary = summarizeEvidence(scope, read, manifests);
-  await writeSummaryIndex(canonicalPath, summary, manifests.length === 0 ? read : undefined);
+  const activeRead = manifests.length === 0 ? activeEvidenceRead(read) : null;
+  await writeSummaryIndex(canonicalPath, summary, activeRead
+    ? {
+        warnings: read.warnings,
+        primaryMetric: resolvePrimaryMetricKey([...activeRead.entries].reverse()) ?? undefined,
+        metricObservationState: buildMetricObservationState(activeRead.entries),
+      }
+    : undefined);
   return summary;
 }
 
@@ -888,7 +937,7 @@ async function updateSummaryIndexAfterAppend(
   canonicalPath: string,
   paths: RuntimeStorePaths,
   appendedEntries: RuntimeEvidenceEntry[],
-  preAppendCheckpoint: RuntimeEvidenceReadResult | null
+  preAppendIndex: RuntimeEvidenceSummaryIndex | null
 ): Promise<RuntimeEvidenceSummary> {
   const scope = summaryScopeFromPath(canonicalPath);
   const manifests = await readReproducibilityManifests(paths, scope);
@@ -896,16 +945,21 @@ async function updateSummaryIndexAfterAppend(
     return rebuildSummaryIndex(canonicalPath, paths);
   }
 
-  if (!preAppendCheckpoint) {
+  if (!preAppendIndex) {
     return rebuildSummaryIndex(canonicalPath, paths);
   }
 
-  const read: RuntimeEvidenceReadResult = {
-    entries: [...preAppendCheckpoint.entries, ...appendedEntries],
-    warnings: preAppendCheckpoint.warnings,
-  };
-  const summary = summarizeEvidence(scope, read);
-  await writeSummaryIndex(canonicalPath, summary, read);
+  const warnings = readWarningsFromSummaryIndex(preAppendIndex);
+  if (!warnings) return rebuildSummaryIndex(canonicalPath, paths);
+  const metricState = readMetricObservationStateFromSummaryIndex(preAppendIndex);
+  const primaryMetric = preAppendIndex.append_state?.primary_metric;
+  const summary = updateSummaryFromAppend(scope, preAppendIndex.summary, appendedEntries, warnings, metricState, primaryMetric);
+  if (!summary) return rebuildSummaryIndex(canonicalPath, paths);
+  await writeSummaryIndex(canonicalPath, summary, {
+    warnings,
+    primaryMetric,
+    metricObservationState: updateMetricObservationState(metricState, appendedEntries),
+  });
   return summary;
 }
 
@@ -963,18 +1017,36 @@ async function readSummaryIndex(
   return readSummaryIndexWithStat(canonicalPath, expectedScope);
 }
 
-async function readPreAppendCheckpoint(canonicalPath: string): Promise<RuntimeEvidenceReadResult | null> {
+async function readPreAppendSummaryIndex(canonicalPath: string): Promise<RuntimeEvidenceSummaryIndex | null> {
   try {
     const stat = await fsp.stat(canonicalPath);
-    if (stat.size === 0) return { entries: [], warnings: [] };
+    if (stat.size === 0) return emptySummaryIndex(canonicalPath);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { entries: [], warnings: [] };
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptySummaryIndex(canonicalPath);
     throw err;
   }
 
   const scope = summaryScopeFromPath(canonicalPath);
-  const index = await readSummaryIndexWithStat(canonicalPath, scope);
-  return index ? readCheckpointFromSummaryIndex(index) : null;
+  return readSummaryIndexWithStat(canonicalPath, scope);
+}
+
+async function emptySummaryIndex(canonicalPath: string): Promise<RuntimeEvidenceSummaryIndex> {
+  const scope = summaryScopeFromPath(canonicalPath);
+  const summary = summarizeEvidence(scope, { entries: [], warnings: [] });
+  return {
+    schema_version: "runtime-evidence-summary-index-v1",
+    generated_at: new Date().toISOString(),
+    canonical_log_path: canonicalPath,
+    canonical_log_size: 0,
+    canonical_log_mtime_ms: 0,
+    summary,
+    append_state: {
+      schema_version: "runtime-evidence-summary-append-state-v1",
+      warnings: [],
+      primary_metric: undefined,
+      metric_observations: [],
+    },
+  };
 }
 
 async function readSummaryIndexWithStat(
@@ -1033,6 +1105,50 @@ function readCheckpointFromSummaryIndex(index: RuntimeEvidenceSummaryIndex): Run
   return { entries, warnings };
 }
 
+function readWarningsFromSummaryIndex(index: RuntimeEvidenceSummaryIndex): RuntimeEvidenceReadWarning[] | null {
+  if (index.append_state?.schema_version === "runtime-evidence-summary-append-state-v1") {
+    return validateRuntimeEvidenceWarnings(index.append_state.warnings);
+  }
+  return readCheckpointFromSummaryIndex(index)?.warnings ?? null;
+}
+
+function readMetricObservationStateFromSummaryIndex(index: RuntimeEvidenceSummaryIndex): RuntimeEvidenceSummaryMetricObservationState[] | null {
+  const state = index.append_state?.metric_observations;
+  if (!state) return null;
+  if (!Array.isArray(state)) return null;
+  for (const group of state) {
+    if (
+      typeof group !== "object"
+      || group === null
+      || typeof group.metric_key !== "string"
+      || (group.direction !== "maximize" && group.direction !== "minimize")
+      || typeof group.count !== "number"
+      || !Array.isArray(group.recent)
+    ) {
+      return null;
+    }
+  }
+  return state;
+}
+
+function validateRuntimeEvidenceWarnings(value: unknown): RuntimeEvidenceReadWarning[] | null {
+  if (!Array.isArray(value)) return null;
+  const warnings: RuntimeEvidenceReadWarning[] = [];
+  for (const warning of value) {
+    if (
+      typeof warning !== "object"
+      || warning === null
+      || typeof (warning as RuntimeEvidenceReadWarning).file !== "string"
+      || typeof (warning as RuntimeEvidenceReadWarning).line !== "number"
+      || typeof (warning as RuntimeEvidenceReadWarning).message !== "string"
+    ) {
+      return null;
+    }
+    warnings.push(warning as RuntimeEvidenceReadWarning);
+  }
+  return warnings;
+}
+
 function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
   return summary.context_policy_version === "quarantine-filtered-planning-context-v2"
     && Array.isArray(summary.candidate_lineages)
@@ -1049,12 +1165,372 @@ function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean
     && summary.candidate_selection_summary !== null;
 }
 
+function updateSummaryFromAppend(
+  scope: RuntimeEvidenceSummary["scope"],
+  previous: RuntimeEvidenceSummary,
+  appendedEntries: RuntimeEvidenceEntry[],
+  warnings: RuntimeEvidenceReadWarning[],
+  metricState: RuntimeEvidenceSummaryMetricObservationState[] | null,
+  primaryMetric: ComparableMetricKey | undefined
+): RuntimeEvidenceSummary | null {
+  if (appendedEntries.length === 0) {
+    return {
+      ...previous,
+      generated_at: new Date().toISOString(),
+      warnings,
+    };
+  }
+  if (!canIncrementSummaryWithEntries(appendedEntries)) return null;
+  if (previous.total_entries > 0 && !primaryMetric) return null;
+  if (!canPreservePrimaryMetric(appendedEntries, primaryMetric)) return null;
+
+  const combinedRecent = [...appendedEntries, ...previous.recent_entries]
+    .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
+  const recentEntries = dedupeEvidenceEntriesById(combinedRecent).slice(0, 10);
+  const recentFailedAttempts = dedupeEvidenceEntriesById([
+    ...appendedEntries.filter(isFailedEvidenceEntry),
+    ...previous.recent_failed_attempts,
+  ].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))).slice(0, 5);
+  const latestStrategyCandidates = appendedEntries.filter((entry) =>
+    entry.kind === "strategy" || Boolean(entry.strategy) || Boolean(entry.decision_reason)
+  );
+  const latestStrategy = [...latestStrategyCandidates, previous.latest_strategy].filter((entry): entry is RuntimeEvidenceEntry => Boolean(entry))
+    .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))[0] ?? null;
+  const bestEvidence = updateBestEvidenceFromAppend(previous.best_evidence, appendedEntries, primaryMetric);
+  if (bestEvidence === undefined) return null;
+  if (!metricState) return null;
+  const metricTrends = summarizeMetricState(updateMetricObservationState(metricState, appendedEntries));
+
+  return {
+    ...previous,
+    generated_at: new Date().toISOString(),
+    scope,
+    total_entries: previous.total_entries + appendedEntries.length,
+    latest_strategy: latestStrategy,
+    best_evidence: bestEvidence,
+    metric_trends: metricTrends.length > 0 ? metricTrends : previous.metric_trends,
+    recent_failed_attempts: recentFailedAttempts,
+    recent_entries: recentEntries,
+    warnings,
+  };
+}
+
+function activeEvidenceRead(read: RuntimeEvidenceReadResult): RuntimeEvidenceReadResult {
+  const entries = [...read.entries].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+  const corrections = entries.flatMap((entry) => entry.correction ? [entry.correction] : []);
+  const correctionState = summarizeMemoryCorrectionState(corrections);
+  return {
+    entries: entries.filter((entry) => isRuntimeEvidenceEntryActive(entry, correctionState)),
+    warnings: read.warnings,
+  };
+}
+
+function updateBestEvidenceFromAppend(
+  previousBest: RuntimeEvidenceEntry | null,
+  appendedEntries: RuntimeEvidenceEntry[],
+  primaryMetric: ComparableMetricKey | undefined
+): RuntimeEvidenceEntry | null | undefined {
+  if (!primaryMetric) {
+    return chooseBestEvidence(
+      dedupeEvidenceEntriesById([
+        ...appendedEntries,
+        ...(previousBest ? [previousBest] : []),
+      ].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)))
+    );
+  }
+
+  let best = previousBest;
+  for (const entry of appendedEntries) {
+    const metric = findComparableMetric([entry], primaryMetric);
+    if (!metric) continue;
+    if (!best) {
+      best = entry;
+      continue;
+    }
+    const current = chooseBestEvidence([entry, best].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)));
+    if (!current) return undefined;
+    best = current;
+  }
+  return best;
+}
+
+function canPreservePrimaryMetric(
+  appendedEntries: RuntimeEvidenceEntry[],
+  primaryMetric: ComparableMetricKey | undefined
+): boolean {
+  if (!primaryMetric) return appendedEntries.every((entry) => entry.metrics.length === 0);
+  return appendedEntries.every((entry) =>
+    entry.metrics.every((metric) =>
+      metric.direction === undefined
+      || metric.direction === "neutral"
+      || (metric.label === primaryMetric.label && metric.direction === primaryMetric.direction)
+    )
+    && (!entry.task?.primary_dimension || entry.task.primary_dimension === primaryMetric.label)
+  );
+}
+
+function buildMetricObservationState(entries: RuntimeEvidenceEntry[]): RuntimeEvidenceSummaryMetricObservationState[] {
+  return updateMetricObservationState([], entries);
+}
+
+function updateMetricObservationState(
+  previous: RuntimeEvidenceSummaryMetricObservationState[] | null,
+  appendedEntries: RuntimeEvidenceEntry[]
+): RuntimeEvidenceSummaryMetricObservationState[] {
+  const groups = new Map<string, RuntimeEvidenceSummaryMetricObservationState>();
+  for (const group of previous ?? []) {
+    groups.set(`${group.metric_key}\0${group.direction}`, {
+      ...group,
+      recent: [...group.recent],
+    });
+  }
+  for (const observation of extractMetricObservationsFromEvidence(appendedEntries).sort((a, b) =>
+    a.observed_at.localeCompare(b.observed_at)
+  )) {
+    const key = `${observation.metric_key}\0${observation.direction}`;
+    const next = updateMetricState(groups.get(key), observation);
+    groups.set(key, next);
+  }
+  return [...groups.values()];
+}
+
+function updateMetricState(
+  previous: RuntimeEvidenceSummaryMetricObservationState | undefined,
+  observation: MetricObservation
+): RuntimeEvidenceSummaryMetricObservationState {
+  const normalized = observation.direction === "maximize" ? observation.value : -observation.value;
+  if (!previous) {
+    return {
+      metric_key: observation.metric_key,
+      direction: observation.direction,
+      count: 1,
+      confidence_sum: observation.confidence,
+      first_value: observation.value,
+      first_normalized: normalized,
+      first_observed_at: observation.observed_at,
+      latest_value: observation.value,
+      latest_normalized: normalized,
+      latest_observed_at: observation.observed_at,
+      best_value: observation.value,
+      best_normalized: normalized,
+      best_observed_at: observation.observed_at,
+      previous_best_normalized: normalized,
+      last_meaningful_improvement_delta: null,
+      last_meaningful_improvement_observed_at: null,
+      last_meaningful_improvement_index: null,
+      last_breakthrough_delta: null,
+      post_improvement_min_normalized: normalized,
+      post_improvement_max_normalized: normalized,
+      recent: [{ value: observation.value, normalized, observed_at: observation.observed_at, source: observation.source }],
+    };
+  }
+
+  const improvementThreshold = 0.01;
+  const breakthroughThreshold = 0.05;
+  const delta = normalized - previous.latest_normalized;
+  const meaningful = delta >= improvementThreshold;
+  const breakthrough = delta >= breakthroughThreshold;
+  const count = previous.count + 1;
+  const bestImproved = normalized > previous.best_normalized;
+  const postMin = meaningful ? normalized : Math.min(previous.post_improvement_min_normalized, normalized);
+  const postMax = meaningful ? normalized : Math.max(previous.post_improvement_max_normalized, normalized);
+  return {
+    ...previous,
+    count,
+    confidence_sum: previous.confidence_sum + observation.confidence,
+    latest_value: observation.value,
+    latest_normalized: normalized,
+    latest_observed_at: observation.observed_at,
+    best_value: bestImproved ? observation.value : previous.best_value,
+    best_normalized: bestImproved ? normalized : previous.best_normalized,
+    best_observed_at: bestImproved ? observation.observed_at : previous.best_observed_at,
+    previous_best_normalized: previous.best_normalized,
+    last_meaningful_improvement_delta: meaningful ? delta : previous.last_meaningful_improvement_delta,
+    last_meaningful_improvement_observed_at: meaningful
+      ? observation.observed_at
+      : previous.last_meaningful_improvement_observed_at,
+    last_meaningful_improvement_index: meaningful ? count - 1 : previous.last_meaningful_improvement_index,
+    last_breakthrough_delta: breakthrough ? delta : previous.last_breakthrough_delta,
+    post_improvement_min_normalized: postMin,
+    post_improvement_max_normalized: postMax,
+    recent: [
+      ...previous.recent,
+      { value: observation.value, normalized, observed_at: observation.observed_at, source: observation.source },
+    ].slice(-5),
+  };
+}
+
+function summarizeMetricState(states: RuntimeEvidenceSummaryMetricObservationState[]): MetricTrendContext[] {
+  return states.map(metricTrendFromState);
+}
+
+function metricTrendFromState(state: RuntimeEvidenceSummaryMetricObservationState): MetricTrendContext {
+  const improvementThreshold = 0.01;
+  const breakthroughThreshold = 0.05;
+  const noiseBand = 0.005;
+  const recentValues = state.recent.map((entry) => entry.normalized);
+  const recentSlope = linearSlope(recentValues);
+  const minRecent = Math.min(...recentValues);
+  const maxRecent = Math.max(...recentValues);
+  const recentRange = maxRecent - minRecent;
+  const latestBestDelta = state.latest_normalized - state.previous_best_normalized;
+  const latestDeltaFromBest = state.latest_normalized - state.best_normalized;
+  const latestDeltaFromFirst = state.latest_normalized - state.first_normalized;
+  const bestDelta = state.best_normalized - state.first_normalized;
+  const postImprovementRange = state.post_improvement_max_normalized - state.post_improvement_min_normalized;
+  const observationsSinceLastMeaningfulImprovement = state.last_meaningful_improvement_index === null
+    ? null
+    : (state.count - 1) - state.last_meaningful_improvement_index;
+  const trend = classifyCompactMetricTrend({
+    count: state.count,
+    latestBestDelta,
+    latestDeltaFromBest,
+    latestDeltaFromFirst,
+    bestDelta,
+    recentSlope,
+    recentRange,
+    postImprovementRange,
+    observationsSinceLastMeaningfulImprovement,
+    improvementThreshold,
+    breakthroughThreshold,
+    noiseBand,
+  });
+  const meanConfidence = state.confidence_sum / state.count;
+  const sampleConfidence = Math.min(1, state.count / 5);
+  const trendConfidence = trend === "noisy"
+    ? Math.max(0.35, Math.min(0.75, noiseBand / Math.max(recentRange, Number.EPSILON)))
+    : 1;
+  const confidence = clamp01(meanConfidence * sampleConfidence * trendConfidence);
+  return {
+    metric_key: state.metric_key,
+    direction: state.direction,
+    trend,
+    latest_value: state.latest_value,
+    latest_observed_at: state.latest_observed_at,
+    best_value: state.best_value,
+    best_observed_at: state.best_observed_at,
+    observation_count: state.count,
+    recent_slope_per_observation: denormalizeMetricDelta(recentSlope, state.direction),
+    best_delta: denormalizeMetricDelta(bestDelta, state.direction),
+    last_meaningful_improvement_delta: state.last_meaningful_improvement_delta === null
+      ? null
+      : denormalizeMetricDelta(state.last_meaningful_improvement_delta, state.direction),
+    last_breakthrough_delta: state.last_breakthrough_delta === null
+      ? null
+      : denormalizeMetricDelta(state.last_breakthrough_delta, state.direction),
+    time_since_last_meaningful_improvement_ms: state.last_meaningful_improvement_observed_at
+      ? Math.max(0, Date.now() - Date.parse(state.last_meaningful_improvement_observed_at))
+      : null,
+    improvement_threshold: denormalizeMetricDelta(improvementThreshold, state.direction),
+    breakthrough_threshold: denormalizeMetricDelta(breakthroughThreshold, state.direction),
+    noise_band: denormalizeMetricDelta(noiseBand, state.direction),
+    confidence,
+    source_refs: state.recent.map((entry) => entry.source),
+    summary: `${state.metric_key} trend is ${trend} from ${state.count} observation(s); latest=${state.latest_value}, best=${state.best_value}`,
+  };
+}
+
+function classifyCompactMetricTrend(input: {
+  count: number;
+  latestBestDelta: number;
+  latestDeltaFromBest: number;
+  latestDeltaFromFirst: number;
+  bestDelta: number;
+  recentSlope: number;
+  recentRange: number;
+  postImprovementRange: number;
+  observationsSinceLastMeaningfulImprovement: number | null;
+  improvementThreshold: number;
+  breakthroughThreshold: number;
+  noiseBand: number;
+}): MetricTrendContext["trend"] {
+  if (input.count < 2) return "noisy";
+  if (input.latestBestDelta >= input.breakthroughThreshold) return "breakthrough";
+  if (input.latestBestDelta >= input.improvementThreshold) return "improving";
+  if (input.latestDeltaFromBest <= -input.improvementThreshold) return "regressing";
+  if (
+    input.observationsSinceLastMeaningfulImprovement !== null
+    && input.observationsSinceLastMeaningfulImprovement >= 2
+    && input.postImprovementRange <= input.noiseBand
+  ) {
+    return "stalled";
+  }
+  if (input.latestDeltaFromFirst <= -input.improvementThreshold || input.recentSlope <= -input.improvementThreshold) {
+    return "regressing";
+  }
+  if (input.recentSlope >= input.improvementThreshold) return "improving";
+  if (input.recentRange === 0 || input.recentRange <= Number.EPSILON) return "stalled";
+  if (input.recentRange <= input.noiseBand || Math.abs(input.recentSlope) < input.noiseBand) {
+    return input.bestDelta >= input.improvementThreshold ? "stalled" : "noisy";
+  }
+  if (input.bestDelta < input.improvementThreshold) return "stalled";
+  return "noisy";
+}
+
+function linearSlope(values: number[]): number {
+  if (values.length < 2) return 0;
+  const n = values.length;
+  const meanX = (n - 1) / 2;
+  const meanY = values.reduce((sum, value) => sum + value, 0) / n;
+  let numerator = 0;
+  let denominator = 0;
+  for (let index = 0; index < n; index += 1) {
+    const dx = index - meanX;
+    numerator += dx * (values[index]! - meanY);
+    denominator += dx * dx;
+  }
+  return denominator === 0 ? 0 : numerator / denominator;
+}
+
+function denormalizeMetricDelta(delta: number, direction: "maximize" | "minimize"): number {
+  return direction === "maximize" ? delta : -delta;
+}
+
+function canIncrementSummaryWithEntries(entries: RuntimeEvidenceEntry[]): boolean {
+  return entries.every((entry) =>
+    entry.kind !== "correction"
+    && entry.kind !== "failure"
+    && entry.outcome !== "failed"
+    && entry.outcome !== "regressed"
+    && entry.result?.status !== "failed"
+    && entry.verification?.verdict !== "fail"
+    && !entry.correction
+    && !entry.correction_state
+    && !entry.evaluators?.length
+    && !entry.research?.length
+    && !entry.dream_checkpoints?.length
+    && !entry.divergent_exploration?.length
+    && !entry.candidates?.length
+    && !entry.artifacts.length
+    && !entry.quarantine_state
+    && entry.verification_status !== "suspicious"
+    && entry.verification_status !== "contradicted"
+    && !isSuspiciousProvenance(entry.provenance)
+  );
+}
+
+function dedupeEvidenceEntriesById(entries: RuntimeEvidenceEntry[]): RuntimeEvidenceEntry[] {
+  const seen = new Set<string>();
+  const unique: RuntimeEvidenceEntry[] = [];
+  for (const entry of entries) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    unique.push(entry);
+  }
+  return unique;
+}
+
 async function writeSummaryIndex(
   canonicalPath: string,
   summary: RuntimeEvidenceSummary,
-  checkpointRead?: RuntimeEvidenceReadResult
+  checkpointRead?: RuntimeEvidenceReadResult | {
+    warnings: RuntimeEvidenceReadWarning[];
+    primaryMetric?: ComparableMetricKey;
+    metricObservationState?: RuntimeEvidenceSummaryMetricObservationState[];
+  }
 ): Promise<void> {
   const stat = await fsp.stat(canonicalPath);
+  const warnings = checkpointRead ? checkpointRead.warnings : [];
   const index: RuntimeEvidenceSummaryIndex = {
     schema_version: "runtime-evidence-summary-index-v1",
     generated_at: new Date().toISOString(),
@@ -1062,12 +1538,22 @@ async function writeSummaryIndex(
     canonical_log_size: stat.size,
     canonical_log_mtime_ms: stat.mtimeMs,
     summary,
-    ...(checkpointRead
+    append_state: {
+      schema_version: "runtime-evidence-summary-append-state-v1",
+      warnings,
+      ...(checkpointRead && "primaryMetric" in checkpointRead && checkpointRead.primaryMetric
+        ? { primary_metric: checkpointRead.primaryMetric }
+        : {}),
+      metric_observations: checkpointRead && "metricObservationState" in checkpointRead
+        ? checkpointRead.metricObservationState
+        : buildMetricObservationState(summary.recent_entries),
+    },
+    ...(checkpointRead && "entries" in checkpointRead
       ? {
           checkpoint: {
             schema_version: "runtime-evidence-summary-checkpoint-v1",
             entries: checkpointRead.entries,
-            warnings: checkpointRead.warnings,
+            warnings,
           },
         }
       : {}),
