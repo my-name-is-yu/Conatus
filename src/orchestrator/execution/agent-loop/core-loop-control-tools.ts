@@ -5,7 +5,7 @@ import type { Goal } from "../../../base/types/goal.js";
 import { DaemonClient, isDaemonRunning, type DaemonStartGoalOptions } from "../../../runtime/daemon/client.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../../tools/types.js";
 
-export interface CoreLoopControlToolset {
+export interface DurableLoopControlToolset {
   goalStatus(input: { goalId: string }): Promise<unknown>;
   goalCreate?(input: { description: string }): Promise<unknown>;
   tendGoal?(input: { description: string; parentSessionId?: string; notifyPolicy?: "silent" | "done_only" | "state_changes" }): Promise<unknown>;
@@ -17,6 +17,9 @@ export interface CoreLoopControlToolset {
   taskPrioritize?(input: { goalId: string; taskId: string; priority: number }): Promise<unknown>;
   runCycle?(input: { goalId: string; maxIterations?: number }): Promise<unknown>;
 }
+
+/** @deprecated Use DurableLoopControlToolset. */
+export type CoreLoopControlToolset = DurableLoopControlToolset;
 
 const schemas = {
   core_goal_status: z.object({ goalId: z.string().min(1) }),
@@ -42,7 +45,7 @@ const schemas = {
 
 type CoreToolName = keyof typeof schemas;
 
-export function createCoreLoopControlTools(service: CoreLoopControlToolset): ITool[] {
+export function createDurableLoopControlTools(service: DurableLoopControlToolset): ITool[] {
   const tools: ITool[] = [
     new CoreLoopControlTool("core_goal_status", "Read CoreLoop goal status.", "read_only", (input) => service.goalStatus(input), schemas.core_goal_status),
   ];
@@ -57,6 +60,9 @@ export function createCoreLoopControlTools(service: CoreLoopControlToolset): ITo
   if (service.runCycle) tools.push(new CoreLoopControlTool("core_run_cycle", "Run one bounded CoreLoop cycle.", "write_local", (input) => service.runCycle!(input), schemas.core_run_cycle));
   return tools;
 }
+
+/** @deprecated Use createDurableLoopControlTools. */
+export const createCoreLoopControlTools = createDurableLoopControlTools;
 
 class CoreLoopControlTool<TInput> implements ITool<TInput> {
   readonly metadata: ToolMetadata;
@@ -119,15 +125,18 @@ class CoreLoopControlTool<TInput> implements ITool<TInput> {
   }
 }
 
-export interface DaemonBackedCoreLoopControlDeps {
+export interface DaemonBackedDurableLoopControlDeps {
   stateManager: StateManager;
   host?: string;
   daemonClientFactory?: () => Promise<Pick<DaemonClient, "startGoal" | "stopGoal" | "pauseGoal" | "resumeGoal" | "getSnapshot">>;
 }
 
-export function createDaemonBackedCoreLoopControlToolset(
-  deps: DaemonBackedCoreLoopControlDeps,
-): CoreLoopControlToolset {
+/** @deprecated Use DaemonBackedDurableLoopControlDeps. */
+export type DaemonBackedCoreLoopControlDeps = DaemonBackedDurableLoopControlDeps;
+
+export function createDaemonBackedDurableLoopControlToolset(
+  deps: DaemonBackedDurableLoopControlDeps,
+): DurableLoopControlToolset {
   const createGoal = async (description: string): Promise<{ goalId: string; goal: Goal }> => {
     const normalizedDescription = description.trim();
     if (!normalizedDescription) {
@@ -266,3 +275,6 @@ export function createDaemonBackedCoreLoopControlToolset(
     },
   };
 }
+
+/** @deprecated Use createDaemonBackedDurableLoopControlToolset. */
+export const createDaemonBackedCoreLoopControlToolset = createDaemonBackedDurableLoopControlToolset;

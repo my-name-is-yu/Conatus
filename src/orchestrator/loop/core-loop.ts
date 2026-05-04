@@ -36,7 +36,7 @@ import type {
   RuntimeOperatorHandoffTrigger,
 } from "../../runtime/store/operator-handoff-store.js";
 
-// Re-export types for backward compatibility
+// Re-export types for compatibility while DurableLoop naming is introduced.
 export type {
   GapCalculatorModule,
   DriveScorerModule,
@@ -49,6 +49,9 @@ export type {
   ProgressEvent,
   ProgressPhase,
   LoopRunPolicyMode,
+} from "./core-loop/contracts.js";
+export type {
+  CoreLoopDeps as DurableLoopDeps,
 } from "./core-loop/contracts.js";
 export type {
   LoopIterationResult,
@@ -75,10 +78,14 @@ const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget" | "runtimeBudg
   consolidationRawThreshold: 20,
 };
 
-// ─── CoreLoop ───
+// ─── DurableLoop ───
 
 /**
- * CoreLoop is the heart of PulSeed — it orchestrates one full iteration of the
+ * DurableLoop is the daemon-backed resilient long-running execution loop. The
+ * legacy CoreLoop export remains available as a compatibility name during the
+ * migration.
+ *
+ * CoreLoop orchestrates one full iteration of the
  * task discovery loop: observe → gap → score → completion check → stall check → task → report.
  *
  * It runs multiple iterations until the goal is complete (SatisficingJudge),
@@ -125,7 +132,6 @@ export class CoreLoop {
       deps.strategyManager.setStrategyTemplateRegistry(deps.strategyTemplateRegistry);
     }
   }
-
   // ─── Public API ───
 
   /**
@@ -754,3 +760,5 @@ export class CoreLoop {
 function uniqueTriggers(triggers: RuntimeOperatorHandoffTrigger[]): RuntimeOperatorHandoffTrigger[] {
   return [...new Set(triggers)];
 }
+
+export { CoreLoop as DurableLoop };
