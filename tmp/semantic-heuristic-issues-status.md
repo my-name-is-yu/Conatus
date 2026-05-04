@@ -30,3 +30,9 @@
 - Plan: keep learned pattern/workflow retrieval advisory-only, require typed template applicability for strategy-materializing candidates, and attach template ranking trace provenance showing source/confidence/lexical-overlap usage.
 - Review: fresh review agent found stored `embedding_id` was incorrectly treated as embedding-backed retrieval; fixed selector to require typed applicability in the current production path and added coverage with a non-null stored embedding id.
 - Verification: `npm run typecheck`; `npx vitest run src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`; `npm run test:changed`; `npm run lint:boundaries` (warnings only, pre-existing).
+
+## #1033
+- Status: implementation verified locally after review fixes; preparing PR.
+- Plan: extend `StallTaskHistoryEntry` with optional typed task-result evidence, prefer typed no-op/material-change signals in `detectRepetitivePatterns()`, mark phrase/bigram text matching as low-confidence fallback with source, and cover the `StallDetector.detectRepetitivePatterns()` caller path.
+- Review: fresh review agent found mixed typed/untyped windows could still fall through to text fallback after one material change, and tool-call-only/not-run evidence was too weak for typed no-op; fixed both and added regression coverage.
+- Verification: `npm run typecheck`; `npx vitest run src/platform/drive/__tests__/stall-detector-repetitive.test.ts`; `npm run lint:boundaries` (warnings only, pre-existing); `npm run test:changed`.
