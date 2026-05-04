@@ -78,6 +78,16 @@ export const StrategyLineageAssessmentSchema = z.object({
 }).strict();
 export type StrategyLineageAssessment = z.infer<typeof StrategyLineageAssessmentSchema>;
 
+export const StrategyPlannerHintTraceSchema = z.object({
+  source: z.enum(["dream_template_typed_applicability", "dream_template_embedding"]),
+  source_id: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  lexical_overlap_used: z.boolean(),
+  matched_dimensions: z.array(z.string()).default([]),
+  evidence_refs: z.array(z.string().min(1)).default([]),
+}).strict();
+export type StrategyPlannerHintTrace = z.infer<typeof StrategyPlannerHintTraceSchema>;
+
 export const StrategyExplorationMetadataSchema = z.object({
   schema_version: z.literal("strategy-exploration-v1").default("strategy-exploration-v1"),
   phase: z.enum(["normal", "divergent_stall_recovery"]).default("normal"),
@@ -138,6 +148,9 @@ export const StrategySchema = z.object({
 
   // Curiosity-driven stall recovery metadata. Speculative unless promoted by smoke evidence.
   exploration: StrategyExplorationMetadataSchema.nullable().optional(),
+
+  // Provenance for advisory/materialized planner hints that shaped this candidate.
+  planner_hint_trace: StrategyPlannerHintTraceSchema.optional(),
 });
 export type Strategy = z.infer<typeof StrategySchema>;
 
