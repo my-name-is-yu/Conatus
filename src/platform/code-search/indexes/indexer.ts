@@ -18,6 +18,9 @@ export async function buildCodeSearchIndexes(root: string, maxFiles?: number): P
   return {
     version: "code-search-v1",
     indexedAt: Date.now(),
+    capabilities: {
+      semanticRetrieval: "disabled",
+    },
     files,
     symbols,
     repoMap,

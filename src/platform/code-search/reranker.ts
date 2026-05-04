@@ -1,13 +1,22 @@
 import type { Intent, RankedCandidate, ReadRecommendation } from "./contracts.js";
 import type { FusedCandidate } from "./fusion.js";
 
-function signalScore(candidate: FusedCandidate, intent: Intent): number {
+interface RerankOptions {
+  semanticRetrieval?: "disabled" | "embedding_index";
+}
+
+function semanticSignal(candidate: FusedCandidate, options: RerankOptions): number {
+  return options.semanticRetrieval === "embedding_index" ? candidate.signals.semanticSimilarity : 0;
+}
+
+function signalScore(candidate: FusedCandidate, intent: Intent, options: RerankOptions): number {
   const s = candidate.signals;
+  const semanticSimilarity = semanticSignal(candidate, options);
   const intentBoost =
     intent === "test_failure" ? s.failingTestAffinity + s.stacktraceMatch + s.testRelation
     : intent === "config_fix" ? s.configAffinity + s.packageBoundaryFit
     : intent === "refactor" ? s.exactSymbolMatch + s.callgraphProximity + s.packageBoundaryFit
-    : intent === "explain" ? s.repoMapCentrality + s.semanticSimilarity + s.exactSymbolMatch
+    : intent === "explain" ? s.repoMapCentrality + semanticSimilarity + s.exactSymbolMatch
     : intent === "security_review" ? s.lexicalMatch + s.configAffinity + s.callgraphProximity
     : s.lexicalMatch + s.exactSymbolMatch + s.pathPrior;
   return (
@@ -22,7 +31,7 @@ function signalScore(candidate: FusedCandidate, intent: Intent): number {
     + s.repoMapCentrality * 0.8
     + s.callgraphProximity * 1.2
     + s.pathPrior * 2
-    + s.semanticSimilarity * 0.7
+    + semanticSimilarity * 0.7
     + intentBoost
   );
 }
@@ -40,10 +49,15 @@ function recommendation(candidate: FusedCandidate, score: number): ReadRecommend
   return "reference_only";
 }
 
-export function rerankCandidates(candidates: FusedCandidate[], intent: Intent, limit: number): RankedCandidate[] {
+export function rerankCandidates(
+  candidates: FusedCandidate[],
+  intent: Intent,
+  limit: number,
+  options: RerankOptions = {}
+): RankedCandidate[] {
   return candidates
     .map((candidate) => {
-      const rerankScore = signalScore(candidate, intent) - penaltyScore(candidate);
+      const rerankScore = signalScore(candidate, intent, options) - penaltyScore(candidate);
       const ranked: RankedCandidate = {
         ...candidate,
         rerankScore,

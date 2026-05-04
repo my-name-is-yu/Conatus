@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import type { CodeSearchTask, RankedCandidate, SearchSessionState, VerificationSignal } from "./contracts.js";
+import type { CodeSearchIndexes, CodeSearchTask, RankedCandidate, Retriever, SearchSessionState, VerificationSignal } from "./contracts.js";
 import { normalizeCandidates } from "./candidate-normalizer.js";
 import { fuseCandidates } from "./fusion.js";
 import { getCodeSearchIndexes } from "./indexes/index-store.js";
@@ -25,8 +25,14 @@ const DEFAULT_RETRIEVERS = [
   new PackageRetriever(),
   new RepoMapRetriever(),
   new CallgraphRetriever(),
-  new SemanticRetriever(),
 ];
+
+function activeRetrievers(indexes: CodeSearchIndexes): Retriever[] {
+  if (indexes.capabilities.semanticRetrieval === "embedding_index") {
+    return [...DEFAULT_RETRIEVERS, new SemanticRetriever()];
+  }
+  return DEFAULT_RETRIEVERS;
+}
 
 export class SearchOrchestrator {
   constructor(private readonly root = process.cwd()) {}
@@ -42,7 +48,11 @@ export class SearchOrchestrator {
     trace.indexVersions.push(indexes.version);
 
     const all = [];
-    for (const retriever of DEFAULT_RETRIEVERS) {
+    const retrievers = activeRetrievers(indexes);
+    if (indexes.capabilities.semanticRetrieval === "disabled") {
+      trace.warnings.push("semantic retrieval disabled: no embedding-backed code-search index configured");
+    }
+    for (const retriever of retrievers) {
       trace.retrieversUsed.push(retriever.name);
       try {
         const candidates = await retriever.search(req, indexes);
@@ -55,7 +65,9 @@ export class SearchOrchestrator {
 
     const normalized = normalizeCandidates(all);
     const fused = fuseCandidates(normalized, req.budget.maxFusionCandidates);
-    const ranked = rerankCandidates(fused, req.intent, req.budget.maxRerankCandidates);
+    const ranked = rerankCandidates(fused, req.intent, req.budget.maxRerankCandidates, {
+      semanticRetrieval: indexes.capabilities.semanticRetrieval,
+    });
     trace.fusedCandidates = fused.map((candidate) => candidate.id);
     trace.rerankedCandidates = ranked.map((candidate) => candidate.id);
     for (const candidate of ranked) {
