@@ -44,12 +44,32 @@ const RECOVERY_SCHEDULE: Array<{ loops: number; factor: number }> = [
 export interface StallTaskHistoryEntry {
   strategy_id: string | null;
   output: string;
+  task_result?: StallTaskResultEvidence;
+}
+
+export interface StallTaskResultEvidence {
+  changed_files?: string[];
+  diff_stats?: {
+    files_changed?: number;
+    insertions?: number;
+    deletions?: number;
+  };
+  tool_calls?: Array<{
+    tool_name: string;
+    status?: "success" | "failed" | "skipped";
+  }>;
+  verification_status?: "passed" | "failed" | "not_run" | "unknown";
+  artifact_changes?: Array<{
+    artifact_id: string;
+    change_type: "created" | "updated" | "deleted";
+  }>;
 }
 
 export interface RepetitivePatternResult {
   isRepetitive: boolean;
   pattern: 'identical_actions' | 'oscillating' | 'no_change' | null;
   confidence: number;
+  source?: "typed_task_result" | "text_fallback" | "none";
 }
 
 /**

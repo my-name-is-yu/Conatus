@@ -3,6 +3,7 @@ import type { RepetitivePatternResult, StallTaskHistoryEntry } from "../stall-de
 const REPETITIVE_WINDOW = 3;
 const SIMILARITY_THRESHOLD = 0.8;
 const NO_CHANGE_PATTERNS = ["no changes made", "no modifications", "nothing to change", "no action taken"];
+const TEXT_FALLBACK_MAX_CONFIDENCE = 0.6;
 
 function stringSimilarity(a: string, b: string): number {
   if (a.length === 0 || b.length === 0) {
@@ -42,17 +43,29 @@ function stringSimilarity(a: string, b: string): number {
 
 export function detectRepetitivePatterns(taskHistory: StallTaskHistoryEntry[]): RepetitivePatternResult {
   if (taskHistory.length < REPETITIVE_WINDOW) {
-    return { isRepetitive: false, pattern: null, confidence: 0 };
+    return { isRepetitive: false, pattern: null, confidence: 0, source: "none" };
   }
 
   const recent = taskHistory.slice(-REPETITIVE_WINDOW);
   const outputs = recent.map((entry) => entry.output);
+  const typedEvidence = recent.map((entry) => entry.task_result).filter((result) => result !== undefined);
+  const anyMaterialChange = recent.some((entry) => hasMaterialTaskChange(entry));
+  if (anyMaterialChange) {
+    return { isRepetitive: false, pattern: null, confidence: 0, source: "typed_task_result" };
+  }
+
+  if (typedEvidence.length === REPETITIVE_WINDOW) {
+    const allNoOp = recent.every((entry) => hasTypedNoOpEvidence(entry));
+    if (allNoOp) {
+      return { isRepetitive: true, pattern: "no_change", confidence: 0.9, source: "typed_task_result" };
+    }
+  }
 
   const noChangeCount = recent.filter((entry) =>
     NO_CHANGE_PATTERNS.some((pattern) => entry.output.toLowerCase().includes(pattern))
   ).length;
   if (noChangeCount >= REPETITIVE_WINDOW) {
-    return { isRepetitive: true, pattern: "no_change", confidence: 0.95 };
+    return { isRepetitive: true, pattern: "no_change", confidence: TEXT_FALLBACK_MAX_CONFIDENCE, source: "text_fallback" };
   }
 
   const strategyIds = recent.map((entry) => entry.strategy_id);
@@ -62,7 +75,12 @@ export function detectRepetitivePatterns(taskHistory: StallTaskHistoryEntry[]): 
     const similarity12 = stringSimilarity(outputs[1], outputs[2]);
     const averageSimilarity = (similarity01 + similarity12) / 2;
     if (averageSimilarity >= SIMILARITY_THRESHOLD) {
-      return { isRepetitive: true, pattern: "identical_actions", confidence: averageSimilarity };
+      return {
+        isRepetitive: true,
+        pattern: "identical_actions",
+        confidence: Math.min(averageSimilarity, TEXT_FALLBACK_MAX_CONFIDENCE),
+        source: "text_fallback",
+      };
     }
   }
 
@@ -80,11 +98,41 @@ export function detectRepetitivePatterns(taskHistory: StallTaskHistoryEntry[]): 
       return {
         isRepetitive: true,
         pattern: "oscillating",
-        confidence: Math.min(similarity02, similarity13),
+        confidence: Math.min(Math.min(similarity02, similarity13), TEXT_FALLBACK_MAX_CONFIDENCE),
+        source: "text_fallback",
       };
     }
   }
 
-  return { isRepetitive: false, pattern: null, confidence: 0 };
+  return { isRepetitive: false, pattern: null, confidence: 0, source: "none" };
 }
 
+function hasMaterialTaskChange(entry: StallTaskHistoryEntry): boolean {
+  const result = entry.task_result;
+  if (!result) return false;
+
+  if ((result.changed_files?.length ?? 0) > 0) return true;
+  if ((result.artifact_changes?.length ?? 0) > 0) return true;
+
+  const diffStats = result.diff_stats;
+  if (!diffStats) return false;
+  return (
+    (diffStats.files_changed ?? 0) > 0 ||
+    (diffStats.insertions ?? 0) > 0 ||
+    (diffStats.deletions ?? 0) > 0
+  );
+}
+
+function hasTypedNoOpEvidence(entry: StallTaskHistoryEntry): boolean {
+  const result = entry.task_result;
+  if (!result || hasMaterialTaskChange(entry)) return false;
+
+  const hasZeroChangedFiles = result.changed_files !== undefined && result.changed_files.length === 0;
+  const hasZeroArtifactChanges = result.artifact_changes !== undefined && result.artifact_changes.length === 0;
+  const hasZeroDiffStats = result.diff_stats !== undefined &&
+    (result.diff_stats.files_changed ?? 0) === 0 &&
+    (result.diff_stats.insertions ?? 0) === 0 &&
+    (result.diff_stats.deletions ?? 0) === 0;
+
+  return hasZeroChangedFiles || hasZeroArtifactChanges || hasZeroDiffStats;
+}
