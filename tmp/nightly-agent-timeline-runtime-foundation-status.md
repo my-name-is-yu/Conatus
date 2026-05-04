@@ -31,3 +31,13 @@
 - Review finding addressed: Telegram no longer renders shared `agent_timeline` final rows as separate messages; final timeline rows only mark assistant output as present to suppress fallback, leaving production assistant_final rendering as the single final reply.
 - Review: final fresh review completed with no findings.
 - Status: ready for commit/PR.
+
+## #935 progress
+- Branch: codex/issue-935-evidence-summary-append-cost.
+- Plan: remove live append dependence on full checkpoint entries in summary index; use current summary plus append_state for simple metric/observation appends, fall back to canonical rebuild for complex evidence entries where compact aggregation is not yet sufficient.
+- Implemented draft: summary indexes no longer write checkpoint.entries during rebuild/live append; live append uses append_state warnings/metric observation state and preserves canonical rebuild equivalence for 100/500/1000 metric fixtures in focused tests.
+- Updated metric append_state to compact aggregate state plus recent source window; summary index sizes are bounded in measurement.
+- Live append measurement after compact state: 100 entries append_ms=1.310 index_before_bytes=8962 index_after_bytes=8946; 500 entries append_ms=1.679 index_before_bytes=8998 index_after_bytes=8997; 1000 entries append_ms=0.662 index_before_bytes=9040 index_after_bytes=9054.
+- Verification so far: focused runtime evidence ledger test passed; npm run typecheck passed; npm run build passed; npm run test:runtime-long-run passed; npm run lint:boundaries exited 0 with existing warnings; npm run test:changed failed on unrelated daemon e2e EADDRINUSE 127.0.0.1:41700.
+- Fixed review findings: active-only metric append state after rebuild; compact metric state; primary metric drift fallback; best_evidence tie-break uses canonical chooseBestEvidence for previous best vs appended candidate.
+- Final #935 live append measurement: 100 entries append_ms=1.902 index_before_bytes=9023 index_after_bytes=9022; 500 entries append_ms=2.249 index_before_bytes=9059 index_after_bytes=9072; 1000 entries append_ms=0.722 index_before_bytes=9101 index_after_bytes=9130.

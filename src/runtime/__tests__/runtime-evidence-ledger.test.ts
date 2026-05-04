@@ -578,6 +578,163 @@ describe("RuntimeEvidenceLedger", () => {
     }
   });
 
+  it("keeps live append summary indexes out of full-entry checkpoint storage and equivalent to canonical rebuild", async () => {
+    for (const size of [100, 500, 1000]) {
+      const runId = `run:append-index-compact-${size}`;
+      const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+      const entries = Array.from({ length: size }, (_, index) => ({
+        schema_version: "runtime-evidence-entry-v1",
+        id: `compact-entry-${size}-${index}`,
+        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
+        kind: "metric",
+        scope: { run_id: runId, loop_index: index },
+        metrics: [{ label: "accuracy", value: index / size, direction: "maximize" }],
+        evaluators: [],
+        research: [],
+        dream_checkpoints: [],
+        divergent_exploration: [],
+        candidates: [],
+        artifacts: [],
+        raw_refs: [],
+        summary: `Compact metric ${index}`,
+        outcome: index === size - 1 ? "improved" : "continued",
+      }));
+      await fsp.mkdir(path.dirname(ledger.runPath(runId)), { recursive: true });
+      await fsp.writeFile(
+        ledger.runPath(runId),
+        `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+        "utf8"
+      );
+      await ledger.rebuildSummaryIndexForRun(runId);
+
+      await ledger.append({
+        id: `compact-entry-${size}-new`,
+        occurred_at: "2026-04-30T00:30:00.000Z",
+        kind: "metric",
+        scope: { run_id: runId, loop_index: size },
+        metrics: [{ label: "accuracy", value: 2, direction: "maximize" }],
+        summary: "Incremental compact append metric.",
+        outcome: "improved",
+      });
+
+      const indexed = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
+      const index = JSON.parse(await fsp.readFile(`${ledger.runPath(runId)}.summary.json`, "utf8")) as {
+        checkpoint?: { entries?: unknown[] };
+        append_state?: { metric_observations?: Array<{ recent?: unknown[] }> };
+      };
+      const indexBytes = Buffer.byteLength(JSON.stringify(index), "utf8");
+      const rebuilt = await ledger.rebuildSummaryIndexForRun(runId);
+
+      expect(index.checkpoint?.entries).toBeUndefined();
+      expect(index.append_state?.metric_observations?.[0]?.recent).toHaveLength(5);
+      expect(indexBytes).toBeLessThan(20_000);
+      expect(indexed.total_entries).toBe(rebuilt.total_entries);
+      expect(indexed.best_evidence?.id).toBe(rebuilt.best_evidence?.id);
+      expect(indexed.metric_trends[0]?.observation_count).toBe(rebuilt.metric_trends[0]?.observation_count);
+      expect(indexed.metric_trends[0]?.latest_value).toBe(rebuilt.metric_trends[0]?.latest_value);
+    }
+  });
+
+  it("keeps append summaries equivalent after a rebuild filtered inactive metric evidence", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "inactive-best",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:compact-active" },
+      metrics: [{ label: "accuracy", value: 99, direction: "maximize" }],
+      verification_status: "suspicious",
+      summary: "Suspicious metric must not enter compact append state.",
+      outcome: "improved",
+    });
+    await ledger.append({
+      id: "active-best",
+      occurred_at: "2026-04-30T00:01:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:compact-active" },
+      metrics: [{ label: "accuracy", value: 1, direction: "maximize" }],
+      summary: "Active metric.",
+      outcome: "continued",
+    });
+    await ledger.rebuildSummaryIndexForRun("run:compact-active");
+    await ledger.append({
+      id: "active-new",
+      occurred_at: "2026-04-30T00:02:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:compact-active" },
+      metrics: [{ label: "accuracy", value: 2, direction: "maximize" }],
+      summary: "Active append metric.",
+      outcome: "improved",
+    });
+
+    const indexed = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:compact-active");
+    const rebuilt = await ledger.rebuildSummaryIndexForRun("run:compact-active");
+
+    expect(indexed.metric_trends[0]?.best_value).toBe(rebuilt.metric_trends[0]?.best_value);
+    expect(indexed.metric_trends[0]?.observation_count).toBe(rebuilt.metric_trends[0]?.observation_count);
+    expect(indexed.best_evidence?.id).toBe(rebuilt.best_evidence?.id);
+  });
+
+  it("rebuilds instead of compact-updating when appended metrics can change the primary metric", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "accuracy-baseline",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:primary-change" },
+      metrics: [{ label: "accuracy", value: 0.6, direction: "maximize" }],
+      summary: "Accuracy baseline.",
+      outcome: "continued",
+    });
+    await ledger.rebuildSummaryIndexForRun("run:primary-change");
+    await ledger.append({
+      id: "latency-explicit-primary",
+      occurred_at: "2026-04-30T00:01:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:primary-change" },
+      task: { primary_dimension: "latency" },
+      metrics: [{ label: "latency", value: 10, direction: "minimize" }],
+      summary: "Latency became the explicit primary metric.",
+      outcome: "improved",
+    });
+
+    const indexed = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:primary-change");
+    const rebuilt = await ledger.rebuildSummaryIndexForRun("run:primary-change");
+
+    expect(indexed.best_evidence?.id).toBe(rebuilt.best_evidence?.id);
+    expect(indexed.best_evidence?.id).toBe("latency-explicit-primary");
+  });
+
+  it("keeps compact append best-evidence metric tie-breaks aligned with canonical rebuild", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "same-value-no-artifact",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:compact-tiebreak" },
+      metrics: [{ label: "accuracy", value: 1, direction: "maximize", confidence: 0.5 }],
+      summary: "Same metric value without artifact.",
+      outcome: "continued",
+    });
+    await ledger.rebuildSummaryIndexForRun("run:compact-tiebreak");
+    await ledger.append({
+      id: "same-value-with-artifact",
+      occurred_at: "2026-04-30T00:01:00.000Z",
+      kind: "metric",
+      scope: { run_id: "run:compact-tiebreak" },
+      metrics: [{ label: "accuracy", value: 1, direction: "maximize", confidence: 0.4 }],
+      artifacts: [{ label: "metric artifact", state_relative_path: "runs/tiebreak/metrics.json", kind: "metrics" }],
+      summary: "Same metric value with artifact wins canonical tie-break.",
+      outcome: "continued",
+    });
+
+    const indexed = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:compact-tiebreak");
+    const rebuilt = await ledger.rebuildSummaryIndexForRun("run:compact-tiebreak");
+
+    expect(indexed.best_evidence?.id).toBe(rebuilt.best_evidence?.id);
+    expect(indexed.best_evidence?.id).toBe("same-value-with-artifact");
+  });
+
   it("serializes concurrent appends so the summary index cannot omit canonical rows", async () => {
     const runId = "run:concurrent-index";
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
