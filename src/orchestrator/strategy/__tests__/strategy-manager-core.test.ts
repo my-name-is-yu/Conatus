@@ -5,6 +5,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyManager } from "../strategy-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { Strategy } from "../../../base/types/strategy.js";
+import type { DecisionRecord } from "../../../base/types/knowledge.js";
 import { applyDecisionHeuristicsToCandidates } from "../../../platform/dream/dream-activation.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -88,6 +89,39 @@ function makeStrategy(overrides: Partial<Strategy> = {}): Strategy {
   };
 }
 
+function makeDecisionRecord(overrides: Partial<DecisionRecord> = {}): DecisionRecord {
+  return {
+    id: "decision-1",
+    goal_id: "goal-1",
+    goal_type: "kaggle",
+    strategy_id: "strategy-old",
+    hypothesis: "historical diagnostic text",
+    decision: "pivot",
+    context: {
+      gap_value: 0.4,
+      stall_count: 2,
+      cycle_count: 5,
+      trust_score: 0,
+    },
+    outcome: "failure",
+    timestamp: "2026-05-04T00:00:00.000Z",
+    what_worked: [],
+    what_failed: [],
+    suggested_next: [],
+    ...overrides,
+  };
+}
+
+function makeDecisionHistoryManager(records: DecisionRecord[]): TestableStrategyManager {
+  return new TestableStrategyManager(
+    stateManager,
+    createMockLLMClient([]),
+    {
+      queryDecisions: vi.fn().mockResolvedValue(records),
+    } as never
+  );
+}
+
 const STRATEGY_TEMPLATES_ACTIVATION = {
   verifiedPlannerHintsOnly: false,
   semanticWorkingMemory: false,
@@ -102,6 +136,12 @@ const STRATEGY_TEMPLATES_ACTIVATION = {
   graphTraversal: false,
 } as const;
 
+class TestableStrategyManager extends StrategyManager {
+  rankByDecisionHistory(candidates: Strategy[], goalType: string): Promise<Strategy[]> {
+    return this._rankCandidatesByDecisionHistory(candidates, goalType);
+  }
+}
+
 // ─── Test Setup ───
 
 let tempDir: string;
@@ -114,6 +154,97 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tempDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+});
+
+describe("decision history lineage ranking", () => {
+  it("downranks a paraphrased candidate from a failed typed lineage", async () => {
+    const failedLineageCandidate = makeStrategy({
+      id: "candidate-threshold",
+      hypothesis: "Explore a narrower cutoff calibration sweep around the plateau",
+      exploration: {
+        schema_version: "strategy-exploration-v1",
+        phase: "divergent_stall_recovery",
+        role: "adjacent_exploration",
+        strategy_family: "threshold_sweep",
+        novelty_score: 0.55,
+        similarity_to_recent_failures: 0,
+        expected_cost: "medium",
+        relationship_to_lineage: "neighbor",
+        smoke: { status: "not_run", reason: "Smoke before full run." },
+        speculative: true,
+        evidence_authority: "speculative_hypothesis",
+      },
+    });
+    const unrelatedCandidate = makeStrategy({
+      id: "candidate-audit",
+      hypothesis: "Audit validation fold distribution before more tuning",
+      exploration: {
+        schema_version: "strategy-exploration-v1",
+        phase: "divergent_stall_recovery",
+        role: "divergent_exploration",
+        strategy_family: "fold_distribution_audit",
+        novelty_score: 0.82,
+        similarity_to_recent_failures: 0,
+        expected_cost: "low",
+        relationship_to_lineage: "different_assumption",
+        smoke: { status: "not_run", reason: "Smoke before full run." },
+        speculative: true,
+        evidence_authority: "speculative_hypothesis",
+      },
+    });
+    const manager = makeDecisionHistoryManager([
+      makeDecisionRecord({ id: "d1", lineage: { strategy_family: "threshold_sweep", failed_lineage_fingerprints: [], lineage_evidence_refs: [] } }),
+      makeDecisionRecord({ id: "d2", lineage: { strategy_family: "threshold_sweep", failed_lineage_fingerprints: [], lineage_evidence_refs: [] } }),
+      makeDecisionRecord({ id: "d3", decision: "proceed", outcome: "success", lineage: { strategy_family: "fold_distribution_audit", failed_lineage_fingerprints: [], lineage_evidence_refs: [] } }),
+    ]);
+
+    const ranked = await manager.rankByDecisionHistory([failedLineageCandidate, unrelatedCandidate], "kaggle");
+
+    expect(ranked.map((strategy) => strategy.id)).toEqual(["candidate-audit", "candidate-threshold"]);
+  });
+
+  it("does not penalize unrelated candidates that only overlap hypothesis tokens", async () => {
+    const failedText = "Tune threshold calibration around current model";
+    const overlappingButTypedDifferent = makeStrategy({
+      id: "candidate-overlap",
+      hypothesis: "Calibrate reporting threshold for documentation coverage",
+      exploration: {
+        schema_version: "strategy-exploration-v1",
+        phase: "normal",
+        role: "exploitation",
+        strategy_family: "documentation_quality",
+        novelty_score: 0.4,
+        similarity_to_recent_failures: 0,
+        expected_cost: "low",
+        relationship_to_lineage: "current_best",
+        smoke: { status: "not_run", reason: "No smoke required." },
+        speculative: true,
+        evidence_authority: "speculative_hypothesis",
+      },
+    });
+    const manager = makeDecisionHistoryManager([
+      makeDecisionRecord({ id: "d1", hypothesis: failedText, lineage: { strategy_family: "model_threshold_sweep", failed_lineage_fingerprints: [], lineage_evidence_refs: [] } }),
+      makeDecisionRecord({ id: "d2", hypothesis: failedText, lineage: { strategy_family: "model_threshold_sweep", failed_lineage_fingerprints: [], lineage_evidence_refs: [] } }),
+      makeDecisionRecord({ id: "d3", hypothesis: failedText, lineage: { strategy_family: "model_threshold_sweep", failed_lineage_fingerprints: [], lineage_evidence_refs: [] } }),
+    ]);
+
+    const ranked = await manager.rankByDecisionHistory([overlappingButTypedDifferent], "coding");
+
+    expect(ranked[0]?.id).toBe("candidate-overlap");
+  });
+
+  it("preserves existing order when fewer than three decision records exist", async () => {
+    const first = makeStrategy({ id: "candidate-first", hypothesis: "First candidate" });
+    const second = makeStrategy({ id: "candidate-second", hypothesis: "Second candidate" });
+    const manager = makeDecisionHistoryManager([
+      makeDecisionRecord({ id: "d1", lineage: { strategy_family: "candidate-second-family", failed_lineage_fingerprints: [], lineage_evidence_refs: [] } }),
+      makeDecisionRecord({ id: "d2", lineage: { strategy_family: "candidate-second-family", failed_lineage_fingerprints: [], lineage_evidence_refs: [] } }),
+    ]);
+
+    const ranked = await manager.rankByDecisionHistory([first, second], "general");
+
+    expect(ranked.map((strategy) => strategy.id)).toEqual(["candidate-first", "candidate-second"]);
+  });
 });
 
 // ─── generateCandidates ───

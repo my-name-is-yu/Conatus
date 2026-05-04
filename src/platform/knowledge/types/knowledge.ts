@@ -135,12 +135,29 @@ export const DecisionContextSchema = z.object({
 });
 export type DecisionContext = z.infer<typeof DecisionContextSchema>;
 
+export const DecisionLineageSchema = z.object({
+  strategy_family: z.string().min(1).optional(),
+  source_template_id: z.string().min(1).optional(),
+  relationship_to_lineage: z.enum([
+    "current_best",
+    "neighbor",
+    "failed_lineage",
+    "different_mechanism",
+    "different_assumption",
+    "unknown",
+  ]).optional(),
+  failed_lineage_fingerprints: z.array(z.string().min(1)).default([]),
+  lineage_evidence_refs: z.array(z.string().min(1)).default([]),
+}).strict();
+export type DecisionLineage = z.infer<typeof DecisionLineageSchema>;
+
 export const DecisionRecordSchema = z.object({
   id: z.string(),
   goal_id: z.string(),
   goal_type: z.string(),
   strategy_id: z.string(),
   hypothesis: z.string().optional(),
+  lineage: DecisionLineageSchema.optional(),
   decision: z.enum(["proceed", "refine", "pivot", "escalate"]),
   context: DecisionContextSchema,
   outcome: z.enum(["success", "failure", "pending"]),
