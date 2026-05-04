@@ -3,6 +3,7 @@ import type { Goal } from "../../../base/types/goal.js";
 import type { GapHistoryEntry } from "../../../base/types/gap.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { MetricTrendContext } from "../../../platform/drive/metric-history.js";
+import type { RuntimeFailedLineageContext } from "../../../runtime/store/evidence-ledger.js";
 import type { GapObservation } from "../../../base/types/time-horizon.js";
 import {
   selectMetricTrendForDimension,
@@ -26,6 +27,7 @@ type StrategyStallArgs = [
   goalType?: string,
   activationContext?: WaitStrategyActivationContext,
   metricTrendContext?: MetricTrendContext,
+  failedLineages?: RuntimeFailedLineageContext[],
 ];
 
 type DivergentExplorationPlanner = {
@@ -38,6 +40,7 @@ type DivergentExplorationPlanner = {
       stallCount: number;
       trigger: "sustained_stall" | "predicted_plateau" | "predicted_regression";
       metricTrendContext?: MetricTrendContext;
+      failedLineages?: RuntimeFailedLineageContext[];
     }
   ) => Promise<unknown>;
 };
@@ -157,6 +160,7 @@ async function applyStallAction(
   const activeStrategyForRecord = await Promise.resolve(ctx.deps.strategyManager.getActiveStrategy(goalId)).catch(() => null);
   const strategyIdForRecord = activeStrategyForRecord?.id ?? "unknown";
   const metricTrendContext = stallReport.metric_trend_context;
+  const failedLineages = await loadFailedLineageContexts(ctx, goalId);
   if (metricTrendContext) {
     result.metricTrendContext = metricTrendContext;
     ctx.logger?.info(`CoreLoop: ${logPrefix}metric trend evidence — ${metricTrendContext.summary}`, {
@@ -204,6 +208,7 @@ async function applyStallAction(
       goal.origin ?? "general",
       waitActivationContext,
       metricTrendContext,
+      failedLineages,
     ]);
     await appendDivergentRecoveryEvidence(ctx, goalId, result, stallReport);
     result.pivotOccurred = true;
@@ -225,6 +230,7 @@ async function applyStallAction(
         goal.origin ?? "general",
         waitActivationContext,
         metricTrendContext,
+        failedLineages,
       ]);
       await appendDivergentRecoveryEvidence(ctx, goalId, result, stallReport);
       result.pivotOccurred = true;
@@ -235,6 +241,7 @@ async function applyStallAction(
         goal.origin ?? "general",
         waitActivationContext,
         metricTrendContext,
+        failedLineages,
       ]);
       if (newStrategy) {
         await appendDivergentRecoveryEvidence(ctx, goalId, result, stallReport);
@@ -288,16 +295,36 @@ async function callStrategyOnStall(
   args: StrategyStallArgs
 ) {
   const [goalId, stallCount, goalType, activationContext, metricTrendContext] = args;
+  const failedLineages = args[5];
+  const hasFailedLineages = failedLineages !== undefined && failedLineages.length > 0;
   if (metricTrendContext) {
-    return ctx.deps.strategyManager.onStallDetected(
+    return hasFailedLineages
+      ? ctx.deps.strategyManager.onStallDetected(
+        goalId,
+        stallCount,
+        goalType,
+        activationContext,
+        metricTrendContext,
+        failedLineages
+      )
+      : ctx.deps.strategyManager.onStallDetected(
+        goalId,
+        stallCount,
+        goalType,
+        activationContext,
+        metricTrendContext
+      );
+  }
+  return hasFailedLineages
+    ? ctx.deps.strategyManager.onStallDetected(
       goalId,
       stallCount,
       goalType,
       activationContext,
-      metricTrendContext
-    );
-  }
-  return ctx.deps.strategyManager.onStallDetected(goalId, stallCount, goalType, activationContext);
+      undefined,
+      failedLineages
+    )
+    : ctx.deps.strategyManager.onStallDetected(goalId, stallCount, goalType, activationContext);
 }
 
 async function loadMetricTrendContexts(ctx: PhaseCtx, goalId: string): Promise<MetricTrendContext[]> {
@@ -308,6 +335,21 @@ async function loadMetricTrendContexts(ctx: PhaseCtx, goalId: string): Promise<M
     return summarizeEvidenceMetricTrends(read.entries);
   } catch (err) {
     ctx.logger?.warn("CoreLoop: metric trend history unavailable (non-fatal)", {
+      goalId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+async function loadFailedLineageContexts(ctx: PhaseCtx, goalId: string): Promise<RuntimeFailedLineageContext[]> {
+  const summarizeGoal = ctx.deps.evidenceLedger?.summarizeGoal;
+  if (!summarizeGoal) return [];
+  try {
+    const summary = await summarizeGoal.call(ctx.deps.evidenceLedger, goalId);
+    return summary.failed_lineages;
+  } catch (err) {
+    ctx.logger?.warn("CoreLoop: failed lineage summary unavailable (non-fatal)", {
       goalId,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -379,6 +421,7 @@ async function requestPredictedDivergentExploration(
   const planner = ctx.deps.strategyManager as unknown as DivergentExplorationPlanner;
   if (!planner.prepareDivergentExplorationOnStall) return;
   const dimension = stallReport.dimension_name ?? goal.dimensions[0]?.name ?? "";
+  const failedLineages = await loadFailedLineageContexts(ctx, goalId);
   try {
     await planner.prepareDivergentExplorationOnStall(goalId, {
       primaryDimension: dimension,
@@ -387,6 +430,7 @@ async function requestPredictedDivergentExploration(
       stallCount: Math.max(2, stallReport.escalation_level),
       trigger,
       ...(stallReport.metric_trend_context ? { metricTrendContext: stallReport.metric_trend_context } : {}),
+      ...(failedLineages.length > 0 ? { failedLineages } : {}),
     });
     await appendDivergentRecoveryEvidence(ctx, goalId, result, stallReport);
   } catch (err) {

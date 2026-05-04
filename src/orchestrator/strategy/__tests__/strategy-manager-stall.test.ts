@@ -105,6 +105,96 @@ const NEAR_STALL_RECOVERY_RESPONSE = `\`\`\`json
 ]
 \`\`\``;
 
+const PARAPHRASE_MULTILINGUAL_RECOVERY_RESPONSE = `\`\`\`json
+[
+  {
+    "hypothesis": "Adjust the learner cutoff and rebalance weights around the same validation plateau",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
+    ],
+    "resource_estimate": {
+      "sessions": 2,
+      "duration": { "value": 3, "unit": "hours" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3
+  },
+  {
+    "hypothesis": "現在の分類器のしきい値を少し調整して停滞を確認する",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
+    ],
+    "resource_estimate": {
+      "sessions": 2,
+      "duration": { "value": 3, "unit": "hours" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3
+  }
+]
+\`\`\``;
+
+const TYPED_LINEAGE_RECOVERY_RESPONSE = `\`\`\`json
+[
+  {
+    "hypothesis": "Run distribution-shift audit against validation folds before another model refinement",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "medium" }
+    ],
+    "resource_estimate": {
+      "sessions": 1,
+      "duration": { "value": 45, "unit": "minutes" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3,
+    "exploration": {
+      "schema_version": "strategy-exploration-v1",
+      "phase": "divergent_stall_recovery",
+      "role": "divergent_exploration",
+      "strategy_family": "fold-distribution-audit",
+      "novelty_score": 0.84,
+      "similarity_to_recent_failures": 0,
+      "expected_cost": "low",
+      "relationship_to_lineage": "different_assumption",
+      "smoke": {
+        "status": "not_run",
+        "reason": "Run a smoke-scale fold audit before expensive execution."
+      },
+      "speculative": true,
+      "evidence_authority": "speculative_hypothesis"
+    }
+  },
+  {
+    "hypothesis": "Repeat threshold sweep with a tighter calibration grid",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
+    ],
+    "resource_estimate": {
+      "sessions": 2,
+      "duration": { "value": 4, "unit": "hours" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3,
+    "exploration": {
+      "schema_version": "strategy-exploration-v1",
+      "phase": "divergent_stall_recovery",
+      "role": "adjacent_exploration",
+      "strategy_family": "threshold_sweep",
+      "novelty_score": 0.58,
+      "similarity_to_recent_failures": 0,
+      "expected_cost": "medium",
+      "relationship_to_lineage": "neighbor",
+      "smoke": {
+        "status": "not_run",
+        "reason": "Needs smoke evidence before promotion."
+      },
+      "speculative": true,
+      "evidence_authority": "speculative_hypothesis"
+    }
+  }
+]
+\`\`\``;
+
 // ─── Test Setup ───
 
 let tempDir: string;
@@ -314,8 +404,89 @@ describe("onStallDetected", () => {
       }),
     }));
     expect(recoveryCandidates.some((strategy) =>
-      strategy.exploration?.downrank_reason === "similar_to_recent_failed_lineage_without_new_evidence"
+      strategy.exploration?.downrank_reason === "low_confidence_lineage_assessment"
     )).toBe(true);
+  });
+
+  it("keeps paraphrased and multilingual novelty ambiguous when no typed lineage evidence exists", async () => {
+    const mock = createMockLLMClient([KAGGLE_LOCAL_SEARCH_RESPONSE, PARAPHRASE_MULTILINGUAL_RECOVERY_RESPONSE]);
+    const manager = new StrategyManager(stateManager, mock);
+
+    await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
+      currentGap: 0.2,
+      pastStrategies: [],
+    });
+    await manager.activateBestCandidate("goal-1");
+
+    await manager.onStallDetected("goal-1", 2, "kaggle");
+
+    const portfolio = await manager.getPortfolio("goal-1");
+    const recoveryCandidates = portfolio?.strategies.filter(
+      (strategy) => strategy.exploration?.phase === "divergent_stall_recovery"
+    ) ?? [];
+    const rawCandidates = recoveryCandidates.filter((strategy) =>
+      strategy.exploration?.lineage_assessment?.novelty_basis === "diagnostic_text_overlap"
+      || strategy.exploration?.lineage_assessment?.novelty_basis === "unknown"
+    );
+    expect(rawCandidates).toHaveLength(2);
+    expect(rawCandidates.every((strategy) =>
+      strategy.exploration?.role !== "divergent_exploration"
+      && (strategy.exploration?.lineage_assessment?.confidence ?? 1) < 0.65
+      && strategy.exploration?.downrank_reason === "low_confidence_lineage_assessment"
+    )).toBe(true);
+    expect(recoveryCandidates.some((strategy) =>
+      strategy.exploration?.lineage_assessment?.summary ===
+        "Fallback smoke audit is intentionally separated from recorded failed lineage keys."
+    )).toBe(true);
+  });
+
+  it("uses typed failed-lineage evidence and strategy metadata in production stall recovery ranking", async () => {
+    const mock = createMockLLMClient([KAGGLE_LOCAL_SEARCH_RESPONSE, TYPED_LINEAGE_RECOVERY_RESPONSE]);
+    const manager = new StrategyManager(stateManager, mock);
+
+    await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
+      currentGap: 0.2,
+      pastStrategies: [],
+    });
+    await manager.activateBestCandidate("goal-1");
+
+    await manager.onStallDetected("goal-1", 2, "kaggle", undefined, undefined, [{
+      fingerprint: "threshold_sweep|balanced_accuracy|threshold_sweep",
+      count: 3,
+      first_seen_at: "2026-04-30T00:00:00.000Z",
+      last_seen_at: "2026-05-01T00:00:00.000Z",
+      strategy_family: "threshold_sweep",
+      primary_dimension: "balanced_accuracy",
+      task_action: "threshold_sweep",
+      representative_entry_id: "evidence://failed-lineage/latest",
+      representative_summary: "Threshold sweeps repeatedly failed.",
+      evidence_entry_ids: ["evidence://failed-lineage/1", "evidence://failed-lineage/2"],
+    }]);
+
+    const portfolio = await manager.getPortfolio("goal-1");
+    const recoveryCandidates = portfolio?.strategies.filter(
+      (strategy) => strategy.exploration?.phase === "divergent_stall_recovery"
+    ) ?? [];
+    const divergent = recoveryCandidates.find((strategy) =>
+      strategy.exploration?.strategy_family === "fold-distribution-audit"
+    );
+    const failedLineage = recoveryCandidates.find((strategy) =>
+      strategy.exploration?.strategy_family === "threshold_sweep"
+    );
+
+    expect(divergent?.exploration?.lineage_assessment).toMatchObject({
+      confidence: 0.72,
+      novelty_basis: "strategy_metadata",
+      relationship_to_lineage: "different_assumption",
+    });
+    expect(failedLineage?.exploration?.lineage_assessment).toMatchObject({
+      confidence: 0.9,
+      novelty_basis: "typed_lineage_evidence",
+      relationship_to_lineage: "failed_lineage",
+      matched_failed_lineage_fingerprints: ["threshold_sweep|balanced_accuracy|threshold_sweep"],
+    });
+    expect(failedLineage?.exploration?.downrank_reason).toBe("similar_to_recent_failed_lineage_without_new_evidence");
+    expect((divergent?.exploration?.novelty_score ?? 0) > (failedLineage?.exploration?.novelty_score ?? 1)).toBe(true);
   });
 
   it("records smoke promote defer and retire decisions without treating speculative candidates as proven", async () => {

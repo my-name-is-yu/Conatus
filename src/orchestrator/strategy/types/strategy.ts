@@ -57,6 +57,27 @@ export const StrategySmokeMetadataSchema = z.object({
 }).strict();
 export type StrategySmokeMetadata = z.infer<typeof StrategySmokeMetadataSchema>;
 
+export const StrategyLineageAssessmentSchema = z.object({
+  schema_version: z.literal("strategy-lineage-assessment-v1").default("strategy-lineage-assessment-v1"),
+  confidence: z.number().min(0).max(1),
+  relationship_to_lineage: StrategyLineageRelationshipSchema,
+  novelty_basis: z.enum([
+    "typed_lineage_evidence",
+    "strategy_metadata",
+    "metric_trend_context",
+    "smoke_evidence",
+    "diagnostic_text_overlap",
+    "unknown",
+  ]),
+  matched_failed_lineage_fingerprints: z.array(z.string().min(1)).default([]),
+  matched_strategy_ids: z.array(z.string().min(1)).default([]),
+  evidence_refs: z.array(z.string().min(1)).default([]),
+  metric_trend: z.enum(["improving", "stalled", "noisy", "regressing", "breakthrough"]).optional(),
+  lexical_similarity_diagnostic: z.number().min(0).max(1).optional(),
+  summary: z.string().min(1),
+}).strict();
+export type StrategyLineageAssessment = z.infer<typeof StrategyLineageAssessmentSchema>;
+
 export const StrategyExplorationMetadataSchema = z.object({
   schema_version: z.literal("strategy-exploration-v1").default("strategy-exploration-v1"),
   phase: z.enum(["normal", "divergent_stall_recovery"]).default("normal"),
@@ -71,6 +92,7 @@ export const StrategyExplorationMetadataSchema = z.object({
   smoke: StrategySmokeMetadataSchema.default({ status: "not_run" }),
   speculative: z.literal(true).default(true),
   evidence_authority: z.literal("speculative_hypothesis").default("speculative_hypothesis"),
+  lineage_assessment: StrategyLineageAssessmentSchema.optional(),
 }).strict();
 export type StrategyExplorationMetadata = z.infer<typeof StrategyExplorationMetadataSchema>;
 
