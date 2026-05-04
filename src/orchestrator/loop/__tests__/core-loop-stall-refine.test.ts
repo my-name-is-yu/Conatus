@@ -442,6 +442,69 @@ describe("detectStallsAndRebalance — reRefineLeaf on observation-failure stall
     expect(result.metricTrendContext).toMatchObject({ metric_key: "dim1", trend: "breakthrough" });
   });
 
+  it("records typed strategy lineage keys with stall decisions", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({ id: "goal-1", origin: "manual" });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory("goal-1", makeGapHistoryWithStall("dim1", 5));
+
+    (deps.strategyManager.getActiveStrategy as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "strategy-active",
+      hypothesis: "Repeat threshold tuning around the same plateau",
+      primary_dimension: "dim1",
+      target_dimensions: ["dim1"],
+      exploration: {
+        schema_version: "strategy-exploration-v1",
+        phase: "divergent_stall_recovery",
+        role: "adjacent_exploration",
+        strategy_family: "threshold_sweep",
+        novelty_score: 0.5,
+        similarity_to_recent_failures: 0.9,
+        expected_cost: "medium",
+        relationship_to_lineage: "failed_lineage",
+        smoke: { status: "not_run", reason: "Smoke first." },
+        speculative: true,
+        evidence_authority: "speculative_hypothesis",
+        lineage_assessment: {
+          schema_version: "strategy-lineage-assessment-v1",
+          confidence: 0.9,
+          relationship_to_lineage: "failed_lineage",
+          novelty_basis: "typed_lineage_evidence",
+          matched_failed_lineage_fingerprints: ["threshold_sweep|dim1|threshold_sweep"],
+          matched_strategy_ids: ["strategy-active"],
+          evidence_refs: ["evidence-failed-1"],
+          summary: "Matched failed lineage.",
+        },
+      },
+    });
+    const knowledgeManager = {
+      recordDecision: vi.fn().mockResolvedValue(undefined),
+    };
+    deps.knowledgeManager = knowledgeManager as never;
+    (deps.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockReturnValue(makeStallReport({
+      goal_id: "goal-1",
+      dimension_name: "dim1",
+      escalation_level: 2,
+    }));
+    (deps.strategyManager.onStallDetected as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "strategy-next", state: "active" });
+
+    const ctx = buildPhaseCtx(deps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(knowledgeManager.recordDecision).toHaveBeenCalledWith(expect.objectContaining({
+      strategy_id: "strategy-active",
+      hypothesis: "Repeat threshold tuning around the same plateau",
+      lineage: expect.objectContaining({
+        strategy_family: "threshold_sweep",
+        relationship_to_lineage: "failed_lineage",
+        failed_lineage_fingerprints: ["threshold_sweep|dim1|threshold_sweep"],
+        lineage_evidence_refs: ["evidence-failed-1"],
+      }),
+    }));
+  });
+
   it("requests divergent exploration on predicted plateau without pivoting and writes speculative evidence", async () => {
     const deps = createBaseDeps(tmpDir);
     const goal = makeGoal({ id: "goal-1" });

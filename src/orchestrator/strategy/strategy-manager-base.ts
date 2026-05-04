@@ -6,7 +6,7 @@ import type { Strategy, Portfolio } from "../../base/types/strategy.js";
 import type { StrategyState } from "../../base/types/core.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
-import type { KnowledgeGapSignal } from "../../base/types/knowledge.js";
+import type { DecisionLineage, DecisionRecord, KnowledgeGapSignal } from "../../base/types/knowledge.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
 import type { StrategyTemplateRegistry } from "./strategy-template-registry.js";
 import type { Logger } from "../../runtime/logger.js";
@@ -51,6 +51,47 @@ export interface ExecutionFeedback {
   verificationPassed: boolean;
   duration_ms: number;
   timestamp: number;
+}
+
+export function buildDecisionLineageForStrategy(strategy: Strategy | null | undefined): DecisionLineage | undefined {
+  if (!strategy) return undefined;
+  const exploration = strategy.exploration;
+  const lineage: DecisionLineage = {
+    failed_lineage_fingerprints: exploration?.lineage_assessment?.matched_failed_lineage_fingerprints ?? [],
+    lineage_evidence_refs: exploration?.lineage_assessment?.evidence_refs ?? [],
+  };
+  if (exploration?.strategy_family) {
+    lineage.strategy_family = exploration.strategy_family;
+  }
+  if (strategy.source_template_id) {
+    lineage.source_template_id = strategy.source_template_id;
+  }
+  if (exploration?.relationship_to_lineage && exploration.relationship_to_lineage !== "unknown") {
+    lineage.relationship_to_lineage = exploration.relationship_to_lineage;
+  }
+  return decisionLineageKeys(lineage).length > 0 ? lineage : undefined;
+}
+
+function decisionRecordLineageKeys(record: DecisionRecord): string[] {
+  const keys = record.lineage ? decisionLineageKeys(record.lineage) : [];
+  if (keys.length > 0) return keys;
+  return record.strategy_id ? [`strategy:${record.strategy_id}`] : [];
+}
+
+function strategyDecisionLineageKeys(strategy: Strategy): string[] {
+  return [
+    `strategy:${strategy.id}`,
+    ...decisionLineageKeys(buildDecisionLineageForStrategy(strategy)),
+  ];
+}
+
+function decisionLineageKeys(lineage: DecisionLineage | undefined): string[] {
+  if (!lineage) return [];
+  return [
+    lineage.source_template_id ? `template:${lineage.source_template_id}` : null,
+    lineage.strategy_family ? `family:${lineage.strategy_family}` : null,
+    ...(lineage.failed_lineage_fingerprints ?? []).map((fingerprint) => `failed:${fingerprint}`),
+  ].filter((key): key is string => Boolean(key));
 }
 
 export interface WaitStrategyActivationContext {
@@ -721,24 +762,34 @@ export class StrategyManagerBase {
       return candidates;
     }
 
-    // Build score map: hypothesis text → adjustment
-    // Pivot → -1, Success → +1, Others → 0
+    // Build score map from stable typed lineage keys. Exact hypothesis text is
+    // retained on DecisionRecord only as diagnostic context.
     const scoreMap = new Map<string, number>();
     for (const record of records) {
-      const key = record.hypothesis;
-      if (!key) continue;
-      const existing = scoreMap.get(key) ?? 0;
-      if (record.decision === "pivot" && record.outcome !== "success") {
-        scoreMap.set(key, existing - 1);
-      } else if (record.outcome === "success") {
-        scoreMap.set(key, existing + 1);
+      const keys = decisionRecordLineageKeys(record);
+      if (keys.length === 0) continue;
+      const delta = record.decision === "pivot" && record.outcome !== "success"
+        ? -1
+        : record.outcome === "success"
+          ? 1
+          : 0;
+      if (delta === 0) continue;
+      for (const key of keys) {
+        scoreMap.set(key, (scoreMap.get(key) ?? 0) + delta);
       }
     }
 
-    const scored = candidates.map((c) => ({
-      candidate: c,
-      score: scoreMap.get(c.hypothesis) ?? 0,
-    }));
+    const scored = candidates.map((candidate) => {
+      const candidateKeys = strategyDecisionLineageKeys(candidate);
+      let score = 0;
+      for (const key of candidateKeys) {
+        score += scoreMap.get(key) ?? 0;
+      }
+      return {
+        candidate,
+        score,
+      };
+    });
 
     // Stable sort: higher score first (ties keep original order)
     scored.sort((a, b) => b.score - a.score);

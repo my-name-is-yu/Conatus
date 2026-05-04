@@ -13,7 +13,10 @@ import { gatherStallEvidence } from "../stall-evidence.js";
 import type { LoopIterationResult } from "./contracts.js";
 import type { PhaseCtx } from "./preparation.js";
 import type { StallActionHints } from "./task-cycle.js";
-import type { WaitStrategyActivationContext } from "../../strategy/strategy-manager-base.js";
+import {
+  buildDecisionLineageForStrategy,
+  type WaitStrategyActivationContext,
+} from "../../strategy/strategy-manager-base.js";
 import { collectDivergentHypotheses } from "../../strategy/divergent-exploration.js";
 
 type DimensionGapSample = {
@@ -261,12 +264,14 @@ async function applyStallAction(
     try {
       const latestGap = dimHistory[dimHistory.length - 1]?.normalized_gap ?? 1;
       const recordedDecision = selectedAction === "continue" ? "proceed" : selectedAction;
+      const decisionLineage = buildDecisionLineageForStrategy(activeStrategyForRecord);
       await ctx.deps.knowledgeManager.recordDecision({
         id: randomUUID(),
         goal_id: goalId,
         goal_type: goal.origin ?? "general",
         strategy_id: strategyIdForRecord,
         hypothesis: activeStrategyForRecord?.hypothesis,
+        ...(decisionLineage ? { lineage: decisionLineage } : {}),
         decision: recordedDecision,
         context: {
           gap_value: latestGap,
