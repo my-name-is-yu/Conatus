@@ -2652,7 +2652,7 @@ describe("ChatRunner", () => {
                 notify_policy: "done_only",
                 reply_target_source: "none",
                 pinned_reply_target: null,
-                title: "CoreLoop goal goal-1",
+                title: "DurableLoop goal goal-1",
                 workspace: "/repo",
                 created_at: "2026-05-02T00:00:00.000Z",
                 started_at: "2026-05-02T00:00:00.000Z",
@@ -2778,7 +2778,7 @@ describe("ChatRunner", () => {
                 notify_policy: "done_only",
                 reply_target_source: "none",
                 pinned_reply_target: null,
-                title: "CoreLoop goal goal-1",
+                title: "DurableLoop goal goal-1",
                 workspace: "/repo",
                 created_at: "2026-05-02T00:00:00.000Z",
                 started_at: "2026-05-02T00:00:00.000Z",
@@ -4493,7 +4493,7 @@ describe("ChatRunner", () => {
 
       expect(approveResult.success).toBe(true);
       expect(approveResult.output).toContain("RunSpec confirmed:");
-      expect(approveResult.output).toContain("Started daemon-backed CoreLoop goal:");
+      expect(approveResult.output).toContain("Started daemon-backed DurableLoop goal:");
       expect(approveResult.output).toContain("Background run: run:coreloop:");
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(daemonClient.startGoal).toHaveBeenCalledOnce();
@@ -4550,7 +4550,7 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(false);
       expect(result.output).toContain("Daemon start failed");
-      expect(result.output).toContain("no CoreLoop run was started");
+      expect(result.output).toContain("no DurableLoop run was started");
       expect(result.output).toContain("Connection refused");
       expect(daemonClient.startGoal).toHaveBeenCalledOnce();
       const registry = createRuntimeSessionRegistry({ stateManager });

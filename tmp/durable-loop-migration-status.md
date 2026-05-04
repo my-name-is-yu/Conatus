@@ -39,3 +39,15 @@
 - `rg -n "from .*core-loop|import\\(.*core-loop|\\.\\/core-loop|\\.\\.\\/core-loop" src -g '*.ts'` returned no remaining source imports after migration.
 - Intentional leftovers from `rg -n "CoreLoop|core-loop|coreloop" src/orchestrator/loop src/orchestrator/execution/agent-loop -g '*.ts'`: legacy compatibility shims, deprecated compatibility export names, compatibility alias tests, unchanged persisted/wire names such as `core_*` tool names and `run:coreloop:*`, and log/message text deferred to #1018.
 - Review: separate review agent found no material issues and confirmed old/new compiled ESM import paths still resolve.
+
+## #1018 Rename runtime, session, and user-facing CoreLoop labels to DurableLoop with legacy compatibility
+
+- Status: in progress.
+- Branch: `codex/issue-1018-durable-loop-user-labels`.
+- Issue body reviewed with `gh issue view 1018`.
+- Plan: update user-facing labels in chat/CLI/tool descriptions/runtime session titles/background run summaries to `DurableLoop`; keep legacy persisted IDs and kinds (`run:coreloop:*`, `session:coreloop:*`, `coreloop_run`, `coreloop`) unchanged and readable.
+- Compatibility note: runtime-control goal ID fallback now accepts both `DurableLoop goal <id>` and legacy `CoreLoop goal <id>` titles. This is deterministic parsing of an internal title compatibility surface, not freeform semantic routing.
+- Verification: `npm run typecheck` passed. `npm run lint:boundaries` passed with existing warnings and no errors. Runtime/session/control focused tests in the bundle passed. Chat caller-path DurableLoop label tests passed with targeted `-t` runs for `starts a confirmed RunSpec only after next-turn approval` and `starts a gateway natural-language RunSpec after approval and retains reply target metadata`.
+- Full chat focused bundle also ran but failed in unrelated Telegram setup tests because existing untracked `.pulseed-sandbox` local state reports Telegram/Home chat configured; this is the same local-state issue seen in #1016 and not caused by DurableLoop label changes.
+- Review: separate review agent found one missed user-facing chat safety response label. Fixed `background CoreLoop work` to `background DurableLoop work`.
+- Re-verification after review fix: `npm run typecheck`, `npm run lint:boundaries`, runtime/session/control/agent-loop focused tests, and targeted chat/cross-platform DurableLoop caller-path tests passed.

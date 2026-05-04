@@ -43,7 +43,7 @@ Routing contract:
 - assist: questions, how-to, status explanation, read-only guidance.
 - configure: setup/configuration of Telegram, Slack, daemon, provider, notifications, gateway, or channels.
 - execute: concrete repo edits, tests, implementation, commands, or goal execution that should enter the coding agent loop.
-- run_spec: clear natural-language requests for PulSeed to run, continue, optimize, evaluate, monitor, or work toward an outcome over time as a long-running background/CoreLoop run.
+- run_spec: clear natural-language requests for PulSeed to run, continue, optimize, evaluate, monitor, or work toward an outcome over time as a long-running background/DurableLoop run.
 - clarify: ambiguous or underspecified input where executing code would be unsafe.
 
 Use semantic intent, not literal phrase matching. Multilingual paraphrases should route by meaning.

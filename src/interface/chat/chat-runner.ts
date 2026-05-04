@@ -240,7 +240,7 @@ function validateRunSpecStartSafety(spec: RunSpec): string | null {
     return [
       `RunSpec confirmed but not started: ${spec.id}`,
       "Workspace is missing or ambiguous.",
-      "Reply with the exact local or remote workspace path before starting background CoreLoop work.",
+      "Reply with the exact local or remote workspace path before starting background DurableLoop work.",
     ].join("\n");
   }
 
@@ -1088,7 +1088,7 @@ export class ChatRunner {
         success: true,
         output: [
           `RunSpec confirmed: ${spec.id}`,
-          `Started daemon-backed CoreLoop goal: ${goal.id}`,
+          `Started daemon-backed DurableLoop goal: ${goal.id}`,
           `Background run: ${run.id}`,
           "Run `pulseed status` or `/sessions` to check progress.",
         ].join("\n"),
@@ -1106,7 +1106,7 @@ export class ChatRunner {
         output: [
           `RunSpec confirmed: ${spec.id}`,
           "",
-          `Daemon start failed, so no CoreLoop run was started: ${message}`,
+          `Daemon start failed, so no DurableLoop run was started: ${message}`,
           "Start the daemon with `pulseed daemon start`, then approve the RunSpec again from a daemon-capable chat surface.",
           `Background run record marked failed: ${run.id}`,
         ].join("\n"),

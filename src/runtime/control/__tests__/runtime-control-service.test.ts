@@ -28,7 +28,7 @@ function makeRun(input: Partial<RuntimeSessionRegistrySnapshot["background_runs"
     notify_policy: "done_only",
     reply_target_source: "none",
     pinned_reply_target: null,
-    title: "CoreLoop goal goal-1",
+    title: "DurableLoop goal goal-1",
     workspace: "/repo",
     created_at: "2026-05-02T00:00:00.000Z",
     started_at: "2026-05-02T00:00:00.000Z",

@@ -26,7 +26,7 @@ export function printUsage(): void {
 Usage:
   pulseed                                               Launch interactive TUI (default)
   pulseed --version, -v                Show version and exit
-  pulseed run --goal <id>              Run CoreLoop for a goal
+  pulseed run --goal <id>              Run DurableLoop for a goal
   pulseed improve [path]               Analyze path, suggest goals, and optionally run improvement loop
   pulseed suggest "<context>"          Suggest improvement goals for a project context
   pulseed goal add --title "<t>" --dim "name:type:val"  Register a goal (raw mode, no LLM)

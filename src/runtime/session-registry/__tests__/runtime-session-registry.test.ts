@@ -352,13 +352,13 @@ describe("RuntimeSessionRegistry", () => {
     }));
   });
 
-  it("projects a completed CoreLoop handoff graph from durable ledger records", async () => {
+  it("projects a completed DurableLoop handoff graph from durable ledger records", async () => {
     await stateManager.writeRaw("chat/sessions/chat-coreloop.json", {
       id: "chat-coreloop",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
       updatedAt: "2026-04-25T00:01:00.000Z",
-      title: "CoreLoop handoff",
+      title: "DurableLoop handoff",
       messages: [],
     });
 
@@ -371,7 +371,7 @@ describe("RuntimeSessionRegistry", () => {
       reply_target_source: "none",
       parent_session_id: "session:conversation:chat-coreloop",
       child_session_id: "session:coreloop:worker-handoff",
-      title: "CoreLoop handoff",
+      title: "DurableLoop handoff",
       workspace: "/repo",
       created_at: "2026-04-25T00:02:00.000Z",
       started_at: "2026-04-25T00:03:00.000Z",
@@ -387,7 +387,7 @@ describe("RuntimeSessionRegistry", () => {
     await ledger.terminal("run:coreloop:handoff", {
       status: "succeeded",
       completed_at: "2026-04-25T00:04:00.000Z",
-      summary: "CoreLoop completed.",
+      summary: "DurableLoop completed.",
     });
 
     const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();

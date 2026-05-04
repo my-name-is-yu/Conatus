@@ -431,7 +431,7 @@ export class RuntimeSessionRegistry {
       const sessionId = stringField(worker, "sessionId") ?? coreLoopSessionId(workerId);
       const runId = stringField(worker, "backgroundRunId") ?? coreLoopRunId(workerId);
       const parentSessionId = stringField(worker, "parentSessionId");
-      const title = goalId ? `CoreLoop goal ${goalId}` : `CoreLoop worker ${workerId}`;
+      const title = goalId ? `DurableLoop goal ${goalId}` : `DurableLoop worker ${workerId}`;
       sessions.push({
         schema_version: "runtime-session-v1",
         id: sessionId,
