@@ -30,6 +30,7 @@ export class FileWriteTool implements ITool<FileWriteInput, FileWriteOutput> {
     maxConcurrency: 3,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "file_create",
   };
   readonly inputSchema = FileWriteInputSchema;
 

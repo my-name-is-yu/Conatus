@@ -24,6 +24,7 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
     maxConcurrency: 1,
     maxOutputChars: 8000,
     tags: ["agentloop", "filesystem", "edit"],
+    activityCategory: "file_modify",
   };
 
   readonly inputSchema = ApplyPatchInputSchema;

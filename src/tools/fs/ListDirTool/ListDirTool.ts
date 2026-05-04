@@ -33,6 +33,7 @@ export class ListDirTool implements ITool<ListDirInput, DirEntry[]> {
     maxConcurrency: 0,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "read",
   };
   readonly inputSchema = ListDirInputSchema;
 

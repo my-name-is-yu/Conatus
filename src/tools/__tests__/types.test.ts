@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   ToolResultSchema,
   ToolPermissionLevelSchema,
+  ToolActivityCategorySchema,
   ToolMetadataSchema,
   PermissionCheckResultSchema,
 } from "../types.js";
@@ -80,6 +81,15 @@ describe("ToolPermissionLevelSchema", () => {
   });
 });
 
+describe("ToolActivityCategorySchema", () => {
+  it.each(["search", "read", "command", "file_create", "file_modify", "test", "approval"] as const)(
+    "parses activity category: %s",
+    (category) => {
+      expect(ToolActivityCategorySchema.parse(category)).toBe(category);
+    },
+  );
+});
+
 describe("ToolMetadataSchema", () => {
   const validMeta = {
     name: "glob",
@@ -111,6 +121,7 @@ describe("ToolMetadataSchema", () => {
       maxConcurrency: 5,
       maxOutputChars: 4000,
       tags: ["file", "search"],
+      activityCategory: "search",
     };
     const result = ToolMetadataSchema.parse(meta);
     expect(result.aliases).toEqual(["find", "search"]);
@@ -118,6 +129,7 @@ describe("ToolMetadataSchema", () => {
     expect(result.maxConcurrency).toBe(5);
     expect(result.maxOutputChars).toBe(4000);
     expect(result.tags).toEqual(["file", "search"]);
+    expect(result.activityCategory).toBe("search");
   });
 
   it("rejects when name is missing", () => {

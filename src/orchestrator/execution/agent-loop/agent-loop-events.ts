@@ -1,3 +1,5 @@
+import type { ToolActivityCategory } from "../../../tools/types.js";
+
 export type AgentLoopEvent =
   | AgentLoopStartedEvent
   | AgentLoopResumedEvent
@@ -68,6 +70,7 @@ export interface AgentLoopToolCallStartedEvent extends AgentLoopBaseEvent {
   callId: string;
   toolName: string;
   inputPreview: string;
+  activityCategory?: ToolActivityCategory;
 }
 
 export interface AgentLoopToolCallFinishedEvent extends AgentLoopBaseEvent {
@@ -84,6 +87,7 @@ export interface AgentLoopToolCallFinishedEvent extends AgentLoopBaseEvent {
     originalChars: number;
     overflowPath?: string;
   };
+  activityCategory?: ToolActivityCategory;
 }
 
 export interface AgentLoopPlanUpdateEvent extends AgentLoopBaseEvent {

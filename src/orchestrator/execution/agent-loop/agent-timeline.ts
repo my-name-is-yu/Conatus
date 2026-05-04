@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "./agent-loop-events.js";
+import type { ToolActivityCategory } from "../../../tools/types.js";
 
 export type AgentTimelineItem =
   | AgentTimelineLifecycleItem
@@ -13,14 +14,7 @@ export type AgentTimelineItem =
   | AgentTimelineFinalItem
   | AgentTimelineStoppedItem;
 
-export type AgentTimelineActivityKind =
-  | "search"
-  | "read"
-  | "command"
-  | "file_create"
-  | "file_modify"
-  | "test"
-  | "approval";
+export type AgentTimelineActivityKind = ToolActivityCategory;
 
 export interface AgentTimelineBaseItem {
   id: string;
@@ -67,6 +61,7 @@ export interface AgentTimelineToolItem extends AgentTimelineBaseItem {
   status: "started" | "finished";
   callId: string;
   toolName: string;
+  activityCategory?: AgentTimelineActivityKind;
   inputPreview?: string;
   success?: boolean;
   disposition?: "respond_to_model" | "fatal" | "approval_denied" | "cancelled";
@@ -181,6 +176,7 @@ export function projectAgentLoopEventToTimeline(event: AgentLoopEvent): AgentTim
         status: "started",
         callId: event.callId,
         toolName: event.toolName,
+        ...(event.activityCategory ? { activityCategory: event.activityCategory } : {}),
         inputPreview: event.inputPreview,
       };
     case "tool_call_finished":
@@ -190,6 +186,7 @@ export function projectAgentLoopEventToTimeline(event: AgentLoopEvent): AgentTim
         status: "finished",
         callId: event.callId,
         toolName: event.toolName,
+        ...(event.activityCategory ? { activityCategory: event.activityCategory } : {}),
         success: event.success,
         ...(event.inputPreview ? { inputPreview: event.inputPreview } : {}),
         ...(event.disposition ? { disposition: event.disposition } : {}),
@@ -298,19 +295,19 @@ export function formatAgentTimelineActivitySummary(buckets: AgentTimelineActivit
 function classifyTimelineActivity(item: AgentTimelineItem): AgentTimelineActivityKind | null {
   if (item.kind === "approval" && item.status === "requested") return "approval";
   if (item.kind !== "tool" || item.status !== "finished") return null;
-  return classifyToolActivity(item.toolName, item.inputPreview);
+  return classifyToolActivity(item.activityCategory, item.inputPreview);
 }
 
-function classifyToolActivity(toolName: string, inputPreview?: string): AgentTimelineActivityKind {
-  const normalizedTool = normalizeToolToken(toolName);
+function classifyToolActivity(
+  activityCategory: AgentTimelineActivityKind | undefined,
+  inputPreview?: string,
+): AgentTimelineActivityKind {
   const input = parseToolInputPreview(inputPreview);
   const command = stringField(input, "command") ?? stringField(input, "cmd");
-  if (command) return classifyCommandActivity(command);
-  if (hasAny(normalizedTool, ["test", "verify", "check"])) return "test";
-  if (hasAny(normalizedTool, ["search", "grep", "query"])) return "search";
-  if (hasAny(normalizedTool, ["read", "list", "dir", "log", "diff"])) return "read";
-  if (hasAny(normalizedTool, ["write", "create"])) return "file_create";
-  if (hasAny(normalizedTool, ["edit", "patch", "apply"])) return "file_modify";
+  if (command && (!activityCategory || activityCategory === "command")) {
+    return classifyCommandActivity(command);
+  }
+  if (activityCategory) return activityCategory;
   return "command";
 }
 
@@ -348,14 +345,6 @@ function parseToolInputPreview(inputPreview?: string): Record<string, unknown> |
 function stringField(input: Record<string, unknown> | null, field: string): string | null {
   const value = input?.[field];
   return typeof value === "string" ? value : null;
-}
-
-function normalizeToolToken(value: string): string {
-  return value.toLowerCase().replace(/[-_]/g, "");
-}
-
-function hasAny(value: string, needles: string[]): boolean {
-  return needles.some((needle) => value.includes(needle));
 }
 
 function firstCommandToken(command: string): string {

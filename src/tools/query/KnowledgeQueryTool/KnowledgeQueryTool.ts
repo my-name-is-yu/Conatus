@@ -75,6 +75,7 @@ export class KnowledgeQueryTool
     maxConcurrency: 0,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "search",
   };
 
   readonly inputSchema = KnowledgeQueryInputSchema;

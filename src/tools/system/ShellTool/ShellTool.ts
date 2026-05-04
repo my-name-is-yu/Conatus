@@ -22,6 +22,7 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
     permissionLevel: PERMISSION_LEVEL, isReadOnly: false, isDestructive: false,
     shouldDefer: false, alwaysLoad: true, maxConcurrency: 3,
     maxOutputChars: MAX_OUTPUT_CHARS, tags: [...TAGS],
+    activityCategory: "command",
   };
   readonly inputSchema = ShellInputSchema;
 

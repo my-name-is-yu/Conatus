@@ -18,6 +18,7 @@ export class JsonQueryTool implements ITool<JsonQueryInput, unknown> {
     permissionLevel: PERMISSION_LEVEL, isReadOnly: READ_ONLY, isDestructive: false,
     shouldDefer: true, alwaysLoad: false, maxConcurrency: 0,
     maxOutputChars: MAX_OUTPUT_CHARS, tags: [...TAGS],
+    activityCategory: "read",
   };
   readonly inputSchema = JsonQueryInputSchema;
 

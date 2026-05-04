@@ -71,6 +71,7 @@ export class WebSearchTool implements ITool<WebSearchInput, SearchResult[]> {
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
     requiresNetwork: true,
+    activityCategory: "search",
   };
 
   readonly inputSchema = WebSearchInputSchema;

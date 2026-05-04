@@ -237,6 +237,7 @@ export class HttpFetchTool implements ITool<HttpFetchInput, HttpFetchOutput> {
     permissionLevel: PERMISSION_LEVEL, isReadOnly: true, isDestructive: false,
     shouldDefer: true, alwaysLoad: false, maxConcurrency: 5,
     maxOutputChars: MAX_OUTPUT_CHARS, tags: [...TAGS], requiresNetwork: true,
+    activityCategory: "read",
   };
   readonly inputSchema = HttpFetchInputSchema;
 
