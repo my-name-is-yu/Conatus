@@ -70,6 +70,15 @@ function runSpecFreeformDecision(): string {
   });
 }
 
+function configureFreeformDecision(): string {
+  return JSON.stringify({
+    kind: "configure",
+    confidence: 0.91,
+    configure_target: "unknown",
+    rationale: "Misclassified long-running work as configuration",
+  });
+}
+
 function runSpecDraftDecision(): string {
   return JSON.stringify({
     decision: "run_spec_request",
@@ -160,6 +169,42 @@ describe("CrossPlatformChatSessionManager", () => {
         message_id: "message-1",
         identity_key: "telegram:user-1",
       });
+    } finally {
+      cleanupTempDir(baseDir);
+    }
+  });
+
+  it("keeps gateway long-running requests on RunSpec when freeform routing over-classifies configuration", async () => {
+    const baseDir = makeTempDir();
+    try {
+      const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
+      const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = { execute: vi.fn() };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        adapter,
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        llmClient: createMockLLMClient([
+          configureFreeformDecision(),
+          runSpecDraftDecision(),
+        ]),
+      }));
+
+      const result = await manager.execute("DurableloopのほうでKaggleのタスクに取り組んで", {
+        identity_key: "telegram:user-1",
+        channel: "plugin_gateway",
+        platform: "telegram",
+        conversation_id: "telegram-chat-1",
+        cwd: "/repo/kaggle",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Proposed long-running run:");
+      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).not.toContain("setup/configuration");
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      expect(fs.readdirSync(`${baseDir}/run-specs`)).toHaveLength(1);
     } finally {
       cleanupTempDir(baseDir);
     }

@@ -4462,6 +4462,46 @@ describe("ChatRunner", () => {
       });
     });
 
+    it("lets typed RunSpec derivation override an over-broad configure route", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-configure-override-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockRejectedValue(new Error("agent loop must not run")),
+      } as unknown as ChatAgentLoopRunner;
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          kind: "configure",
+          confidence: 0.91,
+          configure_target: "unknown",
+          rationale: "misread DurableLoop request as configuration",
+        }),
+        runSpecDraftDecision(),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter,
+        chatAgentLoopRunner,
+        llmClient,
+      }));
+
+      const result = await runner.execute(
+        "DurableloopのほうでKaggleのタスクに取り組んで",
+        "/repo/kaggle",
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Proposed long-running run:");
+      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).not.toContain("setup/configuration");
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.status).toBe("draft");
+      expect(stored.profile).toBe("kaggle");
+    });
+
     it("starts a confirmed RunSpec only after next-turn approval", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-confirm-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });

@@ -836,7 +836,12 @@ export class CrossPlatformChatSessionManager {
     }
     const shouldDeriveRunSpecDraft =
       runtimeControlIntent === null
-      && freeformRouteIntent?.kind === "run_spec"
+      && freeformRouteIntent !== null
+      && (
+        freeformRouteIntent.kind === "run_spec"
+        || freeformRouteIntent.kind === "configure"
+        || freeformRouteIntent.kind === "clarify"
+      )
       && freeformRouteIntent.confidence >= 0.7;
     const runSpecDraft = shouldDeriveRunSpecDraft
       ? await deriveRunSpecFromText(safeIngressText, {
