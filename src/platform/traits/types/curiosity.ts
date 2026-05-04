@@ -33,6 +33,18 @@ export const CuriosityProposalStatusEnum = z.enum([
 ]);
 export type CuriosityProposalStatus = z.infer<typeof CuriosityProposalStatusEnum>;
 
+// --- CuriosityTransferEvidence ---
+
+export const CuriosityTransferEvidenceSchema = z.object({
+  source_goal_id: z.string(),
+  source_dimension: z.string(),
+  target_goal_id: z.string().nullable(),
+  target_dimension: z.string(),
+  similarity: z.number().min(0).max(1),
+  evidence_refs: z.array(z.string()).default([]),
+});
+export type CuriosityTransferEvidence = z.infer<typeof CuriosityTransferEvidenceSchema>;
+
 // --- CuriosityProposal ---
 
 export const CuriosityProposalSchema = z.object({
@@ -57,6 +69,7 @@ export const CuriosityProposalSchema = z.object({
       "periodic_review",
       "embedding_similarity",
     ]),
+    transfer_evidence: z.array(CuriosityTransferEvidenceSchema).optional(),
   }),
   status: CuriosityProposalStatusEnum,
   created_at: z.string(),

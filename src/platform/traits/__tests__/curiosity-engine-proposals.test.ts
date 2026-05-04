@@ -4,6 +4,7 @@ import type { CuriosityEngineDeps } from "../curiosity-engine.js";
 import type { CuriosityProposal, CuriosityTrigger } from "../../../base/types/curiosity.js";
 import type { StallState } from "../../../base/types/stall.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { generateProposals as generateProposalsImpl } from "../curiosity-proposals.js";
 
 // ─── Helper Factories ───
 
@@ -120,6 +121,203 @@ describe("CuriosityEngine — generateProposals", async () => {
     const proposals = await engine.generateProposals([makeTrigger()], []);
     expect(proposals).toHaveLength(1);
     expect(proposals[0]!.proposed_goal.description).toBe("Explore new testing patterns");
+  });
+
+  it("uses admitted vector results as embedding transfer evidence through generateProposals", async () => {
+    const vectorIndex = {
+      add: vi.fn(),
+      search: vi.fn().mockResolvedValue([
+        {
+          id: "dim:goal-source:balanced_accuracy",
+          text: "balanced accuracy",
+          similarity: 0.86,
+          metadata: { goal_id: "goal-source", dimension: "balanced_accuracy", type: "dimension" },
+        },
+      ]),
+    } as any;
+    const deps = createMockDeps({ vectorIndex });
+    (deps.llmClient.parseJSON as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        description: "Transfer balanced accuracy audit",
+        rationale: "Use the similar source dimension evidence",
+        suggested_dimensions: [],
+        scope_domain: "classification",
+        detection_method: "llm_heuristic",
+      },
+    ]);
+    const engine = new CuriosityEngine(deps);
+    const goals = [
+      makeGoal({
+        id: "goal-target",
+        status: "active",
+        dimensions: [{ name: "balanced_accuracy", label: "Balanced accuracy", threshold: { type: "min", value: 0.8 }, current_value: 0.4, confidence: 0.2, history: [] } as any],
+      }),
+    ];
+
+    const proposals = await engine.generateProposals([
+      { type: "undefined_problem", detected_at: new Date().toISOString(), source_goal_id: "goal-target", details: "Low confidence", severity: 0.7 },
+    ], goals);
+
+    expect(vectorIndex.search).toHaveBeenCalledWith("balanced_accuracy", 5, 0.7);
+    expect(proposals[0]!.proposed_goal.detection_method).toBe("embedding_similarity");
+    expect(proposals[0]!.proposed_goal.transfer_evidence).toEqual([
+      {
+        source_goal_id: "goal-source",
+        source_dimension: "balanced_accuracy",
+        target_goal_id: "goal-target",
+        target_dimension: "balanced_accuracy",
+        similarity: 0.86,
+        evidence_refs: ["dim:goal-source:balanced_accuracy"],
+      },
+    ]);
+    const prompt = (deps.llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0]![0][0].content as string;
+    expect(prompt).toContain("Semantic Transfer Evidence");
+    expect(prompt).toContain("goal-source");
+    expect(prompt).toContain("similarity=0.860");
+    expect(prompt).toContain("dim:goal-source:balanced_accuracy");
+  });
+
+  it("does not assign embedding_similarity when vector search returns no transfer results", async () => {
+    const vectorIndex = {
+      add: vi.fn(),
+      search: vi.fn().mockResolvedValue([]),
+    } as any;
+    const deps = createMockDeps({ vectorIndex });
+    (deps.llmClient.parseJSON as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        description: "Clarify weak signal",
+        rationale: "No semantic transfer evidence was admitted",
+        suggested_dimensions: [],
+        scope_domain: "classification",
+        detection_method: "llm_heuristic",
+      },
+    ]);
+    const engine = new CuriosityEngine(deps);
+    const goals = [
+      makeGoal({
+        id: "goal-target",
+        status: "active",
+        dimensions: [{ name: "calibration", label: "Calibration", threshold: { type: "min", value: 0.8 }, current_value: 0.4, confidence: 0.2, history: [] } as any],
+      }),
+    ];
+
+    const proposals = await engine.generateProposals([
+      { type: "undefined_problem", detected_at: new Date().toISOString(), source_goal_id: "goal-target", details: "Low confidence", severity: 0.7 },
+    ], goals);
+
+    expect(vectorIndex.search).toHaveBeenCalledWith("calibration", 5, 0.7);
+    expect(proposals[0]!.proposed_goal.detection_method).toBe("llm_heuristic");
+    expect(proposals[0]!.proposed_goal.transfer_evidence).toEqual([]);
+  });
+
+  it("downgrades model-provided embedding_similarity when no vector evidence is admitted", async () => {
+    const deps = createMockDeps();
+    (deps.llmClient.parseJSON as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        description: "Claim semantic transfer",
+        rationale: "Model claimed vector similarity without evidence",
+        suggested_dimensions: [],
+        scope_domain: "classification",
+        detection_method: "embedding_similarity",
+      },
+    ]);
+    const engine = new CuriosityEngine(deps);
+
+    const proposals = await engine.generateProposals([
+      { type: "undefined_problem", detected_at: new Date().toISOString(), source_goal_id: "goal-target", details: "Low confidence", severity: 0.7 },
+    ], []);
+
+    expect(proposals[0]!.proposed_goal.detection_method).toBe("llm_heuristic");
+    expect(proposals[0]!.proposed_goal.transfer_evidence).toEqual([]);
+  });
+
+  it("does not assign embedding_similarity when semantic transfer is unavailable", async () => {
+    const deps = createMockDeps();
+    (deps.llmClient.parseJSON as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        description: "Clarify weak signal",
+        rationale: "Vector transfer unavailable",
+        suggested_dimensions: [],
+        scope_domain: "classification",
+        detection_method: "llm_heuristic",
+      },
+    ]);
+    const engine = new CuriosityEngine(deps);
+    const goals = [
+      makeGoal({
+        id: "goal-target",
+        status: "active",
+        dimensions: [{ name: "calibration", label: "Calibration", threshold: { type: "min", value: 0.8 }, current_value: 0.4, confidence: 0.2, history: [] } as any],
+      }),
+    ];
+
+    const proposals = await engine.generateProposals([
+      { type: "undefined_problem", detected_at: new Date().toISOString(), source_goal_id: "goal-target", details: "Low confidence", severity: 0.7 },
+    ], goals);
+
+    expect(proposals[0]!.proposed_goal.detection_method).toBe("llm_heuristic");
+    expect(proposals[0]!.proposed_goal.transfer_evidence).toEqual([]);
+  });
+
+  it("sends semantic transfer evidence in the concrete proposal prompt even when a gateway dependency exists", async () => {
+    const vectorIndex = {
+      add: vi.fn(),
+      search: vi.fn().mockResolvedValue([
+        {
+          id: "dim:goal-source:recall",
+          text: "recall",
+          similarity: 0.91,
+          metadata: { goal_id: "goal-source", dimension: "recall", type: "dimension" },
+        },
+      ]),
+    } as any;
+    const gateway = {
+      execute: vi.fn().mockResolvedValue([]),
+      executeWithUsage: vi.fn().mockResolvedValue({ data: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, contextTokens: 0 }),
+    } as any;
+    const deps = createMockDeps({ vectorIndex });
+    (deps.llmClient.parseJSON as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        description: "Transfer recall diagnostics",
+        rationale: "Use evidence refs",
+        suggested_dimensions: [],
+        scope_domain: "classification",
+        detection_method: "llm_heuristic",
+      },
+    ]);
+    const state = {
+      proposals: [],
+      learning_records: [],
+      last_exploration_at: null,
+      rejected_proposal_hashes: [],
+    };
+    const goals = [
+      makeGoal({
+        id: "goal-target",
+        status: "active",
+        dimensions: [{ name: "recall", label: "Recall", threshold: { type: "min", value: 0.8 }, current_value: 0.4, confidence: 0.2, history: [] } as any],
+      }),
+    ];
+
+    const proposals = await generateProposalsImpl(
+      [{ type: "undefined_problem", detected_at: new Date().toISOString(), source_goal_id: "goal-target", details: "Low confidence", severity: 0.7 }],
+      goals,
+      state,
+      0,
+      {
+        llmClient: deps.llmClient,
+        ethicsGate: deps.ethicsGate,
+        vectorIndex,
+        gateway,
+        config: deps.config as any,
+      }
+    );
+
+    expect(gateway.execute).not.toHaveBeenCalled();
+    const prompt = (deps.llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0]![0][0].content as string;
+    expect(prompt).toContain("Semantic Transfer Evidence");
+    expect(prompt).toContain("dim:goal-source:recall");
+    expect(proposals[0]!.proposed_goal.detection_method).toBe("embedding_similarity");
   });
 
   it("returns empty array when triggers is empty", async () => {

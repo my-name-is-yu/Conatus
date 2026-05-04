@@ -31,6 +31,7 @@ import {
   detectSemanticTransfer as detectSemanticTransferImpl,
   detectKnowledgeTransferOpportunities as detectKnowledgeTransferOpportunitiesImpl,
 } from "./curiosity-transfer.js";
+import type { SemanticTransferEvidence } from "./curiosity-transfer.js";
 
 // ─── Constants ───
 
@@ -636,7 +637,7 @@ export class CuriosityEngine {
   async detectSemanticTransfer(
     goalId: string,
     dimensions: string[]
-  ): Promise<Array<{ source_goal_id: string; dimension: string; similarity: number }>> {
+  ): Promise<SemanticTransferEvidence[]> {
     return detectSemanticTransferImpl(goalId, dimensions, {
       vectorIndex: this.vectorIndex,
     });

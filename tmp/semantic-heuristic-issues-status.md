@@ -36,3 +36,9 @@
 - Plan: extend `StallTaskHistoryEntry` with optional typed task-result evidence, prefer typed no-op/material-change signals in `detectRepetitivePatterns()`, mark phrase/bigram text matching as low-confidence fallback with source, and cover the `StallDetector.detectRepetitivePatterns()` caller path.
 - Review: fresh review agent found mixed typed/untyped windows could still fall through to text fallback after one material change, and tool-call-only/not-run evidence was too weak for typed no-op; fixed both and added regression coverage.
 - Verification: `npm run typecheck`; `npx vitest run src/platform/drive/__tests__/stall-detector-repetitive.test.ts`; `npm run lint:boundaries` (warnings only, pre-existing); `npm run test:changed`.
+
+## #1032
+- Status: implementation verified locally after review fixes; preparing PR.
+- Plan: route `generateProposals()` through concrete semantic-transfer search evidence, add typed proposal transfer evidence with source goal/dimension/similarity/evidence refs, include that evidence in proposal prompts, and only assign `embedding_similarity` when admitted vector results exist.
+- Review: fresh review agent found model-provided `embedding_similarity` could be accepted without vector evidence and gateway prompt assembly could drop transfer evidence; fixed by sanitizing detection methods without evidence and using the concrete proposal prompt path.
+- Verification: `npm run typecheck`; `npx vitest run src/platform/traits/__tests__/curiosity-engine-budget.test.ts src/platform/traits/__tests__/curiosity-engine-proposals.test.ts`; `npm run lint:boundaries` (warnings only, pre-existing); `npm run test:changed`.
