@@ -7,6 +7,7 @@ import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { renderOperationProgress } from "../../interface/chat/operation-progress.js";
 import { formatLifecycleFailureMessage } from "../../interface/chat/failure-recovery.js";
+import { renderAgentTimelineItemForChat } from "../../interface/chat/chat-event-state.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
@@ -394,6 +395,7 @@ class TelegramChatEventAdapter {
   private assistantMessage: { messageId: number; text: string } | null = null;
   private readonly toolMessages = new Map<string, { messageId: number; text: string }>();
   private readonly activityMessages = new Map<string, { messageId: number; text: string }>();
+  private readonly timelineMessages = new Map<string, { messageId: number; text: string }>();
   private hasAssistantOutput = false;
 
   constructor(
@@ -411,6 +413,7 @@ class TelegramChatEventAdapter {
         this.assistantMessage = null;
         this.toolMessages.clear();
         this.activityMessages.clear();
+        this.timelineMessages.clear();
         this.hasAssistantOutput = false;
         return;
       case "assistant_delta":
@@ -423,15 +426,30 @@ class TelegramChatEventAdapter {
         }
         return;
       case "operation_progress":
+        if (event.item.metadata?.["source"] === "agent_timeline_activity_summary") return;
         await this.upsertActivityMessage(event.item.id, renderOperationProgress(event.item));
         return;
+      case "agent_timeline": {
+        if (event.item.visibility !== "user") return;
+        const text = renderAgentTimelineItemForChat(event.item).trim();
+        if (!text) return;
+        if (event.item.kind === "final") {
+          this.hasAssistantOutput = true;
+          return;
+        }
+        await this.upsertTimelineMessage(event.item.sourceEventId, text);
+        return;
+      }
       case "tool_start":
+        if (event.presentation?.suppressTranscript) return;
         await this.upsertToolMessage(event.toolCallId, `[tool] ${event.toolName} started`);
         return;
       case "tool_update":
+        if (event.presentation?.suppressTranscript) return;
         await this.upsertToolMessage(event.toolCallId, `[tool] ${event.toolName} ${event.status}: ${event.message}`);
         return;
       case "tool_end":
+        if (event.presentation?.suppressTranscript) return;
         await this.upsertToolMessage(
           event.toolCallId,
           `[tool] ${event.toolName} ${event.success ? "done" : "failed"}: ${event.summary}`
@@ -478,6 +496,17 @@ class TelegramChatEventAdapter {
     if (!existing) {
       const messageId = await this.api.sendPlainMessage(this.chatId, text);
       this.activityMessages.set(activityId, { messageId, text });
+      return;
+    }
+    await this.api.editMessageText(this.chatId, existing.messageId, text);
+    existing.text = text;
+  }
+
+  private async upsertTimelineMessage(sourceEventId: string, text: string): Promise<void> {
+    const existing = this.timelineMessages.get(sourceEventId);
+    if (!existing) {
+      const messageId = await this.api.sendPlainMessage(this.chatId, text);
+      this.timelineMessages.set(sourceEventId, { messageId, text });
       return;
     }
     await this.api.editMessageText(this.chatId, existing.messageId, text);

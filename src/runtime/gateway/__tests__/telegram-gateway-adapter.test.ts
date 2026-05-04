@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
 import { TelegramGatewayAdapter } from "../telegram-gateway-adapter.js";
+import { ChatRunnerEventBridge } from "../../../interface/chat/chat-runner-event-bridge.js";
+import type { AgentLoopEvent } from "../../../orchestrator/execution/agent-loop/agent-loop-events.js";
 
 vi.mock("../chat-session-dispatch.js", () => ({
   dispatchGatewayChatInput: vi.fn().mockResolvedValue("ok"),
@@ -20,7 +22,12 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(adapters.splice(0).map((adapter) => adapter.stop()));
   vi.unstubAllGlobals();
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, {
+    recursive: true,
+    force: true,
+    maxRetries: 3,
+    retryDelay: 10,
+  })));
 });
 
 describe("TelegramGatewayAdapter", () => {
@@ -201,6 +208,203 @@ describe("TelegramGatewayAdapter", () => {
       expect(sentMessages).toContain("Final setup guidance.");
     });
     expect(sentMessages.filter((message) => message === "Final setup guidance.")).toHaveLength(1);
+  });
+
+  it("renders shared agent timeline events in the Telegram channel without parsing TUI transcript text", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const sentMessages: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "getMe") return telegramResponse({ id: 1, username: "pulseed_test_bot" });
+      if (method === "getUpdates") {
+        return telegramResponse([{
+          update_id: 100,
+          message: { message_id: 2718, from: { id: 42 }, chat: { id: 314 }, text: "work on timeline" },
+        }]);
+      }
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        return telegramResponse({ message_id: 9000 + sentMessages.length });
+      }
+      if (method === "editMessageText") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        return telegramResponse({ message_id: 9100 + sentMessages.length });
+      }
+      if (method === "sendChatAction") return telegramResponse(true);
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      const bridge = new ChatRunnerEventBridge(() => input.onEvent);
+      const sink = bridge.createAgentLoopEventSink({ runId: "run-1", turnId: "chat-turn-1" });
+      const emit = (event: Partial<AgentLoopEvent> & { type: AgentLoopEvent["type"]; eventId: string } & {
+        createdAt?: string;
+      }) => sink.emit({
+        sessionId: "session-1",
+        traceId: "trace-1",
+        turnId: "agent-turn-1",
+        goalId: "goal-1",
+        createdAt: event.createdAt ?? "2026-04-08T00:00:00.000Z",
+        ...event,
+      } as AgentLoopEvent);
+
+      await emit({
+        type: "assistant_message",
+        eventId: "commentary-1",
+        phase: "commentary",
+        contentPreview: "Reviewing the timeline path.",
+        toolCallCount: 1,
+      });
+      await emit({
+        type: "tool_call_started",
+        eventId: "tool-start-1",
+        callId: "call-1",
+        toolName: "shell_command",
+        activityCategory: "command",
+        inputPreview: JSON.stringify({ command: "rg Timeline src/interface/chat" }),
+      });
+      await emit({
+        type: "tool_call_finished",
+        eventId: "tool-finish-1",
+        callId: "call-1",
+        toolName: "shell_command",
+        activityCategory: "command",
+        inputPreview: JSON.stringify({ command: "rg Timeline src/interface/chat" }),
+        success: true,
+        outputPreview: "src/interface/chat/chat-events.ts",
+        durationMs: 12,
+      });
+      await emit({
+        type: "approval_request",
+        eventId: "approval-1",
+        callId: "call-2",
+        toolName: "shell_command",
+        reason: "run a write command",
+        permissionLevel: "execute",
+        isDestructive: false,
+      });
+      await emit({
+        type: "context_compaction",
+        eventId: "compaction-1",
+        phase: "mid_turn",
+        reason: "context_limit",
+        inputMessages: 12,
+        outputMessages: 4,
+        summaryPreview: "kept timeline facts",
+      });
+      await emit({
+        type: "final",
+        eventId: "final-1",
+        success: true,
+        outputPreview: "Done from final.",
+        createdAt: "2026-04-08T00:00:01.000Z",
+      });
+      await adapter.stop();
+      return "Done from fallback.";
+    });
+
+    await adapter.start();
+
+    await vi.waitFor(() => {
+      expect(sentMessages).toEqual(expect.arrayContaining([
+        "Reviewing the timeline path.",
+        `Started shell_command: ${JSON.stringify({ command: "rg Timeline src/interface/chat" })}`,
+        "Finished shell_command: src/interface/chat/chat-events.ts",
+        "Approval requested for shell_command: run a write command",
+        "Compacted context (mid_turn, context_limit): 12 -> 4.",
+        "searched 1 search, requested 1 approval",
+      ]));
+    });
+    expect(sentMessages.some((message) => message.includes("[tool]"))).toBe(false);
+    expect(sentMessages).not.toContain("Done from final.");
+    expect(sentMessages).not.toContain("Done from fallback.");
+    expect(sentMessages.join("\n")).not.toContain("Agent-loop activity summarized");
+    expect(sentMessages.join("\n")).not.toMatch(/\b(Checkpoint|Intent|Current activity|Recent activity)\b/);
+  });
+
+  it("does not send fallback after an agent_timeline final marks assistant output", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const sentMessages: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "getMe") return telegramResponse({ id: 1, username: "pulseed_test_bot" });
+      if (method === "getUpdates") {
+        return telegramResponse([{
+          update_id: 100,
+          message: { message_id: 2718, from: { id: 42 }, chat: { id: 314 }, text: "hello" },
+        }]);
+      }
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        return telegramResponse({ message_id: 9000 + sentMessages.length });
+      }
+      if (method === "sendChatAction") return telegramResponse(true);
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      void input.onEvent?.({
+        type: "agent_timeline",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:02.000Z",
+        item: {
+          id: "agent-timeline:final-1",
+          sourceEventId: "final-1",
+          sourceType: "final",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "agent-turn-1",
+          goalId: "goal-1",
+          createdAt: "2026-04-08T00:00:02.000Z",
+          visibility: "user",
+          kind: "final",
+          success: true,
+          outputPreview: "Final timeline answer.",
+        },
+      });
+      await adapter.stop();
+      return "Fallback should not send.";
+    });
+
+    await adapter.start();
+    expect(sentMessages).not.toContain("Final timeline answer.");
+    expect(sentMessages).not.toContain("Fallback should not send.");
+
+    await vi.waitFor(() => {
+      expect(sentMessages).not.toContain("Fallback should not send.");
+    });
   });
 
   it("does not send fallback while async assistant_final delivery is still draining", async () => {
