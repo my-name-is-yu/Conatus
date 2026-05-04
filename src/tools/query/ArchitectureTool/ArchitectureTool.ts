@@ -14,7 +14,7 @@ const LAYERS: Record<string, string> = {
   "Layer 2": "ObservationEngine, DriveScorer, SatisficingJudge, StallDetector",
   "Layer 3": "SessionManager, GoalNegotiator, StrategyManager",
   "Layer 4": "TaskLifecycle",
-  "Layer 5": "CoreLoop, ReportingEngine",
+  "Layer 5": "DurableLoop, ReportingEngine",
   "Layer 6": "CLIRunner",
   "Layer 7": "TUI (Ink/React dashboard, approval UI, chat)",
   "Layer 8": "KnowledgeManager (cross-cutting)",
@@ -37,7 +37,7 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
   StallDetector: "Detects stall conditions (repetition, timeout, loop)",
   SessionManager: "Manages agent session lifecycle",
   TaskLifecycle: "Task selection, execution delegation, verification",
-  CoreLoop: "Main orchestration loop: observe -> gap -> score -> task -> execute -> verify (NEVER STOP)",
+  DurableLoop: "Main orchestration loop: observe -> gap -> score -> task -> execute -> verify (NEVER STOP)",
   EthicsGate: "L1 mechanical safety checks before irreversible actions",
   KnowledgeManager: "Hierarchical memory with LLM page-in/out and semantic archival",
   PortfolioManager: "Orchestrates parallel strategies between DriveScorer and TaskLifecycle",
@@ -87,7 +87,7 @@ export class ArchitectureTool implements ITool<ArchitectureToolInput, unknown> {
     const data = {
       core_concept: {
         model: "4-element: Goal (with thresholds) -> Current State (observation + confidence) -> Gap -> Constraints",
-        core_loop: "observe -> gap -> score -> task -> execute -> verify (NEVER STOP)",
+        durable_loop: "observe -> gap -> score -> task -> execute -> verify (NEVER STOP)",
         execution_boundary: "PulSeed uses available tools directly for safe local work and delegates when specialization, parallelism, or context isolation helps.",
       },
       layers: LAYERS,

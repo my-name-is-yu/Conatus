@@ -5,7 +5,7 @@
 
 > Related: `plugin-architecture.md`, `reporting.md`, `daemon-client-architecture.md`, `docs/design/core/observation.md`, `docs/design/execution/data-source.md`
 
-> Current implementation note: scheduling now coexists with the dual-loop architecture. A scheduled activation may ultimately drive CoreLoop, which in turn may invoke bounded AgentLoop phases and native task execution. Read "full CoreLoop" in this document as "long-lived control path," not as a single flat sequence without internal agentic phases.
+> Current implementation note: scheduling now coexists with the dual-loop architecture. A scheduled activation may ultimately drive DurableLoop, which in turn may invoke bounded AgentLoop phases and native task execution. Read "full DurableLoop" in this document as "long-lived control path," not as a single flat sequence without internal agentic phases.
 
 ---
 
@@ -13,7 +13,7 @@
 
 ### Why ScheduleEngine
 
-PulSeed already has a CoreLoop that runs continuously when the daemon is active. But "continuously" is not the same as "proactively." The CoreLoop processes goals that are already active — it does not initiate new observations, generate unprompted reports, or monitor external systems on a cadence.
+PulSeed already has a DurableLoop that runs continuously when the daemon is active. But "continuously" is not the same as "proactively." The DurableLoop processes goals that are already active — it does not initiate new observations, generate unprompted reports, or monitor external systems on a cadence.
 
 The ScheduleEngine fills this gap. It introduces time-based triggers that cause PulSeed to act at specific moments: checking email every 30 minutes, generating a morning summary at 8am, running a weekly code quality review, or pinging a health endpoint every minute.
 
@@ -35,7 +35,7 @@ PulSeed ScheduleEngine:
   Cost model: most executions cost zero LLM tokens
 ```
 
-The key insight is that not all scheduled actions require the same weight of processing. A health check does not need an LLM. An email check only needs an LLM when something important arrives. A morning summary always needs an LLM. A weekly code review needs the full CoreLoop. The 4-layer architecture matches processing weight to the task.
+The key insight is that not all scheduled actions require the same weight of processing. A health check does not need an LLM. An email check only needs an LLM when something important arrives. A morning summary always needs an LLM. A weekly code review needs the full DurableLoop. The 4-layer architecture matches processing weight to the task.
 
 ### "Thin core, extend with plugins" principle
 
@@ -57,9 +57,9 @@ The ScheduleEngine core handles scheduling mechanics (when to fire) and layer di
 
 ```
 DaemonRunner
-  |-- CoreLoop (existing -- goal pursuit)
+  |-- DurableLoop (existing -- goal pursuit)
   +-- ScheduleEngine (proactive scheduling + internal future activations)
-       |-- GoalTrigger  -> CoreLoop.run(goal)
+       |-- GoalTrigger  -> DurableLoop.run(goal)
        |-- Probe        -> DataSource.fetch() -> conditional LLM -> maybe escalate
        |-- Cron         -> LLM processing every time (human rhythm)
        +-- Heartbeat    -> mechanical check only -> escalate on failure
@@ -78,7 +78,7 @@ Legacy cron task categories map cleanly to ScheduleEngine layers:
 |------------------------|---------------------|-----------|
 | `reflection` | Cron | Always produces LLM output |
 | `consolidation` | Cron | Always produces LLM output |
-| `custom` | Cron or GoalTrigger | Depends on whether full CoreLoop is needed |
+| `custom` | Cron or GoalTrigger | Depends on whether full DurableLoop is needed |
 
 Migration status: legacy cron tasks are migrated into `schedules.json`, and the
 daemon now runs ScheduleEngine as the single runtime for scheduled work.
@@ -114,9 +114,9 @@ Operator visibility follows that split:
 
 ### 3.1 GoalTrigger (Heavy)
 
-**Weight**: Full CoreLoop execution. High LLM cost.
+**Weight**: Full DurableLoop execution. High LLM cost.
 
-**Behavior**: Triggers `CoreLoop.run(goal)` on schedule. The goal must be pre-defined in PulSeed's goal store. The GoalTrigger simply activates it at the scheduled time.
+**Behavior**: Triggers `DurableLoop.run(goal)` on schedule. The goal must be pre-defined in PulSeed's goal store. The GoalTrigger simply activates it at the scheduled time.
 
 **Use cases**:
 - Weekly code quality review ("Run code quality review every Monday at 9am")
@@ -127,7 +127,7 @@ Operator visibility follows that split:
 ```
 Schedule fires
   -> Load goal definition from StateManager
-  -> CoreLoop.run(goalId, { maxIterations })
+  -> DurableLoop.run(goalId, { maxIterations })
   -> LoopResult recorded in goal history
   -> NotificationDispatcher.dispatch(goal_progress event)
 ```
@@ -137,12 +137,12 @@ Schedule fires
 {
   layer: "goal_trigger",
   goal_id: string,              // existing goal to activate
-  max_iterations: number,       // cap CoreLoop iterations (default: 10)
+  max_iterations: number,       // cap DurableLoop iterations (default: 10)
   skip_if_active: boolean,      // skip if goal is already being pursued (default: true)
 }
 ```
 
-**Cost**: 5,000-50,000+ tokens per execution (full CoreLoop with LLM observation, gap analysis, task generation).
+**Cost**: 5,000-50,000+ tokens per execution (full DurableLoop with LLM observation, gap analysis, task generation).
 
 ### 3.2 Probe (Medium, conditional)
 
@@ -191,7 +191,7 @@ Schedule fires
 }
 ```
 
-**Cost**: 0 tokens for most executions. 500-2,000 tokens when change is detected (LLM significance analysis). Full CoreLoop cost if escalated to GoalTrigger.
+**Cost**: 0 tokens for most executions. 500-2,000 tokens when change is detected (LLM significance analysis). Full DurableLoop cost if escalated to GoalTrigger.
 
 ### 3.3 Cron (Medium, guaranteed execution)
 
@@ -492,9 +492,9 @@ for (const entry of dueEntries) {
 }
 ```
 
-### 6.2 CoreLoop
+### 6.2 DurableLoop
 
-GoalTrigger invokes `CoreLoop.run(goalId, { maxIterations })` directly. No changes to CoreLoop are required — it already accepts a `goalId` and options.
+GoalTrigger invokes `DurableLoop.run(goalId, { maxIterations })` directly. No changes to DurableLoop are required — it already accepts a `goalId` and options.
 
 ### 6.3 ObservationEngine and DataSourceAdapter
 
@@ -509,7 +509,7 @@ ScheduleEngine dispatches notifications through the existing `NotificationDispat
 - Probe: change detection notifications
 - Cron: report delivery notifications
 - Heartbeat: failure and escalation notifications
-- GoalTrigger: goal progress notifications (handled by CoreLoop internally)
+- GoalTrigger: goal progress notifications (handled by DurableLoop internally)
 
 New notification event types added:
 
@@ -531,7 +531,7 @@ Cron layer integrates with `ReportingEngine` when `output_format` is `"report"` 
 | Module | Changes required | Integration method |
 |--------|-----------------|-------------------|
 | `DaemonRunner` | Add ScheduleEngine initialization and tick | Direct dependency injection |
-| `CoreLoop` | No change | Called by GoalTrigger via `coreLoop.run()` |
+| `DurableLoop` | No change | Called by GoalTrigger via `coreLoop.run()` |
 | `ObservationEngine` | No change | Probe queries data sources through DataSourceRegistry |
 | `DataSourceAdapter` | No change | Probe calls `query()` on registered adapters |
 | `NotificationDispatcher` | Add 4 new event types | Called by all layers for notifications |
@@ -869,14 +869,14 @@ ScheduleEngine tracks cumulative token usage per entry in `total_tokens_used`. T
 **Scope**:
 - Cron layer: prompt template interpolation, context gathering, LLM execution
 - Cron + ReportingEngine integration
-- GoalTrigger layer: CoreLoop.run() invocation
+- GoalTrigger layer: DurableLoop.run() invocation
 - GoalTrigger skip_if_active logic
 - Cost tracking and budget controls
 - CLI: `pulseed schedule history`, `pulseed schedule cost`
 
 **Completion criteria**:
 - Cron produces LLM-generated output on schedule
-- GoalTrigger activates CoreLoop for a goal on schedule
+- GoalTrigger activates DurableLoop for a goal on schedule
 - Cost tracking accurately reflects token usage per entry
 - Budget limits auto-disable entries when exceeded
 
@@ -901,10 +901,10 @@ ScheduleEngine tracks cumulative token usage per entry in `total_tokens_used`. T
 | Principle | Concrete design decision |
 |-----------|------------------------|
 | PulSeed acts on time, not just on demand | ScheduleEngine adds proactive time-based triggers to the daemon |
-| Match processing weight to the task | 4 layers: Heartbeat (zero cost) to Probe (conditional) to Cron (always LLM) to GoalTrigger (full CoreLoop) |
+| Match processing weight to the task | 4 layers: Heartbeat (zero cost) to Probe (conditional) to Cron (always LLM) to GoalTrigger (full DurableLoop) |
 | Most checks cost nothing | Heartbeat and Probe (no change) use zero LLM tokens |
 | Escalation, not duplication | Lower layers escalate to higher layers rather than reimplementing their logic |
-| Reuse existing infrastructure | Probe uses DataSourceAdapter, GoalTrigger uses CoreLoop, notifications use NotificationDispatcher |
+| Reuse existing infrastructure | Probe uses DataSourceAdapter, GoalTrigger uses DurableLoop, notifications use NotificationDispatcher |
 | Extend with plugins | External schedule sources (calendar, webhook) are plugins, not core |
 | Cost transparency | Per-entry token tracking, budget controls, cost reporting CLI |
 | Failures do not stop PulSeed | Schedule entry failures are logged and retried, not fatal |

@@ -3,16 +3,16 @@
 This page is the canonical conceptual explanation of how PulSeed works.
 For runtime surfaces and commands, see [Runtime](runtime.md). For the public map, see [docs/index.md](index.md).
 
-## CoreLoop and AgentLoop
+## DurableLoop and AgentLoop
 
 PulSeed is easiest to understand as two cooperating loops.
 
-### CoreLoop
+### DurableLoop
 
-`CoreLoop` is the long-lived controller.
+`DurableLoop` is the long-lived controller.
 It owns durable decisions about goal progress, scheduling, stall handling, reprioritization, verification, and completion.
 
-CoreLoop answers questions such as:
+DurableLoop answers questions such as:
 
 - Is the goal still viable?
 - What should be worked on next?
@@ -30,7 +30,7 @@ AgentLoop is used for:
 
 - task execution through the native `agent_loop` path
 - chat turns
-- selected CoreLoop phases that need targeted evidence gathering
+- selected DurableLoop phases that need targeted evidence gathering
 
 ## Tools
 
@@ -93,11 +93,11 @@ Completion is decided from a combination of:
 - stall and error boundaries
 
 AgentLoop stops when the bounded task or chat turn is done.
-CoreLoop stops when the longer-running goal or iteration plan is done.
+DurableLoop stops when the longer-running goal or iteration plan is done.
 
-## Bounded phases inside CoreLoop
+## Bounded phases inside DurableLoop
 
-CoreLoop can invoke bounded AgentLoop phases for targeted evidence and planning support.
+DurableLoop can invoke bounded AgentLoop phases for targeted evidence and planning support.
 
 The current public phases are:
 
@@ -114,7 +114,7 @@ They do not replace it.
 
 The split keeps two concerns separate:
 
-- CoreLoop manages durable control over a goal over time
+- DurableLoop manages durable control over a goal over time
 - AgentLoop manages local tool use over a bounded window
 
 That separation is what lets PulSeed keep running across sessions while still doing short, tool-driven work inside a single turn or task.

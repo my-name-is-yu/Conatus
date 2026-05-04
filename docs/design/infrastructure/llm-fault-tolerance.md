@@ -326,11 +326,11 @@ On task verification failure (verdict = "fail" or "partial"):
 
 ---
 
-### 4.8 CoreLoop Checkpoint (AutoGen-inspired)
+### 4.8 DurableLoop Checkpoint (AutoGen-inspired)
 
-**Purpose**: Allow recovery to the last known-good state after a crash or interruption during CoreLoop execution.
+**Purpose**: Allow recovery to the last known-good state after a crash or interruption during DurableLoop execution.
 
-**Current state**: If CoreLoop crashes mid-loop, intermediate state is lost. An auto-archive mechanism exists (moves goal state to `~/.pulseed/archive/<goalId>/` on completion), but there are no mid-loop checkpoints.
+**Current state**: If DurableLoop crashes mid-loop, intermediate state is lost. An auto-archive mechanism exists (moves goal state to `~/.pulseed/archive/<goalId>/` on completion), but there are no mid-loop checkpoints.
 
 **Definition**:
 
@@ -345,15 +345,15 @@ Contents:
   - timestamp: ISO format
 
 Recovery behavior:
-  - On CoreLoop startup, check for the existence of checkpoint.json
+  - On DurableLoop startup, check for the existence of checkpoint.json
   - If found, restore state from dimension_snapshot and trust_snapshot
   - Treat tasks after last_verified_task_id as pending re-execution
   - WARN log: "Resuming from checkpoint (cycle ${cycle_number}, task ${last_verified_task_id})"
 ```
 
 **Implementation locations**:
-- Checkpoint write: after successful verify in `src/core/core-loop.ts`
-- Checkpoint read: at loop startup in `src/core/core-loop.ts`
+- Checkpoint write: after successful verify in `src/orchestrator/loop/durable-loop.ts`
+- Checkpoint read: at loop startup in `src/orchestrator/loop/durable-loop.ts`
 
 **Behavior when guard fires**: Normal operation (this is a recovery mechanism, not a guard). If no checkpoint exists, performs a normal cold start.
 
@@ -374,7 +374,7 @@ Recovery behavior:
 | P1 | 4.2 Duplicate task guard | `task-generation.ts` |
 | P1 | 4.6 `completion_judger` Zod validation | `task-verifier.ts` |
 | P1 | 4.7 Verification failure injection into next cycle | `task-verifier.ts`, `task-generation.ts` |
-| P1 | 4.8 CoreLoop checkpoint | `core-loop.ts` |
+| P1 | 4.8 DurableLoop checkpoint | `durable-loop.ts` |
 | P2 | 4.5 `dimension_updates` direction check | `task-verifier.ts` + schema change |
 
 ---

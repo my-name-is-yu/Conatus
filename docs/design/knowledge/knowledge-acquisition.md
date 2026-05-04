@@ -5,7 +5,7 @@
 
 > Related: `observation.md`, `task-lifecycle.md`, `execution-boundary.md`, `session-and-context.md`, `curiosity.md`, `stall-detection.md`
 
-> Current implementation note: knowledge acquisition now spans both deterministic CoreLoop control and bounded agentic phases. The current runtime can use direct tools, Soil, memory recall, and native AgentLoop phases before falling back to heavier investigation work.
+> Current implementation note: knowledge acquisition now spans both deterministic DurableLoop control and bounded agentic phases. The current runtime can use direct tools, Soil, memory recall, and native AgentLoop phases before falling back to heavier investigation work.
 
 ---
 
@@ -13,7 +13,7 @@
 
 ### Role in the Core Loop
 
-Knowledge acquisition cuts across CoreLoop control and bounded agentic execution, but it is triggered primarily at two points.
+Knowledge acquisition cuts across DurableLoop control and bounded agentic execution, but it is triggered primarily at two points.
 
 ```
 Observation / evidence collection -> gap interpretation -> replanning / strategy selection -> task definition
@@ -41,7 +41,7 @@ Knowledge acquisition is a means to achieving a goal, not an end in itself. PulS
 
 ## 2. Detecting Knowledge Gaps
 
-Knowledge gaps are detected via multiple signals. They can arise in deterministic CoreLoop logic, in bounded core phases such as `knowledge_refresh`, or during task generation.
+Knowledge gaps are detected via multiple signals. They can arise in deterministic DurableLoop logic, in bounded core phases such as `knowledge_refresh`, or during task generation.
 
 ### 2.1 Difficulty Interpreting Observations
 

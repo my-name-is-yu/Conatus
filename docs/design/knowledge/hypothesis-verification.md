@@ -21,7 +21,7 @@
 ### PulSeedtion for Applying This to PulSeed
 
 PulSeed's orchestration runtime is structurally sound, but the following questions remain important:
-1. **No defined action after stall detection** — Even when StallDetector determines "it has stalled," CoreLoop has only limited branching
+1. **No defined action after stall detection** — Even when StallDetector determines "it has stalled," DurableLoop has only limited branching
 2. **Zero meta-knowledge for strategy decisions** — There is no record of which strategies were effective for similar goals in the past, and no way to look that up
 3. **Cannot distinguish convergence from stagnation** — An absolute threshold check on `gap < threshold` alone cannot handle the case where progress is "close but not quite there"
 
@@ -31,7 +31,7 @@ AutoResearchClaw's approach directly addresses these three issues. However, PulS
 
 ## Improvement 1: Structured PIVOT/REFINE Decision
 
-**Affected modules**: `stall-detector.ts`, `strategy-manager.ts`, `core-loop.ts`, `types/`
+**Affected modules**: `stall-detector.ts`, `strategy-manager.ts`, `durable-loop.ts`, `types/`
 **Effort**: Medium (2–3 days)
 
 ### Current Problem
@@ -86,7 +86,7 @@ interface StrategyDefinition {
 }
 ```
 
-### CoreLoop Changes
+### DurableLoop Changes
 
 Extend the existing stall branch to three directions:
 

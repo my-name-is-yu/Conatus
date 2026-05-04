@@ -128,7 +128,7 @@ Returns a static description of PulSeed's architecture and capabilities.
 - Layer structure (Layer 0-15) with module names
 - Module responsibilities summary
 - Execution boundary: "PulSeed orchestrates goal pursuit. It uses available tools directly for safe local work and delegates when specialization, parallelism, or context isolation helps."
-- Runtime shape: CoreLoop for long-lived control plus AgentLoop for bounded tool-using execution- 4-element model: Goal -> Current State -> Gap -> Constraints
+- Runtime shape: DurableLoop for long-lived control plus AgentLoop for bounded tool-using execution- 4-element model: Goal -> Current State -> Gap -> Constraints
 
 **Data source**: Hardcoded text
 

@@ -4,7 +4,7 @@
 **Author:** Auto-generated
 **Date:** 2026-04-05
 
-> Current implementation note: the runtime has evolved beyond the exact TUI/daemon split described below. TUI, chat, daemon, and schedule flows now all sit on top of the shared CoreLoop + AgentLoop runtime stack. Read this document as a direction for daemon/client ownership, not a line-by-line map of the current interface code.
+> Current implementation note: the runtime has evolved beyond the exact TUI/daemon split described below. TUI, chat, daemon, and schedule flows now all sit on top of the shared DurableLoop + AgentLoop runtime stack. Read this document as a direction for daemon/client ownership, not a line-by-line map of the current interface code.
 
 ## Overview
 
@@ -26,7 +26,7 @@ This design makes the daemon the single owner of long-lived goal execution, with
               │   │ EventServer     │ │
               │   │ :41700          │ │
               │   ├─────────────────┤ │
-              │   │ CoreLoop(s)     │ │
+              │   │ DurableLoop(s)     │ │
               │   │ per-goal        │ │
               │   ├─────────────────┤ │
               │   │ ApprovalQueue   │ │
@@ -48,7 +48,7 @@ This design makes the daemon the single owner of long-lived goal execution, with
 
 | Event | Data | When |
 |-------|------|------|
-| `iteration_complete` | `{ goalId, iteration, gapScore, driveScore }` | After each CoreLoop iteration |
+| `iteration_complete` | `{ goalId, iteration, gapScore, driveScore }` | After each DurableLoop iteration |
 | `goal_updated` | `{ goalId, status, progress }` | Goal state changes |
 | `approval_required` | `{ requestId, goalId, task, description }` | Daemon needs human approval; clients may display status only |
 | `approval_resolved` | `{ requestId, approved }` | Approval answered |
@@ -82,7 +82,7 @@ Conversational approval flow:
 1. Runtime encounters an action requiring approval.
 2. `ApprovalBroker` writes a pending approval record with origin metadata for channel, conversation, session, user, and reply target.
 3. The broker delivers the approval prompt through the originating conversation adapter.
-4. CoreLoop or runtime-control execution blocks while the approval remains pending.
+4. DurableLoop or runtime-control execution blocks while the approval remains pending.
 5. A reply in the same conversation is classified as `approve`, `reject`, `clarify`, or `unknown` with the active approval context.
 6. Only an origin-matched `approve` or `reject` resolves the stored approval; `clarify` and `unknown` keep the original record pending.
 7. The broker emits status/audit events such as `approval_required` and `approval_resolved`.
@@ -133,7 +133,7 @@ Startup flow:
 
 ## Migration Strategy
 
-**Backward compatibility:** Keep `pulseed run --goal <id>` as standalone CoreLoop execution (no daemon). Only `pulseed` (TUI) uses daemon mode.
+**Backward compatibility:** Keep `pulseed run --goal <id>` as standalone DurableLoop execution (no daemon). Only `pulseed` (TUI) uses daemon mode.
 
 **Standalone fallback:** If daemon can't start (port conflict, etc.), TUI falls back to current standalone mode with a warning.
 

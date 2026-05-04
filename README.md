@@ -82,7 +82,7 @@ PulSeed will guide provider and adapter setup when needed.
 
 ## What It Does
 
-- `CoreLoop` keeps a goal moving and decides whether to continue, refine,
+- `DurableLoop` keeps a goal moving and decides whether to continue, refine,
   verify, or stop
 - `AgentLoop` handles bounded tool-using work for task execution, chat, and
   selected runtime phases

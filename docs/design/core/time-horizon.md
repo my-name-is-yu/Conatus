@@ -2,7 +2,7 @@
 
 How PulSeed develops temporal awareness: evaluating whether goal progress is on pace relative to deadlines, projecting completion dates, and emitting signals that influence drive scoring and strategy selection. TimeHorizonEngine is the bridge between "how far are we from the goal?" (gap) and "do we have enough time?" (temporal budget).
 
-> Current implementation note: TimeHorizonEngine now influences a CoreLoop that may also run bounded agentic phases and native AgentLoop task execution. The temporal model still applies, but the surrounding orchestration is no longer a single flat loop body.
+> Current implementation note: TimeHorizonEngine now influences a DurableLoop that may also run bounded agentic phases and native AgentLoop task execution. The temporal model still applies, but the surrounding orchestration is no longer a single flat loop body.
 
 As a prerequisite, see `drive-scoring.md` for the drive scoring structure and `stall-detection.md` for stall detection.
 
@@ -322,7 +322,7 @@ TimeHorizonEngine does **not** modify StallDetector directly. Instead, it provid
 
 The connection point: StallDetector flags a stall -> WaitStrategy (future) checks `timeBudget.canAffordWait(estimatedEffectDelay)` -> if affordable, suppress the stall signal.
 
-### 5.4 CoreLoop
+### 5.4 DurableLoop
 
 TimeHorizonEngine is called in the **drive-scoring phase**, after gap calculation but before task generation:
 
@@ -330,7 +330,7 @@ TimeHorizonEngine is called in the **drive-scoring phase**, after gap calculatio
 observe -> gap calculation -> [TIME HORIZON] -> drive scoring -> task generation -> execute -> verify
 ```
 
-The CoreLoop passes:
+The DurableLoop passes:
 1. Current gap (from gap calculation)
 2. Goal deadline
 3. Recent observation history
@@ -391,7 +391,7 @@ Based on pacing status, TimeHorizonEngine suggests adjusting the loop interval:
 | `ahead` | 2.0 | Reduce cost — things are going well |
 | `no_deadline` | 1.5 | Slightly relaxed |
 
-> **Note**: Values < 1.0 shorten the interval (more frequent observations). Values > 1.0 lengthen it (less frequent). The multiplier is applied to the base observation interval configured for the goal. This is a suggestion — CoreLoop may override based on other factors.
+> **Note**: Values < 1.0 shorten the interval (more frequent observations). Values > 1.0 lengthen it (less frequent). The multiplier is applied to the base observation interval configured for the goal. This is a suggestion — DurableLoop may override based on other factors.
 
 ---
 
@@ -445,7 +445,7 @@ All values have sensible defaults. Configuration is per-engine instance (not per
 | Tests | `src/platform/time/__tests__/time-horizon-engine.test.ts` |
 | Config | Merged into `DriveConfig` or standalone `TimeHorizonConfig` |
 
-Injected via DI into CoreLoop, following the same pattern as DriveScorer and StallDetector.
+Injected via DI into DurableLoop, following the same pattern as DriveScorer and StallDetector.
 
 ---
 

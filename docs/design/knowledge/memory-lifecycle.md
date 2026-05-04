@@ -5,7 +5,7 @@
 
 > Related: `session-and-context.md`, `knowledge-acquisition.md`, `reporting.md`, `state-vector.md`, `drive-system.md`, `curiosity.md`, `stall-detection.md`
 
-> Current implementation note: long-term memory is now consumed not only by session context builders but also by the native AgentLoop and Soil query path. Memory should be read as part of a shared substrate used by CoreLoop, AgentLoop, chat, and Soil rather than as a passive store behind one flat loop.
+> Current implementation note: long-term memory is now consumed not only by session context builders but also by the native AgentLoop and Soil query path. Memory should be read as part of a shared substrate used by DurableLoop, AgentLoop, chat, and Soil rather than as a passive store behind one flat loop.
 
 ---
 
@@ -17,7 +17,7 @@ Under long-term operation, PulSeed continuously accumulates the following data:
 
 | Data type | Source | Growth rate |
 |-----------|--------|------------|
-| Experience log | CoreLoop iterations and task execution outcomes, including bounded agent runs and verification evidence | 1 entry per loop/task outcome || Observation history | ObservationEngine periodic and event-driven observations | dimensions × observation frequency |
+| Experience log | DurableLoop iterations and task execution outcomes, including bounded agent runs and verification evidence | 1 entry per loop/task outcome || Observation history | ObservationEngine periodic and event-driven observations | dimensions × observation frequency |
 | Knowledge base | Results of KnowledgeManager research tasks | Multiple entries per research task |
 | Strategy history | Strategy execution results from StrategyManager/PortfolioManager | 1 entry per strategy change |
 | Task history | Past tasks from TaskLifecycle | 1 entry per task |
@@ -115,7 +115,7 @@ Long-term Memory
 
 ### 3.1 Experience Log
 
-Records of CoreLoop iteration outcomes, task execution, verification evidence, and related bounded agent activity. These records feed the learning pipeline and Soil projections.
+Records of DurableLoop iteration outcomes, task execution, verification evidence, and related bounded agent activity. These records feed the learning pipeline and Soil projections.
 | Layer | What is retained | Format |
 |-------|----------------|--------|
 | Working | Summary of the last 2–3 loops of experience relevant to the current task | Text summary |

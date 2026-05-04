@@ -1,12 +1,12 @@
 # Tool Integration Design
 
-> Current implementation note: much of this integration has already happened. ChatRunner no longer represents the only tool-using path; the native AgentLoop runtime, CoreLoop phases, and task execution all share the built-in tool substrate. Read this document as a migration/design rationale, not as an untouched future plan.
+> Current implementation note: much of this integration has already happened. ChatRunner no longer represents the only tool-using path; the native AgentLoop runtime, DurableLoop phases, and task execution all share the built-in tool substrate. Read this document as a migration/design rationale, not as an untouched future plan.
 
 ## 1. Overview
 
 PulSeed has two existing tool systems that need to be unified:
 
-**System A** (`src/tools/`): ITool class-based registry with ToolRegistry, ToolExecutor, ToolPermissionManager. Used by CoreLoop and ObservationEngine. Contains 20+ tools across `filesystem/`, `git/`, `state/`, `network/`, `system/`, `meta/` categories.
+**System A** (`src/tools/`): ITool class-based registry with ToolRegistry, ToolExecutor, ToolPermissionManager. Used by DurableLoop and ObservationEngine. Contains 20+ tools across `filesystem/`, `git/`, `state/`, `network/`, `system/`, `meta/` categories.
 
 **System B** (`src/interface/chat/`): Raw ToolDefinition JSON schemas used by ChatRunner for LLM function calling. Contains 6 self-knowledge read tools and 7 mutation tools.
 
@@ -22,7 +22,7 @@ PulSeed has two existing tool systems that need to be unified:
 └──────────┬───────────────┬───────────┘
            │               │
     ┌──────▼──────┐  ┌─────▼──────────────┐
-    │  CoreLoop   │  │  ChatRunner         │
+    │  DurableLoop   │  │  ChatRunner         │
     │  Goal-driven│  │  LLM function calls │
     │  (existing) │  │  via toToolDef()    │
     └─────────────┘  └────────────────────┘
@@ -30,7 +30,7 @@ PulSeed has two existing tool systems that need to be unified:
 
 **AgentLoop** (interactive): ChatRunner exposes ITool instances as ToolDefinition JSON for LLM function calling. LLM freely picks tools.
 
-**CoreLoop** (autonomous): deterministic control plus bounded agentic phases using tool policy and ToolExecutor-backed execution.
+**DurableLoop** (autonomous): deterministic control plus bounded agentic phases using tool policy and ToolExecutor-backed execution.
 
 ---
 
@@ -246,11 +246,11 @@ Add tools not currently in System A, using ITool interface.
 
 Files: ~5-7 new tools in existing categories | Tests: unit tests per tool + AgentLoop integration
 
-**Phase B: CoreLoop Migration**
+**Phase B: DurableLoop Migration**
 
-Refactor CoreLoop to call tool primitives via ToolExecutor instead of module methods directly. Both loops verified sharing tools correctly.
+Refactor DurableLoop to call tool primitives via ToolExecutor instead of module methods directly. Both loops verified sharing tools correctly.
 
-Files: 3-5 modified (core-loop.ts, observation-engine.ts) | Tests: CoreLoop integration tests
+Files: 3-5 modified (durable-loop.ts, observation-engine.ts) | Tests: DurableLoop integration tests
 
 **Phase C: Concurrency & Polish**
 
@@ -286,7 +286,7 @@ Files: 2-3 modified | Tests: concurrency, overflow
 | src/tools/interaction/ask-human.ts | A | Create |
 | src/tools/interaction/create-plan.ts | A | Create |
 | src/tools/interaction/read-plan.ts | A | Create |
-| src/orchestrator/loop/core-loop.ts | B | Modify |
+| src/orchestrator/loop/durable-loop.ts | B | Modify |
 | src/platform/observation/observation-engine.ts | B | Modify |
 
 ---
@@ -296,5 +296,5 @@ Files: 2-3 modified | Tests: concurrency, overflow
 - **Unit**: each new tool tested independently with mock dependencies (same pattern as existing state/ tests)
 - **Migration**: chat-runner and task/state integration tests preserve the same behavior through the registry-backed tools
 - **Integration (ChatRunner)**: LLM tool calls routed through registry produce same results as before
-- **Integration (CoreLoop)**: CoreLoop with tool layer, full round-trip (Phase B)
+- **Integration (DurableLoop)**: DurableLoop with tool layer, full round-trip (Phase B)
 - **Concurrency**: parallel read-only tools execute simultaneously via existing concurrency.ts (Phase C)

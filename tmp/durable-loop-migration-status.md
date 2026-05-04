@@ -51,3 +51,14 @@
 - Full chat focused bundle also ran but failed in unrelated Telegram setup tests because existing untracked `.pulseed-sandbox` local state reports Telegram/Home chat configured; this is the same local-state issue seen in #1016 and not caused by DurableLoop label changes.
 - Review: separate review agent found one missed user-facing chat safety response label. Fixed `background CoreLoop work` to `background DurableLoop work`.
 - Re-verification after review fix: `npm run typecheck`, `npm run lint:boundaries`, runtime/session/control/agent-loop focused tests, and targeted chat/cross-platform DurableLoop caller-path tests passed.
+
+## #1019 Clean up DurableLoop documentation and retire obsolete CoreLoop aliases
+
+- Status: in progress.
+- Branch: `codex/issue-1019-durable-loop-doc-cleanup`.
+- Issue body reviewed with `gh issue view 1019`.
+- Plan: update current-facing README/docs/architecture text and ArchitectureTool labels to DurableLoop. Keep compatibility shims, public deprecated API names, legacy persisted identifiers (`run:coreloop:*`, `session:coreloop:*`, `coreloop_run`, `coreloop`), and tests that document compatibility.
+- Alias decision: keep deprecated TypeScript aliases and shims for this migration because downstream callers and legacy import paths still need compatibility after #1017/#1018. Do not remove persisted/wire compatibility surfaces.
+- Review: separate review agent found one stale `core_concept.core_loop` ArchitectureTool output key. Fixed to `core_concept.durable_loop` and added a regression assertion.
+- Verification after review fix: `npm run check:docs`, `npx vitest run src/tools/query/ArchitectureTool/__tests__/ArchitectureTool.test.ts`, `npm run typecheck`, and `npm run lint:boundaries` passed. `lint:boundaries` reports existing warnings only.
+- `npm run test:changed` ran and passed docs/ArchitectureTool related checks, then failed in unrelated Telegram chat setup expectations because untracked `.pulseed-sandbox` runtime/config state reports Telegram/Home chat configured. This is the same local-state issue recorded in earlier migration PRs and is not caused by #1019 docs/tool label changes.
