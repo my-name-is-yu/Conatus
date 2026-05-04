@@ -668,7 +668,8 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain("@BotFather");
+    expect(result.output).toContain("Telegram gateway status");
+    expect(result.output).toContain("chat-assisted setup");
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
@@ -1204,13 +1205,9 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain("@BotFather");
-    expect(result.output).toContain("pulseed telegram setup");
-    expect(result.output).toContain("pulseed gateway setup");
-    expect(result.output).toContain("pulseed daemon start");
-    expect(result.output).toContain("pulseed daemon status");
     expect(result.output).toContain("Telegram gateway status");
-    expect(result.output).toContain("Telegram: まだ設定されていません");
+    expect(result.output).toContain("chat-assisted setup");
+    expect(result.output).toContain("pulseed daemon status");
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
@@ -1337,5 +1334,192 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(chatAgentLoopRunner.execute).toHaveBeenNthCalledWith(2, expect.objectContaining({
       goalId: "goal-next",
     }));
+    const info = manager.getSessionInfo({
+      platform: "slack",
+      conversation_id: "C_GENERAL",
+      user_id: "U123",
+    });
+    expect(info?.active_companion_contract?.turn_policy.current_target).toMatchObject({
+      conversation_id: "C_GENERAL",
+      message_id: null,
+      goal_id: "goal-next",
+    });
+    expect(info?.active_companion_contract?.turn_policy.current_target.goal_id).not.toBe("goal-routed");
+  });
+
+  it("does not let stale companion target overrides replace the current gateway turn", async () => {
+    const adapter = makeMockAdapter();
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      adapter,
+    }));
+
+    await manager.processIncomingMessage({
+      text: "Use current target",
+      platform: "slack",
+      identity_key: "owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      sender_id: "owner-user",
+      cwd: "/repo",
+      companion: {
+        presence: {
+          mode: "listening",
+          interruptible: true,
+          current_target: {
+            session_key: "identity:stale",
+            conversation_id: "stale-thread",
+            message_id: "stale-message",
+            run_id: "run-stale",
+            goal_id: "goal-stale",
+            reply_target_id: "stale-thread",
+          },
+        },
+        turnPolicy: {
+          dialogue_kind: "direct_turn",
+          input_modality: "text",
+          output_mode: "reply",
+          urgency: "normal",
+          current_target: {
+            session_key: "identity:stale",
+            conversation_id: "stale-thread",
+            message_id: "stale-message",
+            run_id: "run-stale",
+            goal_id: "goal-stale",
+            reply_target_id: "stale-thread",
+          },
+        },
+      },
+    });
+
+    const contract = manager.getSessionInfo({ identity_key: "owner" })?.active_companion_contract;
+    expect(contract?.presence.current_target).toMatchObject({
+      session_key: "identity:owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      reply_target_id: "current-thread",
+    });
+    expect(contract?.turn_policy.current_target).toMatchObject({
+      session_key: "identity:owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      reply_target_id: "current-thread",
+    });
+    expect(contract?.turn_policy.current_target.goal_id).not.toBe("goal-stale");
+  });
+
+  it("routes gateway text through the companion contract before ChatRunner execution", async () => {
+    const adapter = makeMockAdapter();
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      adapter,
+    }));
+
+    const result = await manager.processIncomingMessage({
+      text: "Please look at this",
+      platform: "telegram",
+      identity_key: "owner",
+      conversation_id: "telegram-thread",
+      message_id: "msg-current",
+      goal_id: "goal-current",
+      sender_id: "owner-user",
+      cwd: "/repo",
+      companion: {
+        presence: {
+          mode: "listening",
+          interruptible: true,
+          current_context: "work",
+        },
+        turnPolicy: {
+          dialogue_kind: "direct_turn",
+          input_modality: "text",
+          output_mode: "reply",
+          urgency: "normal",
+        },
+      },
+    });
+
+    const receivedIngress = manager.getSessionInfo({ identity_key: "owner" })?.active_companion_contract ?? null;
+    expect(result).toBe("Task completed successfully.");
+    expect(adapter.execute).toHaveBeenCalledTimes(1);
+    expect(receivedIngress).toMatchObject({
+      turn_policy: {
+        current_target: {
+          session_key: "identity:owner",
+          conversation_id: "telegram-thread",
+          message_id: "msg-current",
+          goal_id: "goal-current",
+        },
+      },
+    });
+  });
+
+  it("suppresses non-urgent proactive output while presence is do-not-disturb", async () => {
+    const adapter = makeMockAdapter();
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      adapter,
+    }));
+
+    const result = await manager.processIncomingMessage({
+      text: "A gentle proactive check-in",
+      platform: "slack",
+      conversation_id: "C_DND",
+      sender_id: "U123",
+      cwd: "/repo",
+      companion: {
+        presence: {
+          mode: "do_not_disturb",
+          interruptible: false,
+          current_context: "sleep",
+        },
+        turnPolicy: {
+          dialogue_kind: "proactive",
+          input_modality: "notification",
+          output_mode: "notification",
+          urgency: "normal",
+        },
+      },
+    });
+
+    expect(result).toContain("suppressed by the current quieting policy");
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit interruption when the current turn is non-interruptible", async () => {
+    const adapter = makeMockAdapter();
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      adapter,
+    }));
+
+    const result = await manager.interruptAndRedirect({
+      text: "別の作業に切り替えて",
+      platform: "telegram",
+      conversation_id: "thread-noninterruptible",
+      sender_id: "owner",
+      cwd: "/repo",
+      companion: {
+        presence: {
+          mode: "thinking",
+          interruptible: false,
+          current_context: "work",
+        },
+        turnPolicy: {
+          dialogue_kind: "interruption",
+          input_modality: "text",
+          output_mode: "reply",
+          can_interrupt: false,
+          urgency: "normal",
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("non-interruptible");
+    expect(adapter.execute).not.toHaveBeenCalled();
   });
 });

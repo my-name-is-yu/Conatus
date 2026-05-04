@@ -8,6 +8,7 @@ import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
 } from "../../runtime/store/runtime-operation-schemas.js";
+import type { CompanionRuntimeContract } from "../../runtime/types/companion.js";
 
 export type IngressChannel = "tui" | "plugin_gateway" | "cli" | "web";
 export type IngressDeliveryMode = "reply" | "notify" | "thread_reply";
@@ -43,6 +44,7 @@ export interface ChatIngressMessage {
   text: string;
   actor: RuntimeControlActor;
   runtimeControl: ChatIngressRuntimeControl;
+  companion?: CompanionRuntimeContract;
   deliveryMode?: IngressDeliveryMode;
   metadata: Record<string, unknown>;
   replyTarget: IngressReplyTarget;
@@ -288,6 +290,7 @@ export interface NormalizeLegacyIngressInput {
   actor?: RuntimeControlActor;
   replyTarget?: Partial<IngressReplyTarget>;
   runtimeControl?: Partial<ChatIngressRuntimeControl>;
+  companion?: CompanionRuntimeContract;
 }
 
 export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput): ChatIngressMessage {
@@ -353,6 +356,43 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
       allowed,
       approvalMode,
       approval_mode: approvalMode,
+    },
+    companion: input.companion ?? {
+      schema_version: "companion-runtime-contract-v1",
+      presence: {
+        schema_version: "companion-presence-state-v1",
+        mode: "available",
+        interruptible: true,
+        last_user_activity_at: input.received_at ?? new Date().toISOString(),
+        current_context: "unknown",
+        current_target: {
+          session_key: null,
+          conversation_id: conversationId ?? null,
+          message_id: input.message_id ?? null,
+          run_id: null,
+          goal_id: goalId ?? null,
+          reply_target_id: conversationId ?? identityKey ?? null,
+        },
+      },
+      turn_policy: {
+        schema_version: "companion-turn-policy-v1",
+        dialogue_kind: "direct_turn",
+        input_modality: "text",
+        output_mode: "reply",
+        can_interrupt: true,
+        latency_budget_ms: 120_000,
+        urgency: "normal",
+        quieting: "allow",
+        requires_explicit_interruption: false,
+        current_target: {
+          session_key: null,
+          conversation_id: conversationId ?? null,
+          message_id: input.message_id ?? null,
+          run_id: null,
+          goal_id: goalId ?? null,
+          reply_target_id: conversationId ?? identityKey ?? null,
+        },
+      },
     },
     ...(input.deliveryMode ? { deliveryMode: input.deliveryMode } : {}),
     metadata,

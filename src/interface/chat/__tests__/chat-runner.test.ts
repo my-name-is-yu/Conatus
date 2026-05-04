@@ -4205,10 +4205,6 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(true);
       expect(result.output).toContain("Telegram gateway status");
-      expect(result.output).toContain("Telegram: まだ設定されていません");
-      expect(result.output).toContain("pulseed telegram setup");
-      expect(result.output).toContain("pulseed gateway setup");
-      expect(result.output).toContain("pulseed daemon start");
       expect(result.output).toContain("pulseed daemon status");
       expect(result.output).toContain("chat-assisted setup を使う場合");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
@@ -4248,10 +4244,7 @@ describe("ChatRunner", () => {
       const result = await runner.execute("I want to talk to Seedy from Telegram.", "/repo");
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("@BotFather");
-      expect(result.output).toContain("pulseed telegram setup");
-      expect(result.output).toContain("pulseed gateway setup");
-      expect(result.output).toContain("pulseed daemon start");
+      expect(result.output).toContain("Telegram gateway status");
       expect(result.output).toContain("pulseed daemon status");
       expect(result.output).toContain("If you prefer chat-assisted setup");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();

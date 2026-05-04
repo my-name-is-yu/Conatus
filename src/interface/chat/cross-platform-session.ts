@@ -50,6 +50,17 @@ import { classifyConversationalApprovalDecision } from "../../runtime/conversati
 import { registerGlobalCrossPlatformChatSessionManager } from "./cross-platform-session-global.js";
 import type { RuntimeControlActor } from "../../runtime/store/runtime-operation-schemas.js";
 import type { ApprovalOrigin } from "../../runtime/store/runtime-schemas.js";
+import {
+  buildCompanionRuntimeContract,
+  evaluateCompanionOutputPolicy,
+} from "../../runtime/companion-policy.js";
+import type {
+  CompanionPresenceState,
+  CompanionRuntimeContract,
+  CompanionTurnPolicy,
+  ConversationInputModality,
+  ConversationOutputMode,
+} from "../../runtime/types/companion.js";
 
 export interface CrossPlatformChatSessionOptions {
   /**
@@ -79,6 +90,13 @@ export interface CrossPlatformChatSessionOptions {
   replyTarget?: Partial<ChatIngressReplyTarget>;
   /** Explicit runtime-control policy for the turn. */
   runtimeControl?: Partial<ChatIngressRuntimeControl>;
+  /** Shared companion presence/policy contract overrides for this turn. */
+  companion?: {
+    presence?: Partial<CompanionPresenceState>;
+    turnPolicy?: Partial<CompanionTurnPolicy>;
+    inputModality?: ConversationInputModality;
+    outputMode?: ConversationOutputMode;
+  };
   /** Workspace root or working directory used when the session is created. */
   cwd?: string;
   /** Per-turn timeout forwarded to ChatRunner. */
@@ -106,6 +124,12 @@ export interface CrossPlatformIncomingChatMessage {
   actor?: Partial<RuntimeControlActor>;
   replyTarget?: Partial<ChatIngressReplyTarget>;
   runtimeControl?: Partial<ChatIngressRuntimeControl>;
+  companion?: {
+    presence?: Partial<CompanionPresenceState>;
+    turnPolicy?: Partial<CompanionTurnPolicy>;
+    inputModality?: ConversationInputModality;
+    outputMode?: ConversationOutputMode;
+  };
   metadata?: Record<string, unknown>;
   approvalResponse?: {
     approval_id: string;
@@ -129,6 +153,7 @@ export interface CrossPlatformChatSessionInfo {
   last_used_at: string;
   last_message_id?: string;
   active_reply_target?: ChatIngressReplyTarget;
+  active_companion_contract?: CompanionRuntimeContract;
   metadata: Record<string, unknown>;
 }
 
@@ -363,6 +388,7 @@ export class CrossPlatformChatSessionManager {
       actor: options.actor,
       replyTarget: options.replyTarget,
       runtimeControl: options.runtimeControl,
+      companion: options.companion,
       cwd: options.cwd,
       timeoutMs: options.timeoutMs,
       metadata: {
@@ -399,7 +425,7 @@ export class CrossPlatformChatSessionManager {
   }
 
   async interruptAndRedirect(input: CrossPlatformIncomingChatMessage): Promise<ChatRunResult> {
-    const ingress = this.createIngressMessage(input);
+    const ingress = this.ensureCompanionContract(this.createIngressMessage(input));
     const approvalReply = await this.tryResolveConversationalApprovalReply(ingress);
     if (approvalReply) {
       return {
@@ -409,6 +435,14 @@ export class CrossPlatformChatSessionManager {
       };
     }
     const session = this.getOrCreateSession(ingress, input.cwd);
+    const decision = evaluateCompanionOutputPolicy(ingress.companion.turn_policy);
+    if (!decision.delivered) {
+      return {
+        success: true,
+        output: formatCompanionPolicyDecision(decision),
+        elapsed_ms: 0,
+      };
+    }
     const previousOnEvent = session.runner.onEvent;
     let deliveryQueue: ChatEventDeliveryQueue | null = null;
     if (input.onEvent) {
@@ -427,8 +461,17 @@ export class CrossPlatformChatSessionManager {
     ingress: CrossPlatformIngressMessage,
     options: Pick<CrossPlatformIncomingChatMessage, "cwd" | "timeoutMs" | "onEvent" | "conversation_name" | "user_name"> = {}
   ): Promise<ChatRunResult> {
-    const session = this.getOrCreateSession(ingress, options.cwd);
-    const queueEntry = session.queue.then(() => this.executeInSession(session, ingress, options));
+    const normalizedIngress = this.ensureCompanionContract(ingress);
+    const decision = evaluateCompanionOutputPolicy(normalizedIngress.companion.turn_policy);
+    if (!decision.delivered) {
+      return {
+        success: true,
+        output: formatCompanionPolicyDecision(decision),
+        elapsed_ms: 0,
+      };
+    }
+    const session = this.getOrCreateSession(normalizedIngress, options.cwd);
+    const queueEntry = session.queue.then(() => this.executeInSession(session, normalizedIngress, options));
     session.queue = queueEntry.then(() => undefined, () => undefined);
     return queueEntry;
   }
@@ -536,6 +579,16 @@ export class CrossPlatformChatSessionManager {
     const identityKey = normalizeIdentity(input.identity_key) ?? undefined;
     const conversationId = normalizeIdentity(input.conversation_id) ?? undefined;
     const messageId = normalizeIdentity(input.message_id) ?? undefined;
+    const companion = this.buildCompanionContractForIngress({
+      identity_key: identityKey,
+      platform,
+      conversation_id: conversationId,
+      user_id: userId,
+      message_id: messageId,
+      goal_id: goalId,
+      replyTarget: input.replyTarget,
+      companion: input.companion,
+    });
 
     return {
       ingress_id: randomUUID(),
@@ -556,6 +609,7 @@ export class CrossPlatformChatSessionManager {
         actor: input.actor,
       }),
       runtimeControl: resolveRuntimeControl(channel, input.runtimeControl, metadata),
+      companion,
       metadata,
       replyTarget: normalizeReplyTarget(channel, {
         platform,
@@ -567,6 +621,54 @@ export class CrossPlatformChatSessionManager {
         metadata,
       }),
     };
+  }
+
+  private ensureCompanionContract(ingress: CrossPlatformIngressMessage): CrossPlatformIngressMessage & { companion: CompanionRuntimeContract } {
+    if (ingress.companion) {
+      return ingress as CrossPlatformIngressMessage & { companion: CompanionRuntimeContract };
+    }
+    return {
+      ...ingress,
+      companion: this.buildCompanionContractForIngress({
+        identity_key: ingress.identity_key,
+        platform: ingress.platform,
+        conversation_id: ingress.conversation_id,
+        user_id: ingress.user_id,
+        message_id: ingress.message_id,
+        goal_id: ingress.goal_id,
+        replyTarget: ingress.replyTarget,
+      }),
+    };
+  }
+
+  private buildCompanionContractForIngress(input: {
+    identity_key?: string;
+    platform?: string;
+    conversation_id?: string;
+    user_id?: string;
+    message_id?: string;
+    goal_id?: string;
+    replyTarget?: Partial<ChatIngressReplyTarget>;
+    companion?: CrossPlatformIncomingChatMessage["companion"];
+  }): CompanionRuntimeContract {
+    const sessionKey = buildSessionKeyFromParts({
+      identity_key: input.identity_key,
+      platform: input.platform,
+      conversation_id: input.conversation_id,
+      user_id: input.user_id,
+    });
+    const replyTargetId = normalizeIdentity(input.replyTarget?.conversation_id ?? input.conversation_id ?? input.replyTarget?.identity_key ?? input.identity_key) ?? undefined;
+    return buildCompanionRuntimeContract({
+      sessionKey,
+      conversationId: input.conversation_id,
+      messageId: input.message_id,
+      goalId: input.goal_id,
+      replyTargetId,
+      presence: input.companion?.presence,
+      turnPolicy: input.companion?.turnPolicy,
+      inputModality: input.companion?.inputModality ?? "text",
+      outputMode: input.companion?.outputMode,
+    });
   }
 
   /**
@@ -693,6 +795,9 @@ export class CrossPlatformChatSessionManager {
       ...ingress.replyTarget,
       metadata: cloneMetadata(ingress.replyTarget.metadata),
     };
+    if (ingress.companion) {
+      session.info.active_companion_contract = ingress.companion;
+    }
     session.info.metadata = cloneMetadata(buildSessionMetadata({
       metadata: ingress.metadata,
       channel: ingress.channel,
@@ -783,6 +888,19 @@ export class CrossPlatformChatSessionManager {
       session.runner.onEvent = previousOnEvent;
     }
   }
+}
+
+function formatCompanionPolicyDecision(decision: ReturnType<typeof evaluateCompanionOutputPolicy>): string {
+  if (decision.reason === "interruption_requires_explicit_request") {
+    return "The current companion turn is non-interruptible. Send an explicit interruption request before redirecting it.";
+  }
+  if (decision.reason === "suppressed_by_quieting") {
+    return "Companion output was suppressed by the current quieting policy.";
+  }
+  if (decision.reason === "deferred_by_quieting") {
+    return "Companion output was deferred by the current quieting policy.";
+  }
+  return "Companion output is allowed.";
 }
 
 export function createApprovalOriginFromSessionInfo(
