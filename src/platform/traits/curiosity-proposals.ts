@@ -20,6 +20,10 @@ import type {
   LearningRecord,
 } from "../../base/types/curiosity.js";
 import type { Goal } from "../../base/types/goal.js";
+import {
+  detectSemanticTransfer,
+  type SemanticTransferEvidence,
+} from "./curiosity-transfer.js";
 
 // ─── LLM Proposal Schema (for parsing LLM output) ───
 
@@ -75,7 +79,10 @@ export function buildProposalPrompt(
   trigger: CuriosityTrigger,
   goals: Goal[],
   learningRecords: LearningRecord[],
-  options: { relationshipProfileContext?: string } = {}
+  options: {
+    relationshipProfileContext?: string;
+    transferEvidence?: SemanticTransferEvidence[];
+  } = {}
 ): string {
   const relationshipProfileContext = options.relationshipProfileContext?.trim() ?? "";
   const activeGoalsSummary = goals
@@ -93,6 +100,11 @@ export function buildProposalPrompt(
         `- Goal ${r.goal_id}, dim "${r.dimension_name}", approach "${r.approach}": ${r.outcome} (improvement_ratio=${r.improvement_ratio.toFixed(2)})`
     )
     .join("\n");
+  const transferEvidence = (options.transferEvidence ?? [])
+    .map((e) =>
+      `- source_goal=${e.source_goal_id}, source_dimension="${e.source_dimension}", target_goal=${e.target_goal_id ?? "(unknown)"}, target_dimension="${e.target_dimension}", similarity=${e.similarity.toFixed(3)}, evidence_refs=[${e.evidence_refs.join(", ")}]`
+    )
+    .join("\n");
 
   return `Analyzing curiosity triggers to propose new exploration goals.
 
@@ -108,6 +120,9 @@ ${activeGoalsSummary || "(none)"}
 ## Recent Learning Records
 ${recentLearning || "(none)"}
 
+## Semantic Transfer Evidence
+${transferEvidence || "(none)"}
+
 ## Resident Relationship Profile Context
 ${relationshipProfileContext || "(none)"}
 
@@ -122,7 +137,9 @@ Return a JSON array of proposal objects. Each object must have:
 - rationale: string — why this is worth exploring (cite the trigger/learning evidence)
 - suggested_dimensions: array of { name: string, threshold_type: string, target: number }
 - scope_domain: string — domain this exploration belongs to
-- detection_method: one of "observation_log" | "stall_pattern" | "cross_goal_transfer" | "llm_heuristic" | "periodic_review"
+- detection_method: one of "observation_log" | "stall_pattern" | "cross_goal_transfer" | "llm_heuristic" | "periodic_review" | "embedding_similarity"
+
+Use detection_method "embedding_similarity" only when Semantic Transfer Evidence is present, and cite its source goal, dimension, similarity, and evidence refs in the rationale.
 
 Return only valid JSON array, no markdown, no explanation outside the JSON.`;
 }
@@ -202,28 +219,21 @@ export async function generateProposals(
     }
 
     let llmItems: LLMProposalItem[] = [];
+    const transferEvidence = await collectSemanticTransferEvidence(trigger, goals, deps);
 
     try {
       const prompt = buildProposalPrompt(trigger, goals, state.learning_records, {
         relationshipProfileContext: options.relationshipProfileContext,
+        transferEvidence,
       });
-      if (deps.gateway) {
-        llmItems = await deps.gateway.execute({
-          purpose: "curiosity_propose",
-          additionalContext: { proposal_prompt: prompt },
-          responseSchema: LLMProposalsResponseSchema,
-          temperature: 0.3,
-        }) as LLMProposalItem[];
-      } else {
-        const response = await deps.llmClient.sendMessage(
-          [{ role: "user", content: prompt }],
-          { temperature: 0.3, model_tier: 'light' }
-        );
-        llmItems = deps.llmClient.parseJSON(
-          response.content,
-          LLMProposalsResponseSchema
-        ) as LLMProposalItem[];
-      }
+      const response = await deps.llmClient.sendMessage(
+        [{ role: "user", content: prompt }],
+        { temperature: 0.3, model_tier: 'light' }
+      );
+      llmItems = deps.llmClient.parseJSON(
+        response.content,
+        LLMProposalsResponseSchema
+      ) as LLMProposalItem[];
     } catch (err) {
       // Don't throw on LLM failure — return what we have so far
       deps.logger?.warn(
@@ -267,12 +277,10 @@ export async function generateProposals(
         continue;
       }
 
-      // Phase 2: use embedding_similarity detection method when vectorIndex
-      // is available and the trigger is undefined_problem
       const detectionMethod =
-        deps.vectorIndex && trigger.type === "undefined_problem"
+        transferEvidence.length > 0
           ? "embedding_similarity"
-          : item.detection_method;
+          : item.detection_method === "embedding_similarity" ? "llm_heuristic" : item.detection_method;
 
       const proposal = CuriosityProposalSchema.parse({
         id: proposalId,
@@ -283,6 +291,7 @@ export async function generateProposals(
           suggested_dimensions: item.suggested_dimensions,
           scope_domain: item.scope_domain,
           detection_method: detectionMethod,
+          transfer_evidence: detectionMethod === "embedding_similarity" ? transferEvidence : [],
         },
         status: "pending",
         created_at: now.toISOString(),
@@ -371,4 +380,31 @@ export async function generateProposals(
   }
 
   return newProposals;
+}
+
+async function collectSemanticTransferEvidence(
+  trigger: CuriosityTrigger,
+  goals: Goal[],
+  deps: ProposalGenerationDeps
+): Promise<SemanticTransferEvidence[]> {
+  if (!deps.vectorIndex || trigger.type !== "undefined_problem" || !trigger.source_goal_id) {
+    return [];
+  }
+
+  const sourceGoal = goals.find((goal) => goal.id === trigger.source_goal_id);
+  const dimensions = sourceGoal?.dimensions.map((dimension) => dimension.name) ?? [];
+  if (dimensions.length === 0) {
+    return [];
+  }
+
+  try {
+    return await detectSemanticTransfer(trigger.source_goal_id, dimensions, {
+      vectorIndex: deps.vectorIndex,
+    });
+  } catch (err) {
+    deps.logger?.warn(
+      `CuriosityEngine: semantic transfer search failed for trigger "${trigger.type}": ${err}`
+    );
+    return [];
+  }
 }
