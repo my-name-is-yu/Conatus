@@ -12,7 +12,6 @@ import {
   type SelectedChatRoute,
 } from "./ingress-router.js";
 import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
-import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { buildAdapterRegistry, buildLLMClient } from "../../base/llm/provider-factory.js";
@@ -827,32 +826,7 @@ export class CrossPlatformChatSessionManager {
       && ingress.metadata["runtime_control_explicit"] === true
       && ingress.runtimeControl.approvalMode === "disallowed";
     const freeformRouteIntent = null;
-    const shouldDeriveRunSpecDraft =
-      runtimeControlIntent === null
-      && freeformRouteIntent !== null
-      && (
-        freeformRouteIntent.kind === "run_spec"
-        || freeformRouteIntent.kind === "configure"
-        || freeformRouteIntent.kind === "clarify"
-      )
-      && freeformRouteIntent.confidence >= 0.7;
-    const runSpecDraft = shouldDeriveRunSpecDraft
-      ? await deriveRunSpecFromText(safeIngressText, {
-        cwd: ingress.cwd ?? session.info.cwd,
-        conversationId: ingress.conversation_id ?? null,
-        channel: ingress.channel,
-        sessionId: session.runner.getSessionId() ?? ingress.conversation_id ?? null,
-        replyTarget: ingress.replyTarget as unknown as Record<string, unknown>,
-        originMetadata: {
-          ingress_id: ingress.ingress_id ?? null,
-          platform: ingress.platform ?? null,
-          message_id: ingress.message_id ?? null,
-          deliveryMode: ingress.deliveryMode ?? null,
-          metadata: ingress.metadata,
-        },
-        llmClient: this.deps.llmClient,
-      })
-      : null;
+    const runSpecDraft = null;
     const selectedRoute = this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
