@@ -265,6 +265,9 @@ export interface IndexedSymbol {
 export interface CodeSearchIndexes {
   version: string;
   indexedAt: number;
+  capabilities: {
+    semanticRetrieval: "disabled" | "embedding_index";
+  };
   files: IndexedFile[];
   symbols: IndexedSymbol[];
   repoMap: RepoMapSlice;

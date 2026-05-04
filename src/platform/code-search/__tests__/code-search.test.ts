@@ -4,10 +4,13 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SearchOrchestrator } from "../orchestrator.js";
 import { ProgressiveReader } from "../progressive-reader.js";
+import { rerankCandidates } from "../reranker.js";
 import { buildFileIndex } from "../indexes/file-index.js";
 import { getCodeSearchIndexes } from "../indexes/index-store.js";
 import { planCodeSearchTask } from "../query-planner.js";
 import { parseVerificationSignal } from "../verification-retrieval.js";
+import type { FusedCandidate } from "../fusion.js";
+import { DEFAULT_CANDIDATE_PENALTIES, DEFAULT_CANDIDATE_SIGNALS } from "../contracts.js";
 
 describe("code search platform", () => {
   let root: string;
@@ -50,6 +53,50 @@ describe("code search platform", () => {
     expect(candidates[0]).toHaveProperty("reasons");
     expect(candidates[0]).toHaveProperty("signals");
     expect(candidates[0]).toHaveProperty("penalties");
+  });
+
+  it("does not advertise semantic retrieval when no embedding-backed index is configured", async () => {
+    const result = await new SearchOrchestrator(root).searchWithState({
+      task: "explain findWidget",
+      intent: "explain",
+      cwd: root,
+    });
+
+    expect(result.trace.retrieversUsed).not.toContain("semantic");
+    expect(result.trace.candidatesReturnedByRetriever).not.toHaveProperty("semantic");
+    expect(result.trace.warnings).toContain("semantic retrieval disabled: no embedding-backed code-search index configured");
+    expect(result.candidates.every((candidate) => !candidate.reasons.some((reason) => reason.includes("semantic")))).toBe(true);
+  });
+
+  it("ignores semantic similarity during reranking when semantic retrieval is disabled", () => {
+    const makeCandidate = (id: string, lexicalMatch: number, semanticSimilarity: number): FusedCandidate => ({
+      id,
+      file: `src/${id}.ts`,
+      range: { startLine: 1, endLine: 1 },
+      preview: id,
+      signals: {
+        ...DEFAULT_CANDIDATE_SIGNALS,
+        lexicalMatch,
+        semanticSimilarity,
+      },
+      ranks: { retrieverRanks: { lexical: 1 } },
+      penalties: DEFAULT_CANDIDATE_PENALTIES,
+      reasons: [],
+      sourceRetrievers: ["lexical"],
+      indexVersion: "test",
+      indexedAt: 1,
+      fileHashAtIndex: id,
+      rrfScore: 0,
+    });
+    const candidates = [
+      makeCandidate("lexical", 1, 0),
+      makeCandidate("semantic-only", 0, 1),
+    ];
+
+    const ranked = rerankCandidates(candidates, "explain", 2, { semanticRetrieval: "disabled" });
+
+    expect(ranked.map((candidate) => candidate.id)).toEqual(["lexical", "semantic-only"]);
+    expect(ranked[1]!.rerankScore).toBe(0);
   });
 
   it("reads bounded context ranges with budget and trace state", async () => {

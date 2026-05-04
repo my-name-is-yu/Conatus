@@ -42,3 +42,9 @@
 - Plan: route `generateProposals()` through concrete semantic-transfer search evidence, add typed proposal transfer evidence with source goal/dimension/similarity/evidence refs, include that evidence in proposal prompts, and only assign `embedding_similarity` when admitted vector results exist.
 - Review: fresh review agent found model-provided `embedding_similarity` could be accepted without vector evidence and gateway prompt assembly could drop transfer evidence; fixed by sanitizing detection methods without evidence and using the concrete proposal prompt path.
 - Verification: `npm run typecheck`; `npx vitest run src/platform/traits/__tests__/curiosity-engine-budget.test.ts src/platform/traits/__tests__/curiosity-engine-proposals.test.ts`; `npm run lint:boundaries` (warnings only, pre-existing); `npm run test:changed`.
+
+## #1035
+- Status: implementation verified locally; preparing PR.
+- Plan: make semantic retrieval capability explicit in `CodeSearchIndexes`, default it to disabled, exclude the semantic retriever from the orchestrator unless capability is enabled, and make reranking ignore semantic similarity when disabled so ranking/reasons are unaffected.
+- Review: fresh review agent reported no material findings.
+- Verification: `npm run typecheck`; `npx vitest run src/platform/code-search/__tests__/code-search.test.ts`; `npm run lint:boundaries` (warnings only, pre-existing); `npm run test:changed` (exit 0; included pre-existing `ps: process id too large: 999999999` output).
