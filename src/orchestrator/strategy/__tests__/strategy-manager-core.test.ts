@@ -136,6 +136,17 @@ const STRATEGY_TEMPLATES_ACTIVATION = {
   graphTraversal: false,
 } as const;
 
+const DECISION_HEURISTICS_ACTIVATION = {
+  ...STRATEGY_TEMPLATES_ACTIVATION,
+  strategyTemplates: false,
+  decisionHeuristics: true,
+} as const;
+
+const VERIFIED_HINTS_ONLY_HEURISTICS_ACTIVATION = {
+  ...DECISION_HEURISTICS_ACTIVATION,
+  verifiedPlannerHintsOnly: true,
+} as const;
+
 class TestableStrategyManager extends StrategyManager {
   rankByDecisionHistory(candidates: Strategy[], goalType: string): Promise<Strategy[]> {
     return this._rankCandidatesByDecisionHistory(candidates, goalType);
@@ -437,7 +448,7 @@ describe("generateCandidates", () => {
     expect(first[0]!.id).not.toBe(second[0]!.id);
   });
 
-  it("applies decision heuristics without double-counting prefer/avoid deltas", async () => {
+  it("ignores legacy substring-only decision heuristics when ranking candidates", async () => {
     const candidates = [
       makeStrategy({
         id: "cand-1",
@@ -477,7 +488,293 @@ describe("generateCandidates", () => {
       }
     );
 
-    expect(reordered[0]!.hypothesis).toContain("structured outline");
+    expect(reordered.map((candidate) => candidate.id)).toEqual(["cand-1", "cand-2"]);
+  });
+
+  it("applies typed decision heuristic selectors without relying on hypothesis text", async () => {
+    const candidates = [
+      makeStrategy({
+        id: "cand-threshold",
+        hypothesis: "現在の分類器のしきい値をもう一度細かく調整する",
+        exploration: {
+          schema_version: "strategy-exploration-v1",
+          phase: "divergent_stall_recovery",
+          role: "adjacent_exploration",
+          strategy_family: "threshold_sweep",
+          novelty_score: 0.45,
+          similarity_to_recent_failures: 0.9,
+          expected_cost: "medium",
+          relationship_to_lineage: "failed_lineage",
+          smoke: { status: "not_run", reason: "Smoke first." },
+          speculative: true,
+          evidence_authority: "speculative_hypothesis",
+          lineage_assessment: {
+            schema_version: "strategy-lineage-assessment-v1",
+            confidence: 0.9,
+            relationship_to_lineage: "failed_lineage",
+            novelty_basis: "typed_lineage_evidence",
+            matched_failed_lineage_fingerprints: ["threshold_sweep|balanced_accuracy"],
+            matched_strategy_ids: [],
+            evidence_refs: ["evidence-failed-1"],
+            metric_trend: "stalled",
+            summary: "Typed failed lineage.",
+          },
+        },
+      }),
+      makeStrategy({
+        id: "cand-audit",
+        hypothesis: "Audit fold distribution before another model refinement",
+        exploration: {
+          schema_version: "strategy-exploration-v1",
+          phase: "divergent_stall_recovery",
+          role: "divergent_exploration",
+          strategy_family: "fold_distribution_audit",
+          novelty_score: 0.82,
+          similarity_to_recent_failures: 0,
+          expected_cost: "low",
+          relationship_to_lineage: "different_assumption",
+          smoke: { status: "promote", reason: "Smoke passed.", evidence_ref: "evidence-smoke-1" },
+          speculative: true,
+          evidence_authority: "speculative_hypothesis",
+          lineage_assessment: {
+            schema_version: "strategy-lineage-assessment-v1",
+            confidence: 0.82,
+            relationship_to_lineage: "different_assumption",
+            novelty_basis: "smoke_evidence",
+            matched_failed_lineage_fingerprints: [],
+            matched_strategy_ids: [],
+            evidence_refs: ["evidence-smoke-1"],
+            metric_trend: "stalled",
+            summary: "Typed promoted smoke lineage.",
+          },
+        },
+      }),
+    ] satisfies Strategy[];
+
+    const reordered = applyDecisionHeuristicsToCandidates(
+      candidates,
+      [
+        {
+          id: "heur-prefer-audit",
+          prefer_candidate_selector: {
+            strategy_family: "fold_distribution_audit",
+            exploration_role: "divergent_exploration",
+            smoke_status: "promote",
+            metric_trend: "stalled",
+          },
+          score_delta: 0.4,
+          reason: "prefer promoted divergent smoke result",
+        },
+        {
+          id: "heur-avoid-failed",
+          avoid_candidate_selector: {
+            failed_lineage_fingerprint: "threshold_sweep|balanced_accuracy",
+          },
+          score_delta: 0.2,
+          reason: "avoid repeated failed lineage",
+        },
+      ],
+      {
+        stallCount: 0,
+        activeStrategyId: null,
+      }
+    );
+
+    expect(reordered.map((candidate) => candidate.id)).toEqual(["cand-audit", "cand-threshold"]);
+  });
+
+  it("applies typed decision heuristics through generateCandidates when unverified hints are allowed", async () => {
+    const response = `\`\`\`json
+[
+  {
+    "hypothesis": "現在の分類器のしきい値を少し調整する",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
+    ],
+    "resource_estimate": {
+      "sessions": 2,
+      "duration": { "value": 3, "unit": "hours" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3,
+    "exploration": {
+      "schema_version": "strategy-exploration-v1",
+      "phase": "divergent_stall_recovery",
+      "role": "adjacent_exploration",
+      "strategy_family": "threshold_sweep",
+      "novelty_score": 0.45,
+      "similarity_to_recent_failures": 0.9,
+      "expected_cost": "medium",
+      "relationship_to_lineage": "failed_lineage",
+      "smoke": { "status": "not_run", "reason": "Smoke first." },
+      "speculative": true,
+      "evidence_authority": "speculative_hypothesis",
+      "lineage_assessment": {
+        "schema_version": "strategy-lineage-assessment-v1",
+        "confidence": 0.9,
+        "relationship_to_lineage": "failed_lineage",
+        "novelty_basis": "typed_lineage_evidence",
+        "matched_failed_lineage_fingerprints": ["threshold_sweep|balanced_accuracy"],
+        "matched_strategy_ids": [],
+        "evidence_refs": ["evidence-failed-1"],
+        "metric_trend": "stalled",
+        "summary": "Typed failed lineage."
+      }
+    }
+  },
+  {
+    "hypothesis": "Audit validation fold distribution before more model refinement",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "medium" }
+    ],
+    "resource_estimate": {
+      "sessions": 1,
+      "duration": { "value": 45, "unit": "minutes" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3,
+    "exploration": {
+      "schema_version": "strategy-exploration-v1",
+      "phase": "divergent_stall_recovery",
+      "role": "divergent_exploration",
+      "strategy_family": "fold_distribution_audit",
+      "novelty_score": 0.82,
+      "similarity_to_recent_failures": 0,
+      "expected_cost": "low",
+      "relationship_to_lineage": "different_assumption",
+      "smoke": { "status": "promote", "reason": "Smoke passed.", "evidence_ref": "evidence-smoke-1" },
+      "speculative": true,
+      "evidence_authority": "speculative_hypothesis",
+      "lineage_assessment": {
+        "schema_version": "strategy-lineage-assessment-v1",
+        "confidence": 0.82,
+        "relationship_to_lineage": "different_assumption",
+        "novelty_basis": "smoke_evidence",
+        "matched_failed_lineage_fingerprints": [],
+        "matched_strategy_ids": [],
+        "evidence_refs": ["evidence-smoke-1"],
+        "metric_trend": "stalled",
+        "summary": "Typed promoted smoke lineage."
+      }
+    }
+  }
+]
+\`\`\``;
+    const manager = new StrategyManager(stateManager, createMockLLMClient([response]));
+    await saveDreamConfig(
+      { activation: DECISION_HEURISTICS_ACTIVATION },
+      stateManager.getBaseDir()
+    );
+    fs.mkdirSync(`${tempDir}/dream`, { recursive: true });
+    fs.writeFileSync(
+      `${tempDir}/dream/decision-heuristics.json`,
+      JSON.stringify({
+        heuristics: [{
+          id: "heur-prefer-audit",
+          prefer_candidate_selector: {
+            strategy_family: "fold_distribution_audit",
+            exploration_role: "divergent_exploration",
+            smoke_status: "promote",
+          },
+          score_delta: 0.5,
+          reason: "prefer promoted fold audit",
+        }],
+      }, null, 2)
+    );
+
+    const candidates = await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
+      currentGap: 0.2,
+      pastStrategies: [],
+    });
+
+    expect(candidates.map((candidate) => candidate.exploration?.strategy_family)).toEqual([
+      "fold_distribution_audit",
+      "threshold_sweep",
+    ]);
+  });
+
+  it("blocks unverified decision heuristics through generateCandidates when verifiedPlannerHintsOnly is enabled", async () => {
+    const response = `\`\`\`json
+[
+  {
+    "hypothesis": "Audit validation fold distribution before more model refinement",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "medium" }
+    ],
+    "resource_estimate": {
+      "sessions": 1,
+      "duration": { "value": 45, "unit": "minutes" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3,
+    "exploration": {
+      "schema_version": "strategy-exploration-v1",
+      "phase": "divergent_stall_recovery",
+      "role": "divergent_exploration",
+      "strategy_family": "fold_distribution_audit",
+      "novelty_score": 0.82,
+      "similarity_to_recent_failures": 0,
+      "expected_cost": "low",
+      "relationship_to_lineage": "different_assumption",
+      "smoke": { "status": "promote", "reason": "Smoke passed." },
+      "speculative": true,
+      "evidence_authority": "speculative_hypothesis"
+    }
+  },
+  {
+    "hypothesis": "現在の分類器のしきい値を少し調整する",
+    "expected_effect": [
+      { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
+    ],
+    "resource_estimate": {
+      "sessions": 2,
+      "duration": { "value": 3, "unit": "hours" },
+      "llm_calls": 1
+    },
+    "allocation": 0.3,
+    "exploration": {
+      "schema_version": "strategy-exploration-v1",
+      "phase": "divergent_stall_recovery",
+      "role": "adjacent_exploration",
+      "strategy_family": "threshold_sweep",
+      "novelty_score": 0.45,
+      "similarity_to_recent_failures": 0.9,
+      "expected_cost": "medium",
+      "relationship_to_lineage": "failed_lineage",
+      "smoke": { "status": "not_run", "reason": "Smoke first." },
+      "speculative": true,
+      "evidence_authority": "speculative_hypothesis"
+    }
+  }
+]
+\`\`\``;
+    const manager = new StrategyManager(stateManager, createMockLLMClient([response]));
+    await saveDreamConfig(
+      { activation: VERIFIED_HINTS_ONLY_HEURISTICS_ACTIVATION },
+      stateManager.getBaseDir()
+    );
+    fs.mkdirSync(`${tempDir}/dream`, { recursive: true });
+    fs.writeFileSync(
+      `${tempDir}/dream/decision-heuristics.json`,
+      JSON.stringify({
+        heuristics: [{
+          id: "heur-prefer-threshold",
+          prefer_candidate_selector: { strategy_family: "threshold_sweep" },
+          score_delta: 0.5,
+          reason: "would prefer threshold if unverified hints were allowed",
+        }],
+      }, null, 2)
+    );
+
+    const candidates = await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
+      currentGap: 0.2,
+      pastStrategies: [],
+    });
+
+    expect(candidates.map((candidate) => candidate.exploration?.strategy_family)).toEqual([
+      "fold_distribution_audit",
+      "threshold_sweep",
+    ]);
   });
 });
 
