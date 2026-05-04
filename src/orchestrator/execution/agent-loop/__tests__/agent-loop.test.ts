@@ -52,6 +52,7 @@ class EchoTool implements ITool<{ value: string }> {
     maxConcurrency: 0,
     maxOutputChars: 8000,
     tags: ["test"],
+    activityCategory: "read" as const,
   };
   readonly inputSchema = z.object({ value: z.string() });
 
@@ -89,6 +90,7 @@ class VerifyTool implements ITool<{ command: string; cwd?: string }> {
     maxConcurrency: 0,
     maxOutputChars: 8000,
     tags: ["test", "verification"],
+    activityCategory: "test" as const,
   };
   readonly inputSchema = z.object({ command: z.string(), cwd: z.string().optional() });
 
@@ -488,6 +490,14 @@ describe("agentloop phase 1", () => {
     expect(modelClient.calls[1].messages.some((message) => message.role === "tool")).toBe(true);
     const events = await session.traceStore.list(session.traceId);
     expect(events.some((event) => event.type === "final")).toBe(true);
+    expect(events.find((event) => event.type === "tool_call_started")).toMatchObject({
+      toolName: "echo",
+      activityCategory: "read",
+    });
+    expect(events.find((event) => event.type === "tool_call_finished")).toMatchObject({
+      toolName: "echo",
+      activityCategory: "read",
+    });
     const assistantMessages = events.filter((event) => event.type === "assistant_message");
     expect(assistantMessages).toHaveLength(2);
     expect(assistantMessages[0]).toMatchObject({ phase: "commentary" });

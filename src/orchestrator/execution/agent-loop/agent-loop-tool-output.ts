@@ -1,4 +1,5 @@
 import type { ToolResult } from "../../../tools/types.js";
+import type { ToolActivityCategory } from "../../../tools/types.js";
 
 export type AgentLoopToolDisposition =
   | "respond_to_model"
@@ -23,5 +24,6 @@ export interface AgentLoopToolOutput {
     originalChars: number;
     overflowPath?: string;
   };
+  activityCategory?: ToolActivityCategory;
   fatal?: boolean;
 }

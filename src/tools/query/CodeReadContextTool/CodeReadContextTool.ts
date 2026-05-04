@@ -77,6 +77,7 @@ export class CodeReadContextTool implements ITool<CodeReadContextInput, unknown>
     maxConcurrency: 0,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "read",
   };
   readonly inputSchema = CodeReadContextInputSchema;
 

@@ -41,6 +41,7 @@ export class FileEditTool implements ITool<FileEditInput, FileEditOutput> {
     maxConcurrency: 3,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "file_modify",
   };
   readonly inputSchema = FileEditInputSchema;
 

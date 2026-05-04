@@ -19,6 +19,7 @@ export class SkillSearchTool implements ITool<SkillSearchInput> {
     maxConcurrency: 10,
     maxOutputChars: 8000,
     tags: ["skills", "query"],
+    activityCategory: "search",
   };
   readonly inputSchema = SkillSearchInputSchema;
 

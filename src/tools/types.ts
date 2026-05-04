@@ -51,6 +51,20 @@ export const ToolPermissionLevelSchema = z.enum([
 
 export type ToolPermissionLevel = z.infer<typeof ToolPermissionLevelSchema>;
 
+// --- Tool Activity Category ---
+
+export const ToolActivityCategorySchema = z.enum([
+  "search",
+  "read",
+  "command",
+  "file_create",
+  "file_modify",
+  "test",
+  "approval",
+]);
+
+export type ToolActivityCategory = z.infer<typeof ToolActivityCategorySchema>;
+
 // --- Tool Metadata ---
 
 export const ToolMetadataSchema = z.object({
@@ -84,6 +98,12 @@ export const ToolMetadataSchema = z.object({
   tags: z.array(z.string()).default([]),
   /** Whether this tool requires network access even if it is otherwise read-only. */
   requiresNetwork: z.boolean().optional(),
+  /**
+   * Channel-agnostic activity category used by shared agent timeline summaries.
+   * Tools should declare this instead of requiring timeline consumers to infer
+   * semantics from tool names.
+   */
+  activityCategory: ToolActivityCategorySchema.optional(),
 });
 
 export type ToolMetadata = z.infer<typeof ToolMetadataSchema>;

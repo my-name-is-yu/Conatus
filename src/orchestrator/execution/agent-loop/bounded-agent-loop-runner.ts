@@ -299,12 +299,14 @@ export class BoundedAgentLoopRunner {
       }
 
       for (const call of response.toolCalls) {
+        const activityCategory = this.deps.toolRouter.resolveTool(call.name)?.metadata.activityCategory;
         await this.record(turn, {
           type: "tool_call_started",
           ...this.baseEvent(turn),
           callId: call.id,
           toolName: call.name,
           inputPreview: this.preview(this.stringify(call.input)),
+          ...(activityCategory ? { activityCategory } : {}),
         });
       }
 
@@ -342,6 +344,7 @@ export class BoundedAgentLoopRunner {
           durationMs: result.durationMs,
           ...(result.artifacts ? { artifacts: result.artifacts } : {}),
           ...(result.truncated ? { truncated: result.truncated } : {}),
+          ...(result.activityCategory ? { activityCategory: result.activityCategory } : {}),
         });
 
         if (result.disposition === "approval_denied") {

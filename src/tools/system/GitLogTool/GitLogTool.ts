@@ -33,6 +33,7 @@ export class GitLogTool implements ITool<GitLogInput, string[] | GitLogEntryFull
     maxConcurrency: 0,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "read",
   };
   readonly inputSchema = GitLogInputSchema;
 

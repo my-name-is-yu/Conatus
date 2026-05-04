@@ -67,6 +67,7 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
         : { status: "executed" as const });
       const command = this.extractCommand(call.name, call.input);
       const resolvedCwd = this.extractCwd(call.input) ?? turn.cwd;
+      const activityCategory = this.router.resolveTool(call.name)?.metadata.activityCategory;
       return {
         callId: call.id,
         toolName: call.name,
@@ -78,6 +79,7 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
         ...(result.contextModifier ? { contextModifier: result.contextModifier } : {}),
         rawResult: result,
         ...(command ? { command, cwd: resolvedCwd } : {}),
+        ...(activityCategory ? { activityCategory } : {}),
         ...(result.artifacts ? { artifacts: result.artifacts } : {}),
         ...(result.truncated ? { truncated: result.truncated } : {}),
       };
@@ -104,6 +106,9 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
       content: message,
       durationMs,
       disposition,
+      ...(this.router.resolveTool(call.name)?.metadata.activityCategory
+        ? { activityCategory: this.router.resolveTool(call.name)?.metadata.activityCategory }
+        : {}),
     };
   }
 

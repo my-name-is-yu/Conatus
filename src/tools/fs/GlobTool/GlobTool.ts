@@ -25,6 +25,7 @@ export class GlobTool implements ITool<GlobInput, string[]> {
     maxConcurrency: 0,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "search",
   };
   readonly inputSchema = GlobInputSchema;
 

@@ -29,6 +29,7 @@ export class ToolSearchTool implements ITool<ToolSearchInput, ToolSearchResult[]
     maxConcurrency: 10,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "search",
   };
 
   readonly inputSchema = ToolSearchInputSchema;

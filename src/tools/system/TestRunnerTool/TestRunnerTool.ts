@@ -122,6 +122,7 @@ export class TestRunnerTool implements ITool<TestRunnerInput, TestRunnerOutput> 
     maxConcurrency: 1,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "test",
   };
 
   readonly inputSchema = TestRunnerInputSchema;

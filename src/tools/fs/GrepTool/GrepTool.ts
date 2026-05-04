@@ -28,6 +28,7 @@ export class GrepTool implements ITool<GrepInput, string> {
     maxConcurrency: 0,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "search",
   };
   readonly inputSchema = GrepInputSchema;
 

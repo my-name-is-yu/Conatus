@@ -40,6 +40,7 @@ export class GitDiffTool implements ITool<GitDiffInput, string> {
     maxConcurrency: 5,
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
+    activityCategory: "read",
   };
 
   readonly inputSchema = GitDiffInputSchema;
