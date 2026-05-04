@@ -30,7 +30,7 @@ import {
   loadDreamActivationState,
   loadStrategyTemplates,
   materializeTemplateCandidate,
-  selectTemplateCandidates,
+  selectTemplateCandidatesWithTrace,
 } from "../../platform/dream/dream-activation.js";
 import {
   VALID_TRANSITIONS,
@@ -320,7 +320,7 @@ export class StrategyManagerBase {
       if (activation.flags.strategyTemplates && !verifiedPlannerHintsOnly) {
         const goal = await this.stateManager.loadGoal(goalId);
         const templates = await loadStrategyTemplates(this.stateManager.getBaseDir());
-        const matchedTemplates = selectTemplateCandidates(
+        const matchedTemplates = selectTemplateCandidatesWithTrace(
           templates,
           [
             goal?.title ?? "",
@@ -333,8 +333,8 @@ export class StrategyManagerBase {
         );
 
         if (matchedTemplates.length > 0) {
-          const templateCandidates = matchedTemplates.map((template) =>
-            materializeTemplateCandidate(template, goalId, primaryDimension, targetDimensions)
+          const templateCandidates = matchedTemplates.map(({ template, trace }) =>
+            materializeTemplateCandidate(template, goalId, primaryDimension, targetDimensions, trace)
           );
           candidates = [
             ...templateCandidates,

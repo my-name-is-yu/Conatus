@@ -6,7 +6,10 @@ import { StrategyManager } from "../strategy-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { Strategy } from "../../../base/types/strategy.js";
 import type { DecisionRecord } from "../../../base/types/knowledge.js";
-import { applyDecisionHeuristicsToCandidates } from "../../../platform/dream/dream-activation.js";
+import {
+  applyDecisionHeuristicsToCandidates,
+  selectTemplateCandidatesWithTrace,
+} from "../../../platform/dream/dream-activation.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -398,6 +401,109 @@ describe("generateCandidates", () => {
 
     expect(candidates[0]!.source_template_id).toBe("tmpl-1");
     expect(candidates[0]!.hypothesis).toContain("structured research checklist");
+    expect(candidates[0]!.planner_hint_trace).toMatchObject({
+      source: "dream_template_typed_applicability",
+      source_id: "tmpl-1",
+      lexical_overlap_used: false,
+      matched_dimensions: ["research_depth"],
+    });
+  });
+
+  it("does not materialize templates from paraphrased text or stored embedding ids without typed applicability", async () => {
+    const matches = selectTemplateCandidatesWithTrace(
+      [{
+        template_id: "tmpl-text-only",
+        source_goal_id: "goal-src",
+        source_strategy_id: "strat-src",
+        hypothesis_pattern: "監査で分類器の停滞を調べる",
+        domain_tags: ["audit"],
+        effectiveness_score: 0.95,
+        applicable_dimensions: ["unrelated_dimension"],
+        embedding_id: "emb-text-only",
+        created_at: new Date().toISOString(),
+      }],
+      "Audit model plateau for balanced accuracy",
+      ["balanced_accuracy"],
+      1
+    );
+
+    expect(matches).toEqual([]);
+  });
+
+  it("keeps advisory hints from overriding typed template materialization", async () => {
+    const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+    const manager = new StrategyManager(stateManager, mock);
+    await saveDreamConfig(
+      {
+        activation: {
+          ...STRATEGY_TEMPLATES_ACTIVATION,
+          learnedPatternHints: true,
+        },
+      },
+      stateManager.getBaseDir()
+    );
+    await stateManager.saveGoal({
+      id: "goal-1",
+      title: "Improve balanced accuracy",
+      description: "Need a fold audit",
+      status: "active",
+      dimensions: [],
+      parent_id: null,
+      child_goal_ids: [],
+      success_criteria: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as any);
+    fs.mkdirSync(`${tempDir}/learning`, { recursive: true });
+    fs.writeFileSync(
+      `${tempDir}/learning/goal-1_patterns.json`,
+      JSON.stringify([{
+        pattern_id: "pattern-advisory",
+        type: "strategy_selection",
+        description: "Prefer text-only threshold tuning",
+        source_goal_ids: ["goal-1"],
+        applicable_domains: ["kaggle"],
+        confidence: 0.99,
+        evidence_count: 10,
+        created_at: new Date().toISOString(),
+        last_applied_at: null,
+      }], null, 2)
+    );
+    fs.writeFileSync(
+      `${tempDir}/strategy-templates.json`,
+      JSON.stringify([
+        {
+          template_id: "tmpl-audit",
+          source_goal_id: "goal-src",
+          source_strategy_id: "strat-src",
+          hypothesis_pattern: "Run fold distribution audit",
+          domain_tags: ["audit"],
+          effectiveness_score: 0.8,
+          applicable_dimensions: ["balanced_accuracy"],
+          embedding_id: null,
+          created_at: new Date().toISOString(),
+        },
+        {
+          template_id: "tmpl-text-only",
+          source_goal_id: "goal-src",
+          source_strategy_id: "strat-src-2",
+          hypothesis_pattern: "Prefer text-only threshold tuning",
+          domain_tags: ["kaggle"],
+          effectiveness_score: 0.99,
+          applicable_dimensions: ["other_dimension"],
+          embedding_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ], null, 2)
+    );
+
+    const candidates = await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
+      currentGap: 0.2,
+      pastStrategies: [],
+    });
+
+    expect(candidates[0]!.source_template_id).toBe("tmpl-audit");
+    expect(candidates.some((candidate) => candidate.source_template_id === "tmpl-text-only")).toBe(false);
   });
 
   it("assigns unique ids to repeated template-backed candidates", async () => {

@@ -23,3 +23,10 @@
 - Plan: deprecate `*_hypothesis_includes` as production selectors, add typed Dream decision heuristic selectors, keep `verifiedPlannerHintsOnly` as the caller-path gate, and cover direct heuristic behavior plus `StrategyManagerBase.generateCandidates()`.
 - Review: fresh review agent reported no material findings.
 - Verification: `npm run typecheck`; `npx vitest run src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`; `npm run test:changed`; `npm run lint:boundaries` (warnings only, pre-existing).
+- Result: PR #1038 merged; CI unit (22) and integration (24) passed.
+
+## #1031
+- Status: implementation verified locally after review fix.
+- Plan: keep learned pattern/workflow retrieval advisory-only, require typed template applicability for strategy-materializing candidates, and attach template ranking trace provenance showing source/confidence/lexical-overlap usage.
+- Review: fresh review agent found stored `embedding_id` was incorrectly treated as embedding-backed retrieval; fixed selector to require typed applicability in the current production path and added coverage with a non-null stored embedding id.
+- Verification: `npm run typecheck`; `npx vitest run src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`; `npm run test:changed`; `npm run lint:boundaries` (warnings only, pre-existing).

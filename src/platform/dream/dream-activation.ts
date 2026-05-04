@@ -206,29 +206,58 @@ export function selectTemplateCandidates(
   targetDimensions: string[],
   limit = 1
 ): StrategyTemplate[] {
+  return selectTemplateCandidatesWithTrace(templates, query, targetDimensions, limit).map(({ template }) => template);
+}
+
+export interface DreamTemplateCandidateTrace {
+  template: StrategyTemplate;
+  trace: NonNullable<Strategy["planner_hint_trace"]>;
+}
+
+export function selectTemplateCandidatesWithTrace(
+  templates: StrategyTemplate[],
+  _query: string,
+  targetDimensions: string[],
+  limit = 1
+): DreamTemplateCandidateTrace[] {
   const dimensionSet = new Set(targetDimensions.map((dimension) => dimension.toLowerCase()));
   return [...templates]
     .map((template) => {
       const dimensionOverlap = template.applicable_dimensions.filter((dimension) =>
         dimensionSet.has(dimension.toLowerCase())
-      ).length;
+      );
+      const hasTypedApplicability = dimensionOverlap.length > 0;
+      if (!hasTypedApplicability) {
+        return null;
+      }
       const score =
         template.effectiveness_score * 0.6 +
-        scoreTextOverlap(query, `${template.hypothesis_pattern} ${template.domain_tags.join(" ")}`) * 0.4 +
-        Math.min(dimensionOverlap, 2) * 0.1;
-      return { template, score };
+        Math.min(dimensionOverlap.length, 2) * 0.2;
+      return {
+        template,
+        score,
+        trace: {
+          source: "dream_template_typed_applicability",
+          source_id: template.template_id,
+          confidence: Math.min(1, score),
+          lexical_overlap_used: false,
+          matched_dimensions: dimensionOverlap,
+          evidence_refs: [template.source_strategy_id],
+        } satisfies NonNullable<Strategy["planner_hint_trace"]>,
+      };
     })
-    .filter(({ score }) => score >= 0.35)
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null && entry.score >= 0.35)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
-    .map(({ template }) => template);
+    .map(({ template, trace }) => ({ template, trace }));
 }
 
 export function materializeTemplateCandidate(
   template: StrategyTemplate,
   goalId: string,
   primaryDimension: string,
-  targetDimensions: string[]
+  targetDimensions: string[],
+  plannerHintTrace?: Strategy["planner_hint_trace"]
 ): Strategy {
   const now = new Date().toISOString();
   return {
@@ -264,6 +293,7 @@ export function materializeTemplateCandidate(
     toolset_locked: false,
     allowed_tools: [],
     required_tools: [],
+    ...(plannerHintTrace ? { planner_hint_trace: plannerHintTrace } : {}),
   };
 }
 
