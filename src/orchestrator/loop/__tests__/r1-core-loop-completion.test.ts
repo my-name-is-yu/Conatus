@@ -14,7 +14,7 @@ import * as path from "node:path";
 import {
   CoreLoop,
   type CoreLoopDeps,
-} from "../core-loop.js";
+} from "../durable-loop.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../execution/adapter-layer.js";
 import type { Goal } from "../../../base/types/goal.js";

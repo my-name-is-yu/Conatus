@@ -3,7 +3,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runDaemonGoalCycleLoop } from "../daemon/runner-goal-cycle.js";
-import type { LoopResult, ProgressEvent } from "../../orchestrator/loop/core-loop.js";
+import type { LoopResult, ProgressEvent } from "../../orchestrator/loop/durable-loop.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {

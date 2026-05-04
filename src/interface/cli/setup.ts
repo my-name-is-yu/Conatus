@@ -26,7 +26,7 @@ import { CrossGoalPortfolio } from "../../orchestrator/strategy/cross-goal-portf
 import { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import { TaskLifecycle } from "../../orchestrator/execution/task/task-lifecycle.js";
 import { ReportingEngine } from "../../reporting/reporting-engine.js";
-import { CoreLoop } from "../../orchestrator/loop/core-loop.js";
+import { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
 import { ScheduleEngine } from "../../runtime/schedule/engine.js";
 import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import { RuntimeBudgetStore } from "../../runtime/store/budget-store.js";
@@ -47,9 +47,9 @@ import { KnowledgeTransfer } from "../../platform/knowledge/transfer/knowledge-t
 import { CharacterConfigManager } from "../../platform/traits/character-config.js";
 import * as GapCalculator from "../../platform/drive/gap-calculator.js";
 import * as DriveScorer from "../../platform/drive/drive-scorer.js";
-import type { GapCalculatorModule, DriveScorerModule, LoopConfig } from "../../orchestrator/loop/core-loop.js";
+import type { GapCalculatorModule, DriveScorerModule, LoopConfig } from "../../orchestrator/loop/durable-loop.js";
 import type { Task } from "../../base/types/task.js";
-import type { ProgressEvent } from "../../orchestrator/loop/core-loop.js";
+import type { ProgressEvent } from "../../orchestrator/loop/durable-loop.js";
 import { Logger } from "../../runtime/logger.js";
 import { TimeHorizonEngine } from "../../platform/time/time-horizon-engine.js";
 import { HookManager } from "../../runtime/hook-manager.js";

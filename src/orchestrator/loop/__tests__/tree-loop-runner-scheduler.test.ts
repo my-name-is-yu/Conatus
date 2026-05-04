@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { runMultiGoalIteration } from "../tree-loop-runner.js";
-import type { CoreLoopDeps, ResolvedLoopConfig } from "../core-loop/contracts.js";
+import type { CoreLoopDeps, ResolvedLoopConfig } from "../durable-loop/contracts.js";
 import type { LoopIterationResult } from "../loop-result-types.js";
 
 function makeIterationResult(goalId: string, loopIndex = 0): LoopIterationResult {

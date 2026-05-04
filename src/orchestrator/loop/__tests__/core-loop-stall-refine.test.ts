@@ -20,8 +20,8 @@ import {
   type GapCalculatorModule,
   type DriveScorerModule,
   type ReportingEngine,
-} from "../core-loop.js";
-import { detectStallsAndRebalance } from "../core-loop/task-cycle.js";
+} from "../durable-loop.js";
+import { detectStallsAndRebalance } from "../durable-loop/task-cycle.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";
 import type { TaskLifecycle } from "../../execution/task/task-lifecycle.js";
@@ -35,8 +35,8 @@ import type { Goal } from "../../../base/types/goal.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { ITimeHorizonEngine } from "../../../platform/time/time-horizon-engine.js";
 import type { RuntimeEvidenceEntry } from "../../../runtime/store/evidence-ledger.js";
-import type { LoopIterationResult } from "../core-loop/contracts.js";
-import type { PhaseCtx } from "../core-loop/preparation.js";
+import type { LoopIterationResult } from "../durable-loop/contracts.js";
+import type { PhaseCtx } from "../durable-loop/preparation.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 

@@ -5,7 +5,7 @@
  */
 
 import type { Goal } from "../../base/types/goal.js";
-import type { ExecutionSummaryParams, ReportingEngine, LoopIterationResult } from "./core-loop/contracts.js";
+import type { ExecutionSummaryParams, ReportingEngine, LoopIterationResult } from "./durable-loop/contracts.js";
 import type { Logger } from "../../runtime/logger.js";
 import { dimensionProgress } from "../../platform/drive/gap-calculator.js";
 

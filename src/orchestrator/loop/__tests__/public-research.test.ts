@@ -3,12 +3,12 @@ import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { makeEmptyIterationResult } from "../loop-result-types.js";
 import {
   buildPublicResearchRequest,
-} from "../core-loop/public-research.js";
+} from "../durable-loop/public-research.js";
 import {
   PublicResearchEvidenceSchema,
   PublicResearchExternalActionSchema,
-} from "../core-loop/phase-specs.js";
-import { StaticCorePhasePolicyRegistry } from "../core-loop/phase-policy.js";
+} from "../durable-loop/phase-specs.js";
+import { StaticCorePhasePolicyRegistry } from "../durable-loop/phase-policy.js";
 
 describe("public research planning", () => {
   it("requests bounded research when a plateau/stall is detected", () => {

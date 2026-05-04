@@ -11,8 +11,8 @@ import {
 import { ProcessShutdownCoordinator, startDaemonStatusHeartbeat, type ProcessSignalTarget } from "./runner-lifecycle.js";
 import { handleCriticalDaemonError, handleDaemonLoopError } from "./runner-errors.js";
 import type { Envelope } from "../types/envelope.js";
-import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
-import type { CoreLoop } from "../../orchestrator/loop/core-loop.js";
+import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
+import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
 import { CommandDispatcher } from "../command-dispatcher.js";
 import { EventDispatcher } from "../event/dispatcher.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";

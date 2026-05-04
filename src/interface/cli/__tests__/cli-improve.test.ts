@@ -33,8 +33,8 @@ vi.mock("../ensure-api-key.js", () => ({
   }),
 }));
 
-vi.mock("../../../orchestrator/loop/core-loop.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../orchestrator/loop/core-loop.js")>();
+vi.mock("../../../orchestrator/loop/durable-loop.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../orchestrator/loop/durable-loop.js")>();
   return {
     ...actual,
     CoreLoop: vi.fn(),
@@ -117,11 +117,11 @@ vi.mock("../../../reporting/reporting-engine.js", async (importOriginal) => {
 
 import { CLIRunner } from "../cli-runner.js";
 import { StateManager } from "../../../base/state/state-manager.js";
-import { CoreLoop } from "../../../orchestrator/loop/core-loop.js";
+import { CoreLoop } from "../../../orchestrator/loop/durable-loop.js";
 import { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import type { Goal } from "../../../base/types/goal.js";
-import type { LoopResult } from "../../../orchestrator/loop/core-loop.js";
+import type { LoopResult } from "../../../orchestrator/loop/durable-loop.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { SuggestTimeoutError } from "../../../orchestrator/goal/goal-suggest.js";

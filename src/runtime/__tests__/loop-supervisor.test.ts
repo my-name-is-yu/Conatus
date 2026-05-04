@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import { LoopSupervisor } from "../executor/loop-supervisor.js";
 import { JournalBackedQueue } from "../queue/journal-backed-queue.js";
 import { createEnvelope } from "../types/envelope.js";
-import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
+import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
 import { GoalLeaseManager } from "../goal-lease-manager.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";

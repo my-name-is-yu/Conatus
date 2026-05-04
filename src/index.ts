@@ -85,8 +85,8 @@ export {
 } from "./platform/knowledge/index.js";
 export { CapabilityDetector } from "./platform/observation/capability-detector.js";
 export { PortfolioManager } from "./orchestrator/strategy/portfolio-manager.js";
-export { DurableLoop, CoreLoop } from "./orchestrator/loop/core-loop.js";
-export type { DurableLoopDeps, CoreLoopDeps, LoopConfig, LoopResult } from "./orchestrator/loop/core-loop.js";
+export { DurableLoop, CoreLoop } from "./orchestrator/loop/durable-loop.js";
+export type { DurableLoopDeps, CoreLoopDeps, LoopConfig, LoopResult } from "./orchestrator/loop/durable-loop.js";
 export { RuntimeSessionRegistry, createRuntimeSessionRegistry } from "./runtime/session-registry/index.js";
 export { deriveRunSpecFromText, understandRunSpecDraft, createRunSpecStore } from "./runtime/run-spec/index.js";
 export {

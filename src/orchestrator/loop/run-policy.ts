@@ -1,4 +1,4 @@
-import type { LoopConfig, LoopRunPolicy, LoopRunPolicyInput } from "./core-loop/contracts.js";
+import type { LoopConfig, LoopRunPolicy, LoopRunPolicyInput } from "./durable-loop/contracts.js";
 
 export function resolveLoopRunPolicy(input?: {
   runPolicy?: LoopRunPolicyInput;

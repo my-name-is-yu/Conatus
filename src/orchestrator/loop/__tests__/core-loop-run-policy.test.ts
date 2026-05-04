@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CoreLoop, makeEmptyIterationResult, type CoreLoopDeps } from "../core-loop.js";
+import { CoreLoop, makeEmptyIterationResult, type CoreLoopDeps } from "../durable-loop.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";

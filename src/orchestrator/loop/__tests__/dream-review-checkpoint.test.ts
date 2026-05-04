@@ -9,8 +9,8 @@ import {
   dreamCheckpointRawRefs,
   formatDreamRunControlRecommendationContext,
   normalizeDreamReviewCheckpoint,
-} from "../core-loop/dream-review-checkpoint.js";
-import { DreamReviewCheckpointEvidenceSchema } from "../core-loop/phase-specs.js";
+} from "../durable-loop/dream-review-checkpoint.js";
+import { DreamReviewCheckpointEvidenceSchema } from "../durable-loop/phase-specs.js";
 
 function makeMetricTrendContext(overrides: Partial<MetricTrendContext> = {}): MetricTrendContext {
   return {

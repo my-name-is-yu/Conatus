@@ -13,8 +13,8 @@ import * as yaml from "js-yaml";
 
 // ─── Module mocks (must precede imports of mocked modules) ───────────────────
 
-vi.mock("../../../orchestrator/loop/core-loop.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../orchestrator/loop/core-loop.js")>();
+vi.mock("../../../orchestrator/loop/durable-loop.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../orchestrator/loop/durable-loop.js")>();
   return { ...actual, CoreLoop: vi.fn() };
 });
 

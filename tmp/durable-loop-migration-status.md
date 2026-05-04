@@ -27,3 +27,15 @@
 - Verification: `npm run typecheck` passed. `npx vitest run src/orchestrator/loop/__tests__/durable-loop-aliases.test.ts` passed. `npx vitest run src/orchestrator/execution/agent-loop/__tests__/agent-loop-phases-3-7.test.ts` passed. `npm run lint:boundaries` passed with existing warnings and no errors. `rg -n "DurableLoop" src/orchestrator/loop src/orchestrator/execution/agent-loop/core-loop-control-tools.ts` confirmed new names.
 - `npm run test:changed` failed because existing untracked `.pulseed-sandbox` local state was included and changed Telegram setup expectations in unrelated chat tests; focused tests for changed code passed.
 - Review: separate review agent found no material issues.
+
+## #1017 Rename internal core-loop modules to durable-loop with compatibility shims
+
+- Status: in progress.
+- Branch: `codex/issue-1017-durable-loop-module-move`.
+- Issue body reviewed with `gh issue view 1017`.
+- Plan: move the primary implementation directory to `src/orchestrator/loop/durable-loop/`, move the top-level implementation to `src/orchestrator/loop/durable-loop.ts`, move agent-loop control tools to `durable-loop-control-tools.ts`, update production imports to durable paths, and leave old `core-loop` paths as re-export compatibility shims.
+- Persisted run IDs, event kinds, session kinds, and user-facing CLI/chat wording are not being changed in this issue.
+- Verification: `npm run typecheck` passed. Focused tests passed: `npx vitest run src/orchestrator/loop/__tests__/durable-loop-aliases.test.ts src/orchestrator/loop/__tests__/core-loop-run-policy.test.ts src/orchestrator/loop/__tests__/core-loop-decision-engine.test.ts src/orchestrator/execution/agent-loop/__tests__/agent-loop-phases-3-7.test.ts`. `npm run lint:boundaries` passed with existing warnings and no errors.
+- `rg -n "from .*core-loop|import\\(.*core-loop|\\.\\/core-loop|\\.\\.\\/core-loop" src -g '*.ts'` returned no remaining source imports after migration.
+- Intentional leftovers from `rg -n "CoreLoop|core-loop|coreloop" src/orchestrator/loop src/orchestrator/execution/agent-loop -g '*.ts'`: legacy compatibility shims, deprecated compatibility export names, compatibility alias tests, unchanged persisted/wire names such as `core_*` tool names and `run:coreloop:*`, and log/message text deferred to #1018.
+- Review: separate review agent found no material issues and confirmed old/new compiled ESM import paths still resolve.

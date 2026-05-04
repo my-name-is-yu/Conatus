@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { CoreLoop } from '../../orchestrator/loop/core-loop.js';
-import type { LoopResult } from '../../orchestrator/loop/core-loop.js';
-import type { LoopRunPolicyMode } from '../../orchestrator/loop/core-loop.js';
+import type { CoreLoop } from '../../orchestrator/loop/durable-loop.js';
+import type { LoopResult } from '../../orchestrator/loop/durable-loop.js';
+import type { LoopRunPolicyMode } from '../../orchestrator/loop/durable-loop.js';
 import type { GoalRunActivationContext } from '../../base/types/goal-activation.js';
 
 export interface GoalWorkerConfig {

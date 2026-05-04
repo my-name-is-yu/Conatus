@@ -7,9 +7,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { calculateGapOrComplete } from "../core-loop/preparation.js";
-import type { PhaseCtx } from "../core-loop/preparation.js";
-import type { LoopIterationResult } from "../core-loop/contracts.js";
+import { calculateGapOrComplete } from "../durable-loop/preparation.js";
+import type { PhaseCtx } from "../durable-loop/preparation.js";
+import type { LoopIterationResult } from "../durable-loop/contracts.js";
 import type { Goal } from "../../../base/types/goal.js";
 
 // ─── Mocks ───

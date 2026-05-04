@@ -23,7 +23,7 @@ import { ReportingEngine } from "../../src/reporting/reporting-engine.js";
 import { DriveSystem } from "../../src/platform/drive/drive-system.js";
 import { SessionManager } from "../../src/orchestrator/execution/session-manager.js";
 import { TrustManager } from "../../src/platform/traits/trust-manager.js";
-import { CoreLoop } from "../../src/orchestrator/loop/core-loop.js";
+import { CoreLoop } from "../../src/orchestrator/loop/durable-loop.js";
 import { AdapterRegistry } from "../../src/orchestrator/execution/adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../src/orchestrator/execution/adapter-layer.js";
 import { FileExistenceDataSourceAdapter } from "../../src/adapters/datasources/file-existence-datasource.js";

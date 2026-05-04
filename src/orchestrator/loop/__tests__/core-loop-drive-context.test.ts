@@ -9,7 +9,7 @@ import {
   type DriveScorerModule,
   type ReportingEngine,
   type LoopIterationResult,
-} from "../core-loop.js";
+} from "../durable-loop.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";
 import type { TaskLifecycle, TaskCycleResult } from "../../execution/task/task-lifecycle.js";
