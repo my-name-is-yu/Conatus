@@ -130,6 +130,11 @@ export {
   normalizeLegacyIngressInput,
   selectLegacyChatRoute,
 } from "./interface/chat/ingress-router.js";
+export {
+  buildCompanionCurrentTargetContext,
+  buildCompanionRuntimeContract,
+  evaluateCompanionOutputPolicy,
+} from "./runtime/companion-policy.js";
 export type {
   ChatIngressChannel,
   ChatIngressReplyTarget,
@@ -138,6 +143,19 @@ export type {
   IngressRuntimeControl,
   SelectedChatRoute,
 } from "./interface/chat/ingress-router.js";
+export type {
+  CompanionCurrentTargetContext,
+  CompanionDialogueKind,
+  CompanionOutputPolicyDecision,
+  CompanionPresenceMode,
+  CompanionPresenceState,
+  CompanionQuietingDecision,
+  CompanionRuntimeContract,
+  CompanionTurnPolicy,
+  CompanionUrgency,
+  ConversationInputModality,
+  ConversationOutputMode,
+} from "./runtime/types/companion.js";
 export type {
   ChatEvent,
   ChatEventHandler,

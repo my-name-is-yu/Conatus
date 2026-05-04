@@ -17,6 +17,7 @@ export * from "./capability.js";
 export * from "./portfolio.js";
 export * from "./daemon.js";
 export * from "./notification.js";
+export * from "./companion.js";
 export * from "./memory-lifecycle.js";
 export * from "./dependency.js";
 export * from "./data-source.js";
