@@ -452,7 +452,7 @@ describe("LoopSupervisor", () => {
     }
   });
 
-  it("links CoreLoop background runs to the worker session and marks terminal", async () => {
+  it("links DurableLoop background runs to the worker session and marks terminal", async () => {
     const runId = "run:coreloop:bg";
     const { supervisor, deps, runtimeRoot } = makeSupervisor(async (goalId: string) => {
       await new Promise((resolve) => setTimeout(resolve, 120));
@@ -466,7 +466,7 @@ describe("LoopSupervisor", () => {
       parent_session_id: "session:conversation:chat-bg",
       notify_policy: "silent",
       reply_target_source: "none",
-      title: "Background CoreLoop",
+      title: "Background DurableLoop",
       workspace: "/repo",
     });
     (deps as { backgroundRunLedger?: BackgroundRunLedger }).backgroundRunLedger = ledger;
@@ -499,7 +499,7 @@ describe("LoopSupervisor", () => {
         id: runId,
         parent_session_id: "session:conversation:chat-bg",
         status: "succeeded",
-        summary: "CoreLoop completed after 2 iteration(s).",
+        summary: "DurableLoop completed after 2 iteration(s).",
       });
       expect(terminal.source_refs).toContainEqual(expect.objectContaining({
         kind: "supervisor_state",
@@ -540,7 +540,7 @@ describe("LoopSupervisor", () => {
       const runFile = path.join(runtimeRoot, "background-runs", `${encodeURIComponent(runId)}.json`);
       const terminal = await pollForJsonMatch<any>(runFile, (value) =>
         value.status === "succeeded" &&
-        value.summary === "CoreLoop finalization after 1 iteration(s)."
+        value.summary === "DurableLoop finalization after 1 iteration(s)."
       );
       await supervisor.shutdown();
 
@@ -551,7 +551,7 @@ describe("LoopSupervisor", () => {
     }
   });
 
-  it("settles coalesced CoreLoop background runs instead of leaving them queued", async () => {
+  it("settles coalesced DurableLoop background runs instead of leaving them queued", async () => {
     const initialRunId = "run:coreloop:bg-initial";
     const coalescedRunId = "run:coreloop:bg-coalesced";
     const { supervisor, deps, runtimeRoot } = makeSupervisor(async (goalId: string) => {

@@ -603,7 +603,7 @@ export class LoopSupervisor {
     try {
       const run = await this.deps.backgroundRunLedger.terminal(runId, {
         status: workerStatusToBackgroundRunStatus(result.status),
-        summary: `CoreLoop ${result.status} after ${result.totalIterations} iteration(s).`,
+        summary: `DurableLoop ${result.status} after ${result.totalIterations} iteration(s).`,
         error: result.error ?? null,
         source_refs: sourceRefs,
       });
@@ -639,7 +639,7 @@ export class LoopSupervisor {
       });
       const run = await this.deps.backgroundRunLedger.terminal(runId, {
         status: "cancelled",
-        summary: `CoreLoop activation coalesced into active worker ${activeWorker.id}.`,
+        summary: `DurableLoop activation coalesced into active worker ${activeWorker.id}.`,
         source_refs: sourceRefs,
       });
       if (run.notify_policy !== 'silent' && run.pinned_reply_target) {

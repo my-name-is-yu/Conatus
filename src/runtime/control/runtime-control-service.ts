@@ -586,7 +586,7 @@ function resolveGoalId(run: BackgroundRun, snapshot: RuntimeSessionRegistrySnaps
     ? snapshot.sessions.find((session) => session.id === run.child_session_id)
     : null;
   const title = child?.title ?? run.title ?? "";
-  const match = title.match(/^CoreLoop goal\s+(.+)$/);
+  const match = title.match(/^(?:DurableLoop|CoreLoop) goal\s+(.+)$/);
   return match?.[1]?.trim() || null;
 }
 

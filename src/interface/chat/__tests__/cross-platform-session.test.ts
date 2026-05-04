@@ -207,7 +207,7 @@ describe("CrossPlatformChatSessionManager", () => {
       expect(draft.success).toBe(true);
       expect(draft.output).toContain("It has not started a daemon run.");
       expect(approved.success).toBe(true);
-      expect(approved.output).toContain("Started daemon-backed CoreLoop goal:");
+      expect(approved.output).toContain("Started daemon-backed DurableLoop goal:");
       expect(daemonClient.startGoal).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
@@ -1221,7 +1221,7 @@ describe("CrossPlatformChatSessionManager", () => {
     const chatAgentLoopRunner = {
       execute: vi.fn().mockResolvedValue({
         success: true,
-        output: "Agent loop can choose core_tend_goal when durable CoreLoop handoff is needed.",
+        output: "Agent loop can choose core_tend_goal when durable DurableLoop handoff is needed.",
         error: null,
         exit_code: null,
         elapsed_ms: 42,

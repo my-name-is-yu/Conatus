@@ -47,17 +47,17 @@ type CoreToolName = keyof typeof schemas;
 
 export function createDurableLoopControlTools(service: DurableLoopControlToolset): ITool[] {
   const tools: ITool[] = [
-    new CoreLoopControlTool("core_goal_status", "Read CoreLoop goal status.", "read_only", (input) => service.goalStatus(input), schemas.core_goal_status),
+    new CoreLoopControlTool("core_goal_status", "Read DurableLoop goal status.", "read_only", (input) => service.goalStatus(input), schemas.core_goal_status),
   ];
-  if (service.goalCreate) tools.push(new CoreLoopControlTool("core_goal_create", "Create a CoreLoop goal.", "write_local", (input) => service.goalCreate!(input), schemas.core_goal_create));
-  if (service.tendGoal) tools.push(new CoreLoopControlTool("core_tend_goal", "Create a CoreLoop goal and start it in the daemon for long-running background execution.", "write_local", (input) => service.tendGoal!(input), schemas.core_tend_goal));
-  if (service.goalStart) tools.push(new CoreLoopControlTool("core_goal_start", "Start or resume a CoreLoop goal in the daemon.", "write_local", (input) => service.goalStart!(input), schemas.core_goal_start));
-  if (service.goalPause) tools.push(new CoreLoopControlTool("core_goal_pause", "Pause a CoreLoop goal.", "write_local", (input) => service.goalPause!(input), schemas.core_goal_pause));
-  if (service.goalResume) tools.push(new CoreLoopControlTool("core_goal_resume", "Start or resume a CoreLoop goal in the daemon.", "write_local", (input) => service.goalResume!(input), schemas.core_goal_resume));
-  if (service.goalCancel) tools.push(new CoreLoopControlTool("core_goal_cancel", "Cancel a CoreLoop goal.", "write_local", (input) => service.goalCancel!(input), schemas.core_goal_cancel));
-  if (service.taskStatus) tools.push(new CoreLoopControlTool("core_task_status", "Read CoreLoop task status.", "read_only", (input) => service.taskStatus!(input), schemas.core_task_status));
-  if (service.taskPrioritize) tools.push(new CoreLoopControlTool("core_task_prioritize", "Set CoreLoop task priority.", "write_local", (input) => service.taskPrioritize!(input), schemas.core_task_prioritize));
-  if (service.runCycle) tools.push(new CoreLoopControlTool("core_run_cycle", "Run one bounded CoreLoop cycle.", "write_local", (input) => service.runCycle!(input), schemas.core_run_cycle));
+  if (service.goalCreate) tools.push(new CoreLoopControlTool("core_goal_create", "Create a DurableLoop goal.", "write_local", (input) => service.goalCreate!(input), schemas.core_goal_create));
+  if (service.tendGoal) tools.push(new CoreLoopControlTool("core_tend_goal", "Create a DurableLoop goal and start it in the daemon for long-running background execution.", "write_local", (input) => service.tendGoal!(input), schemas.core_tend_goal));
+  if (service.goalStart) tools.push(new CoreLoopControlTool("core_goal_start", "Start or resume a DurableLoop goal in the daemon.", "write_local", (input) => service.goalStart!(input), schemas.core_goal_start));
+  if (service.goalPause) tools.push(new CoreLoopControlTool("core_goal_pause", "Pause a DurableLoop goal.", "write_local", (input) => service.goalPause!(input), schemas.core_goal_pause));
+  if (service.goalResume) tools.push(new CoreLoopControlTool("core_goal_resume", "Start or resume a DurableLoop goal in the daemon.", "write_local", (input) => service.goalResume!(input), schemas.core_goal_resume));
+  if (service.goalCancel) tools.push(new CoreLoopControlTool("core_goal_cancel", "Cancel a DurableLoop goal.", "write_local", (input) => service.goalCancel!(input), schemas.core_goal_cancel));
+  if (service.taskStatus) tools.push(new CoreLoopControlTool("core_task_status", "Read DurableLoop task status.", "read_only", (input) => service.taskStatus!(input), schemas.core_task_status));
+  if (service.taskPrioritize) tools.push(new CoreLoopControlTool("core_task_prioritize", "Set DurableLoop task priority.", "write_local", (input) => service.taskPrioritize!(input), schemas.core_task_prioritize));
+  if (service.runCycle) tools.push(new CoreLoopControlTool("core_run_cycle", "Run one bounded DurableLoop cycle.", "write_local", (input) => service.runCycle!(input), schemas.core_run_cycle));
   return tools;
 }
 
@@ -117,7 +117,7 @@ class CoreLoopControlTool<TInput> implements ITool<TInput> {
     if (this.metadata.isReadOnly) return { status: "allowed" };
     return context.preApproved
       ? { status: "allowed" }
-      : { status: "needs_approval", reason: `${this.metadata.name} changes CoreLoop state` };
+      : { status: "needs_approval", reason: `${this.metadata.name} changes DurableLoop state` };
   }
 
   isConcurrencySafe(_input: TInput): boolean {
@@ -140,7 +140,7 @@ export function createDaemonBackedDurableLoopControlToolset(
   const createGoal = async (description: string): Promise<{ goalId: string; goal: Goal }> => {
     const normalizedDescription = description.trim();
     if (!normalizedDescription) {
-      throw new Error("CoreLoop goal description is required.");
+      throw new Error("DurableLoop goal description is required.");
     }
     const now = new Date().toISOString();
     const goalId = randomUUID();
@@ -180,7 +180,7 @@ export function createDaemonBackedDurableLoopControlToolset(
     const baseDir = deps.stateManager.getBaseDir();
     const info = await isDaemonRunning(baseDir);
     if (!info.running) {
-      throw new Error("PulSeed daemon is not running; CoreLoop start/stop was not requested.");
+      throw new Error("PulSeed daemon is not running; DurableLoop start/stop was not requested.");
     }
     return new DaemonClient({
       host: deps.host ?? "127.0.0.1",

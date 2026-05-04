@@ -2,7 +2,7 @@
 // ─── CLIRunner ───
 //
 // PulSeed CLI entry point. Wires all dependencies and exposes subcommands:
-//   pulseed run --goal <id>            Run CoreLoop once for a given goal
+//   pulseed run --goal <id>            Run DurableLoop once for a given goal
 //   pulseed goal add "<description>"   Negotiate and register a new goal (interactive)
 //   pulseed goal list                  List all registered goals
 //   pulseed goal archive <id>          Archive a completed goal
