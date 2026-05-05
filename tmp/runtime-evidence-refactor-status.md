@@ -31,7 +31,7 @@ Review:
 
 ## #1044: Runtime Evidence Schema/Type Split
 
-Status: in progress on `codex/issue-1044-evidence-type-split`.
+Status: merged via PR #1070.
 
 Plan:
 - Extract runtime evidence schemas and entry/read types from `src/runtime/store/evidence-ledger.ts` to `src/runtime/store/evidence-types.ts`.
@@ -53,3 +53,33 @@ Verification:
 Review:
 - Fresh review found two public export regressions: missing `RuntimeEvidenceMemoryUsageStats*` re-exports from `evidence-ledger.ts` and missing retention-class exports from the `runtime/store` barrel.
 - Restored those re-exports while keeping helper imports pointed at lower-level contracts.
+
+CI:
+- Initial integration CI hit an unrelated `src/runtime/__tests__/loop-supervisor.test.ts` timeout after the runtime evidence ledger lane passed locally and in CI context.
+- Local focused rerun of `loop-supervisor.test.ts` passed; reran the failed CI job, which passed before merge.
+
+## #1050: Structured Candidate Ranking Fields
+
+Status: in progress on `codex/issue-1050-structured-candidate-ranking`.
+
+Plan:
+- Keep the candidate summary shape stable.
+- Replace lineage/label-derived ranking penalties with explicit structured candidate fields.
+- Make explicit `near_miss.reason_to_keep` authoritative when present instead of expanding it from label/lineage text.
+- Remove primary metric selection preference based on metric label text and cover metric source labels with summary-level tests.
+- Avoid schema migration beyond existing structured fields.
+
+Implementation notes:
+- Candidate risk now uses `candidate.robustness.risk_penalty` when provided, otherwise no inferred text penalty.
+- Near-miss reasons preserve explicit `near_miss.reason_to_keep` exactly; inferred reasons remain only for textless structured status/similarity/score/family evidence.
+- Candidate primary metric selection now breaks ties structurally by coverage, metric position, then recency, without local/public/leaderboard label heuristics.
+- Added runtime evidence summary tests covering harmless manual/threshold/postprocess/stack/ensemble/blend/public/leaderboard/external labels, explicit near-miss reasons, and public/external metric source text.
+
+Verification:
+- `npm run typecheck`: pass.
+- `npx vitest run src/runtime/__tests__/runtime-evidence-ledger.test.ts --config vitest.integration.config.ts`: pass, 43 tests.
+- `npm run lint:boundaries`: pass with existing warnings.
+- `npm run test:changed`: pass, 57 related test files and 8 smoke test files.
+
+Review:
+- Fresh review found no material issues.

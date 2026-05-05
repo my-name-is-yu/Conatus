@@ -1341,8 +1341,8 @@ describe("RuntimeEvidenceLedger", () => {
             postprocess_lineage: [],
           },
           metrics: [
-            { label: "balanced_accuracy", value: 0.97, direction: "maximize" },
-            { label: "public_lb", value: 0.94, direction: "maximize" },
+            { label: "balanced_accuracy", value: 0.97, direction: "maximize", source: "public leaderboard external validation feed" },
+            { label: "public_lb", value: 0.94, direction: "maximize", source: "local validation source" },
           ],
           artifacts: [],
           similarity: [],
@@ -1360,8 +1360,8 @@ describe("RuntimeEvidenceLedger", () => {
             postprocess_lineage: [],
           },
           metrics: [
-            { label: "public_lb", value: 0.999, direction: "maximize" },
-            { label: "balanced_accuracy", value: 0.91, direction: "maximize" },
+            { label: "public_lb", value: 0.999, direction: "maximize", source: "local validation source" },
+            { label: "balanced_accuracy", value: 0.91, direction: "maximize", source: "external public leaderboard source" },
           ],
           artifacts: [],
           similarity: [],
@@ -1374,6 +1374,10 @@ describe("RuntimeEvidenceLedger", () => {
 
     const summary = await ledger.summarizeGoal("goal-candidate-primary-metric");
 
+    expect(summary.candidate_selection_summary.primary_metric).toEqual({
+      label: "balanced_accuracy",
+      direction: "maximize",
+    });
     expect(summary.recommended_candidate_portfolio[0]).toMatchObject({
       candidate_id: "local-best",
       metric: {
@@ -1612,6 +1616,143 @@ describe("RuntimeEvidenceLedger", () => {
     expect(selection.final_portfolio.diverse).toBeNull();
     expect(selection.ranked.find((candidate) => candidate.candidate_id === "renamed-near-duplicate")).toMatchObject({
       diversity_score: 0.05,
+    });
+  });
+
+  it("uses structured candidate ranking fields without penalizing harmless lineage labels", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "structured-ranking-harmless-labels",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-structured-ranking-labels" },
+      candidates: [
+        {
+          candidate_id: "manual-threshold-public-name-only",
+          label: "Manual threshold public leaderboard external stack blend label",
+          lineage: {
+            strategy_family: "candidate_manual_threshold_public",
+            feature_lineage: ["public_feature_name"],
+            model_lineage: ["stack_named_model"],
+            config_lineage: ["manual_threshold_label_only"],
+            seed_lineage: ["seed-1"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: ["postprocess_label_only"],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.9, direction: "maximize", confidence: 0.9 }],
+          artifacts: [],
+          similarity: [],
+          robustness: {
+            stability_score: 0.9,
+            diversity_score: 0.5,
+            evidence_confidence: 0.9,
+            weak_dimensions: [],
+            provenance_refs: [],
+          },
+          disposition: "retained",
+        },
+        {
+          candidate_id: "structured-risk",
+          label: "Structured risk candidate",
+          lineage: {
+            strategy_family: "structured",
+            feature_lineage: [],
+            model_lineage: ["catboost"],
+            config_lineage: [],
+            seed_lineage: ["seed-2"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.89, direction: "maximize", confidence: 0.9 }],
+          artifacts: [],
+          similarity: [],
+          robustness: {
+            stability_score: 0.9,
+            diversity_score: 0.5,
+            risk_penalty: 0.2,
+            evidence_confidence: 0.9,
+            weak_dimensions: [],
+            provenance_refs: [],
+          },
+          disposition: "retained",
+        },
+      ],
+      summary: "Candidate labels contain old heuristic words but structured fields own ranking.",
+      outcome: "continued",
+    });
+
+    const selection = (await ledger.summarizeGoal("goal-structured-ranking-labels")).candidate_selection_summary;
+
+    expect(selection.ranked.find((candidate) => candidate.candidate_id === "manual-threshold-public-name-only")).toMatchObject({
+      risk_penalty: 0,
+    });
+    expect(selection.ranked.find((candidate) => candidate.candidate_id === "structured-risk")).toMatchObject({
+      risk_penalty: 0.2,
+    });
+    expect(selection.robust_best?.candidate_id).toBe("manual-threshold-public-name-only");
+  });
+
+  it("keeps explicit near-miss reasons stable when labels contain ensemble hint words", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "structured-near-miss-reasons",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-structured-near-miss" },
+      candidates: [
+        {
+          candidate_id: "raw-best",
+          label: "Raw best",
+          lineage: {
+            strategy_family: "baseline",
+            feature_lineage: [],
+            model_lineage: ["catboost"],
+            config_lineage: [],
+            seed_lineage: ["seed-1"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.92, direction: "maximize", confidence: 0.9 }],
+          artifacts: [],
+          similarity: [],
+          robustness: { stability_score: 0.8, evidence_confidence: 0.9, weak_dimensions: [], provenance_refs: [] },
+          disposition: "promoted",
+        },
+        {
+          candidate_id: "explicit-near-miss",
+          label: "Stack ensemble blend public label",
+          lineage: {
+            strategy_family: "alternate",
+            feature_lineage: [],
+            model_lineage: ["ensemble_named_model"],
+            config_lineage: ["blend_named_config"],
+            seed_lineage: ["seed-2"],
+            fold_lineage: ["5-fold"],
+            postprocess_lineage: [],
+          },
+          metrics: [{ label: "balanced_accuracy", value: 0.91, direction: "maximize", confidence: 0.9 }],
+          artifacts: [],
+          similarity: [],
+          robustness: { stability_score: 0.9, evidence_confidence: 0.9, weak_dimensions: [], provenance_refs: [] },
+          near_miss: {
+            status: "retained",
+            reason_to_keep: ["stability"],
+            weak_dimensions: [],
+            complementary_candidate_ids: [],
+            evidence_refs: ["runs/explicit-near-miss/metrics.json"],
+          },
+          disposition: "retained",
+        },
+      ],
+      summary: "Explicit near miss reason should not be expanded by label text.",
+      outcome: "continued",
+    });
+
+    const nearMiss = (await ledger.summarizeGoal("goal-structured-near-miss")).near_miss_candidates[0];
+
+    expect(nearMiss).toMatchObject({
+      candidate_id: "explicit-near-miss",
+      reason_to_keep: ["stability"],
     });
   });
 
