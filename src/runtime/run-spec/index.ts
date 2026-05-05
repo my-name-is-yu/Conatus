@@ -8,6 +8,11 @@ export {
   type RunSpecConfirmationResult,
 } from "./confirmation.js";
 export {
+  arbitrateRunSpecPendingDialogue,
+  RunSpecPendingDialogueDecisionSchema,
+  type RunSpecPendingDialogueDecision,
+} from "./pending-dialogue-arbiter.js";
+export {
   RunSpecSchema,
   RunSpecIdSchema,
   RunSpecProfileSchema,

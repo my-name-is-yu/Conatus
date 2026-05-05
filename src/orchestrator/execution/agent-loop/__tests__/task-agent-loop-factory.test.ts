@@ -176,8 +176,19 @@ describe("createNative*AgentLoopRunner", () => {
         "cancel_gateway_config_write",
         "get_runtime_status",
         "request_runtime_control",
+        "sessions_list",
+        "sessions_read",
+        "sessions_children",
       ]),
     );
+    expect(profile.toolPolicy.allowedTools).not.toEqual(expect.arrayContaining([
+      "sessions_spawn",
+      "sessions_send",
+      "sessions_update",
+      "sessions_claim",
+      "sessions_cancel",
+      "sessions_retry",
+    ]));
     expect(profile.toolPolicy.allowedTools).not.toContain("kaggle_submit");
   });
 

@@ -9,10 +9,10 @@ describe("turn language hint", () => {
     expect(hint.confidence).toBeGreaterThanOrEqual(0.5);
   });
 
-  it("detects English from Latin script", () => {
+  it("detects Latin script without treating it as English", () => {
     const hint = detectTurnLanguageHint("I want to talk to Seedy from Telegram.");
 
-    expect(hint).toMatchObject({ language: "en", source: "input_script" });
+    expect(hint).toMatchObject({ language: "unknown", script: "latin", source: "input_script" });
     expect(hint.confidence).toBeGreaterThanOrEqual(0.5);
   });
 

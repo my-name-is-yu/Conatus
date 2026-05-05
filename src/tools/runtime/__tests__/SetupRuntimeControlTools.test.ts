@@ -82,6 +82,37 @@ describe("setup and runtime-control AgentLoop tools", () => {
     expect(result.summary).toContain("Telegram gateway status");
     expect(result.summary).not.toContain("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi");
     expect(JSON.stringify(result.data)).not.toContain("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi");
+    expect(result.data).toMatchObject({
+      channel: "telegram",
+      state: "unconfigured",
+      next_action: { kind: "configure_bot_token", required: true },
+      command_tokens: {
+        recommended_path: [
+          "pulseed telegram setup",
+          "pulseed gateway setup",
+          "pulseed daemon start",
+          "pulseed daemon status",
+        ],
+        confirm_write: "/confirm-setup-write",
+        set_home: "/sethome",
+      },
+      safety: {
+        writes_config: false,
+        writes_secret: false,
+        requires_approval_before_write: true,
+        shell_fallback_allowed: false,
+      },
+      pending_write: {
+        exists: true,
+        state: "confirm_write",
+        secret_kind: "telegram_bot_token",
+      },
+      redaction: {
+        raw_secret_in_summary: false,
+        raw_secret_in_data: false,
+        redaction_marker_present: true,
+      },
+    });
     const pending = await context.setupDialogue!.get() as SetupDialogueRuntimeState;
     expect(pending.publicState).toMatchObject({
       state: "confirm_write",
@@ -90,6 +121,87 @@ describe("setup and runtime-control AgentLoop tools", () => {
     });
     expect(pending.publicState.pendingSecret?.redaction).toBe("[REDACTED:telegram_bot_token:setup_secret_1]");
     expect(pending.secretValue).toBe("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi");
+  });
+
+  it("keeps non-English Latin-script setup requests language-general in typed data", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-setup-tools-spanish-"));
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    const [, guidanceTool] = createSetupRuntimeControlTools({
+      stateManager,
+      gatewaySetupStatusProvider: {
+        getTelegramStatus: vi.fn().mockResolvedValue({
+          channel: "telegram",
+          state: "partially_configured",
+          configPath: path.join(baseDir, "gateway/channels/telegram-bot/config.json"),
+          daemon: { running: true, port: 41700 },
+          gateway: { loadState: "unknown" },
+          config: {
+            exists: true,
+            hasBotToken: true,
+            hasHomeChat: false,
+            allowAll: false,
+            allowedUserCount: 1,
+            runtimeControlAllowedUserCount: 0,
+            identityKeyConfigured: true,
+          },
+        }),
+      },
+    });
+
+    const result = await guidanceTool.call({
+      channel: "telegram",
+      request: "Quiero configurar Telegram para hablar con Seedy.",
+    }, makeContext(baseDir, { setupSecretIntake: intakeSetupSecrets("Quiero configurar Telegram para hablar con Seedy.") }));
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      user_language: {
+        preference: "same_as_user_turn",
+        script: "latin",
+      },
+      next_action: { kind: "send_sethome" },
+    });
+    expect(result.summary).toContain("Telegram gateway status");
+  });
+
+  it("keeps non-Japanese non-Latin setup requests language-general in typed data", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-setup-tools-arabic-"));
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    const [, guidanceTool] = createSetupRuntimeControlTools({
+      stateManager,
+      gatewaySetupStatusProvider: {
+        getTelegramStatus: vi.fn().mockResolvedValue({
+          channel: "telegram",
+          state: "configured",
+          configPath: path.join(baseDir, "gateway/channels/telegram-bot/config.json"),
+          daemon: { running: true, port: 41700 },
+          gateway: { loadState: "unknown" },
+          config: {
+            exists: true,
+            hasBotToken: true,
+            hasHomeChat: true,
+            allowAll: false,
+            allowedUserCount: 1,
+            runtimeControlAllowedUserCount: 1,
+            identityKeyConfigured: true,
+          },
+        }),
+      },
+    });
+
+    const result = await guidanceTool.call({
+      channel: "telegram",
+      request: "أريد إعداد تيليجرام للتحدث مع Seedy",
+    }, makeContext(baseDir, { setupSecretIntake: intakeSetupSecrets("أريد إعداد تيليجرام للتحدث مع Seedy") }));
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      user_language: {
+        preference: "same_as_user_turn",
+        script: "other",
+      },
+      next_action: { kind: "verify_delivery" },
+    });
   });
 
   it("confirms a pending Telegram config write through approval and requests typed gateway refresh", async () => {

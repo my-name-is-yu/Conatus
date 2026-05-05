@@ -17,7 +17,7 @@ import {
 import { SetupSecretIntakeResultSchema, type SetupSecretIntakeItem } from "../../interface/chat/setup-secret-intake.js";
 import { detectTurnLanguageHint, UNKNOWN_TURN_LANGUAGE_HINT, type TurnLanguageHint } from "../../interface/chat/turn-language.js";
 import { formatRuntimeStatus } from "../../interface/chat/chat-runner-runtime.js";
-import { formatTelegramConfigureGuidance } from "../../interface/chat/chat-runner-routes.js";
+import { buildTelegramSetupGuidanceData, formatTelegramConfigureGuidance } from "../../interface/chat/chat-runner-routes.js";
 import { confirmTelegramGatewayConfigWrite } from "../../interface/chat/setup-config-write.js";
 import type {
   ITool,
@@ -145,11 +145,16 @@ class PrepareGatewaySetupGuidanceTool implements ITool<SetupGuidanceInput> {
           replacesExistingSecret: status.config.hasBotToken,
         }));
       }
+      const guidance = buildTelegramSetupGuidanceData(status, telegramSecret !== null, telegramSecret !== null);
       const message = formatTelegramConfigureGuidance(status, telegramSecret !== null, telegramSecret !== null, hint);
       return toolResult(true, {
-        channel: "telegram",
-        state: status.state,
-        pending_write: telegramSecret !== null,
+        ...guidance,
+        user_language: {
+          preference: hint.language === "ja" ? "japanese" : "same_as_user_turn",
+          script: hint.script ?? "unknown",
+          confidence: hint.confidence,
+          source: hint.source,
+        },
       }, message, started);
     }
     if (input.channel === "discord") {

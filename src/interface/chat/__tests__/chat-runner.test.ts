@@ -214,6 +214,15 @@ function runSpecConfirmationDecision(decision: "approve" | "cancel" | "unknown" 
   });
 }
 
+function runSpecPendingDialogueDecision(outcome: "confirmation_reply" | "new_intent" | "ambiguous", overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    outcome,
+    confirmation_kind: outcome === "new_intent" ? "unknown" : "clarify",
+    confidence: 0.93,
+    ...overrides,
+  });
+}
+
 function freeformRouteDecision(kind: "assist" | "configure" | "execute" | "run_spec" | "clarify", confidence = 0.93): string {
   return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
 }
@@ -503,7 +512,7 @@ describe("ChatRunner", () => {
 
       expect(result.output).toContain("Telegram config: 設定済みです");
       expect(result.output).toContain("Home chat: 設定済みです");
-      expect(result.output).toContain("Gateway loaded in daemon: chat status からは未確認です");
+      expect(result.output).toContain("Gateway loaded in daemon: unknown です");
       expect(result.output).toContain("Verification:");
       expect(result.output).not.toContain("`/sethome` を送ってください");
     });
@@ -3661,7 +3670,7 @@ describe("ChatRunner", () => {
       expect(result.output).toBe("Confirmed with tools");
     });
 
-    it("routes Japanese Telegram setup requests to Japanese guidance before agent-loop execution", async () => {
+    it("routes Japanese Telegram setup requests to typed guidance before agent-loop execution", async () => {
       const events: ChatEvent[] = [];
       const stateManager = makeMockStateManager();
       const chatAgentLoopRunner = {
@@ -4340,6 +4349,10 @@ describe("ChatRunner", () => {
             confidence: 0.41,
             clarification: "Please explicitly approve or cancel.",
           }),
+          runSpecPendingDialogueDecision("ambiguous", {
+            confidence: 0.72,
+            confirmation_kind: "unknown",
+          }),
           runSpecConfirmationDecision("approve"),
         ]),
       }));
@@ -4352,6 +4365,55 @@ describe("ChatRunner", () => {
       expect(ambiguousResult.output).toContain("awaiting confirmation");
       expect(approvedResult.success).toBe(true);
       expect(approvedResult.output).toContain("RunSpec confirmed:");
+    });
+
+    it("routes unrelated ordinary chat to AgentLoop while preserving a pending RunSpec", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-side-chat-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const draftRunner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient: createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision(),
+        ]),
+      }));
+      await draftRunner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      const catalog = new ChatSessionCatalog(stateManager);
+      const loaded = await catalog.loadSession(draftRunner.getSessionId()!);
+      expect(loaded?.runSpecConfirmation).toMatchObject({ state: "pending" });
+
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "AgentLoop answered the side question",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 1,
+          stopped_reason: "completed",
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        chatAgentLoopRunner,
+        llmClient: createMockLLMClient([
+          runSpecConfirmationDecision("unknown", {
+            confidence: 0.9,
+            clarification: "This is not a RunSpec confirmation.",
+          }),
+          runSpecPendingDialogueDecision("new_intent"),
+        ]),
+      }));
+      runner.startSessionFromLoadedSession(loaded!);
+
+      const sideQuestion = await runner.execute("What background sessions are currently open?", "/repo/kaggle");
+
+      expect(sideQuestion.success).toBe(true);
+      expect(sideQuestion.output).toBe("AgentLoop answered the side question");
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+      const session = await catalog.loadSession(runner.getSessionId()!);
+      expect(session?.runSpecConfirmation).toMatchObject({
+        state: "pending",
+      });
     });
 
     it("keeps explanatory long-running questions on the ordinary chat path", async () => {
@@ -4580,6 +4642,34 @@ describe("ChatRunner", () => {
   });
 
   describe("setup and runtime-control AgentLoop tools", () => {
+    it("routes natural-language runtime session inspection through the chat AgentLoop path", async () => {
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "I inspected the background sessions with sessions_list.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 1,
+          stopped_reason: "completed",
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        chatAgentLoopRunner,
+        llmClient: createMockLLMClient([]),
+      }));
+
+      const result = await runner.execute("Can you inspect the background sessions from this chat?", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("sessions_list");
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledWith(expect.objectContaining({
+        message: "Can you inspect the background sessions from this chat?",
+        toolCallContext: expect.objectContaining({
+          conversationSessionId: expect.any(String),
+        }),
+      }));
+    });
+
     it("lets AgentLoop produce Telegram setup guidance without host-side configure routing", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-setup-tool-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
