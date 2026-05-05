@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
-import { EthicsGate } from "../../platform/traits/ethics-gate.js";
+import { EthicsGate, requiresManualEthicsReview } from "../../platform/traits/ethics-gate.js";
 import { GoalSchema } from "../../base/types/goal.js";
 import type { Goal } from "../../base/types/goal.js";
 import { DimensionDecompositionSchema } from "../../base/types/negotiation.js";
@@ -123,7 +123,7 @@ export async function decompose(
       `Parent goal: ${parentGoal.title}`
     );
 
-    if (verdict.verdict === "reject") {
+    if (verdict.verdict === "reject" || requiresManualEthicsReview(verdict)) {
       rejectedSubgoals.push({
         description: spec.title,
         reason: verdict.reasoning,

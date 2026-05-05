@@ -7,6 +7,7 @@ import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../../platform/drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
+import { EthicsGate } from "../../../platform/traits/ethics-gate.js";
 import type { Task } from "../../../base/types/task.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveContext } from "../../../base/types/drive.js";
@@ -331,6 +332,40 @@ describe("TaskLifecycle", async () => {
 
       expect(result.verificationResult.verdict).toBe("fail");
       expect(result.verificationResult.evidence[0]?.description).toContain(REJECT_VERDICT.reasoning);
+    });
+
+    it("real ethics classifier unavailable path requires task approval instead of silent pass", async () => {
+      const ethicsGate = new EthicsGate(stateManager, createMockLLMClient([]));
+      const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
+      const approvalFn = vi.fn().mockResolvedValue(false);
+      const lifecycle = createLifecycle(llm, {
+        approvalFn,
+        ethicsGate,
+      });
+      const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
+      const context = makeDriveContext(["coverage"]);
+      const adapterExecute = vi.fn();
+      const adapter: import("../task/task-lifecycle.js").IAdapter = {
+        adapterType: "mock",
+        async execute() {
+          adapterExecute();
+          return {
+            success: true,
+            output: "done",
+            error: null,
+            exit_code: 0,
+            elapsed_ms: 50,
+            stopped_reason: "completed" as const,
+          };
+        },
+      };
+
+      const result = await lifecycle.runTaskCycle("goal-1", gapVector, context, adapter);
+
+      expect(result.action).toBe("approval_denied");
+      expect(approvalFn).toHaveBeenCalledOnce();
+      expect(adapterExecute).not.toHaveBeenCalled();
+      expect(result.verificationResult.evidence[0]?.description).toContain("classifier unavailable");
     });
 
     it("ethics flag + approval granted: task proceeds to adapter execution normally", async () => {

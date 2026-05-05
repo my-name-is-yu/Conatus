@@ -12,7 +12,7 @@ import type {
   EthicsSubjectType,
   CustomConstraintsConfig,
 } from "../../base/types/ethics.js";
-import { LAYER1_RULES, ETHICS_SYSTEM_PROMPT } from "./ethics-rules.js";
+import { classifyExplicitEthicsMarker, ETHICS_SYSTEM_PROMPT } from "./ethics-rules.js";
 
 // ─── Constants ───
 
@@ -20,6 +20,14 @@ const CONFIDENCE_FLAG_THRESHOLD = 0.6;
 
 /** Path relative to StateManager base dir for the ethics log */
 const ETHICS_LOG_PATH = "ethics/ethics-log.json";
+
+export function requiresManualEthicsReview(verdict: EthicsVerdict): boolean {
+  return verdict.verdict === "flag" && (
+    verdict.category === "classifier_unavailable" ||
+    verdict.category === "parse_error" ||
+    verdict.confidence < CONFIDENCE_FLAG_THRESHOLD
+  );
+}
 
 // ─── EthicsGate ───
 
@@ -30,8 +38,8 @@ const ETHICS_LOG_PATH = "ethics/ethics-log.json";
  * Persistence: `ethics/ethics-log.json` via StateManager readRaw/writeRaw.
  * Read all → append → write all pattern (full JSON array, not JSONL).
  *
- * Layer 1: Hardcoded category-based blocklist (no LLM call). Runs before Layer 2.
- * Layer 2: LLM-based evaluation. Only runs when Layer 1 passes.
+ * Deterministic pre-check: exact protocol policy markers only.
+ * Structured classifier: schema-constrained evaluation for freeform input.
  * Custom constraints: Injected into the Layer 2 LLM prompt as additional context.
  */
 export class EthicsGate {
@@ -71,26 +79,14 @@ export class EthicsGate {
     await this.saveLogs(logs);
   }
 
-  // ─── Private: Layer 1 evaluation ───
+  // ─── Private: Deterministic policy-marker evaluation ───
 
   /**
-   * Checks the input description against all hardcoded Layer 1 rules.
-   * Returns an EthicsVerdict with verdict "reject" and confidence 1.0 if any rule matches.
-   * Returns null if no rule matches (pass to Layer 2).
+   * Checks exact protocol markers only.
+   * Freeform descriptions are always sent to the structured classifier.
    */
-  private checkLayer1(description: string): EthicsVerdict | null {
-    for (const rule of LAYER1_RULES) {
-      if (rule.matches(description)) {
-        return {
-          verdict: "reject",
-          category: rule.category,
-          reasoning: rule.description,
-          risks: [],
-          confidence: 1.0,
-        };
-      }
-    }
-    return null;
+  private checkDeterministicMarker(description: string): EthicsVerdict | null {
+    return classifyExplicitEthicsMarker(description);
   }
 
   // ─── Private: LLM evaluation ───
@@ -164,16 +160,33 @@ export class EthicsGate {
     }
   }
 
+  private classifierUnavailableVerdict(error: unknown): EthicsVerdict {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      verdict: "flag",
+      category: "classifier_unavailable",
+      reasoning: `Ethics classifier unavailable; manual review required. ${message.slice(0, 160)}`,
+      risks: ["classifier unavailable", "manual review required"],
+      confidence: 0,
+    };
+  }
+
   private applyConfidenceOverride(verdict: EthicsVerdict): EthicsVerdict {
-    if (verdict.confidence < CONFIDENCE_FLAG_THRESHOLD && verdict.verdict === "pass") {
-      return { ...verdict, verdict: "flag" };
+    if (verdict.confidence < CONFIDENCE_FLAG_THRESHOLD) {
+      return {
+        ...verdict,
+        verdict: "flag",
+        risks: verdict.risks.includes("manual review required")
+          ? verdict.risks
+          : [...verdict.risks, "manual review required"],
+      };
     }
     return verdict;
   }
 
   /**
-   * Runs Layer 2 (LLM evaluation), logs the result, and returns the verdict.
-   * Called by both check() and checkMeans() after Layer 1 passes.
+   * Runs the structured classifier, logs the result, and returns the verdict.
+   * Called by both check() and checkMeans() after deterministic markers pass.
    */
   private async runLayer2(
     userMessage: string,
@@ -218,16 +231,15 @@ export class EthicsGate {
    * Evaluate a goal, subgoal, or task for ethical concerns.
    *
    * Steps:
-   * 1. Run Layer 1 (checkLayer1) — synchronous, no LLM call
-   *    - If match: log with layer1_triggered=true and return immediately
-   * 2. Build LLM prompt, injecting custom constraints for "goal" applies_to
-   * 3. Send ethics judgment prompt to LLM (Layer 2)
+   * 1. Run deterministic exact-marker pre-check.
+   * 2. Build LLM prompt, injecting custom constraints for "goal" applies_to.
+   * 3. Send ethics judgment prompt to the structured classifier.
    * 4. Parse response with EthicsVerdictSchema
    * 5. If confidence < CONFIDENCE_FLAG_THRESHOLD, auto-override verdict to "flag"
    * 6. Create EthicsLog entry, persist
    * 7. Return verdict
    *
-   * On LLM call failure: throws (caller handles).
+   * On classifier failure: returns a conservative flag verdict.
    * On JSON parse failure: returns conservative fallback with verdict "flag".
    */
   async check(
@@ -236,25 +248,38 @@ export class EthicsGate {
     description: string,
     context?: string
   ): Promise<EthicsVerdict> {
-    // Layer 1 check
-    const layer1Result = this.checkLayer1(description);
-    if (layer1Result !== null) {
+    const markerResult = this.checkDeterministicMarker(description);
+    if (markerResult !== null) {
       const logEntry: EthicsLog = EthicsLogSchema.parse({
         log_id: randomUUID(),
         timestamp: new Date().toISOString(),
         subject_type: subjectType,
         subject_id: subjectId,
         subject_description: description,
-        verdict: layer1Result,
+        verdict: markerResult,
         layer1_triggered: true,
       });
       await this.appendLog(logEntry);
-      return layer1Result;
+      return markerResult;
     }
 
-    // Layer 2: LLM evaluation
     const userMessage = this.buildUserMessage(subjectType, description, context, true);
-    return this.runLayer2(userMessage, subjectType, subjectId, description);
+    try {
+      return await this.runLayer2(userMessage, subjectType, subjectId, description);
+    } catch (error) {
+      const verdict = this.classifierUnavailableVerdict(error);
+      const logEntry: EthicsLog = EthicsLogSchema.parse({
+        log_id: randomUUID(),
+        timestamp: new Date().toISOString(),
+        subject_type: subjectType,
+        subject_id: subjectId,
+        subject_description: description,
+        verdict,
+        layer1_triggered: false,
+      });
+      await this.appendLog(logEntry);
+      return verdict;
+    }
   }
 
   /**
@@ -262,10 +287,9 @@ export class EthicsGate {
    * Used by TaskLifecycle to screen proposed execution methods before execution.
    *
    * Steps:
-   * 1. Run Layer 1 on combined taskDescription + means
-   *    - If match: log with layer1_triggered=true and return immediately
-   * 2. Build LLM prompt, injecting custom constraints for "task_means" applies_to
-   * 3. LLM-based Layer 2 evaluation
+   * 1. Run deterministic exact-marker pre-check on combined taskDescription + means.
+   * 2. Build LLM prompt, injecting custom constraints for "task_means" applies_to.
+   * 3. Structured classifier evaluation.
    * 4. Log and return
    */
   async checkMeans(
@@ -275,25 +299,40 @@ export class EthicsGate {
   ): Promise<EthicsVerdict> {
     const subjectDescription = `${taskDescription} | means: ${means}`;
 
-    // Layer 1 check (combined input for full context)
-    const layer1Result = this.checkLayer1(`${taskDescription} ${means}`);
-    if (layer1Result !== null) {
+    const markerResult =
+      this.checkDeterministicMarker(taskDescription) ??
+      this.checkDeterministicMarker(means);
+    if (markerResult !== null) {
       const logEntry: EthicsLog = EthicsLogSchema.parse({
         log_id: randomUUID(),
         timestamp: new Date().toISOString(),
         subject_type: "task",
         subject_id: taskId,
         subject_description: subjectDescription,
-        verdict: layer1Result,
+        verdict: markerResult,
         layer1_triggered: true,
       });
       await this.appendLog(logEntry);
-      return layer1Result;
+      return markerResult;
     }
 
-    // Layer 2: LLM evaluation
     const userMessage = this.buildMeansUserMessage(taskDescription, means, true);
-    return this.runLayer2(userMessage, "task", taskId, subjectDescription);
+    try {
+      return await this.runLayer2(userMessage, "task", taskId, subjectDescription);
+    } catch (error) {
+      const verdict = this.classifierUnavailableVerdict(error);
+      const logEntry: EthicsLog = EthicsLogSchema.parse({
+        log_id: randomUUID(),
+        timestamp: new Date().toISOString(),
+        subject_type: "task",
+        subject_id: taskId,
+        subject_description: subjectDescription,
+        verdict,
+        layer1_triggered: false,
+      });
+      await this.appendLog(logEntry);
+      return verdict;
+    }
   }
 
   /**

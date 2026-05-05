@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
-import { EthicsGate } from "../../platform/traits/ethics-gate.js";
+import { EthicsGate, requiresManualEthicsReview } from "../../platform/traits/ethics-gate.js";
 import { ObservationEngine } from "../../platform/observation/observation-engine.js";
 import { GoalSchema } from "../../base/types/goal.js";
 import type { Goal } from "../../base/types/goal.js";
@@ -153,7 +153,9 @@ export class GoalNegotiator {
     // Step 0: Ethics Gate
     const ethicsVerdict = await this.ethicsGate.check("goal", goalId, rawGoalDescription);
     timeoutGuard?.throwIfTimedOut();
-    if (ethicsVerdict.verdict === "reject") throw new EthicsRejectedError(ethicsVerdict);
+    if (ethicsVerdict.verdict === "reject" || requiresManualEthicsReview(ethicsVerdict)) {
+      throw new EthicsRejectedError(ethicsVerdict);
+    }
     const ethicsFlags = ethicsVerdict.verdict === "flag" ? ethicsVerdict.risks : undefined;
 
     // Step 2: Dimension Decomposition
@@ -318,7 +320,9 @@ export class GoalNegotiator {
 
     // Step 0: Ethics re-check
     const ethicsVerdict = await this.ethicsGate.check("goal", goalId, existingGoal.description, context);
-    if (ethicsVerdict.verdict === "reject") throw new EthicsRejectedError(ethicsVerdict);
+    if (ethicsVerdict.verdict === "reject" || requiresManualEthicsReview(ethicsVerdict)) {
+      throw new EthicsRejectedError(ethicsVerdict);
+    }
     const ethicsFlags = ethicsVerdict.verdict === "flag" ? ethicsVerdict.risks : undefined;
 
     // Step 2: Re-decompose

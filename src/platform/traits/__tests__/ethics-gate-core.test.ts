@@ -27,6 +27,30 @@ const HIGH_CONFIDENCE_FLAG_JSON = JSON.stringify({
   confidence: 0.75,
 });
 
+const PARAPHRASED_UNSAFE_REJECT_JSON = JSON.stringify({
+  verdict: "reject",
+  category: "credential_access",
+  reasoning: "The request seeks unauthorized acquisition of credentials.",
+  risks: ["credential theft", "unauthorized access"],
+  confidence: 0.92,
+});
+
+const MULTILINGUAL_UNSAFE_REJECT_JSON = JSON.stringify({
+  verdict: "reject",
+  category: "privacy_violation",
+  reasoning: "The Japanese request asks to collect personal data without consent.",
+  risks: ["privacy violation", "unconsented tracking"],
+  confidence: 0.91,
+});
+
+const AUTHORIZED_SECURITY_PASS_JSON = JSON.stringify({
+  verdict: "pass",
+  category: "authorized_security_research",
+  reasoning: "The request is scoped to an authorized internal penetration test.",
+  risks: [],
+  confidence: 0.88,
+});
+
 describe("EthicsGate", () => {
   let tmpDir: string;
   let stateManager: StateManager;
@@ -93,6 +117,81 @@ describe("EthicsGate", () => {
     });
   });
 
+  describe("check() structured classifier path", () => {
+    it("routes paraphrased unsafe freeform requests through the classifier", async () => {
+      const mockLLM = createMockLLMClient([PARAPHRASED_UNSAFE_REJECT_JSON]);
+      const g = new EthicsGate(stateManager, mockLLM);
+      const verdict = await g.check(
+        "goal",
+        "goal-paraphrase",
+        "Quietly obtain another team's password vault export so we can enter their account"
+      );
+
+      expect(verdict).toMatchObject({
+        verdict: "reject",
+        category: "credential_access",
+      });
+      expect(mockLLM.callCount).toBe(1);
+    });
+
+    it("routes multilingual unsafe freeform requests through the classifier", async () => {
+      const mockLLM = createMockLLMClient([MULTILINGUAL_UNSAFE_REJECT_JSON]);
+      const g = new EthicsGate(stateManager, mockLLM);
+      const verdict = await g.check(
+        "goal",
+        "goal-ja",
+        "同意を得ずにユーザーの位置情報と個人情報を集める仕組みを作る"
+      );
+
+      expect(verdict).toMatchObject({
+        verdict: "reject",
+        category: "privacy_violation",
+      });
+      expect(mockLLM.callCount).toBe(1);
+    });
+
+    it("allows benign authorized security research when the classifier passes it", async () => {
+      const mockLLM = createMockLLMClient([AUTHORIZED_SECURITY_PASS_JSON]);
+      const g = new EthicsGate(stateManager, mockLLM);
+      const verdict = await g.check(
+        "goal",
+        "goal-authorized",
+        "Run an authorized penetration test against our staging API and produce defensive remediation notes"
+      );
+
+      expect(verdict).toMatchObject({
+        verdict: "pass",
+        category: "authorized_security_research",
+      });
+      expect(mockLLM.callCount).toBe(1);
+    });
+
+    it("flags for manual review when the classifier is unavailable", async () => {
+      const g = new EthicsGate(stateManager, createMockLLMClient([]));
+      const verdict = await g.check("goal", "goal-unavailable", "Assess a sensitive request");
+
+      expect(verdict).toMatchObject({
+        verdict: "flag",
+        category: "classifier_unavailable",
+        confidence: 0,
+      });
+      expect(verdict.risks).toContain("manual review required");
+    });
+
+    it("keeps exact explicit rejection markers deterministic", async () => {
+      const mockLLM = createMockLLMClient([]);
+      const g = new EthicsGate(stateManager, mockLLM);
+      const verdict = await g.check("goal", "goal-marker", "PULSEED_ETHICS_REJECT");
+
+      expect(verdict).toMatchObject({
+        verdict: "reject",
+        category: "explicit_policy_marker",
+        confidence: 1,
+      });
+      expect(mockLLM.callCount).toBe(0);
+    });
+  });
+
   // ─── check() — verdict flag ───
 
   describe("check() with flag verdict", () => {
@@ -134,18 +233,18 @@ describe("EthicsGate", () => {
       expect(verdict.confidence).toBe(0.30);
     });
 
-    it("does NOT override 'reject' when confidence is low", async () => {
+    it("overrides low-confidence 'reject' to flag for manual review", async () => {
       const lowConfidenceReject = JSON.stringify({
         verdict: "reject",
         category: "illegal",
-        reasoning: "Clearly illegal even with low confidence",
+        reasoning: "Potentially illegal but the classifier is uncertain",
         risks: ["illegal"],
         confidence: 0.40,
       });
       const g = new EthicsGate(stateManager, createMockLLMClient([lowConfidenceReject]));
       const verdict = await g.check("goal", "goal-x", "Do something illegal");
-      // reject should remain reject (low confidence override only applies to 'pass')
-      expect(verdict.verdict).toBe("reject");
+      expect(verdict.verdict).toBe("flag");
+      expect(verdict.risks).toContain("manual review required");
     });
 
     it("does NOT override 'flag' when confidence is low (flag stays flag)", async () => {
@@ -240,6 +339,17 @@ describe("EthicsGate", () => {
       expect(logs).toHaveLength(1);
       expect(logs[0]!.subject_type).toBe("task");
       expect(logs[0]!.subject_id).toBe("task-5");
+    });
+
+    it("flags task means for manual review when the classifier is unavailable", async () => {
+      const g = new EthicsGate(stateManager, createMockLLMClient([]));
+      const verdict = await g.checkMeans("task-unavailable", "Handle sensitive data", "Ambiguous means");
+
+      expect(verdict).toMatchObject({
+        verdict: "flag",
+        category: "classifier_unavailable",
+        confidence: 0,
+      });
     });
   });
 

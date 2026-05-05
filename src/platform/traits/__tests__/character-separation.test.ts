@@ -90,22 +90,19 @@ describe("caution_level does not affect ethics gate verdict", () => {
     expect(verdict.verdict).toBe("pass");
   });
 
-  it("caution_level does not affect Layer 1 rejection — illegal input is always rejected", async () => {
+  it("caution_level does not affect structured ethics rejection", async () => {
     const stateManager = new StateManager(tmpDir);
-    // Layer 1 never calls LLM — no responses needed
-    const mockLLM = createMockLLMClient([]);
+    const mockLLM = createMockLLMClient([ETHICS_REJECT_RESPONSE]);
     const ethicsGate = new EthicsGate(stateManager, mockLLM);
 
-    // This triggers the Layer 1 "illegal_activity" rule (theft of credentials)
     const verdict = await ethicsGate.check(
       "goal",
       "test-id",
       "steal credentials and access the system without permission"
     );
 
-    // Layer 1 must reject regardless of any character setting
     expect(verdict.verdict).toBe("reject");
-    expect(verdict.confidence).toBe(1.0);
+    expect(verdict.confidence).toBeGreaterThan(0.6);
   });
 
   it("same safe goal returns same verdict with default config and extreme config (ethics is config-agnostic)", async () => {
