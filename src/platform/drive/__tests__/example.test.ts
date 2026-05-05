@@ -19,7 +19,7 @@ import {
   buildThreshold,
   deduplicateDimensionKeys,
   decompositionToDimension,
-  findBestDimensionMatch,
+  validateDataSourceDimensionMappings,
 } from "../../../orchestrator/goal/goal-validation.js";
 import { MockEmbeddingClient } from "../../knowledge/embedding-client.js";
 import { StateManager } from "../../../base/state/state-manager.js";
@@ -142,10 +142,37 @@ describe("example unit coverage", () => {
     ]);
 
     expect(deduped.map((item) => item.name)).toEqual(["coverage", "coverage_2", "coverage_3"]);
-    expect(findBestDimensionMatch("test_coverage_percent", ["latency", "test_coverage"])).toBe(
-      "test_coverage"
-    );
-    expect(findBestDimensionMatch("revenue_growth", ["burn_rate", "latency"])).toBeNull();
+    const mapped = deduplicateDimensionKeys([
+      {
+        name: "coverage",
+        label: "Coverage",
+        threshold_type: "min",
+        threshold_value: 80,
+        observation_method_hint: "ci",
+        dimension_mapping: {
+          kind: "data_source",
+          data_source: "ci",
+          dimension: "test_coverage_percent",
+          confidence: "high",
+        },
+      },
+      {
+        name: "unknown",
+        label: "Unknown",
+        threshold_type: "present",
+        threshold_value: null,
+        observation_method_hint: "ci",
+        dimension_mapping: {
+          kind: "data_source",
+          data_source: "ci",
+          dimension: "missing",
+          confidence: "low",
+        },
+      },
+    ]);
+    validateDataSourceDimensionMappings(mapped, [{ name: "ci", dimensions: ["test_coverage_percent"] }]);
+    expect(mapped[0]?.dimension_mapping?.dimension).toBe("test_coverage_percent");
+    expect(mapped[1]?.dimension_mapping).toBeNull();
   });
 
   it("covers gap calculation pipeline and aggregation branches", () => {

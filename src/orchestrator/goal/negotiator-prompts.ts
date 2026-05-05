@@ -16,8 +16,12 @@ export function buildDecompositionPrompt(
 
   const dataSourcesSection =
     availableDataSources && availableDataSources.length > 0
-      ? `DataSources (use exact dimension names for overlap; add 1-2 extra only if shell-measurable):
+      ? `DataSources (optional typed mapping targets; do not rename an unrelated goal dimension just because words overlap):
 ${availableDataSources.map((ds) => `- "${ds.name}": ${ds.dimensions.join(", ")}`).join("\n")}
+
+When a dimension is intentionally measured by one of these DataSource dimensions, keep the goal dimension name semantic and add:
+  "dimension_mapping": {"kind":"data_source","data_source":"<source name>","dimension":"<exact DataSource dimension>","confidence":"high"|"medium"|"low","rationale":"..."}
+If the mapping is uncertain or ambiguous, use null.
 
 `
       : "";
@@ -30,7 +34,7 @@ ${availableDataSources.map((ds) => `- "${ds.name}": ${ds.dimensions.join(", ")}`
 
 Goal: ${description}${constraintsSection}${workspaceSection}
 
-Each dimension needs: name (snake_case, prefer exact DataSource name), label, threshold_type ("min"|"max"|"range"|"present"|"match"), threshold_value (number/string/bool or null), observation_method_hint.
+Each dimension needs: name (snake_case), label, threshold_type ("min"|"max"|"range"|"present"|"match"), threshold_value (number/string/bool or null), observation_method_hint, dimension_mapping (typed DataSource mapping or null).
 
 Rules:
 - 100 dimensions max; prefer fewer focused dimensions over many vague ones; prefer mechanically measurable (shell/grep/test runner)
@@ -39,8 +43,8 @@ Rules:
 
 Example:
 [
-  {"name":"test_coverage","label":"Test Coverage","threshold_type":"min","threshold_value":80,"observation_method_hint":"Run test suite, check coverage %"},
-  {"name":"license_file_exists","label":"License File","threshold_type":"present","threshold_value":true,"observation_method_hint":"Check for LICENSE file in root"}
+  {"name":"test_coverage","label":"Test Coverage","threshold_type":"min","threshold_value":80,"observation_method_hint":"Run test suite, check coverage %","dimension_mapping":{"kind":"data_source","data_source":"ci","dimension":"test_coverage_percent","confidence":"high","rationale":"CI exposes exact coverage percent"}},
+  {"name":"license_file_exists","label":"License File","threshold_type":"present","threshold_value":true,"observation_method_hint":"Check for LICENSE file in root","dimension_mapping":null}
 ]`;
 }
 

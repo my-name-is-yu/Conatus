@@ -7,6 +7,7 @@ import { getCodeSearchIndexes } from "../code-search/indexes/index-store.js";
 import { SearchOrchestrator } from "../code-search/orchestrator.js";
 import { ProgressiveReader } from "../code-search/progressive-reader.js";
 import { dimensionNameToSearchTerms } from "./context-provider.js";
+import type { DimensionObservationMapping } from "../../base/types/goal.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,6 +17,13 @@ export interface WorkspaceContextOptions {
   maxCharsPerFile?: number; // default: 4000
   externalFileMaxBytes?: number; // default: 10240 (10KB)
   cacheTtlMs?: number; // default: 0 (disabled to avoid stale daemon task context)
+}
+
+export interface WorkspaceContextGoalInfo {
+  description?: string;
+  dimensionMappings?: Record<string, DimensionObservationMapping | null | undefined>;
+  explicitPaths?: string[];
+  searchTerms?: string[];
 }
 
 const ALLOWED_EXTERNAL_PREFIXES = [os.homedir(), "/tmp"];
@@ -155,7 +163,7 @@ async function readFileSection(filePath: string, maxChars: number): Promise<stri
 
 export function createWorkspaceContextProvider(
   options: WorkspaceContextOptions,
-  getGoalDescription: (goalId: string) => string | undefined | Promise<string | undefined>,
+  getGoalDescription: (goalId: string) => string | WorkspaceContextGoalInfo | undefined | Promise<string | WorkspaceContextGoalInfo | undefined>,
   getGoalConstraints?: (goalId: string) => string[] | undefined | Promise<string[] | undefined>
 ): (goalId: string, dimensionName: string) => Promise<string> {
   const {
@@ -168,8 +176,22 @@ export function createWorkspaceContextProvider(
   const cache = new Map<string, { value: string; expiresAt: number }>();
 
   return async (goalId: string, dimensionName: string): Promise<string> => {
-    const goalDescription = (await getGoalDescription(goalId)) ?? "";
-    const keywords = extractKeywords(goalDescription + " " + dimensionName);
+    const goalInfo = await getGoalDescription(goalId);
+    const goalDescription = typeof goalInfo === "string"
+      ? goalInfo
+      : (goalInfo?.description ?? "");
+    const typedMapping = typeof goalInfo === "string"
+      ? null
+      : (goalInfo?.dimensionMappings?.[dimensionName] ?? null);
+    const typedSearchTerms = typeof goalInfo === "string"
+      ? []
+      : (goalInfo?.searchTerms ?? []);
+    const explicitGoalPaths = typeof goalInfo === "string"
+      ? []
+      : (goalInfo?.explicitPaths ?? []);
+    const keywords = typedMapping
+      ? [typedMapping.dimension, typedMapping.data_source]
+      : extractKeywords(goalDescription + " " + dimensionName);
 
     // Resolve effective workDir: use workspace_path constraint from goal if available
     let effectiveWorkDir = workDir;
@@ -181,7 +203,7 @@ export function createWorkspaceContextProvider(
       }
     }
 
-    const cacheKey = `${effectiveWorkDir}\u0000${goalId}\u0000${dimensionName}`;
+    const cacheKey = `${effectiveWorkDir}\u0000${goalId}\u0000${dimensionName}\u0000${typedMapping?.data_source ?? ""}\u0000${typedMapping?.dimension ?? ""}\u0000${explicitGoalPaths.join("|")}\u0000${typedSearchTerms.join("|")}`;
     if (cacheTtlMs > 0) {
       const cached = cache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
@@ -192,7 +214,7 @@ export function createWorkspaceContextProvider(
     const parts: string[] = [`# Workspace: ${effectiveWorkDir}`];
 
     // Read external absolute-path files mentioned in goal description
-    const externalPaths = extractAbsolutePaths(goalDescription);
+    const externalPaths = [...new Set([...extractAbsolutePaths(goalDescription), ...explicitGoalPaths.filter((p) => path.isAbsolute(p))])];
     for (const extPath of externalPaths) {
       const content = await readExternalFile(extPath, externalFileMaxBytes);
       if (content !== null) {
@@ -210,8 +232,11 @@ export function createWorkspaceContextProvider(
 
     try {
       const orchestrator = new SearchOrchestrator(effectiveWorkDir);
+      const typedTask = typedMapping
+        ? `DataSource mapping: ${typedMapping.data_source}.${typedMapping.dimension}\nDimension: ${dimensionName}`
+        : `${goalDescription}\n${dimensionName}`;
       const candidates = await orchestrator.search({
-        task: `${goalDescription}\n${dimensionName}`,
+        task: typedTask,
         intent: "explain",
         cwd: effectiveWorkDir,
         budget: { maxRerankCandidates: Math.min(maxFiles, 10), maxCandidatesPerRetriever: 20 },
@@ -248,7 +273,7 @@ export function createWorkspaceContextProvider(
     }
 
     // Relative path exact-match: files explicitly mentioned in goal description
-    const relativePathsInGoal = extractRelativePaths(goalDescription);
+    const relativePathsInGoal = [...new Set([...extractRelativePaths(goalDescription), ...explicitGoalPaths.filter((p) => !path.isAbsolute(p))])];
     const pathMatchedPaths: string[] = [];
     for (const rel of relativePathsInGoal) {
       const fp = path.join(effectiveWorkDir, rel);
@@ -287,7 +312,7 @@ export function createWorkspaceContextProvider(
       .split("_")
       .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
     const dimHintPaths: string[] = [];
-    if (dimSegments.length >= 2) {
+    if (!typedMapping && dimSegments.length >= 2) {
       for (let i = 0; i < dimSegments.length - 1; i++) {
         const pattern = `${dimSegments[i]}-${dimSegments[i + 1]}`;
         const matched = allFiles.filter((fp) => path.basename(fp).toLowerCase().includes(pattern));
@@ -295,10 +320,12 @@ export function createWorkspaceContextProvider(
       }
     }
     // Also try single segments for direct matches (e.g. "verifier" → "task-verifier.ts")
-    for (const seg of dimSegments) {
-      if (seg.length >= 5) {
-        const matched = allFiles.filter((fp) => path.basename(fp).toLowerCase().includes(seg) && !dimHintPaths.includes(fp));
-        dimHintPaths.push(...matched);
+    if (!typedMapping) {
+      for (const seg of dimSegments) {
+        if (seg.length >= 5) {
+          const matched = allFiles.filter((fp) => path.basename(fp).toLowerCase().includes(seg) && !dimHintPaths.includes(fp));
+          dimHintPaths.push(...matched);
+        }
       }
     }
 
@@ -309,7 +336,7 @@ export function createWorkspaceContextProvider(
     const candidates = allFiles.filter((fp) => !alwaysSet.has(fp) && !pathMatchSet.has(fp) && !dimHintSet.has(fp));
 
     // Phase 1: filename match
-    const nameMatched = candidates.filter((fp) => fileMatchesKeywords(fp, keywords));
+    const nameMatched = typedMapping ? [] : candidates.filter((fp) => fileMatchesKeywords(fp, keywords));
 
     // Phase 2: content match (only if we still need more)
     // alwaysInclude and pathMatch are treated as priority (outside maxFiles cap),
@@ -322,7 +349,7 @@ export function createWorkspaceContextProvider(
       const contentMatched: string[] = [];
       for (const fp of remaining) {
         if (contentMatched.length >= neededFromCandidates - selected.length) break;
-        if (await fileContentMatchesKeywords(fp, keywords)) {
+        if (!typedMapping && await fileContentMatchesKeywords(fp, keywords)) {
           contentMatched.push(fp);
         }
       }
@@ -332,7 +359,9 @@ export function createWorkspaceContextProvider(
     // Phase 3: grep content match — find files whose content contains dimension-derived terms
     // but weren't caught by filename or keyword matching above
     if (selected.length < neededFromCandidates) {
-      const searchTerms = dimensionNameToSearchTerms(dimensionName);
+      const searchTerms = typedMapping
+        ? [typedMapping.dimension, typedMapping.data_source]
+        : (typedSearchTerms.length > 0 ? typedSearchTerms : dimensionNameToSearchTerms(dimensionName));
       const alreadySelected = new Set([
         ...alwaysIncludePaths, ...pathMatchedPaths, ...dimHintPaths, ...selected,
       ]);

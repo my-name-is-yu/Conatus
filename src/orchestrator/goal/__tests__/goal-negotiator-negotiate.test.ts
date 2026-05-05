@@ -194,6 +194,111 @@ describe("GoalNegotiator", () => {
       expect(result.goal.dimensions).toHaveLength(1);
       expect(result.goal.dimensions[0]!.name).toBe("completion_rate");
     });
+
+    it("does not silently map paraphrased dimensions to unrelated DataSource dimensions", async () => {
+      const paraphrasedDimension = JSON.stringify([
+        {
+          name: "shipping_readiness",
+          label: "Shipping Readiness",
+          threshold_type: "min",
+          threshold_value: 0.9,
+          observation_method_hint: "Review release checklist evidence",
+          dimension_mapping: null,
+        },
+      ]);
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        paraphrasedDimension,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+      const mockObsEngine = {
+        getAvailableDimensionInfo(): Array<{ name: string; dimensions: string[] }> {
+          return [{ name: "github_issues", dimensions: ["completion_ratio", "open_issue_count"] }];
+        },
+      } as unknown as ObservationEngine;
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, mockObsEngine);
+
+      const result = await negotiator.negotiate("Confirm the release is ready to ship");
+
+      expect(result.goal.dimensions[0]?.name).toBe("shipping_readiness");
+      expect(result.log.step2_decomposition?.dimensions[0]?.dimension_mapping).toBeNull();
+    });
+
+    it("keeps substring collisions unknown instead of mutating the dimension name", async () => {
+      const substringCollision = JSON.stringify([
+        {
+          name: "coverage",
+          label: "Coverage",
+          threshold_type: "min",
+          threshold_value: 0.95,
+          observation_method_hint: "Review narrative coverage of requirements",
+          dimension_mapping: null,
+        },
+      ]);
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        substringCollision,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+      const mockObsEngine = {
+        getAvailableDimensionInfo(): Array<{ name: string; dimensions: string[] }> {
+          return [{ name: "ci", dimensions: ["test_coverage_percent", "branch_coverage_percent"] }];
+        },
+      } as unknown as ObservationEngine;
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, mockObsEngine);
+
+      const result = await negotiator.negotiate("Improve requirement coverage");
+
+      expect(result.goal.dimensions[0]?.name).toBe("coverage");
+      expect(result.log.step2_decomposition?.dimensions[0]?.dimension_mapping).toBeNull();
+    });
+
+    it("preserves explicit typed DataSource mapping metadata in the production negotiation log", async () => {
+      const typedMappedDimension = JSON.stringify([
+        {
+          name: "test_coverage",
+          label: "Test Coverage",
+          threshold_type: "min",
+          threshold_value: 80,
+          observation_method_hint: "Use CI coverage report",
+          dimension_mapping: {
+            kind: "data_source",
+            data_source: "ci",
+            dimension: "test_coverage_percent",
+            confidence: "high",
+            rationale: "CI exposes the exact coverage percentage",
+          },
+        },
+      ]);
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        typedMappedDimension,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+      const mockObsEngine = {
+        getAvailableDimensionInfo(): Array<{ name: string; dimensions: string[] }> {
+          return [{ name: "ci", dimensions: ["test_coverage_percent"] }];
+        },
+      } as unknown as ObservationEngine;
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, mockObsEngine);
+
+      const result = await negotiator.negotiate("Raise automated test coverage");
+
+      expect(result.goal.dimensions[0]?.name).toBe("test_coverage");
+      expect(result.log.step2_decomposition?.dimensions[0]?.dimension_mapping).toEqual({
+        kind: "data_source",
+        data_source: "ci",
+        dimension: "test_coverage_percent",
+        confidence: "high",
+        rationale: "CI exposes the exact coverage percentage",
+      });
+    });
   });
 
   // ─── negotiate() — Baseline Observation ───

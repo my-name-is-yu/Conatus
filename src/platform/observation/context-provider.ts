@@ -24,6 +24,8 @@ export async function buildWorkspaceContext(
     cwd?: string;
     maxFileContentLines?: number; // default: 100
     maxTotalChars?: number; // default: WORKSPACE_CONTEXT_MAX_CHARS
+    searchTerms?: string[];
+    explicitPaths?: string[];
     toolExecutor?: ToolExecutor;
     toolContext?: Partial<ToolCallContext>;
   }
@@ -48,6 +50,8 @@ export async function buildWorkspaceContextItems(
     maxFileContentLines?: number;
     maxItems?: number; // default: unlimited
     maxTotalChars?: number; // default: WORKSPACE_CONTEXT_MAX_CHARS
+    searchTerms?: string[];
+    explicitPaths?: string[];
     toolExecutor?: ToolExecutor;
     toolContext?: Partial<ToolCallContext>;
   }

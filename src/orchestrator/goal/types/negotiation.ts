@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { NegotiationResponseTypeEnum } from "../../../base/types/core.js";
+import { DimensionObservationMappingSchema } from "./goal.js";
 
 export const NegotiationStepEnum = z.enum([
   "ethics_check",
@@ -14,12 +15,16 @@ export type NegotiationStep = z.infer<typeof NegotiationStepEnum>;
 export const FeasibilityPathEnum = z.enum(["quantitative", "qualitative", "hybrid"]);
 export type FeasibilityPath = z.infer<typeof FeasibilityPathEnum>;
 
+export const DataSourceDimensionMappingSchema = DimensionObservationMappingSchema;
+export type DataSourceDimensionMapping = z.infer<typeof DataSourceDimensionMappingSchema>;
+
 export const DimensionDecompositionSchema = z.object({
   name: z.string(),
   label: z.string(),
   threshold_type: z.enum(["min", "max", "range", "present", "match"]),
   threshold_value: z.union([z.number(), z.string(), z.boolean(), z.array(z.union([z.number(), z.string()]))]).nullable(),
   observation_method_hint: z.string(),
+  dimension_mapping: DataSourceDimensionMappingSchema.nullable().optional(),
 });
 export type DimensionDecomposition = z.infer<typeof DimensionDecompositionSchema>;
 

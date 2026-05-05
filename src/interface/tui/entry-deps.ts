@@ -95,7 +95,10 @@ export async function buildStandaloneTuiDeps() {
             desc = `${desc}\n${parent.description}`;
           }
         }
-        return desc;
+        const dimensionMappings = Object.fromEntries(
+          goal.dimensions.map((dimension) => [dimension.name, dimension.observation_mapping ?? null])
+        );
+        return { description: desc, dimensionMappings };
       } catch (err) {
         getCliLogger().error(`[pulseed] Failed to resolve goal description for "${goalId}": ${err instanceof Error ? err.message : String(err)}`);
         return undefined;

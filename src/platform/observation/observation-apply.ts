@@ -150,7 +150,8 @@ export async function observeFromDataSource(
   dimensionName: string,
   sourceId: string,
   dataSources: IDataSourceAdapter[],
-  applyFn: (goalId: string, entry: ObservationLogEntry) => Promise<void>
+  applyFn: (goalId: string, entry: ObservationLogEntry) => Promise<void>,
+  queryDimensionName = dimensionName
 ): Promise<ObservationLogEntry> {
   const source = dataSources.find((s) => s.sourceId === sourceId);
   if (!source) {
@@ -161,11 +162,11 @@ export async function observeFromDataSource(
   }
 
   const query: DataSourceQuery = {
-    dimension_name: dimensionName,
+    dimension_name: queryDimensionName,
     timeout_ms: 10000,
   };
 
-  const expression = source.config.dimension_mapping?.[dimensionName];
+  const expression = source.config.dimension_mapping?.[queryDimensionName];
   if (expression !== undefined) {
     query.expression = expression;
   }
