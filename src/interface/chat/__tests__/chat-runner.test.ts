@@ -25,7 +25,8 @@ import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
 import { createRunSpecHandoffTools } from "../../../tools/runtime/RunSpecHandoffTools.js";
-import type { ToolCallContext } from "../../../tools/types.js";
+import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
+import type { ApprovalRequest, ToolCallContext } from "../../../tools/types.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({
@@ -5098,6 +5099,209 @@ describe("ChatRunner", () => {
         state: "pending",
         spec: { id: stored.id },
       });
+    });
+  });
+
+  describe("setup and runtime-control AgentLoop tools", () => {
+    it("lets AgentLoop produce Telegram setup guidance without host-side configure routing", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-setup-tool-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const gatewaySetupStatusProvider = makeTelegramStatusProvider(makeTelegramSetupStatus({
+        state: "unconfigured",
+        daemon: { running: false, port: 41700 },
+        config: { exists: false, hasBotToken: false, hasHomeChat: false },
+      }));
+      const llmClient = createMockLLMClient([]);
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockImplementation(async (input: { message: string; toolCallContext?: ToolCallContext }) => {
+          const guidanceTool = createSetupRuntimeControlTools({
+            stateManager,
+            gatewaySetupStatusProvider,
+          }).find((tool) => tool.metadata.name === "prepare_gateway_setup_guidance")!;
+          const toolResult = await guidanceTool.call({
+            channel: "telegram",
+            request: input.message,
+            language: "ja",
+          }, input.toolCallContext!);
+          return {
+            success: toolResult.success,
+            output: toolResult.summary,
+            error: null,
+            exit_code: null,
+            elapsed_ms: 1,
+            stopped_reason: "completed",
+          };
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient,
+        chatAgentLoopRunner,
+        gatewaySetupStatusProvider,
+      }));
+      const selectedRoute: SelectedChatRoute = {
+        kind: "agent_loop",
+        reason: "agent_loop_available",
+        replyTargetPolicy: "turn_reply_target",
+        eventProjectionPolicy: "turn_only",
+        concurrencyPolicy: "session_serial",
+      };
+
+      const result = await runner.executeIngressMessage(
+        makeIngress("telegramからseedyと会話できるようにしたい"),
+        "/repo",
+        120_000,
+        selectedRoute,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Telegram gateway status");
+      expect(result.output).toContain("pulseed telegram setup");
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+    });
+
+    it("keeps setup secrets redacted before AgentLoop while tools can prepare protected writes", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-setup-secret-tool-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const rawToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const gatewaySetupStatusProvider = makeTelegramStatusProvider(makeTelegramSetupStatus({
+        state: "unconfigured",
+        config: { exists: false, hasBotToken: false, hasHomeChat: false },
+      }));
+      const llmClient = createMockLLMClient([]);
+      let pendingAfterTool: unknown = null;
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockImplementation(async (input: { message: string; toolCallContext?: ToolCallContext }) => {
+          expect(input.message).not.toContain(rawToken);
+          expect(input.message).toContain("[REDACTED:telegram_bot_token:setup_secret_1]");
+          const prepareTool = createSetupRuntimeControlTools({
+            stateManager,
+            gatewaySetupStatusProvider,
+          }).find((tool) => tool.metadata.name === "prepare_gateway_config_write")!;
+          const toolResult = await prepareTool.call({ channel: "telegram" }, input.toolCallContext!);
+          pendingAfterTool = await input.toolCallContext!.setupDialogue?.get();
+          expect(toolResult.summary).not.toContain(rawToken);
+          expect(JSON.stringify(toolResult.data)).not.toContain(rawToken);
+          return {
+            success: toolResult.success,
+            output: toolResult.summary,
+            error: null,
+            exit_code: null,
+            elapsed_ms: 1,
+            stopped_reason: "completed",
+          };
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient,
+        chatAgentLoopRunner,
+        gatewaySetupStatusProvider,
+      }));
+      const selectedRoute: SelectedChatRoute = {
+        kind: "agent_loop",
+        reason: "agent_loop_available",
+        replyTargetPolicy: "turn_reply_target",
+        eventProjectionPolicy: "turn_only",
+        concurrencyPolicy: "session_serial",
+      };
+
+      const result = await runner.execute(`telegram setup token ${rawToken}`, "/repo", 120_000, { selectedRoute });
+
+      expect(result.success).toBe(true);
+      expect(result.output).not.toContain(rawToken);
+      expect(pendingAfterTool).toMatchObject({
+        publicState: {
+          state: "confirm_write",
+          pendingSecret: { kind: "telegram_bot_token" },
+        },
+      });
+      const session = await new ChatSessionCatalog(stateManager).loadSession(runner.getSessionId()!);
+      expect(JSON.stringify(session)).not.toContain(rawToken);
+      expect(session?.setupDialogue).toMatchObject({
+        state: "confirm_write",
+        pendingSecret: { kind: "telegram_bot_token" },
+      });
+    });
+
+    it("passes approved runtime-control metadata through the AgentLoop tool path", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-runtime-tool-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const runtimeControlService = { request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "gateway restart requested",
+        operationId: "op-runtime",
+        state: "approved",
+      }) };
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockImplementation(async (input: {
+          approvalFn?: (request: ApprovalRequest) => Promise<boolean>;
+          toolCallContext?: ToolCallContext;
+        }) => {
+          const approved = await input.approvalFn?.({
+            toolName: "request_runtime_control",
+            input: { operation: "restart_gateway" },
+            reason: "runtime control permission gate",
+            permissionLevel: "write_local",
+            isDestructive: false,
+            reversibility: "reversible",
+          });
+          expect(approved).toBe(true);
+          const runtimeTool = createSetupRuntimeControlTools({
+            stateManager,
+            runtimeControlService,
+          }).find((tool) => tool.metadata.name === "request_runtime_control")!;
+          const toolResult = await runtimeTool.call({
+            operation: "restart_gateway",
+            reason: "operator approved gateway restart",
+          }, input.toolCallContext!);
+          return {
+            success: toolResult.success,
+            output: toolResult.summary,
+            error: null,
+            exit_code: null,
+            elapsed_ms: 1,
+            stopped_reason: "completed",
+          };
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient: createMockLLMClient([]),
+        chatAgentLoopRunner,
+        runtimeControlService: runtimeControlService as never,
+        approvalFn: vi.fn().mockResolvedValue(false),
+      }));
+      const ingress = {
+        ...makeIngress("gatewayを再起動して"),
+        runtimeControl: { allowed: true, approvalMode: "preapproved" as const },
+        metadata: { runtime_control_approved: true },
+        replyTarget: {
+          ...makeIngress("").replyTarget,
+          response_channel: "telegram-chat-1",
+          metadata: { runtime_control_approved: true },
+        },
+      };
+      const selectedRoute: SelectedChatRoute = {
+        kind: "agent_loop",
+        reason: "agent_loop_available",
+        replyTargetPolicy: "turn_reply_target",
+        eventProjectionPolicy: "turn_only",
+        concurrencyPolicy: "session_serial",
+      };
+
+      const result = await runner.executeIngressMessage(ingress, "/repo", 120_000, selectedRoute);
+
+      expect(result.success).toBe(true);
+      expect(runtimeControlService.request).toHaveBeenCalledWith(expect.objectContaining({
+        intent: expect.objectContaining({ kind: "restart_gateway" }),
+        requestedBy: expect.objectContaining({ surface: "gateway", identity_key: "telegram:user-1" }),
+        replyTarget: expect.objectContaining({
+          conversation_id: "chat-1",
+          response_channel: "telegram-chat-1",
+          metadata: { runtime_control_approved: true },
+        }),
+      }));
     });
   });
 });

@@ -1,7 +1,7 @@
 import type { IAdapter, AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, ToolCallResult } from "../../base/llm/llm-client.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
-import type { ToolCallContext } from "../../tools/types.js";
+import type { ApprovalRequest, ToolCallContext } from "../../tools/types.js";
 import { toToolDefinitionsFiltered } from "../../tools/tool-definition-adapter.js";
 import {
   buildPromptedToolProtocolSystemPrompt,
@@ -50,7 +50,8 @@ export interface ChatRunnerRouteHost {
   getProviderConfigBaseDir(): string;
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
   getTurnLanguageHint(): TurnLanguageHint;
-  setPendingSetupDialogue(dialogue: SetupDialogueRuntimeState): Promise<void>;
+  setPendingSetupDialogue(dialogue: SetupDialogueRuntimeState | null): Promise<void>;
+  getPendingSetupDialogue(): SetupDialogueRuntimeState | null;
   setPendingRunSpecConfirmation(confirmation: RunSpecConfirmationState | null): Promise<void>;
   getPendingRunSpecConfirmation(): RunSpecConfirmationState | null;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
@@ -285,21 +286,25 @@ export async function executeAgentLoopRoute(
         content: m.content,
       })),
       eventSink: host.eventBridge.createAgentLoopEventSink(eventContext),
-      approvalFn: async (request) => {
-        if (host.deps.approvalFn) {
-          return host.deps.approvalFn(request.reason);
-        }
-        return false;
-      },
+      approvalFn: agentLoopApprovalFn(host, runtimeControlContext),
       toolCallContext: {
         executionPolicy: await host.getSessionExecutionPolicy(),
         ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
+        providerConfigBaseDir: host.getProviderConfigBaseDir(),
+        setupSecretIntake: host.getSetupSecretIntake(),
+        setupDialogue: {
+          get: () => host.getPendingSetupDialogue(),
+          set: (dialogue) => host.setPendingSetupDialogue(dialogue as SetupDialogueRuntimeState | null),
+        },
         runSpecConfirmation: {
           get: () => host.getPendingRunSpecConfirmation(),
           set: (confirmation) => host.setPendingRunSpecConfirmation(confirmation as RunSpecConfirmationState | null),
           currentTurnStartedAt: new Date(start).toISOString(),
         },
         runtimeReplyTarget: (runtimeControlContext?.replyTarget ?? host.deps.runtimeReplyTarget ?? null) as Record<string, unknown> | null,
+        runtimeControlActor: (runtimeControlContext?.actor ?? host.deps.runtimeControlActor ?? null) as Record<string, unknown> | null,
+        runtimeControlAllowed: runtimeControlContext?.allowed ?? true,
+        runtimeControlApprovalMode: runtimeControlContext?.approvalMode ?? "interactive",
       },
       ...(host.getNativeAgentLoopStatePath() ? { resumeStatePath: host.getNativeAgentLoopStatePath()! } : {}),
       ...(resumeState ? { resumeState } : {}),
@@ -863,7 +868,7 @@ function formatTelegramConfigProgressDetail(status: TelegramSetupStatus, languag
   return "Bot token and home chat are configured.";
 }
 
-function formatTelegramConfigureGuidance(
+export function formatTelegramConfigureGuidance(
   status: TelegramSetupStatus,
   suppliedTelegramToken: boolean,
   pendingActionCreated: boolean,
@@ -1218,20 +1223,39 @@ async function buildToolCallContext(
     goalId: goalId ?? "",
     trustBalance: 0,
     preApproved: false,
-    approvalFn: async (req) => {
-      if (host.deps.approvalFn) {
-        return host.deps.approvalFn(req.reason);
-      }
-      return false;
-    },
+    approvalFn: agentLoopApprovalFn(host, runtimeControlContext),
     executionPolicy,
     ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
+    providerConfigBaseDir: host.getProviderConfigBaseDir(),
+    setupSecretIntake: host.getSetupSecretIntake(),
+    setupDialogue: {
+      get: () => host.getPendingSetupDialogue(),
+      set: (dialogue) => host.setPendingSetupDialogue(dialogue as SetupDialogueRuntimeState | null),
+    },
     runSpecConfirmation: {
       get: () => host.getPendingRunSpecConfirmation(),
       set: (confirmation) => host.setPendingRunSpecConfirmation(confirmation as RunSpecConfirmationState | null),
       ...(typeof start === "number" ? { currentTurnStartedAt: new Date(start).toISOString() } : {}),
     },
     runtimeReplyTarget: (runtimeControlContext?.replyTarget ?? host.deps.runtimeReplyTarget ?? null) as Record<string, unknown> | null,
+    runtimeControlActor: (runtimeControlContext?.actor ?? host.deps.runtimeControlActor ?? null) as Record<string, unknown> | null,
+    runtimeControlAllowed: runtimeControlContext?.allowed ?? true,
+    runtimeControlApprovalMode: runtimeControlContext?.approvalMode ?? "interactive",
+  };
+}
+
+function agentLoopApprovalFn(
+  host: ChatRunnerRouteHost,
+  runtimeControlContext?: RuntimeControlChatContext | null,
+): (request: ApprovalRequest) => Promise<boolean> {
+  return async (request) => {
+    if (request.toolName === "request_runtime_control" && runtimeControlContext?.approvalFn) {
+      return runtimeControlContext.approvalFn(request.reason);
+    }
+    if (host.deps.approvalFn) {
+      return host.deps.approvalFn(request.reason);
+    }
+    return false;
   };
 }
 

@@ -61,6 +61,7 @@ export interface LoadedChatSession {
   lastRetryAt?: string | null;
   lastResumedAt?: string | null;
   notificationReplyTarget?: ChatSession["notificationReplyTarget"];
+  setupDialogue?: ChatSession["setupDialogue"];
   runSpecConfirmation?: ChatSession["runSpecConfirmation"];
   parentNotificationStatus?: "none" | "pending" | "sent" | "failed" | null;
   parentNotificationSummary?: string | null;
@@ -335,6 +336,7 @@ async function readSessionRecordWithMetadata(
     ...(optionalString(parsed.data.lastRetryAt) !== null ? { lastRetryAt: optionalString(parsed.data.lastRetryAt) } : {}),
     ...(optionalString(parsed.data.lastResumedAt) !== null ? { lastResumedAt: optionalString(parsed.data.lastResumedAt) } : {}),
     ...(parsed.data.notificationReplyTarget ? { notificationReplyTarget: parsed.data.notificationReplyTarget } : {}),
+    ...(parsed.data.setupDialogue ? { setupDialogue: parsed.data.setupDialogue } : {}),
     ...(parsed.data.runSpecConfirmation ? { runSpecConfirmation: parsed.data.runSpecConfirmation } : {}),
     ...(parsed.data.parentNotificationStatus ? { parentNotificationStatus: parsed.data.parentNotificationStatus } : {}),
     ...(optionalString(parsed.data.parentNotificationSummary) !== null ? { parentNotificationSummary: optionalString(parsed.data.parentNotificationSummary) } : {}),

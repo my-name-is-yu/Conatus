@@ -1028,12 +1028,21 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
   );
   await pluginLoader.loadAll().catch(() => []);
   await scheduleEngine.syncExternalSources(pluginLoader.getScheduleSources()).catch(() => undefined);
+  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const runtimeControlService = new RuntimeControlService({
+    runtimeRoot,
+    stateManager,
+    executor: createDaemonRuntimeControlExecutor({
+      baseDir: stateManager.getBaseDir(),
+    }),
+  });
 
   for (const tool of createBuiltinTools({
     stateManager,
     trustManager,
     registry: toolRegistry,
     llmClient,
+    runtimeControlService,
     adapterRegistry,
     knowledgeManager,
     observationEngine,
@@ -1069,7 +1078,6 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
       })
     : undefined;
 
-  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
   const approvalBroker = new ApprovalBroker({
     store: new ApprovalStore(createRuntimeStorePaths(runtimeRoot)),
   });
@@ -1083,13 +1091,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     chatAgentLoopRunner,
     reviewAgentLoopRunner,
     approvalBroker,
-    runtimeControlService: new RuntimeControlService({
-      runtimeRoot,
-      stateManager,
-      executor: createDaemonRuntimeControlExecutor({
-        baseDir: stateManager.getBaseDir(),
-      }),
-    }),
+    runtimeControlService,
   });
 }
 

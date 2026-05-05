@@ -321,6 +321,17 @@ export async function buildStandaloneTuiDeps() {
       stateManager,
       executor: createDaemonRuntimeControlExecutor({ baseDir: stateManager.getBaseDir() }),
     });
+    for (const tool of createBuiltinTools({
+      stateManager,
+      trustManager,
+      registry: toolRegistry,
+      llmClient,
+      runtimeControlService,
+    })) {
+      if (!toolRegistry.get(tool.metadata.name)) {
+        toolRegistry.register(tool);
+      }
+    }
     const chatAgentLoopRunner = shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
       ? createNativeChatAgentLoopRunner({
           llmClient,
@@ -491,6 +502,19 @@ export async function buildDaemonModeChatSurface(
       stateManager,
       executor: createDaemonRuntimeControlExecutor({ baseDir: stateManager.getBaseDir() }),
     });
+    for (const tool of createBuiltinTools({
+      stateManager,
+      trustManager,
+      registry: toolRegistry,
+      scheduleEngine,
+      llmClient,
+      daemonClient,
+      runtimeControlService,
+    })) {
+      if (!toolRegistry.get(tool.metadata.name)) {
+        toolRegistry.register(tool);
+      }
+    }
     chatRunner = new SharedManagerTuiChatSurface({
       stateManager,
       adapter,

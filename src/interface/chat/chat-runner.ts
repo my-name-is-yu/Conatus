@@ -7,8 +7,6 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { IAdapter } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
-import { getGatewayChannelDir } from "../../base/utils/paths.js";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import { getSelfIdentityResponseForBaseDir } from "../../base/config/identity-loader.js";
 import { ChatHistory, type ChatSession } from "./chat-history.js";
 import {
@@ -63,7 +61,7 @@ import {
   UNKNOWN_TURN_LANGUAGE_HINT,
   type TurnLanguageHint,
 } from "./turn-language.js";
-import type { TelegramGatewayConfig } from "../../runtime/gateway/telegram-gateway-adapter.js";
+import { confirmTelegramGatewayConfigWrite } from "./setup-config-write.js";
 import {
   buildRuntimeControlContextFromIngress,
   buildStandaloneIngressMessageFromContext,
@@ -137,6 +135,8 @@ export interface RuntimeControlChatContext {
   replyTarget?: RuntimeControlReplyTarget;
   actor?: RuntimeControlActor;
   approvalFn?: (description: string) => Promise<boolean>;
+  allowed?: boolean;
+  approvalMode?: "interactive" | "preapproved" | "disallowed";
 }
 
 export interface ChatRunnerExecutionOptions {
@@ -844,11 +844,12 @@ export class ChatRunner {
       getProviderConfigBaseDir: () => this.providerConfigBaseDir(),
       getSetupSecretIntake: () => this.setupSecretIntake,
       getTurnLanguageHint: () => this.turnLanguageHint,
-      setPendingSetupDialogue: async (dialogue: SetupDialogueRuntimeState) => {
+      setPendingSetupDialogue: async (dialogue: SetupDialogueRuntimeState | null) => {
         this.pendingSetupDialogue = dialogue;
-        this.history?.setSetupDialogue(dialogue.publicState);
+        this.history?.setSetupDialogue(dialogue?.publicState ?? null);
         await this.history?.persist();
       },
+      getPendingSetupDialogue: () => this.pendingSetupDialogue,
       setPendingRunSpecConfirmation: async (confirmation: ReturnType<ChatHistory["getRunSpecConfirmation"]>) => {
         this.history?.setRunSpecConfirmation(confirmation);
         await this.history?.persist();
@@ -1035,56 +1036,28 @@ export class ChatRunner {
         elapsed_ms: 0,
       };
     }
-    const baseDir = this.providerConfigBaseDir();
-    const configDir = getGatewayChannelDir("telegram-bot", baseDir);
-    const configPath = `${configDir}/config.json`;
-    const current = await readJsonFileOrNull<Partial<TelegramGatewayConfig>>(configPath);
-    const nextAllowAll = typeof current?.allow_all === "boolean" ? current.allow_all : false;
-    const nextAllowedUserIds = Array.isArray(current?.allowed_user_ids) ? current.allowed_user_ids : [];
-    const nextRuntimeControlAllowedUserIds = Array.isArray(current?.runtime_control_allowed_user_ids)
-      ? current.runtime_control_allowed_user_ids
-      : [];
-    const accessClosedByDefault = !nextAllowAll && nextAllowedUserIds.length === 0 && nextRuntimeControlAllowedUserIds.length === 0;
-    const approved = await approvalFn([
-      "Write Telegram gateway config from the redacted chat-supplied bot token.",
-      pending.publicState.replacesExistingSecret
-        ? "This will replace the existing configured Telegram bot token."
-        : "",
-      accessClosedByDefault
-        ? "Access will remain closed by default with allow_all=false until allowed Telegram user IDs are configured."
-        : "Existing Telegram access policy will be preserved.",
-    ].filter(Boolean).join(" "));
-    if (!approved) {
+    const writeResult = await confirmTelegramGatewayConfigWrite({
+      pending,
+      baseDir: this.providerConfigBaseDir(),
+      approvalFn,
+      runtimeControlService: this.deps.runtimeControlService,
+      actor: runtimeControlContext?.actor,
+      replyTarget: runtimeControlContext?.replyTarget,
+    });
+    if (!writeResult.success) {
       this.pendingSetupDialogue = null;
       this.history?.setSetupDialogue(null);
       await this.history?.persist();
       return {
         success: false,
-        output: "Telegram setup was not changed because approval was denied.",
+        output: writeResult.message,
         elapsed_ms: 0,
       };
     }
-    const nextConfig: TelegramGatewayConfig = {
-      bot_token: pending.secretValue,
-      ...(typeof current?.chat_id === "number" ? { chat_id: current.chat_id } : {}),
-      allowed_user_ids: nextAllowedUserIds,
-      denied_user_ids: Array.isArray(current?.denied_user_ids) ? current.denied_user_ids : [],
-      allowed_chat_ids: Array.isArray(current?.allowed_chat_ids) ? current.allowed_chat_ids : [],
-      denied_chat_ids: Array.isArray(current?.denied_chat_ids) ? current.denied_chat_ids : [],
-      runtime_control_allowed_user_ids: nextRuntimeControlAllowedUserIds,
-      chat_goal_map: current?.chat_goal_map ?? {},
-      user_goal_map: current?.user_goal_map ?? {},
-      ...(current?.default_goal_id ? { default_goal_id: current.default_goal_id } : {}),
-      allow_all: nextAllowAll,
-      polling_timeout: current?.polling_timeout ?? 30,
-      ...(current?.identity_key ? { identity_key: current.identity_key } : {}),
-    };
-    await writeJsonFileAtomic(configPath, nextConfig);
-    const refreshResult = await this.requestTelegramGatewayRefreshAfterSetup(runtimeControlContext, approvalFn, baseDir);
     this.pendingSetupDialogue = {
       publicState: {
         ...pending.publicState,
-        state: refreshResult.success ? "verify" : "restart_offer",
+        state: writeResult.refresh.success ? "verify" : "restart_offer",
         updatedAt: new Date().toISOString(),
         action: pending.publicState.action
           ? { ...pending.publicState.action, status: "completed" }
@@ -1100,10 +1073,10 @@ export class ChatRunner {
           ? "redacted chat-supplied token から Telegram gateway config を書き込みました。"
           : "Telegram gateway config was written from the redacted chat-supplied token.",
         "",
-        formatTelegramSetupRefreshResult(refreshResult, this.turnLanguageHint),
+        formatTelegramSetupRefreshResult(writeResult.refresh, this.turnLanguageHint),
         "",
         this.turnLanguageHint.language === "ja" ? "Next steps:" : "Next steps:",
-        ...(accessClosedByDefault
+        ...(writeResult.accessClosedByDefault
           ? [this.turnLanguageHint.language === "ja"
             ? "- allowed Telegram user IDs を設定するか、`pulseed telegram setup` で意図的に `allow_all` を有効にするまで access は closed のままです。"
             : "- Access remains closed until you configure allowed Telegram user IDs or intentionally enable `allow_all` with `pulseed telegram setup`."]
@@ -1111,7 +1084,7 @@ export class ChatRunner {
         this.turnLanguageHint.language === "ja"
           ? "- home chat が未設定なら Telegram から `/sethome` を送ってください。"
           : "- Send `/sethome` from Telegram if no home chat is configured yet.",
-        refreshResult.success
+        writeResult.refresh.success
           ? this.turnLanguageHint.language === "ja"
             ? "- Telegram bot にメッセージを送って動作確認してください。"
             : "- Send a message to the Telegram bot to verify delivery."
@@ -1120,36 +1093,6 @@ export class ChatRunner {
             : "- Automatic refresh was not applied. Retry the lifecycle refresh from a chat surface with typed runtime-control available.",
       ].join("\n"),
       elapsed_ms: 0,
-    };
-  }
-
-  private async requestTelegramGatewayRefreshAfterSetup(
-    runtimeControlContext: RuntimeControlChatContext | null,
-    approvalFn: ((description: string) => Promise<boolean>) | undefined,
-    baseDir: string
-  ): Promise<{ success: boolean; message: string; operationId?: string; state?: string; unavailable?: boolean }> {
-    if (!this.deps.runtimeControlService) {
-      return {
-        success: false,
-        unavailable: true,
-        message: "Runtime control service is not available in this chat surface.",
-      };
-    }
-    const result = await this.deps.runtimeControlService.request({
-      intent: {
-        kind: "restart_gateway",
-        reason: "Apply updated Telegram gateway config after approved setup write.",
-      },
-      cwd: baseDir,
-      ...(runtimeControlContext?.actor ? { requestedBy: runtimeControlContext.actor } : {}),
-      ...(runtimeControlContext?.replyTarget ? { replyTarget: runtimeControlContext.replyTarget } : {}),
-      ...(approvalFn ? { approvalFn } : {}),
-    });
-    return {
-      success: result.success,
-      message: result.message,
-      ...(result.operationId ? { operationId: result.operationId } : {}),
-      ...(result.state ? { state: result.state } : {}),
     };
   }
 

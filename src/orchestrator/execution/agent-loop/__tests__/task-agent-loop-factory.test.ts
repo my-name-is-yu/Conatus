@@ -169,6 +169,13 @@ describe("createNative*AgentLoopRunner", () => {
         "update_run_spec_draft",
         "cancel_run_spec_draft",
         "start_durable_run",
+        "get_gateway_setup_status",
+        "prepare_gateway_setup_guidance",
+        "prepare_gateway_config_write",
+        "confirm_gateway_config_write",
+        "cancel_gateway_config_write",
+        "get_runtime_status",
+        "request_runtime_control",
       ]),
     );
     expect(profile.toolPolicy.allowedTools).not.toContain("kaggle_submit");
@@ -181,6 +188,7 @@ describe("createNative*AgentLoopRunner", () => {
       registry,
       stateManager: { getBaseDir: () => "/tmp/pulseed-test" } as never,
       llmClient: makeLlmClient() as never,
+      runtimeControlService: { request: vi.fn() } as never,
     })) {
       registry.register(tool);
     }
@@ -219,6 +227,13 @@ describe("createNative*AgentLoopRunner", () => {
         "update_run_spec_draft",
         "cancel_run_spec_draft",
         "start_durable_run",
+        "get_gateway_setup_status",
+        "prepare_gateway_setup_guidance",
+        "prepare_gateway_config_write",
+        "confirm_gateway_config_write",
+        "cancel_gateway_config_write",
+        "get_runtime_status",
+        "request_runtime_control",
       ]),
     );
     expect(visibleTools).not.toContain("glob");

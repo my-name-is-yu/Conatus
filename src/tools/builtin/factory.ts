@@ -91,6 +91,7 @@ import {
   WorkspaceImportTool,
 } from "../runtime/LongRunningRuntimeTools.js";
 import { createRunSpecHandoffTools } from "../runtime/RunSpecHandoffTools.js";
+import { createSetupRuntimeControlTools } from "../runtime/SetupRuntimeControlTools.js";
 import { CreateScheduleTool } from "../schedule/CreateScheduleTool/CreateScheduleTool.js";
 import { GetScheduleTool } from "../schedule/GetScheduleTool/GetScheduleTool.js";
 import { ListSchedulesTool } from "../schedule/ListSchedulesTool/ListSchedulesTool.js";
@@ -122,6 +123,8 @@ import { getPulseedDirPath } from "../../base/utils/paths.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
+import type { GatewaySetupStatusProvider } from "../../interface/chat/gateway-setup-status.js";
+import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type { IEmbeddingClient } from "../../platform/knowledge/embedding-client.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
 import type { ObservationEngine } from "../../platform/observation/observation-engine.js";
@@ -162,6 +165,8 @@ export interface BuiltinToolDeps {
   llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
   daemonClient?: Pick<DaemonClient, "startGoal">;
   daemonClientFactory?: () => Promise<Pick<DaemonClient, "startGoal">>;
+  gatewaySetupStatusProvider?: GatewaySetupStatusProvider;
+  runtimeControlService?: Pick<RuntimeControlService, "request">;
   llmCall?: (prompt: string) => Promise<string>;
   scheduleEngine?: ScheduleEngine;
   embeddingClient?: IEmbeddingClient | null;
@@ -242,6 +247,13 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
         llmClient: deps.llmClient,
         daemonClient: deps.daemonClient,
         daemonClientFactory: deps.daemonClientFactory,
+      }));
+    }
+    if (deps.gatewaySetupStatusProvider || deps.runtimeControlService) {
+      tools.push(...createSetupRuntimeControlTools({
+        stateManager: deps.stateManager,
+        gatewaySetupStatusProvider: deps.gatewaySetupStatusProvider,
+        runtimeControlService: deps.runtimeControlService,
       }));
     }
     tools.push(...createCoreLoopControlTools(
