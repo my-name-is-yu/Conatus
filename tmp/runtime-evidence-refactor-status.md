@@ -60,7 +60,7 @@ CI:
 
 ## #1050: Structured Candidate Ranking Fields
 
-Status: in progress on `codex/issue-1050-structured-candidate-ranking`.
+Status: merged via PR #1071.
 
 Plan:
 - Keep the candidate summary shape stable.
@@ -83,3 +83,6 @@ Verification:
 
 Review:
 - Fresh review found no material issues.
+
+CI:
+- PR #1071 CI passed: `unit (22)` and `integration (24)`.
