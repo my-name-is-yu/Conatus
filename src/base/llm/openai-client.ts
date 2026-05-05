@@ -9,11 +9,17 @@ import { LLMError } from "../utils/errors.js";
 const DEFAULT_MODEL = "gpt-4o";
 const DEFAULT_TEMPERATURE = 0.2;
 
+export type OpenAIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
 /** Model prefixes that do not support the temperature parameter */
-const REASONING_MODEL_PREFIXES = ["o1", "o3", "o4"];
+const REASONING_MODEL_PREFIXES = ["o1", "o3", "o4", "gpt-5"];
 
 function isReasoningModel(model: string): boolean {
   return REASONING_MODEL_PREFIXES.some((prefix) => model.startsWith(prefix));
+}
+
+function shouldSendReasoningEffort(model: string, effort: OpenAIReasoningEffort | undefined): effort is OpenAIReasoningEffort {
+  return Boolean(effort) && (isReasoningModel(model) || model.includes("codex"));
 }
 
 function shouldFallbackToResponses(err: unknown): boolean {
@@ -36,6 +42,8 @@ export interface OpenAIClientConfig {
   baseURL?: string;
   /** Optional lighter model for routine tasks (observation, verification, etc.) */
   lightModel?: string;
+  /** Optional reasoning effort for supported OpenAI reasoning models. */
+  reasoningEffort?: OpenAIReasoningEffort;
 }
 
 /**
@@ -51,6 +59,7 @@ export interface OpenAIClientConfig {
 export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
   private readonly client: OpenAI;
   private readonly model: string;
+  private readonly reasoningEffort: OpenAIReasoningEffort | undefined;
 
   constructor(config: OpenAIClientConfig = {}) {
     super();
@@ -65,6 +74,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
       ...(config.baseURL ? { baseURL: config.baseURL } : {}),
     });
     this.lightModel = config.lightModel;
+    this.reasoningEffort = config.reasoningEffort;
   }
 
   /**
@@ -111,6 +121,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
           }
         : {}),
       ...(isReasoningModel(model) ? {} : { temperature }),
+      ...(shouldSendReasoningEffort(model, this.reasoningEffort) ? { reasoning_effort: this.reasoningEffort } : {}),
     };
 
     let lastError: unknown;
@@ -140,7 +151,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
           // Some models (notably Codex-style) are not compatible with the
           // chat completions endpoint. In that case, fall back to Responses API.
           if (!shouldFallbackToResponses(err)) throw err;
-          return this.sendViaResponsesApi(model, messages, { max_tokens, temperature, system });
+          return this.sendViaResponsesApi(model, messages, { max_tokens, temperature, system, reasoningEffort: this.reasoningEffort });
         }
       } catch (err) {
         lastError = err;
@@ -204,6 +215,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
           }
         : {}),
       ...(isReasoningModel(model) ? {} : { temperature }),
+      ...(shouldSendReasoningEffort(model, this.reasoningEffort) ? { reasoning_effort: this.reasoningEffort } : {}),
     };
 
     try {
@@ -230,14 +242,14 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
       };
     } catch (err) {
       if (!shouldFallbackToResponses(err)) throw err;
-      return this.sendViaResponsesApi(model, messages, { max_tokens, temperature, system });
+      return this.sendViaResponsesApi(model, messages, { max_tokens, temperature, system, reasoningEffort: this.reasoningEffort });
     }
   }
 
   private async sendViaResponsesApi(
     model: string,
     messages: LLMMessage[],
-    options: { max_tokens: number; temperature: number; system?: string }
+    options: { max_tokens: number; temperature: number; system?: string; reasoningEffort?: OpenAIReasoningEffort }
   ): Promise<LLMResponse> {
     const input = [
       options.system ? `SYSTEM:\n${options.system}` : null,
@@ -263,6 +275,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
         input,
         max_output_tokens: options.max_tokens,
         ...(isReasoningModel(model) ? {} : { temperature: options.temperature }),
+        ...(shouldSendReasoningEffort(model, options.reasoningEffort) ? { reasoning: { effort: options.reasoningEffort } } : {}),
       }),
       timeout,
     ]) as Record<string, unknown>;

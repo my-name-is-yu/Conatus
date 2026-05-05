@@ -18,6 +18,7 @@ export interface ProviderConfigSummary {
   model: string;
   adapter: string;
   light_model?: string;
+  reasoning_effort?: string;
   base_url?: string;
   codex_cli_path?: string;
   has_api_key: boolean;
@@ -152,6 +153,7 @@ export async function readProviderConfigSummary(stateManager: StateManager): Pro
     model: config.model,
     adapter: config.adapter,
     light_model: config.light_model,
+    reasoning_effort: config.reasoning_effort,
     base_url: config.base_url,
     codex_cli_path: config.codex_cli_path,
     has_api_key: Boolean(config.api_key),

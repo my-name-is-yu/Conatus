@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import type { ProviderConfig } from "../../../../../base/llm/provider-config.js";
-import { MODEL_REGISTRY } from "../../../../../base/llm/provider-config.js";
+import { MODEL_REGISTRY, isReasoningEffort } from "../../../../../base/llm/provider-config.js";
 import { PROVIDERS, getAdaptersForModel } from "../../setup-shared.js";
 import type { Provider } from "../../setup-shared.js";
 import { SOURCE_LABELS } from "./constants.js";
@@ -21,6 +21,7 @@ const PROVIDER_KEYS = [
 ];
 
 const MODEL_KEYS = ["model", "default_model", "defaultModel", "modelName"];
+const REASONING_EFFORT_KEYS = ["reasoning_effort", "reasoningEffort", "model_reasoning_effort", "modelReasoningEffort"];
 const ADAPTER_KEYS = ["adapter", "default_adapter", "defaultAdapter", "backend", "terminalBackend"];
 const API_KEY_KEYS = ["api_key", "apiKey", "openai_api_key", "anthropic_api_key", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
 const SECTION_API_KEY_KEYS = [
@@ -214,10 +215,12 @@ export function extractProviderSettings(
   const apiKey = providerApiKey(provider, searchable, env);
   const baseUrl = firstString(searchable, BASE_URL_KEYS);
   const codexCliPath = firstString(searchable, CLI_PATH_KEYS);
+  const reasoningEffort = firstString(searchable, REASONING_EFFORT_KEYS);
 
   const settings: SetupImportProviderSettings = {};
   if (provider) settings.provider = provider;
   if (model) settings.model = model;
+  if (isReasoningEffort(reasoningEffort)) settings.reasoningEffort = reasoningEffort;
   if (adapter) settings.adapter = adapter;
   if (apiKey) settings.apiKey = apiKey;
   if (baseUrl) settings.baseUrl = baseUrl;

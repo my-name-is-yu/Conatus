@@ -31,6 +31,7 @@ function providerPreview(settings: SetupImportProviderSettings | undefined): str
   return [
     settings.provider ? `provider=${settings.provider}` : undefined,
     settings.model ? `model=${settings.model}` : undefined,
+    settings.reasoningEffort ? `reasoning_effort=${settings.reasoningEffort}` : undefined,
     settings.adapter ? `adapter=${settings.adapter}` : undefined,
     settings.apiKey ? `api_key=${maskKey(settings.apiKey)}` : undefined,
     settings.baseUrl ? `base_url=${settings.baseUrl}` : undefined,
@@ -87,6 +88,7 @@ function defaultProviderConfigFromImport(
   return {
     ...(settings.provider ? { provider: settings.provider } : {}),
     ...(settings.model ? { model: settings.model } : {}),
+    ...(settings.reasoningEffort ? { reasoning_effort: settings.reasoningEffort } : {}),
     ...(settings.adapter ? { adapter: settings.adapter } : {}),
     ...(settings.apiKey ? { api_key: settings.apiKey } : {}),
     ...(settings.baseUrl ? { base_url: settings.baseUrl } : {}),

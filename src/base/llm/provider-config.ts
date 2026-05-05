@@ -53,6 +53,7 @@ export async function readCodexOAuthToken(): Promise<string | undefined> {
  * Ollama models are dynamic and not listed here.
  */
 export const MODEL_REGISTRY: Record<string, { provider: string; adapters: string[] }> = {
+  "gpt-5.5": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
   "gpt-5.4": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
   "gpt-5.2-codex": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
   "gpt-5.1-codex-max": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
@@ -80,6 +81,9 @@ export interface ProviderConfig {
   /** Optional lighter model for routine tasks (observation, verification, reflection).
    *  When not set, all calls use `model`. */
   light_model?: string;
+
+  /** Optional OpenAI reasoning effort for supported reasoning models. */
+  reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
   /** Which adapter to use by default for task execution */
   adapter: "claude_code_cli" | "claude_api" | "openai_codex_cli" | "openai_api" | "agent_loop";
@@ -303,6 +307,15 @@ export function validateProviderConfig(config: ProviderConfig): ValidationResult
     errors.push(`API key required for ${providerLabel}. Set ${envName} or add api_key to config.`);
   }
 
+  if (config.reasoning_effort !== undefined) {
+    if (config.provider !== "openai") {
+      errors.push("reasoning_effort is only supported for provider \"openai\".");
+    }
+    if (!isReasoningEffort(config.reasoning_effort)) {
+      errors.push(`Invalid reasoning_effort "${String(config.reasoning_effort)}". Valid: none, minimal, low, medium, high, xhigh`);
+    }
+  }
+
   return { valid: errors.length === 0, errors };
 }
 
@@ -404,6 +417,32 @@ function resolveLightModel(
   envFile: Record<string, string>
 ): string | undefined {
   return process.env["PULSEED_LIGHT_MODEL"] ?? envFile["PULSEED_LIGHT_MODEL"] ?? fileLightModel;
+}
+
+export function isReasoningEffort(value: unknown): value is NonNullable<ProviderConfig["reasoning_effort"]> {
+  return value === "none"
+    || value === "minimal"
+    || value === "low"
+    || value === "medium"
+    || value === "high"
+    || value === "xhigh";
+}
+
+function resolveReasoningEffort(
+  fileReasoningEffort: ProviderConfig["reasoning_effort"] | undefined,
+  provider: ProviderConfig["provider"],
+  envFile: Record<string, string>
+): ProviderConfig["reasoning_effort"] | undefined {
+  if (provider !== "openai") return undefined;
+  const envValue = process.env["PULSEED_REASONING_EFFORT"]
+    ?? process.env["OPENAI_REASONING_EFFORT"]
+    ?? envFile["PULSEED_REASONING_EFFORT"]
+    ?? envFile["OPENAI_REASONING_EFFORT"];
+  if (isReasoningEffort(envValue)) return envValue;
+  if (envValue) {
+    console.warn(`[provider-config] Ignoring invalid reasoning effort "${envValue}".`);
+  }
+  return isReasoningEffort(fileReasoningEffort) ? fileReasoningEffort : undefined;
 }
 
 function parseEnvFile(raw: string): Record<string, string> {
@@ -523,6 +562,7 @@ async function resolveProviderConfig(
   const apiKey = await resolveApiKeyWithFallback(fileConfig.api_key, provider, adapter, envFile);
   const baseUrl = resolveBaseUrl(fileConfig.base_url, provider, envFile);
   const lightModel = resolveLightModel(fileConfig.light_model, envFile);
+  const reasoningEffort = resolveReasoningEffort(fileConfig.reasoning_effort, provider, envFile);
 
   const config: ProviderConfig = { provider, model, adapter };
   if (apiKey !== undefined) config.api_key = apiKey;
@@ -534,6 +574,7 @@ async function resolveProviderConfig(
   if (fileConfig.terminal_backend !== undefined) config.terminal_backend = fileConfig.terminal_backend;
   if (fileConfig.a2a !== undefined) config.a2a = fileConfig.a2a;
   if (lightModel !== undefined) config.light_model = lightModel;
+  if (reasoningEffort !== undefined) config.reasoning_effort = reasoningEffort;
   if (fileConfig.openclaw !== undefined) config.openclaw = fileConfig.openclaw;
   config.agent_loop = resolveProviderNativeAgentLoopConfigShape(fileConfig);
   return config;
@@ -578,6 +619,7 @@ function providerFileOnlyConfig(fileConfig: Partial<ProviderConfig>): ProviderCo
   if (fileConfig.codex_retry_attempts !== undefined) fileOnly.codex_retry_attempts = fileConfig.codex_retry_attempts;
   if (fileConfig.terminal_backend !== undefined) fileOnly.terminal_backend = fileConfig.terminal_backend;
   if (fileConfig.a2a !== undefined) fileOnly.a2a = fileConfig.a2a;
+  if (fileConfig.reasoning_effort !== undefined) fileOnly.reasoning_effort = fileConfig.reasoning_effort;
   if (fileConfig.agent_loop !== undefined) fileOnly.agent_loop = fileConfig.agent_loop;
   return fileOnly;
 }
@@ -636,6 +678,7 @@ export async function getProviderRuntimeFingerprint(): Promise<string> {
     model: config.model,
     adapter: config.adapter,
     light_model: config.light_model ?? null,
+    reasoning_effort: config.reasoning_effort ?? null,
     base_url: config.base_url ?? null,
     codex_cli_path: config.codex_cli_path ?? null,
     codex_timeout_ms: config.codex_timeout_ms ?? null,

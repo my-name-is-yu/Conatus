@@ -11,6 +11,7 @@ export type SetupImportDecision = "import" | "copy_disabled" | "skip";
 export interface SetupImportProviderSettings {
   provider?: ProviderConfig["provider"];
   model?: string;
+  reasoningEffort?: ProviderConfig["reasoning_effort"];
   adapter?: ProviderConfig["adapter"];
   apiKey?: string;
   baseUrl?: string;

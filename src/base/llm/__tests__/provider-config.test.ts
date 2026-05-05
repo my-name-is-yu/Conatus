@@ -318,10 +318,17 @@ describe("resolveProviderNativeAgentLoopDefaults", () => {
 
 describe("MODEL_REGISTRY", () => {
   it("contains expected models", () => {
+    expect(MODEL_REGISTRY["gpt-5.5"]).toBeDefined();
     expect(MODEL_REGISTRY["gpt-5.4-mini"]).toBeDefined();
     expect(MODEL_REGISTRY["gpt-4.1"]).toBeDefined();
     expect(MODEL_REGISTRY["claude-sonnet-4-6"]).toBeDefined();
     expect(MODEL_REGISTRY["claude-haiku-4-5"]).toBeDefined();
+  });
+
+  it("gpt-5.5 is compatible with OpenAI execution adapters", () => {
+    const entry = MODEL_REGISTRY["gpt-5.5"];
+    expect(entry.provider).toBe("openai");
+    expect(entry.adapters).toEqual(expect.arrayContaining(["openai_codex_cli", "openai_api", "agent_loop"]));
   });
 
   it("gpt-4o-mini is not compatible with codex adapter", () => {
@@ -366,8 +373,8 @@ describe("loadProviderConfig", () => {
   const envKeys = [
     "PULSEED_PROVIDER", "PULSEED_LLM_PROVIDER",
     "PULSEED_ADAPTER", "PULSEED_DEFAULT_ADAPTER",
-    "PULSEED_MODEL", "PULSEED_LIGHT_MODEL",
-    "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL",
+    "PULSEED_MODEL", "PULSEED_LIGHT_MODEL", "PULSEED_REASONING_EFFORT",
+    "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL", "OPENAI_REASONING_EFFORT",
     "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
     "OLLAMA_BASE_URL", "OLLAMA_MODEL",
   ];
@@ -556,6 +563,52 @@ describe("loadProviderConfig", () => {
 
     const config = await loadProviderConfig();
     expect(config.light_model).toBe("gpt-env-light");
+  });
+
+  it("loads OpenAI reasoning effort from flat config", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      provider: "openai",
+      model: "gpt-5.5",
+      reasoning_effort: "low",
+      adapter: "openai_api",
+      api_key: "sk-test",
+    }));
+
+    const config = await loadProviderConfig();
+
+    expect(config.reasoning_effort).toBe("low");
+  });
+
+  it("PULSEED_REASONING_EFFORT overrides file reasoning_effort", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      provider: "openai",
+      model: "gpt-5.5",
+      reasoning_effort: "high",
+      adapter: "openai_api",
+      api_key: "sk-test",
+    }));
+    process.env["PULSEED_REASONING_EFFORT"] = "xhigh";
+
+    const config = await loadProviderConfig();
+
+    expect(config.reasoning_effort).toBe("xhigh");
+  });
+
+  it("drops reasoning_effort for non-OpenAI providers", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      reasoning_effort: "low",
+      adapter: "claude_api",
+      api_key: "sk-ant-test",
+    }));
+
+    const config = await loadProviderConfig();
+
+    expect(config.reasoning_effort).toBeUndefined();
   });
 
   it("resolves OpenAI API key from env file for embeddings", async () => {

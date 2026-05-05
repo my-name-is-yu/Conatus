@@ -117,6 +117,19 @@ describe("OpenAICodexCLIAdapter", () => {
       expect(child.stdin.write).toHaveBeenCalledWith("do task", "utf8");
     });
 
+    it("includes model_reasoning_effort config when reasoning effort is configured", async () => {
+      const adapter = new OpenAICodexCLIAdapter({ model: "gpt-5.5", reasoningEffort: "low" });
+      const child = makeFakeChild();
+
+      const executePromise = adapter.execute(makeTask({ prompt: "do task" }));
+      child.emit("close", 0);
+      await executePromise;
+
+      const [, spawnArgs] = mockSpawn.mock.calls[0] as [string, string[]];
+      expect(spawnArgs).toContain("-c");
+      expect(spawnArgs).toContain('model_reasoning_effort="low"');
+    });
+
     it("omits --model flag when no model is configured", async () => {
       const adapter = new OpenAICodexCLIAdapter();
       const child = makeFakeChild();

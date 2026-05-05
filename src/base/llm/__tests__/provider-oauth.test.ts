@@ -178,4 +178,36 @@ describe("loadProviderConfig OAuth fallback", () => {
 
     accessSpy.mockRestore();
   });
+
+  it("changes fingerprint when OpenAI reasoning effort changes", async () => {
+    const providerJsonPath = path.join(os.homedir(), ".pulseed", "provider.json");
+    const providerConfig = (reasoning_effort: string) => JSON.stringify({
+      provider: "openai",
+      model: "gpt-5.5",
+      reasoning_effort,
+      adapter: "openai_codex_cli",
+      api_key: "sk-test",
+    });
+
+    let providerReadCount = 0;
+    mockReadFile.mockImplementation(async (filePath: unknown) => {
+      if (filePath === providerJsonPath) {
+        providerReadCount += 1;
+        return providerConfig(providerReadCount === 1 ? "low" : "high");
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const fspModule = await import("node:fs/promises");
+    const accessSpy = vi.spyOn(fspModule, "access").mockResolvedValue(undefined);
+
+    const fingerprintA = await getProviderRuntimeFingerprint();
+    const fingerprintB = await getProviderRuntimeFingerprint();
+
+    expect(fingerprintA).not.toBe(fingerprintB);
+    expect(fingerprintA).toContain('"reasoning_effort":"low"');
+    expect(fingerprintB).toContain('"reasoning_effort":"high"');
+
+    accessSpy.mockRestore();
+  });
 });

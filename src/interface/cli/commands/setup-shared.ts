@@ -22,12 +22,13 @@ export const ENV_KEY_NAMES: Partial<Record<Provider, string>> = {
 };
 
 export const RECOMMENDED_MODELS: Record<string, string> = {
-  openai: "gpt-5.4-mini",
+  openai: "gpt-5.5",
   anthropic: "claude-sonnet-4-6",
   ollama: "qwen3:4b",
 };
 
 const OPENAI_MODEL_ORDER = [
+  "gpt-5.5",
   "gpt-5.4",
   "gpt-5.2-codex",
   "gpt-5.1-codex-max",
@@ -39,6 +40,7 @@ const OPENAI_MODEL_ORDER = [
 ] as const;
 
 const OPENAI_MODEL_LABELS: Record<string, string> = {
+  "gpt-5.5": "GPT-5.5",
   "gpt-5.4": "GPT-5.4",
   "gpt-5.2-codex": "GPT-5.2-Codex",
   "gpt-5.1-codex-max": "GPT-5.1-Codex-Max",
@@ -48,6 +50,9 @@ const OPENAI_MODEL_LABELS: Record<string, string> = {
   "gpt-5.2": "GPT-5.2",
   "gpt-5.1-codex-mini": "GPT-5.1-Codex-Mini",
 };
+
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export const RECOMMENDED_ADAPTERS: Partial<Record<Provider, string>> = {
   openai: "agent_loop",

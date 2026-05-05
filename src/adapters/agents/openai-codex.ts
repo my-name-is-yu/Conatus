@@ -31,6 +31,8 @@ export interface OpenAICodexCLIAdapterConfig {
   sandboxPolicy?: string | null;
   /** If set, pass -m <model> to the CLI. */
   model?: string;
+  /** If set, pass Codex model_reasoning_effort through -c. */
+  reasoningEffort?: string;
   /** Repository path passed to Codex for workspace-aware execution. Default: "." */
   repoPath?: string;
   /** Pass --skip-git-repo-check. Default: true for daemon/test workspaces. */
@@ -46,6 +48,7 @@ export class OpenAICodexCLIAdapter implements IAdapter {
   private readonly cliPath: string;
   private readonly sandboxPolicy: string | null;
   private readonly model: string | undefined;
+  private readonly reasoningEffort: string | undefined;
   private readonly repoPath: string;
   private readonly skipGitRepoCheck: boolean;
   private readonly terminalBackend?: TerminalBackendConfig;
@@ -56,6 +59,7 @@ export class OpenAICodexCLIAdapter implements IAdapter {
     this.sandboxPolicy =
       config.sandboxPolicy !== undefined ? config.sandboxPolicy : "workspace-write";
     this.model = config.model;
+    this.reasoningEffort = config.reasoningEffort;
     this.repoPath = config.repoPath?.trim() || ".";
     this.skipGitRepoCheck = config.skipGitRepoCheck ?? true;
     this.terminalBackend = config.terminalBackend;
@@ -75,6 +79,10 @@ export class OpenAICodexCLIAdapter implements IAdapter {
 
     if (this.model) {
       spawnArgs.push("-m", this.model);
+    }
+
+    if (this.reasoningEffort) {
+      spawnArgs.push("-c", `model_reasoning_effort="${this.reasoningEffort}"`);
     }
 
     if (this.skipGitRepoCheck) {

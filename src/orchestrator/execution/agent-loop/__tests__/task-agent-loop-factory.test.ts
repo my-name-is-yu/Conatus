@@ -17,8 +17,9 @@ import {
 function makeProviderConfig(): ProviderConfig {
   return {
     provider: "openai",
-    model: "gpt-5.4-mini",
+    model: "gpt-5.5",
     adapter: "openai_codex_cli",
+    reasoning_effort: "high",
     agent_loop: {
       security: {
         sandbox_mode: "workspace_write",
@@ -39,8 +40,9 @@ function makeProviderConfig(): ProviderConfig {
 function makeProviderConfigWithoutAgentLoop(): ProviderConfig {
   return {
     provider: "openai",
-    model: "gpt-5.4-mini",
+    model: "gpt-5.5",
     adapter: "openai_codex_cli",
+    reasoning_effort: "minimal",
   } as ProviderConfig;
 }
 
@@ -80,6 +82,7 @@ describe("createNative*AgentLoopRunner", () => {
     expect(deps.defaultBudget).toEqual(profile.budget);
     expect(deps.defaultToolPolicy).toEqual(profile.toolPolicy);
     expect(deps.defaultReasoningEffort).toBe(profile.reasoningEffort);
+    expect(deps.defaultReasoningEffort).toBe("high");
     expect(deps.defaultProfileName).toBe(profile.name);
     expect(deps.defaultExecutionPolicy).toEqual(profile.executionPolicy);
     expect(deps.defaultWorktreePolicy).toEqual(profile.worktreePolicy);
@@ -112,6 +115,7 @@ describe("createNative*AgentLoopRunner", () => {
     expect(deps.defaultBudget).toEqual(profile.budget);
     expect(deps.defaultToolPolicy).toEqual(profile.toolPolicy);
     expect(deps.defaultReasoningEffort).toBe(profile.reasoningEffort);
+    expect(deps.defaultReasoningEffort).toBe("minimal");
     expect(deps.defaultProfileName).toBe(profile.name);
     expect(deps.defaultExecutionPolicy).toEqual(profile.executionPolicy);
     expect(deps.defaultWorktreePolicy).toEqual(profile.worktreePolicy);
@@ -148,6 +152,7 @@ describe("createNative*AgentLoopRunner", () => {
     expect(deps.defaultBudget).toEqual(profile.budget);
     expect(deps.defaultToolPolicy).toEqual(profile.toolPolicy);
     expect(deps.defaultReasoningEffort).toBe(profile.reasoningEffort);
+    expect(deps.defaultReasoningEffort).toBe("high");
     expect(deps.defaultProfileName).toBe(profile.name);
     expect(deps.defaultExecutionPolicy).toEqual(profile.executionPolicy);
     expect(profile.toolPolicy.allowedTools).toEqual(
@@ -274,6 +279,19 @@ describe("createNative*AgentLoopRunner", () => {
     expect(deps.defaultBudget).toEqual(profile.budget);
     expect(deps.defaultToolPolicy).toEqual(profile.toolPolicy);
     expect(deps.defaultReasoningEffort).toBe(profile.reasoningEffort);
+    expect(deps.defaultReasoningEffort).toBe("high");
     expect(deps.defaultExecutionPolicy).toEqual(profile.executionPolicy);
+  });
+
+  it("keeps explicit native profile reasoning above provider config reasoning", () => {
+    const providerConfig = makeProviderConfig();
+    const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
+      surface: "task",
+      workspaceRoot: "/repo",
+      providerConfig,
+      reasoningEffort: "low",
+    });
+
+    expect(profile.reasoningEffort).toBe("low");
   });
 });
