@@ -3,6 +3,7 @@ import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { extractJSON } from "../../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 import type { LearningPipeline } from "../learning/learning-pipeline.js";
+import { requiresManualEthicsReview } from "../../traits/ethics-gate.js";
 import type { EthicsGate } from "../../traits/ethics-gate.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import { TransferCandidateSchema, TransferResultSchema } from "../../../base/types/cross-portfolio.js";
@@ -89,12 +90,15 @@ export async function applyTransfer(
     return failResult;
   }
 
-  if (ethicsVerdict.verdict === "reject") {
+  if (ethicsVerdict.verdict === "reject" || requiresManualEthicsReview(ethicsVerdict)) {
+    const prefix = ethicsVerdict.verdict === "reject"
+      ? "Ethics gate rejected"
+      : "Ethics gate blocked transfer";
     const failResult = TransferResultSchema.parse({
       transfer_id: `tr_${randomUUID()}`,
       candidate_id: candidateId,
       applied_at: new Date().toISOString(),
-      adaptation_description: `Ethics gate rejected: ${ethicsVerdict.reasoning}`,
+      adaptation_description: `${prefix}: ${ethicsVerdict.reasoning}`,
       success: false,
     });
     results.set(failResult.transfer_id, failResult);
@@ -237,7 +241,7 @@ export async function autoApplyHighConfidenceTransfers(
         continue;
       }
 
-      if (verdict.verdict === "reject" || verdict.verdict === "flag") {
+      if (verdict.verdict === "reject" || requiresManualEthicsReview(verdict)) {
         const rejected = TransferCandidateSchema.parse({ ...candidate, state: "rejected" });
         candidates.set(candidate.candidate_id, rejected);
         processed.push(rejected);

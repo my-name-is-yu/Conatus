@@ -58,6 +58,13 @@ const FEASIBILITY_INFEASIBLE = JSON.stringify({
 
 const RESPONSE_MESSAGE_ACCEPT = "Your goal has been accepted. Let's get started!";
 const RESPONSE_MESSAGE_COUNTER = "This goal is too ambitious. Consider a safer target.";
+const CLASSIFIER_UNAVAILABLE_FLAG = JSON.stringify({
+  verdict: "flag",
+  category: "classifier_unavailable",
+  reasoning: "Ethics classifier unavailable; manual review required.",
+  risks: ["classifier unavailable"],
+  confidence: 0,
+});
 
 const SUBGOALS_RESPONSE = JSON.stringify([
   {
@@ -270,6 +277,31 @@ describe("GoalNegotiator", () => {
       expect(result.subgoals).toHaveLength(1);
       expect(result.rejectedSubgoals).toHaveLength(1);
       expect(result.rejectedSubgoals[0]!.reason).toBeTruthy();
+    });
+
+    it("manual-review subgoal flags are rejected and not persisted", async () => {
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        SINGLE_DIMENSION_RESPONSE,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+        SUBGOALS_RESPONSE,
+        PASS_VERDICT,
+        CLASSIFIER_UNAVAILABLE_FLAG,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const negotiateResult = await negotiator.negotiate("Improve quality");
+      const result = await negotiator.decompose(negotiateResult.goal.id, negotiateResult.goal);
+
+      expect(result.subgoals).toHaveLength(1);
+      expect(result.rejectedSubgoals).toHaveLength(1);
+      expect(result.rejectedSubgoals[0]!.reason).toContain("manual review");
+      const persistedGoals = await Promise.all((await stateManager.listGoalIds()).map((id) => stateManager.loadGoal(id)));
+      expect(persistedGoals.filter((goal) => goal?.status === "active")).toHaveLength(2);
+      expect(persistedGoals.some((goal) => goal?.title === "Write Unit Tests")).toBe(false);
     });
 
     it("persists accepted subgoals to state manager", async () => {

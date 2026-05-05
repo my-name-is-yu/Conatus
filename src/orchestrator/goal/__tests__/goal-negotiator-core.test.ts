@@ -431,6 +431,23 @@ describe("GoalNegotiator", () => {
       expect(result.response.flags).toContain("data collection concern");
     });
 
+    it("blocks manual-review ethics flags before persisting a goal", async () => {
+      const mockLLM = createMockLLMClient([]);
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      await expect(
+        negotiator.negotiate("Sensitive goal while classifier is unavailable")
+      ).rejects.toThrow(EthicsRejectedError);
+
+      expect(await stateManager.listGoalIds()).toEqual([]);
+      const logs = await ethicsGate.getLogs();
+      expect(logs[0]!.verdict).toMatchObject({
+        verdict: "flag",
+        category: "classifier_unavailable",
+      });
+    });
+
     it("continues negotiation when ethics gate passes", async () => {
       const mockLLM = createMockLLMClient([
         PASS_VERDICT,

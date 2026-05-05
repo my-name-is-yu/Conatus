@@ -34,12 +34,17 @@ function makeMockKnowledgeManager() {
   return {} as any;
 }
 
-function makeMockEthicsGate(verdict: "pass" | "flag" | "reject" = "pass") {
+function makeMockEthicsGate(
+  verdict: "pass" | "flag" | "reject" = "pass",
+  options: { category?: string; confidence?: number } = {}
+) {
   return {
     check: async () => ({
       verdict,
+      category: options.category ?? (verdict === "flag" ? "privacy_concern" : verdict === "reject" ? "illegal" : "safe"),
       reasoning: verdict === "reject" ? "Rejected by ethics" : "Approved",
-      confidence: 0.9,
+      risks: verdict === "flag" ? ["review"] : [],
+      confidence: options.confidence ?? 0.9,
     }),
   } as any;
 }
@@ -83,11 +88,12 @@ describe("KnowledgeTransfer", async () => {
     llmResponses?: string[];
     patternsPerGoal?: Record<string, LearnedPattern[]>;
     ethicsVerdict?: "pass" | "flag" | "reject";
+    ethicsOptions?: { category?: string; confidence?: number };
     goalIds?: string[];
   } = {}) {
     const llmClient = createMockLLMClient(opts.llmResponses ?? []);
     const learningPipeline = makeMockLearningPipeline(opts.patternsPerGoal ?? {});
-    const ethicsGate = makeMockEthicsGate(opts.ethicsVerdict ?? "pass");
+    const ethicsGate = makeMockEthicsGate(opts.ethicsVerdict ?? "pass", opts.ethicsOptions);
 
     for (const goalId of opts.goalIds ?? []) {
       await stateManager.writeRaw(`goals/${goalId}/state.json`, { gap: 0.5 });
@@ -232,7 +238,7 @@ describe("KnowledgeTransfer", async () => {
       expect(result.candidate_id).toBe(candidateId);
     });
 
-    it("proceeds when ethics gate returns flag (not reject)", async () => {
+    it("proceeds when ethics gate returns high-confidence reviewable flag", async () => {
       const pattern = makePattern({ confidence: 0.8, source_goal_ids: ["goal_b"] });
       const kt = await createKT({
         goalIds: ["goal_a", "goal_b"],
@@ -243,6 +249,20 @@ describe("KnowledgeTransfer", async () => {
       const candidates = await kt.detectTransferOpportunities("goal_a");
       const result = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
       expect(result.success).toBe(true);
+    });
+
+    it("fails closed when ethics gate returns a manual-review flag", async () => {
+      const pattern = makePattern({ confidence: 0.8, source_goal_ids: ["goal_b"] });
+      const kt = await createKT({
+        goalIds: ["goal_a", "goal_b"],
+        patternsPerGoal: { goal_b: [pattern] },
+        ethicsVerdict: "flag",
+        ethicsOptions: { category: "classifier_unavailable", confidence: 0 },
+      });
+      const candidates = await kt.detectTransferOpportunities("goal_a");
+      const result = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
+      expect(result.success).toBe(false);
+      expect(result.adaptation_description).toContain("Ethics gate blocked transfer");
     });
 
     it("handles ethics gate that throws an error", async () => {

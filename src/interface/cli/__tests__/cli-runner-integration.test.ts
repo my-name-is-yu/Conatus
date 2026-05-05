@@ -106,7 +106,13 @@ describe("goal add with real GoalNegotiator (--no-refine)", () => {
     // 4. buildCounterProposalPrompt if ratio too high (0-1 call)
     // 5. buildNegotiationResponsePrompt (1 call)
 
-    const ethicsPass = JSON.stringify({ verdict: "pass", reasoning: "Acceptable goal" });
+    const ethicsPass = JSON.stringify({
+      verdict: "pass",
+      category: "safe",
+      reasoning: "Acceptable goal",
+      risks: [],
+      confidence: 0.95,
+    });
     const decomposition = JSON.stringify([
       {
         name: "test_coverage",
@@ -157,7 +163,10 @@ describe("goal add with real GoalNegotiator (--no-refine)", () => {
   it("exits with code 1 when GoalNegotiator ethics gate rejects the goal", async () => {
     const ethicsReject = JSON.stringify({
       verdict: "reject",
+      category: "harmful",
       reasoning: "Goal is harmful",
+      risks: ["harmful goal"],
+      confidence: 0.95,
     });
 
     const { LLMClient } = await import("../../../base/llm/llm-client.js");
@@ -172,7 +181,13 @@ describe("goal add with real GoalNegotiator (--no-refine)", () => {
   });
 
   it("goal added via real GoalNegotiator appears in goal list output", async () => {
-    const ethicsPass = JSON.stringify({ verdict: "pass", reasoning: "Acceptable" });
+    const ethicsPass = JSON.stringify({
+      verdict: "pass",
+      category: "safe",
+      reasoning: "Acceptable",
+      risks: [],
+      confidence: 0.95,
+    });
     const decomposition = JSON.stringify([
       {
         name: "coverage",
