@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DEFAULT_PORT } from "../port-utils.js";
-import type { DaemonRuntimeControlRequestBody } from "../control/index.js";
+import type { DaemonRuntimeControlRequestBody } from "./control-contracts.js";
 
 export interface DaemonClientConfig {
   host: string;

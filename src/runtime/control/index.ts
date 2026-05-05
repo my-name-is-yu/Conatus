@@ -8,8 +8,8 @@ export {
 } from "./runtime-control-result-routing.js";
 export type {
   DaemonRuntimeControlExecutorOptions,
-  DaemonRuntimeControlRequestBody,
 } from "./daemon-runtime-control-executor.js";
+export type { DaemonRuntimeControlRequestBody } from "../daemon/control-contracts.js";
 export type {
   RuntimeControlExecutor,
   RuntimeControlExecutorResult,

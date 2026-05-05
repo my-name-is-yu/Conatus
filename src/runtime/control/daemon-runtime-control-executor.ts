@@ -1,5 +1,5 @@
 import { DaemonClient, isDaemonRunning } from "../daemon/client.js";
-import type { RuntimeControlOperationKind } from "../store/runtime-operation-schemas.js";
+import type { DaemonRuntimeControlRequestBody } from "../daemon/control-contracts.js";
 import type {
   RuntimeControlExecutor,
   RuntimeControlExecutorResult,
@@ -8,12 +8,6 @@ import type {
 export interface DaemonRuntimeControlExecutorOptions {
   baseDir: string;
   host?: string;
-}
-
-export interface DaemonRuntimeControlRequestBody {
-  operationId: string;
-  kind: RuntimeControlOperationKind;
-  reason: string;
 }
 
 export function createDaemonRuntimeControlExecutor(
