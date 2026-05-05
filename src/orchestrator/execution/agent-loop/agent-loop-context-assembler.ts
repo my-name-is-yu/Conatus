@@ -62,7 +62,17 @@ export class AgentLoopContextAssembler {
     const cwd = resolve(input.cwd ?? process.cwd());
     const soilQuery = input.soilPrefetch
       ? async ({ query, rootDir, limit }: { query: string; rootDir: string; limit: number }) => {
-          const soil = await input.soilPrefetch!({ query, rootDir, limit });
+          let soil: SoilPrefetchResult | null;
+          try {
+            soil = await input.soilPrefetch!({ query, rootDir, limit });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            return {
+              retrievalSource: "prefetch" as const,
+              warnings: [`Soil prefetch failed; continuing without Soil context: ${detail}`],
+              hits: [],
+            };
+          }
           if (!soil?.content.trim()) {
             return null;
           }
