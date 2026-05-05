@@ -388,40 +388,9 @@ function normalizeRetryPolicy(entry: ScheduleEntry): ScheduleRetryPolicy {
   return { ...DEFAULT_RETRY_POLICY, ...(entry.retry_policy ?? {}) };
 }
 
-function classifyFailureKind(entry: ScheduleEntry, result: ScheduleResult): ScheduleFailureKind {
+function classifyFailureKind(_entry: ScheduleEntry, result: ScheduleResult): ScheduleFailureKind {
   if (result.failure_kind) return result.failure_kind;
-  const message = `${result.error_message ?? ""}`.toLowerCase();
-  const permanentHints = [
-    "no cron config",
-    "no heartbeat config",
-    "no probe config",
-    "no coreloop",
-    "not found",
-    "missing",
-    "invalid",
-    "unsupported",
-    "cannot",
-    "schema",
-    "permission denied",
-  ];
-  if (permanentHints.some((hint) => message.includes(hint))) return "permanent";
-  const transientHints = [
-    "timeout",
-    "timed out",
-    "econnrefused",
-    "econnreset",
-    "etimedout",
-    "eai_again",
-    "enotfound",
-    "network",
-    "temporar",
-    "unavailable",
-    "rate limit",
-    "busy",
-    "abort",
-  ];
-  if (transientHints.some((hint) => message.includes(hint))) return "transient";
-  return entry.layer === "goal_trigger" ? "permanent" : "transient";
+  return "transient";
 }
 
 function computeRetryDelay(policy: ScheduleRetryPolicy, attempt: number): number {
