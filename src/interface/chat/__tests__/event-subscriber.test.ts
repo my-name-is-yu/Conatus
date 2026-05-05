@@ -139,15 +139,14 @@ describe("EventSubscriber", () => {
       expect(n!.message).toContain("No state change detected");
     });
 
-    it("formats stall via stall keyword in phase", () => {
+    it("does not infer stall from a freeform phase label", () => {
       const sub = makeSubscriber("goal-abc", "normal");
       const n = format(sub, "progress", {
         iteration: 3,
         phase: "stall detected",
         skipReason: "agent did not progress",
       });
-      expect(n).not.toBeNull();
-      expect(n!.type).toBe("stall");
+      expect(n).toBeNull();
     });
   });
 

@@ -35,6 +35,7 @@ import {
 import { createOperationProgressItem } from "./operation-progress.js";
 import { createRunSpecStore, formatRunSpecSetupProposal } from "../../runtime/run-spec/index.js";
 import type { RunSpecConfirmationState } from "./chat-history.js";
+import { buildStaticSystemPrompt } from "./grounding.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -204,6 +205,7 @@ export async function executeAssistRoute(
   ];
   const response = await sendLLMMessage(host, host.deps.llmClient, messages, {
     system: [
+      buildStaticSystemPrompt(host.getProviderConfigBaseDir()),
       "Answer read-only. Provide concise operational guidance. Do not ask to edit files or run commands unless the user explicitly asks for execution.",
       sameLanguageResponseInstruction(host.getTurnLanguageHint()),
     ].join(" "),

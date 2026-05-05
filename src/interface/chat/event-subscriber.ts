@@ -224,7 +224,7 @@ export class EventSubscriber extends EventEmitter {
       const phase = ev.phase ?? "";
 
       // Complete phase
-      if (phase === "complete" || phase.toLowerCase().includes("complete")) {
+      if (phase === "complete") {
         const msg = `✅ [tend] ${shortId}: Complete! gap: ${gap?.toFixed(2) ?? "?"}, ${iter ?? "?"} iterations`;
         const n: TendNotification = { type: "complete", goalId: this.goalId, message: msg, iteration: iter, maxIterations: max, gap };
         this.previousGap = undefined;
@@ -232,7 +232,7 @@ export class EventSubscriber extends EventEmitter {
       }
 
       // Stall / skip
-      if (phase === "Skipped" || phase === "Skipped (no state change)" || phase.toLowerCase().includes("stall")) {
+      if (phase === "Skipped" || phase === "Skipped (no state change)") {
         const reason = ev.skipReason ?? phase;
         const msg = `⚠️ [tend] ${shortId}: Stalled — "${reason}"`;
         return { type: "stall", goalId: this.goalId, message: msg, iteration: iter, maxIterations: max, gap };

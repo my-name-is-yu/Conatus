@@ -55,9 +55,9 @@ Session
   /help                 Show this help message
   /clear                Clear conversation history
   /sessions             List prior chat sessions
-  /history [id|title]   Show saved chat history
+  /history [id]         Show saved chat history
   /title <title>        Rename the current session
-  /resume [id|title]    Resume native agentloop state for the current or selected session
+  /resume [id]          Resume native agentloop state for the current or selected session
   /cleanup [--dry-run]  Clean up stale chat sessions
   /compact              Summarize older chat turns and keep the latest turns
   /context              Show active working context and session assumptions

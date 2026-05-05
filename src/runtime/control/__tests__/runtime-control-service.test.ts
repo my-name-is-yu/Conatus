@@ -224,6 +224,39 @@ describe("RuntimeControlService", () => {
     }
   });
 
+  it("does not recover runtime-control goal targets from display titles", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-title-target-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const executor = vi.fn();
+      const service = new RuntimeControlService({
+        operationStore,
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
+            makeRun({ goal_id: null, title: "DurableLoop goal goal-from-title" }),
+          ])),
+        },
+      });
+
+      const result = await service.pauseRun({
+        runId: "run:coreloop:active",
+        reason: "pause this run",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "blocked",
+        message: expect.stringContaining("no typed goal/runtime bridge"),
+      });
+      expect(executor).not.toHaveBeenCalled();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("asks for clarification instead of guessing among multiple active or attention runs", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-run-ambiguous-");
     try {

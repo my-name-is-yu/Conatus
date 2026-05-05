@@ -7,7 +7,6 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { IAdapter } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
-import { getSelfIdentityResponseForBaseDir } from "../../base/config/identity-loader.js";
 import { ChatHistory, type ChatSession } from "./chat-history.js";
 import {
   ChatSessionCatalog,
@@ -163,21 +162,6 @@ function normalizePinnedReplyTarget(replyTarget: RuntimeControlReplyTarget | nul
 }
 
 const standaloneIngressRouter = createIngressRouter();
-
-function resolveSelfIdentityResponse(input: string, baseDir: string): string | null {
-  const normalized = input.trim().toLowerCase().replace(/\s+/g, "");
-  if (!normalized) return null;
-
-  const isEnglishIdentityQuestion = /^(whoareyou|whatisyourname|what'syourname)[?]?$/.test(normalized);
-  const isIdentityQuestion = [
-    /^(あなた|君|きみ|お前|おまえ)(は|って)?(誰|だれ|何者|なにもの)(ですか|なの|です)?[？?]?$/,
-    /^(あなた|君|きみ|お前|おまえ)の名前(は|って)?(何|なに)(ですか|なの|です)?[？?]?$/,
-    /^名前(は|って)?(何|なに)(ですか|なの|です)?[？?]?$/,
-  ].some((pattern) => pattern.test(normalized));
-
-  if (!isIdentityQuestion && !isEnglishIdentityQuestion) return null;
-  return getSelfIdentityResponseForBaseDir(baseDir, isEnglishIdentityQuestion ? "en" : "ja");
-}
 
 function formatPendingSetupConfirmationSubject(publicState: SetupDialogueRuntimeState["publicState"]): string {
   const lines = [
@@ -514,25 +498,6 @@ export class ChatRunner {
 
     const start = Date.now();
     const assistantBuffer: AssistantBuffer = { text: "" };
-    const identityResponse = resumeOnly ? null : resolveSelfIdentityResponse(safeInput, this.providerConfigBaseDir());
-
-    if (identityResponse !== null) {
-      const elapsed_ms = Date.now() - start;
-      await history.appendAssistantMessage(identityResponse);
-      this.eventBridge.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
-      this.eventBridge.emitEvent({
-        type: "assistant_final",
-        text: identityResponse,
-        persisted: true,
-        ...this.eventBridge.eventBase(eventContext),
-      });
-      this.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
-      return {
-        success: true,
-        output: identityResponse,
-        elapsed_ms,
-      };
-    }
 
     const selectedRoute = resumeOnly
       ? null

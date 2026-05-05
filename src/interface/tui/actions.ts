@@ -98,7 +98,7 @@ export class ActionHandler {
       };
     }
 
-    // If a goal argument was provided, match by number (1-indexed), exact ID, or exact title.
+    // If a goal argument was provided, match by number (1-indexed) or exact ID.
     if (goalArg) {
       const num = parseInt(goalArg, 10);
       let matched: { id: string; title: string } | undefined;
@@ -107,21 +107,8 @@ export class ActionHandler {
         matched = runnableGoals[num - 1];
       } else {
         const exactId = runnableGoals.find((g) => g.id === goalArg);
-        const exactTitleMatches = runnableGoals.filter((g) => g.title === goalArg);
         if (exactId) {
           matched = exactId;
-        } else if (exactTitleMatches.length === 1) {
-          matched = exactTitleMatches[0];
-        } else if (exactTitleMatches.length > 1) {
-          const list = exactTitleMatches.map((g, i) => `  ${i + 1}. ${g.title} (ID: ${g.id})`).join("\n");
-          return {
-            messages: [
-              `Ambiguous goal title "${goalArg}".`,
-              list,
-              "Use /start <goal-id> or /start <number>.",
-            ],
-            messageType: "warning",
-          };
         }
       }
 
@@ -131,7 +118,7 @@ export class ActionHandler {
           messages: [
             `No goal matching "${goalArg}". Available goals:`,
             list,
-            "Use /start <number>, /start <goal-id>, or the exact title.",
+            "Use /start <number> or /start <goal-id>.",
           ],
           messageType: "warning",
         };
@@ -151,7 +138,7 @@ export class ActionHandler {
       messages: [
         "Multiple goals available. Specify which one to start:",
         list,
-        "Use /start <number>, /start <goal-id>, or the exact title.",
+        "Use /start <number> or /start <goal-id>.",
       ],
     };
   }
