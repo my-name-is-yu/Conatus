@@ -194,6 +194,14 @@ export interface ToolCallContext {
   sessionId?: string;
   /** Owning chat conversation session id when the tool runs inside chat. */
   conversationSessionId?: string;
+  /** Chat-surface RunSpec confirmation state bridge for model-visible RunSpec tools. */
+  runSpecConfirmation?: {
+    get(): unknown | null | Promise<unknown | null>;
+    set(value: unknown | null): void | Promise<void>;
+    currentTurnStartedAt?: string;
+  };
+  /** Latest turn reply target when a chat/gateway surface exposes one to tools. */
+  runtimeReplyTarget?: Record<string, unknown> | null;
   /** Unique call identifier for correlation in audit logs */
   callId?: string;
   /** Optional logger for audit-trail events */

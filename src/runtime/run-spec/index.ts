@@ -16,3 +16,12 @@ export {
   type RunSpecDerivationContext,
   type RunSpecMissingField,
 } from "./types.js";
+export {
+  RunSpecHandoffService,
+  validateRunSpecStartSafety,
+  type DraftRunSpecInput,
+  type RunSpecConfirmationSnapshot,
+  type RunSpecHandoffDeps,
+  type RunSpecHandoffResult,
+  type UpdateRunSpecDraftInput,
+} from "./handoff.js";

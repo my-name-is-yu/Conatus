@@ -1033,6 +1033,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     stateManager,
     trustManager,
     registry: toolRegistry,
+    llmClient,
     adapterRegistry,
     knowledgeManager,
     observationEngine,

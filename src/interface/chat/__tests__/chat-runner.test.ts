@@ -24,6 +24,8 @@ import type { TelegramSetupStatus } from "../gateway-setup-status.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
+import { createRunSpecHandoffTools } from "../../../tools/runtime/RunSpecHandoffTools.js";
+import type { ToolCallContext } from "../../../tools/types.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({
@@ -4939,6 +4941,162 @@ describe("ChatRunner", () => {
       expect(stored.origin.metadata).toMatchObject({
         platform: "telegram",
         message_id: "message-1",
+      });
+    });
+
+    it("preserves gateway reply target metadata when AgentLoop drafts RunSpec through a model-visible tool", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-gateway-runspec-tool-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const llmClient = createMockLLMClient([
+        runSpecDraftDecision({
+          objective: "Continue Kaggle optimization until score exceeds 0.98",
+        }),
+      ]);
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockImplementation(async (input: { toolCallContext?: ToolCallContext }) => {
+          const [draftTool] = createRunSpecHandoffTools({
+            stateManager,
+            llmClient,
+            daemonClient: { startGoal: vi.fn() } as never,
+          });
+          const toolResult = await draftTool.call({
+            request: "DurableloopのほうでKaggleのタスクに取り組んで",
+          }, input.toolCallContext!);
+          return {
+            success: toolResult.success,
+            output: toolResult.summary,
+            error: null,
+            exit_code: null,
+            elapsed_ms: 1,
+            stopped_reason: "completed",
+          };
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient,
+        chatAgentLoopRunner,
+      }));
+      const ingress = {
+        ...makeIngress("DurableloopのほうでKaggleのタスクに取り組んで"),
+        cwd: "/repo/kaggle",
+        runtimeControl: { allowed: true, approvalMode: "interactive" as const },
+        replyTarget: {
+          ...makeIngress("").replyTarget,
+          response_channel: "telegram-chat-1",
+          metadata: { gateway_message: true },
+        },
+      };
+      const selectedRoute: SelectedChatRoute = {
+        kind: "agent_loop",
+        reason: "agent_loop_available",
+        replyTargetPolicy: "turn_reply_target",
+        eventProjectionPolicy: "turn_only",
+        concurrencyPolicy: "session_serial",
+      };
+
+      const result = await runner.executeIngressMessage(ingress, "/repo/kaggle", 120_000, selectedRoute);
+
+      expect(result.success).toBe(true);
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.origin.channel).toBe("agent_loop");
+      expect(stored.origin.reply_target).toMatchObject({
+        conversation_id: "chat-1",
+        response_channel: "telegram-chat-1",
+      });
+      const session = await new ChatSessionCatalog(stateManager).loadSession(runner.getSessionId()!);
+      expect(session?.runSpecConfirmation).toMatchObject({
+        state: "pending",
+        spec: { id: stored.id },
+      });
+    });
+
+    it("preserves pending RunSpec confirmation and reply target through the tool-loop fallback", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-gateway-runspec-tool-loop-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const daemonClient = { startGoal: vi.fn() };
+      const llmClient = {
+        supportsToolCalling: () => true,
+        sendMessage: vi.fn()
+          .mockResolvedValueOnce({
+            content: "",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "tool_calls",
+            tool_calls: [{
+              id: "call-draft-runspec",
+              type: "function",
+              function: {
+                name: "draft_run_spec",
+                arguments: JSON.stringify({
+                  request: "DurableloopのほうでKaggleのタスクに取り組んで",
+                }),
+              },
+            }],
+          })
+          .mockResolvedValueOnce({
+            content: runSpecDraftDecision({
+              objective: "Continue Kaggle optimization until score exceeds 0.98",
+            }),
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "end_turn",
+          })
+          .mockResolvedValueOnce({
+            content: "RunSpec draft is ready.",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "end_turn",
+            tool_calls: [],
+          }),
+        parseJSON: vi.fn((content: string, schema) => schema.parse(JSON.parse(content))),
+      } as unknown as ILLMClient;
+      const tools = createRunSpecHandoffTools({
+        stateManager,
+        llmClient,
+        daemonClient: daemonClient as never,
+      });
+      const registry = {
+        listAll: () => tools,
+        get: (name: string) => tools.find((tool) => tool.metadata.name === name),
+      };
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        llmClient,
+        registry: registry as never,
+      }));
+      const ingress = {
+        ...makeIngress("DurableloopのほうでKaggleのタスクに取り組んで"),
+        cwd: "/repo/kaggle",
+        runtimeControl: { allowed: true, approvalMode: "interactive" as const },
+        replyTarget: {
+          ...makeIngress("").replyTarget,
+          response_channel: "telegram-chat-1",
+          metadata: { gateway_message: true },
+        },
+      };
+      const selectedRoute: SelectedChatRoute = {
+        kind: "tool_loop",
+        reason: "tool_loop_available",
+        replyTargetPolicy: "turn_reply_target",
+        eventProjectionPolicy: "turn_only",
+        concurrencyPolicy: "session_serial",
+      };
+
+      const result = await runner.executeIngressMessage(ingress, "/repo/kaggle", 120_000, selectedRoute);
+
+      expect(result.success).toBe(true);
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      expect(stored.origin.channel).toBe("agent_loop");
+      expect(stored.origin.reply_target).toMatchObject({
+        conversation_id: "chat-1",
+        response_channel: "telegram-chat-1",
+      });
+      const session = await new ChatSessionCatalog(stateManager).loadSession(runner.getSessionId()!);
+      expect(session?.runSpecConfirmation).toMatchObject({
+        state: "pending",
+        spec: { id: stored.id },
       });
     });
   });
