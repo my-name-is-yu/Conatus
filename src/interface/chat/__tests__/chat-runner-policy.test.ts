@@ -157,7 +157,7 @@ describe("ChatRunner policy commands", () => {
     const runner = new ChatRunner(makeDeps());
     runner.startSession("/repo");
 
-    const result = await runner.execute("/models high", "/repo");
+    const result = await runner.execute("/model high", "/repo");
 
     expect(result.success).toBe(true);
     const saved = providerConfigMock.save.mock.calls[0]?.[0] as Record<string, unknown>;

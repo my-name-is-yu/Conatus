@@ -90,7 +90,6 @@ Configuration
   /model                Show model and reasoning choices
   /model <model> [effort]
                         Select OpenAI model and optional reasoning effort
-  /models               Alias for /model
   /permissions [args]   Show or update session execution policy
   /plugins              List installed plugins when plugin metadata is available
   /usage [scope]        Show usage summary (session, goal <id>, daemon <goal-id>, schedule [7d|24h|2w])
@@ -194,8 +193,8 @@ export class ChatRunnerCommandHandler {
     if (cmd === "/config") {
       return this.handleConfig(start);
     }
-    if (cmd === "/model" || cmd === "/models") {
-      return this.handleModel(trimmed.slice(cmd.length).trim(), start);
+    if (cmd === "/model") {
+      return this.handleModel(trimmed.slice("/model".length).trim(), start);
     }
     if (cmd === "/permissions") {
       return this.handlePermissions(trimmed.slice("/permissions".length).trim(), start);

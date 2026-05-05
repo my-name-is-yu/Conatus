@@ -136,7 +136,7 @@ const COMMANDS: Suggestion[] = [
   },
   {
     name: "/model",
-    aliases: ["/models"],
+    aliases: [],
     description: "Choose model and reasoning effort",
     type: "command",
   },
