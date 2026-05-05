@@ -32,12 +32,17 @@ function makePattern(overrides: Partial<LearnedPattern> = {}): LearnedPattern {
   };
 }
 
-function makeMockEthicsGate(verdict: "pass" | "flag" | "reject" = "pass") {
+function makeMockEthicsGate(
+  verdict: "pass" | "flag" | "reject" = "pass",
+  options: { category?: string; confidence?: number } = {}
+) {
   return {
     check: async () => ({
       verdict,
+      category: options.category ?? (verdict === "flag" ? "privacy_concern" : verdict === "reject" ? "illegal" : "safe"),
       reasoning: verdict === "reject" ? "Rejected by ethics" : "Approved",
-      confidence: 0.9,
+      risks: verdict === "flag" ? ["review"] : [],
+      confidence: options.confidence ?? 0.9,
     }),
   } as any;
 }
@@ -191,7 +196,7 @@ describe("KnowledgeTransfer.autoApplyHighConfidenceTransfers", () => {
     expect(applied.length).toBe(0);
   });
 
-  it("rejects when ethics-gate returns flag", async () => {
+  it("rejects when ethics-gate returns a manual-review flag", async () => {
     const highConfPattern = makePattern({ confidence: 0.9, applicable_domains: ["testing"] });
     const llmClient = createMockLLMClient([ADAPTATION_RESPONSE, ADAPTATION_RESPONSE, ADAPTATION_RESPONSE]);
     const kt = new KnowledgeTransfer({
@@ -199,7 +204,7 @@ describe("KnowledgeTransfer.autoApplyHighConfidenceTransfers", () => {
       knowledgeManager: {} as any,
       vectorIndex,
       learningPipeline: makeMockLearningPipeline({ goal_a: [highConfPattern] }),
-      ethicsGate: makeMockEthicsGate("flag"),
+      ethicsGate: makeMockEthicsGate("flag", { category: "classifier_unavailable", confidence: 0 }),
       stateManager,
       transferTrust: makeMockTransferTrust(0.8),
     });
