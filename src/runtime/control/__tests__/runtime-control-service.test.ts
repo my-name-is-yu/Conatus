@@ -82,26 +82,27 @@ describe("RuntimeControlService", () => {
     }
   });
 
-  it("rejects unsupported operation kinds before claiming executor support", async () => {
-    const tmpDir = makeTempDir("pulseed-runtime-control-service-unsupported-");
+  it("routes reload_config through approval and executor support", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-reload-config-");
     try {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
-      const executor = vi.fn();
+      const executor = vi.fn().mockResolvedValue({ ok: true, state: "verified", message: "config reloaded" });
       const service = new RuntimeControlService({ operationStore, executor });
 
       const result = await service.request({
         intent: { kind: "reload_config", reason: "runtime 設定を再読み込みして" },
         cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
       });
 
       expect(result).toMatchObject({
-        success: false,
-        state: "failed",
-        message: expect.stringContaining("not supported"),
+        success: true,
+        state: "verified",
+        message: "config reloaded",
       });
-      expect(executor).not.toHaveBeenCalled();
+      expect(executor).toHaveBeenCalledOnce();
       expect(await operationStore.listPending()).toHaveLength(0);
-      expect(await operationStore.listCompleted()).toHaveLength(0);
+      expect(await operationStore.listCompleted()).toHaveLength(1);
     } finally {
       cleanupTempDir(tmpDir);
     }
@@ -278,7 +279,7 @@ describe("RuntimeControlService", () => {
       expect(result).toMatchObject({
         success: false,
         state: "blocked",
-        message: expect.stringContaining("Multiple active/recent runtime runs"),
+        message: expect.stringContaining("Multiple runtime runs match this request"),
       });
     } finally {
       cleanupTempDir(tmpDir);

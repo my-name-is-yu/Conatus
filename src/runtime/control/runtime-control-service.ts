@@ -3,7 +3,6 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import {
   createRuntimeSessionRegistry,
   type BackgroundRun,
-  type RuntimeSessionRegistrySnapshot,
 } from "../session-registry/index.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceLedgerPort } from "../store/evidence-ledger.js";
 import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
@@ -16,6 +15,7 @@ import type {
   RuntimeControlReplyTarget,
 } from "../store/runtime-operation-schemas.js";
 import type { RuntimeControlIntent } from "./runtime-control-intent.js";
+import { resolveRuntimeTarget } from "./runtime-target-resolver.js";
 
 export interface RuntimeControlRequest {
   intent: RuntimeControlIntent;
@@ -76,9 +76,6 @@ type RuntimeControlStep =
 type TargetResolution =
   | { ok: true; run?: BackgroundRun; goalId?: string | null }
   | { ok: false; result: RuntimeControlResult };
-
-const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
-const ATTENTION_RUN_STATUSES = new Set(["failed", "timed_out", "lost"]);
 
 export class RuntimeControlService {
   private readonly operationStore: RuntimeOperationStore;
@@ -244,27 +241,24 @@ export class RuntimeControlService {
     }
 
     const snapshot = await this.sessionRegistry.snapshot();
-    const explicitRunId = request.intent.target?.runId;
-    const explicitSessionId = request.intent.target?.sessionId;
-    const run = explicitRunId
-      ? snapshot.background_runs.find((candidate) => candidate.id === explicitRunId)
-      : explicitSessionId
-        ? snapshot.background_runs.find((candidate) => candidate.child_session_id === explicitSessionId)
-        : selectImplicitTarget(snapshot, request);
+    const resolution = resolveRuntimeTarget({
+      snapshot,
+      operation: request.intent.kind,
+      target: request.intent.target,
+      selector: request.intent.targetSelector,
+      conversationId: request.replyTarget?.conversation_id ?? request.requestedBy?.conversation_id ?? null,
+    });
 
-    if (!run) {
-      const candidates = selectableRuns(snapshot);
-      if (!explicitRunId && !explicitSessionId && candidates.length > 1) {
-        return blocked(`Multiple active/recent runtime runs match this request. Specify one run id: ${candidates.map((candidate) => candidate.id).join(", ")}`);
-      }
-      return blocked("No active or recent long-running runtime run matched this request.");
+    if (resolution.status === "ambiguous") {
+      return blocked(`Multiple runtime runs match this request. Specify one run id: ${resolution.evidence.candidates.map((candidate) => candidate.run_id).join(", ")}`);
     }
-
-    if (!isCurrentRunForControl(run, request.intent.kind)) {
-      return blocked(`Runtime run ${run.id} is stale or terminal for ${request.intent.kind}; refusing to reuse previous-session state.`);
+    if (resolution.status === "unknown") {
+      return blocked(`No runtime run matched this request: ${resolution.evidence.reason}.`);
     }
-
-    return { ok: true, run, goalId: resolveGoalId(run) };
+    if (resolution.status === "stale") {
+      return blocked(`${resolution.evidence.reason}; refusing to reuse previous-session state.`);
+    }
+    return { ok: true, run: resolution.run, goalId: resolution.goalId };
   }
 
   private async proposeFinalize(
@@ -464,8 +458,13 @@ export class RuntimeControlService {
 
 export function isExecutableRuntimeControlKind(
   kind: RuntimeControlOperationKind
-): kind is Extract<RuntimeControlOperationKind, "restart_daemon" | "restart_gateway" | "pause_run" | "resume_run"> {
-  return kind === "restart_daemon" || kind === "restart_gateway" || kind === "pause_run" || kind === "resume_run";
+): kind is Extract<RuntimeControlOperationKind, "restart_daemon" | "restart_gateway" | "reload_config" | "self_update" | "pause_run" | "resume_run"> {
+  return kind === "restart_daemon"
+    || kind === "restart_gateway"
+    || kind === "reload_config"
+    || kind === "self_update"
+    || kind === "pause_run"
+    || kind === "resume_run";
 }
 
 function isRunControlKind(
@@ -475,7 +474,13 @@ function isRunControlKind(
 }
 
 function requiresApproval(kind: RuntimeControlOperationKind): boolean {
-  return kind === "restart_daemon" || kind === "restart_gateway" || kind === "pause_run" || kind === "resume_run" || kind === "finalize_run";
+  return kind === "restart_daemon"
+    || kind === "restart_gateway"
+    || kind === "reload_config"
+    || kind === "self_update"
+    || kind === "pause_run"
+    || kind === "resume_run"
+    || kind === "finalize_run";
 }
 
 function normalizeReplyTarget(target: RuntimeControlReplyTarget): RuntimeControlReplyTarget {
@@ -548,45 +553,6 @@ function riskForIntent(intent: RuntimeControlIntent): RuntimeControlOperation["r
     irreversible: intent.irreversible ?? true,
     external_actions: intent.externalActions ?? [],
   };
-}
-
-function selectableRuns(snapshot: RuntimeSessionRegistrySnapshot): BackgroundRun[] {
-  return [...snapshot.background_runs]
-    .filter((run) => ACTIVE_RUN_STATUSES.has(run.status) || ATTENTION_RUN_STATUSES.has(run.status))
-    .sort((left, right) => compareUpdated(right, left));
-}
-
-function selectImplicitTarget(
-  snapshot: RuntimeSessionRegistrySnapshot,
-  request: RuntimeControlRequest
-): BackgroundRun | null {
-  const candidates = selectableRuns(snapshot);
-  const conversationId = request.replyTarget?.conversation_id ?? request.requestedBy?.conversation_id;
-  const currentSessionId = conversationId ? `session:conversation:${conversationId}` : null;
-  const scoped = currentSessionId
-    ? candidates.filter((run) => run.parent_session_id === currentSessionId)
-    : [];
-  if (scoped.length === 1) return scoped[0];
-  if (scoped.length > 1) return null;
-  return candidates.length === 1 ? candidates[0] : null;
-}
-
-function isCurrentRunForControl(run: BackgroundRun, kind: RuntimeControlOperationKind): boolean {
-  if (kind === "inspect_run") return ACTIVE_RUN_STATUSES.has(run.status) || ATTENTION_RUN_STATUSES.has(run.status);
-  if (kind === "pause_run") return ACTIVE_RUN_STATUSES.has(run.status);
-  if (kind === "resume_run") return ACTIVE_RUN_STATUSES.has(run.status) || ATTENTION_RUN_STATUSES.has(run.status);
-  if (kind === "finalize_run") return ACTIVE_RUN_STATUSES.has(run.status) || ATTENTION_RUN_STATUSES.has(run.status);
-  return false;
-}
-
-function resolveGoalId(run: BackgroundRun): string | null {
-  if (run.kind !== "coreloop_run") return null;
-  if (run.goal_id) return run.goal_id;
-  return null;
-}
-
-function compareUpdated(left: BackgroundRun, right: BackgroundRun): number {
-  return Date.parse(left.updated_at ?? left.started_at ?? left.created_at ?? "") - Date.parse(right.updated_at ?? right.started_at ?? right.created_at ?? "");
 }
 
 function blocked(message: string): TargetResolution {

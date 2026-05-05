@@ -627,6 +627,45 @@ describe("ChatRunner gateway runtime-control routes", () => {
       }
     });
 
+    it("routes approved reload_config and self_update through RuntimeControlService", async () => {
+      for (const operation of ["reload_config", "self_update"] as const) {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `pulseed-runtime-control-${operation}-`));
+        try {
+          const adapter = makeMockAdapter();
+          const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+          const executor = vi.fn().mockResolvedValue({
+            ok: true,
+            state: "verified",
+            message: `${operation} requested`,
+          });
+          const runtimeControlService = new RuntimeControlService({
+            operationStore,
+            executor,
+          });
+          const runtimeControlApprovalFn = vi.fn().mockResolvedValue(true);
+          const runner = new ChatRunner(makeDeps({
+            adapter,
+            llmClient: createSingleMockLLMClient(JSON.stringify({
+              intent: operation,
+              reason: `please ${operation}`,
+            })),
+            runtimeControlApprovalFn,
+            runtimeControlService,
+            runtimeReplyTarget: { surface: "gateway", platform: "telegram" },
+          }));
+
+          const result = await runner.execute(`please ${operation}`, "/repo");
+
+          expect(result).toMatchObject({ success: true, output: `${operation} requested` });
+          expect(runtimeControlApprovalFn).toHaveBeenCalledWith(expect.stringContaining(operation));
+          expect(executor).toHaveBeenCalledWith(expect.objectContaining({ kind: operation }), expect.anything());
+          expect(adapter.execute).not.toHaveBeenCalled();
+        } finally {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+      }
+    });
+
     it("routes natural-language run pause to typed runtime control instead of the adapter", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-control-chat-pause-"));
       try {
@@ -677,6 +716,7 @@ describe("ChatRunner gateway runtime-control routes", () => {
           llmClient: createSingleMockLLMClient(JSON.stringify({
             intent: "pause_run",
             reason: "この実行を一時停止して",
+            targetSelector: { scope: "run", reference: "current", sourceText: "この実行" },
           })),
           runtimeControlService,
           runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
@@ -690,6 +730,99 @@ describe("ChatRunner gateway runtime-control routes", () => {
           kind: "pause_run",
           target: expect.objectContaining({ run_id: "run:coreloop:chat", goal_id: "goal-1" }),
         }), expect.anything());
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("resolves latest and previous natural-language run references through typed target selection", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-control-target-selector-"));
+      try {
+        const adapter = makeMockAdapter();
+        const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+        const runtimeControlService = new RuntimeControlService({
+          operationStore,
+          sessionRegistry: {
+            snapshot: vi.fn().mockResolvedValue({
+              schema_version: "runtime-session-registry-v1",
+              generated_at: "2026-05-02T00:20:00.000Z",
+              sessions: [],
+              background_runs: [
+                {
+                  schema_version: "background-run-v1",
+                  id: "run:older",
+                  kind: "coreloop_run",
+                  parent_session_id: null,
+                  child_session_id: "session:coreloop:older",
+                  process_session_id: null,
+                  goal_id: "goal-older",
+                  status: "running",
+                  notify_policy: "done_only",
+                  reply_target_source: "none",
+                  pinned_reply_target: null,
+                  title: "older",
+                  workspace: "/repo",
+                  created_at: "2026-05-02T00:00:00.000Z",
+                  started_at: "2026-05-02T00:00:00.000Z",
+                  updated_at: "2026-05-02T00:00:00.000Z",
+                  completed_at: null,
+                  summary: null,
+                  error: null,
+                  artifacts: [],
+                  source_refs: [],
+                },
+                {
+                  schema_version: "background-run-v1",
+                  id: "run:newer",
+                  kind: "coreloop_run",
+                  parent_session_id: null,
+                  child_session_id: "session:coreloop:newer",
+                  process_session_id: null,
+                  goal_id: "goal-newer",
+                  status: "running",
+                  notify_policy: "done_only",
+                  reply_target_source: "none",
+                  pinned_reply_target: null,
+                  title: "newer",
+                  workspace: "/repo",
+                  created_at: "2026-05-02T00:10:00.000Z",
+                  started_at: "2026-05-02T00:10:00.000Z",
+                  updated_at: "2026-05-02T00:10:00.000Z",
+                  completed_at: null,
+                  summary: null,
+                  error: null,
+                  artifacts: [],
+                  source_refs: [],
+                },
+              ],
+              warnings: [],
+            }),
+          },
+        });
+        const runner = new ChatRunner(makeDeps({
+          adapter,
+          llmClient: createMockLLMClient([
+            JSON.stringify({
+              intent: "inspect_run",
+              reason: "latest session",
+              targetSelector: { scope: "run", reference: "latest", sourceText: "latest session" },
+            }),
+            JSON.stringify({
+              intent: "inspect_run",
+              reason: "前のバックグラウンドジョブ",
+              targetSelector: { scope: "run", reference: "previous", sourceText: "前のバックグラウンドジョブ" },
+            }),
+          ]),
+          runtimeControlService,
+          runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
+        }));
+
+        await expect(runner.execute("inspect latest session", "/repo")).resolves.toMatchObject({ success: true });
+        await expect(runner.execute("前のバックグラウンドジョブを確認して", "/repo")).resolves.toMatchObject({ success: true });
+
+        const completed = await operationStore.listCompleted();
+        expect(completed.map((operation) => operation.target?.run_id).sort()).toEqual(["run:newer", "run:older"].sort());
+        expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }

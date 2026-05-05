@@ -364,6 +364,7 @@ class ChatEventDeliveryQueue {
 export class CrossPlatformChatSessionManager {
   private readonly sessions = new Map<string, ManagedChatSession>();
   private readonly activeApprovalEventHandlers = new Map<string, ChatEventHandler>();
+  private readonly approvalSideTurnIngressIds = new Set<string>();
   private readonly ingressRouter = createIngressRouter();
 
   constructor(private readonly deps: ChatRunnerDeps) {}
@@ -406,6 +407,9 @@ export class CrossPlatformChatSessionManager {
       };
     }
     const session = this.getOrCreateSession(ingress, options.cwd);
+    if (ingress.ingress_id && this.approvalSideTurnIngressIds.delete(ingress.ingress_id)) {
+      return this.executeInSession(session, ingress, options);
+    }
     const queueEntry = session.queue.then(() => this.executeInSession(session, ingress, options));
     session.queue = queueEntry.then(() => undefined, () => undefined);
     return queueEntry;
@@ -471,6 +475,9 @@ export class CrossPlatformChatSessionManager {
       };
     }
     const session = this.getOrCreateSession(normalizedIngress, options.cwd);
+    if (normalizedIngress.ingress_id && this.approvalSideTurnIngressIds.delete(normalizedIngress.ingress_id)) {
+      return this.executeInSession(session, normalizedIngress, options);
+    }
     const queueEntry = session.queue.then(() => this.executeInSession(session, normalizedIngress, options));
     session.queue = queueEntry.then(() => undefined, () => undefined);
     return queueEntry;
@@ -536,6 +543,12 @@ export class CrossPlatformChatSessionManager {
     }
     if (decision.decision === "clarify") {
       return decision.clarification ?? "Approval is still pending. Please clarify what you need before approving or rejecting.";
+    }
+    if (decision.decision === "side_question" || decision.decision === "new_intent") {
+      if (ingress.ingress_id) {
+        this.approvalSideTurnIngressIds.add(ingress.ingress_id);
+      }
+      return null;
     }
     return decision.clarification ?? "Approval reply was ambiguous. The approval remains pending.";
   }
