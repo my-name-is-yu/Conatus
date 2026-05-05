@@ -13,12 +13,12 @@ import {
   formatToolActivity,
 } from "./chat-runner-support.js";
 import type { ChatUsageCounter } from "./chat-history.js";
-import type { ChatRunResult, ChatRunnerDeps, RuntimeControlChatContext } from "./chat-runner.js";
+import type { ChatRunResult, ChatRunnerRouteHost, RuntimeControlChatContext } from "./chat-runner-contracts.js";
 import type { SelectedChatRoute } from "./ingress-router.js";
 import type { ChatEventContext } from "./chat-events.js";
 import type { AgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
 import { resolveExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
-import type { AssistantBuffer, ChatRunnerEventBridge } from "./chat-runner-event-bridge.js";
+import type { AssistantBuffer } from "./chat-runner-event-bridge.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 import { createGatewaySetupStatusProvider, type TelegramSetupStatus } from "./gateway-setup-status.js";
 import {
@@ -40,24 +40,6 @@ import { buildStaticSystemPrompt } from "./grounding.js";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
 const MAX_TOOL_LOOPS = 5;
-
-export interface ChatRunnerRouteHost {
-  deps: ChatRunnerDeps;
-  eventBridge: ChatRunnerEventBridge;
-  activatedTools: Set<string>;
-  getConversationSessionId(): string | null;
-  getSessionCwd(): string | null;
-  getNativeAgentLoopStatePath(): string | null;
-  getProviderConfigBaseDir(): string;
-  getSetupSecretIntake(): SetupSecretIntakeResult | null;
-  getTurnLanguageHint(): TurnLanguageHint;
-  setPendingSetupDialogue(dialogue: SetupDialogueRuntimeState | null): Promise<void>;
-  getPendingSetupDialogue(): SetupDialogueRuntimeState | null;
-  setPendingRunSpecConfirmation(confirmation: RunSpecConfirmationState | null): Promise<void>;
-  getPendingRunSpecConfirmation(): RunSpecConfirmationState | null;
-  getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
-  setSessionExecutionPolicy(policy: ExecutionPolicy): void;
-}
 
 export async function executeRuntimeControlRoute(
   host: ChatRunnerRouteHost,

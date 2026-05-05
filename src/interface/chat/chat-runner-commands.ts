@@ -40,8 +40,12 @@ import {
   type ExecutionPolicy,
 } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import { formatRoute, formatRuntimeSessionsList, formatRuntimeStatus } from "./chat-runner-runtime.js";
-import type { ChatRunnerDeps, ChatRunResult, RuntimeControlChatContext } from "./chat-runner.js";
-import type { SelectedChatRoute } from "./ingress-router.js";
+import type {
+  ChatRunResult,
+  ChatRunnerCommandHost,
+  PendingTendState,
+  ResumeCommand,
+} from "./chat-runner-contracts.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { DaemonSnapshot } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
@@ -86,34 +90,6 @@ Review and branching
 
 Deferred
   /retry is intentionally not supported yet.`;
-
-export interface PendingTendState {
-  goalId: string;
-  maxIterations?: number;
-}
-
-export interface ResumeCommand {
-  selector?: string;
-}
-
-export interface ChatRunnerCommandHost {
-  deps: ChatRunnerDeps;
-  onNotification?: (message: string) => void;
-  getHistory(): ChatHistory | null;
-  setHistory(history: ChatHistory | null): void;
-  getSessionCwd(): string | null;
-  setSessionCwd(cwd: string | null): void;
-  setSessionActive(active: boolean): void;
-  getNativeAgentLoopStatePath(): string | null;
-  setNativeAgentLoopStatePath(path: string | null): void;
-  getRuntimeControlContext(): RuntimeControlChatContext | null;
-  getPendingTend(): PendingTendState | null;
-  setPendingTend(value: PendingTendState | null): void;
-  getLastSelectedRoute(): SelectedChatRoute | null;
-  getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
-  emitEvent(event: ChatEvent): void;
-  getActiveSubscribers(): Map<string, EventSubscriber>;
-}
 
 export class ChatRunnerCommandHandler {
   constructor(private readonly host: ChatRunnerCommandHost) {}

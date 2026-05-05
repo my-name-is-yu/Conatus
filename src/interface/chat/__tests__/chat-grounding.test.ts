@@ -37,7 +37,7 @@ import { ClaudeAPIAdapter } from "../../../adapters/agents/claude-api.js";
 import { ClaudeCodeCLIAdapter } from "../../../adapters/agents/claude-code-cli.js";
 import { OpenAICodexCLIAdapter } from "../../../adapters/agents/openai-codex.js";
 import { ChatRunner } from "../chat-runner.js";
-import type { ChatRunnerDeps } from "../chat-runner.js";
+import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";

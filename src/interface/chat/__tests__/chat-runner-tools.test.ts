@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
-import type { ChatRunnerDeps } from "../chat-runner.js";
+import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient, LLMResponse } from "../../../base/llm/llm-client.js";

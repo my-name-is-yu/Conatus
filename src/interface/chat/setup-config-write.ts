@@ -1,12 +1,27 @@
 import { getGatewayChannelDir } from "../../base/utils/paths.js";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import type { TelegramGatewayConfig } from "../../runtime/gateway/telegram-gateway-adapter.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
 } from "../../runtime/store/runtime-operation-schemas.js";
 import type { SetupDialogueRuntimeState } from "./setup-dialogue.js";
+
+interface TelegramGatewayConfig {
+  bot_token: string;
+  chat_id?: number;
+  allowed_user_ids: unknown[];
+  denied_user_ids: unknown[];
+  allowed_chat_ids: unknown[];
+  denied_chat_ids: unknown[];
+  runtime_control_allowed_user_ids: unknown[];
+  chat_goal_map: Record<string, unknown>;
+  user_goal_map: Record<string, unknown>;
+  default_goal_id?: string;
+  allow_all: boolean;
+  polling_timeout: number;
+  identity_key?: string;
+}
 
 export interface TelegramGatewayConfigWriteRequest {
   pending: SetupDialogueRuntimeState;
