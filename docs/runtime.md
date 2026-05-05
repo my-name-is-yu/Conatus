@@ -36,11 +36,11 @@ Supported chat slash commands:
 
 - Session: `/help`, `/clear`, `/sessions`, `/history [id|title]`, `/title <title>`, `/resume [id|title]`, `/cleanup [--dry-run]`, `/compact`, `/exit`
 - Goals and tasks: `/status [goal-id]`, `/goals`, `/tasks [goal-id]`, `/task <task-id> [goal-id]`, `/track`, `/tend`
-- Configuration: `/config`, `/model`, `/plugins`
+- Configuration: `/config`, `/model`, `/models`, `/model <model> [effort]`, `/plugins`
 - Usage: `/usage [session|goal <goal-id>|daemon <goal-id>|schedule [24h|7d|2w]]`
 
 `/compact` summarizes older chat turns into the saved session summary and keeps the latest user and assistant turns available for continuation.
-`/config` and `/model` are read-only and mask secrets.
+`/config` is read-only and masks secrets. `/model` and `/models` mirror Codex-style model selection: without arguments they show the active model and available choices; `/model <model> [effort]` updates the OpenAI model and optional reasoning effort for subsequent chat turns.
 
 Deferred command: `/retry` is intentionally not supported yet.
 

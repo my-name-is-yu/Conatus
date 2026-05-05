@@ -32,8 +32,8 @@ import { resolveExecutionPolicy } from "../../orchestrator/execution/agent-loop/
  *   - "openai"    → OpenAILLMClient or CodexLLMClient depending on adapter
  *   - "ollama"    → OllamaLLMClient
  */
-export async function buildLLMClient(): Promise<ILLMClient> {
-  const config = await loadProviderConfig();
+export async function buildLLMClient(providerConfig?: ProviderConfig): Promise<ILLMClient> {
+  const config = providerConfig ?? await loadProviderConfig();
 
   switch (config.provider) {
     case "openai": {
@@ -118,6 +118,7 @@ export async function buildAdapterRegistry(
   const config = providerConfig ?? await loadProviderConfig();
   registry.register(new ClaudeCodeCLIAdapter({ terminalBackend: config.terminal_backend }));
   registry.register(new ClaudeAPIAdapter(llmClient));
+  registry.register(new ClaudeAPIAdapter(llmClient, "openai_api"));
   registry.register(new OpenAICodexCLIAdapter({
     cliPath: config.codex_cli_path,
     model: config.model,

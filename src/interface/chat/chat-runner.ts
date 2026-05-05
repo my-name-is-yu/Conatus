@@ -192,6 +192,7 @@ export class ChatRunner {
       setPendingTend: (value) => { this.pendingTend = value; },
       getLastSelectedRoute: () => this.lastSelectedRoute,
       getSessionExecutionPolicy: () => this.getSessionExecutionPolicy(),
+      reloadProviderRuntime: () => this.reloadProviderRuntime(),
       emitEvent: (event) => this.eventBridge.emitEvent(event),
       getActiveSubscribers: () => this.activeSubscribers as Map<string, never>,
       setSessionExecutionPolicy: (policy: ExecutionPolicy) => { this.sessionExecutionPolicy = policy; },
@@ -795,6 +796,51 @@ export class ChatRunner {
   private providerConfigBaseDir(): string {
     const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
     return typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
+  }
+
+  private async reloadProviderRuntime(): Promise<void> {
+    const [
+      { buildAdapterRegistry, buildLLMClient },
+      { loadProviderConfig },
+      {
+        createNativeChatAgentLoopRunner,
+        createNativeReviewAgentLoopRunner,
+        shouldUseNativeTaskAgentLoop,
+      },
+    ] = await Promise.all([
+      import("../../base/llm/provider-factory.js"),
+      import("../../base/llm/provider-config.js"),
+      import("../../orchestrator/execution/agent-loop/index.js"),
+    ]);
+    const providerConfig = await loadProviderConfig({
+      baseDir: this.providerConfigBaseDir(),
+      saveMigration: false,
+    });
+    const llmClient = await buildLLMClient(providerConfig);
+    const adapterRegistry = await buildAdapterRegistry(llmClient, providerConfig);
+    this.deps.llmClient = llmClient;
+    this.deps.adapter = adapterRegistry.getAdapter(providerConfig.adapter);
+    this.deps.chatAgentLoopRunner = this.deps.registry && this.deps.toolExecutor && shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
+      ? createNativeChatAgentLoopRunner({
+          llmClient,
+          providerConfig,
+          toolRegistry: this.deps.registry,
+          toolExecutor: this.deps.toolExecutor,
+          cwd: this.sessionCwd ?? process.cwd(),
+          traceBaseDir: this.providerConfigBaseDir(),
+        })
+      : undefined;
+    this.deps.reviewAgentLoopRunner = this.deps.registry && this.deps.toolExecutor && shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
+      ? createNativeReviewAgentLoopRunner({
+          llmClient,
+          providerConfig,
+          toolRegistry: this.deps.registry,
+          toolExecutor: this.deps.toolExecutor,
+          cwd: this.sessionCwd ?? process.cwd(),
+          traceBaseDir: this.providerConfigBaseDir(),
+        })
+      : undefined;
+    this.cachedStaticSystemPrompt = null;
   }
 
   private async handlePendingRunSpecConfirmation(input: string): Promise<ChatRunResult | null> {
