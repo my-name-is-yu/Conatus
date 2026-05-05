@@ -55,6 +55,7 @@ export function loadedSessionToChatSession(session: LoadedChatSession): ChatSess
     ...(session.lastRetryAt ? { lastRetryAt: session.lastRetryAt } : {}),
     ...(session.lastResumedAt ? { lastResumedAt: session.lastResumedAt } : {}),
     ...(session.notificationReplyTarget ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+    ...(session.setupDialogue ? { setupDialogue: session.setupDialogue } : {}),
     ...(session.runSpecConfirmation ? { runSpecConfirmation: session.runSpecConfirmation } : {}),
     ...(session.parentNotificationStatus ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
     ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
@@ -142,6 +143,8 @@ export function buildRuntimeControlContextFromIngress(
   return {
     actor: ingress.actor,
     replyTarget: ingress.replyTarget,
+    allowed: ingress.runtimeControl.allowed,
+    approvalMode: ingress.runtimeControl.approvalMode,
     approvalFn: ingress.runtimeControl.approvalMode === "preapproved"
       ? async () => true
       : ingress.runtimeControl.approvalMode === "interactive"

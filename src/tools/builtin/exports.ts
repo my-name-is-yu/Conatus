@@ -54,6 +54,8 @@ export {
   type WorkspaceImportInput,
   type WorkspaceImportOutput,
 } from "../runtime/LongRunningRuntimeTools.js";
+export { createRunSpecHandoffTools } from "../runtime/RunSpecHandoffTools.js";
+export { createSetupRuntimeControlTools } from "../runtime/SetupRuntimeControlTools.js";
 export { GitHubReadTool, GitHubPrCreateTool } from "../network/GitHubCliTool/GitHubCliTool.js";
 export { McpListToolsTool, McpCallToolTool } from "../network/McpStdioTool/McpStdioTool.js";
 export { ToolSearchTool } from "../query/ToolSearchTool/ToolSearchTool.js";

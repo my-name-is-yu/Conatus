@@ -202,6 +202,21 @@ export interface ToolCallContext {
   };
   /** Latest turn reply target when a chat/gateway surface exposes one to tools. */
   runtimeReplyTarget?: Record<string, unknown> | null;
+  /** Latest turn runtime-control actor metadata when a chat/gateway surface exposes one to tools. */
+  runtimeControlActor?: Record<string, unknown> | null;
+  /** Whether the ingress surface is authorized for runtime-control lifecycle operations. */
+  runtimeControlAllowed?: boolean;
+  /** Runtime-control approval mode supplied by the ingress/gateway boundary. */
+  runtimeControlApprovalMode?: "interactive" | "preapproved" | "disallowed";
+  /** Setup secret intake from the current turn. Values are tool-private and must not be returned. */
+  setupSecretIntake?: unknown | null;
+  /** Chat-surface setup dialogue state bridge for setup tools. */
+  setupDialogue?: {
+    get(): unknown | null | Promise<unknown | null>;
+    set(value: unknown | null): void | Promise<void>;
+  };
+  /** Base dir used for provider/gateway config lookups. */
+  providerConfigBaseDir?: string;
   /** Unique call identifier for correlation in audit logs */
   callId?: string;
   /** Optional logger for audit-trail events */
