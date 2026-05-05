@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { z } from "zod";
 import { ChatRunner } from "../chat-runner.js";
-import type { ChatRunnerDeps } from "../chat-runner.js";
+import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import { ChatSessionCatalog } from "../chat-session-store.js";
 import { StateManager } from "../../../base/state/state-manager.js";

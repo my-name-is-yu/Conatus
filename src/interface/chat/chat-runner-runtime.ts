@@ -13,7 +13,7 @@ import type {
   RuntimeSessionRegistryWarning,
 } from "../../runtime/session-registry/types.js";
 import type { RuntimeControlActor, RuntimeControlReplyTarget } from "../../runtime/store/runtime-operation-schemas.js";
-import type { RuntimeControlChatContext } from "./chat-runner.js";
+import type { RuntimeControlChatContext } from "./chat-runner-contracts.js";
 import type { LoadedChatSession } from "./chat-session-store.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 

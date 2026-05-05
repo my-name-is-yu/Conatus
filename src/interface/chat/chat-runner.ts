@@ -4,8 +4,6 @@
 // Bypasses TaskLifecycle — calls adapter.execute() directly.
 
 import type { StateManager } from "../../base/state/state-manager.js";
-import type { IAdapter } from "../../orchestrator/execution/adapter-layer.js";
-import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { ChatHistory, type ChatSession } from "./chat-history.js";
 import {
@@ -14,26 +12,12 @@ import {
   type LoadedChatSession,
 } from "./chat-session-store.js";
 import { buildChatContext, resolveGitRoot } from "../../platform/observation/context-provider.js";
-import type { EscalationHandler } from "./escalation.js";
 import { buildChatAgentLoopSystemPrompt, buildStaticSystemPrompt, createChatGroundingGateway } from "./grounding.js";
 import type { GroundingGateway } from "../../grounding/gateway.js";
-import type { ApprovalLevel } from "./mutation-tool-defs.js";
-import type { ToolRegistry } from "../../tools/registry.js";
-import type { ToolExecutor } from "../../tools/executor.js";
-import type { DaemonClient } from "../../runtime/daemon/client.js";
-import type { GatewaySetupStatusProvider } from "./gateway-setup-status.js";
-import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { ChatEventHandler } from "./chat-events.js";
-import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
-import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
-import type { RuntimeControlService } from "../../runtime/control/index.js";
-import type { ApprovalBroker } from "../../runtime/approval-broker.js";
 import { classifyRuntimeControlIntent } from "../../runtime/control/index.js";
 import { classifyConfirmationDecision } from "../../runtime/confirmation-decision.js";
-import type {
-  RuntimeControlActor,
-  RuntimeControlReplyTarget,
-} from "../../runtime/store/runtime-operation-schemas.js";
+import type { RuntimeControlReplyTarget } from "../../runtime/store/runtime-operation-schemas.js";
 import type { RuntimeReplyTarget } from "../../runtime/session-registry/types.js";
 import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import {
@@ -45,9 +29,15 @@ import { classifyInterruptRedirect, collectGitDiffArtifact, previewActivityText 
 import {
   COMMAND_HELP,
   ChatRunnerCommandHandler,
-  type PendingTendState,
 } from "./chat-runner-commands.js";
 import { ChatRunnerEventBridge, type AssistantBuffer } from "./chat-runner-event-bridge.js";
+import type {
+  ChatRunResult,
+  ChatRunnerDeps,
+  ChatRunnerExecutionOptions,
+  PendingTendState,
+  RuntimeControlChatContext,
+} from "./chat-runner-contracts.js";
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
 import {
   isSetupWriteConfirmCommand,
@@ -92,57 +82,12 @@ import {
   type RunSpec,
 } from "../../runtime/run-spec/index.js";
 
-export interface ChatRunnerDeps {
-  stateManager: StateManager;
-  adapter: IAdapter;
-  llmClient?: ILLMClient;
-  escalationHandler?: EscalationHandler;
-  trustManager?: { getBalance(domain: string): Promise<{ balance: number }>; setOverride?(domain: string, balance: number, reason: string): Promise<void> };
-  pluginLoader?: { loadAll(): Promise<Array<{ name: string; type?: string; enabled?: boolean }>> };
-  approvalFn?: (description: string) => Promise<boolean>;
-  goalId?: string;
-  approvalConfig?: Record<string, ApprovalLevel>;
-  toolExecutor?: ToolExecutor;
-  registry?: ToolRegistry;
-  onToolStart?: (toolName: string, args: Record<string, unknown>) => void;
-  onToolEnd?: (toolName: string, result: { success: boolean; summary: string; durationMs: number }) => void;
-  daemonClient?: DaemonClient;
-  goalNegotiator?: GoalNegotiator;
-  onNotification?: (message: string) => void;
-  daemonBaseUrl?: string;
-  onEvent?: ChatEventHandler;
-  chatAgentLoopRunner?: ChatAgentLoopRunner;
-  reviewAgentLoopRunner?: Pick<ReviewAgentLoopRunner, "execute">;
-  runtimeControlService?: Pick<RuntimeControlService, "request">;
-  approvalBroker?: Pick<
-    ApprovalBroker,
-    "requestConversationalApproval" | "resolveConversationalApproval" | "findPendingConversationalApproval"
-  >;
-  runtimeControlApprovalFn?: (description: string) => Promise<boolean>;
-  runtimeReplyTarget?: RuntimeControlReplyTarget;
-  runtimeControlActor?: RuntimeControlActor;
-  gatewaySetupStatusProvider?: GatewaySetupStatusProvider;
-}
-
-export interface ChatRunResult {
-  success: boolean;
-  output: string;
-  elapsed_ms: number;
-}
-
-export interface RuntimeControlChatContext {
-  replyTarget?: RuntimeControlReplyTarget;
-  actor?: RuntimeControlActor;
-  approvalFn?: (description: string) => Promise<boolean>;
-  allowed?: boolean;
-  approvalMode?: "interactive" | "preapproved" | "disallowed";
-}
-
-export interface ChatRunnerExecutionOptions {
-  selectedRoute?: SelectedChatRoute;
-  runtimeControlContext?: RuntimeControlChatContext | null;
-  goalId?: string;
-}
+export type {
+  ChatRunResult,
+  ChatRunnerDeps,
+  ChatRunnerExecutionOptions,
+  RuntimeControlChatContext,
+} from "./chat-runner-contracts.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 

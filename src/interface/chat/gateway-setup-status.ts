@@ -2,7 +2,15 @@ import * as path from "node:path";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { getGatewayChannelDir, getPulseedDirPath } from "../../base/utils/paths.js";
 import { isDaemonRunning } from "../../runtime/daemon/client.js";
-import type { TelegramGatewayConfig } from "../../runtime/gateway/telegram-gateway-adapter.js";
+
+interface TelegramGatewaySetupConfig {
+  bot_token?: string;
+  chat_id?: number;
+  allow_all?: boolean;
+  allowed_user_ids?: unknown[];
+  runtime_control_allowed_user_ids?: unknown[];
+  identity_key?: string;
+}
 
 export type TelegramSetupState = "unconfigured" | "partially_configured" | "configured";
 
@@ -42,7 +50,7 @@ export function createGatewaySetupStatusProvider(
   return {
     async getTelegramStatus(baseDir = getPulseedDirPath()): Promise<TelegramSetupStatus> {
       const configPath = path.join(getGatewayChannelDir("telegram-bot", baseDir), "config.json");
-      const config = await readJsonFileOrNull<Partial<TelegramGatewayConfig>>(configPath);
+      const config = await readJsonFileOrNull<TelegramGatewaySetupConfig>(configPath);
       const daemon = await (deps.daemonStatus ?? isDaemonRunning)(baseDir);
       const hasBotToken = typeof config?.bot_token === "string" && config.bot_token.trim().length > 0;
       const hasHomeChat = typeof config?.chat_id === "number";

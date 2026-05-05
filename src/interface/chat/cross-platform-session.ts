@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { ChatRunner } from "./chat-runner.js";
-import type { ChatRunResult, ChatRunnerDeps } from "./chat-runner.js";
+import type { ChatRunResult, ChatRunnerDeps } from "./chat-runner-contracts.js";
 import type { ChatEvent, ChatEventHandler } from "./chat-events.js";
 import {
   createIngressRouter,

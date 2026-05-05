@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import * as fs from "node:fs";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.js";
-import type { ChatRunnerDeps } from "../chat-runner.js";
+import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { ApprovalBroker } from "../../../runtime/approval-broker.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 import type { StateManager } from "../../../base/state/state-manager.js";

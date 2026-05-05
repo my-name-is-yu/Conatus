@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
-import type { ChatRunnerDeps } from "../chat-runner.js";
+import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ITool, ToolCallContext, PermissionCheckResult, ToolResult } from "../../../tools/types.js";

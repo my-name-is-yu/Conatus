@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
-import type { ChatRunnerDeps } from "../chat-runner.js";
+import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { StateManager as RealStateManager } from "../../../base/state/state-manager.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
