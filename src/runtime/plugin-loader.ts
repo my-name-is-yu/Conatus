@@ -5,7 +5,7 @@ import { getPluginsDir } from "../base/utils/paths.js";
 import { getPulseedVersion as getPackageVersion } from "../base/utils/pulseed-meta.js";
 import { writeJsonFileAtomic } from "../base/utils/json-io.js";
 import { ValidationError } from "../base/utils/errors.js";
-import { exposeRegisteredCrossPlatformChatSessionManager } from "../interface/chat/cross-platform-session-global.js";
+import { exposeRegisteredGatewayChatSessionPort } from "./gateway/chat-session-port.js";
 import type { Logger } from "./logger.js";
 import {
   PluginManifestSchema,
@@ -104,7 +104,7 @@ export class PluginLoader {
     }
 
     // 2. Dynamically import the entry point
-    exposeRegisteredCrossPlatformChatSessionManager();
+    exposeRegisteredGatewayChatSessionPort();
     const entryPath = path.resolve(pluginDir, manifest.entry_point);
     if (!entryPath.startsWith(pluginDir + path.sep) && entryPath !== pluginDir) {
       throw new ValidationError(`Plugin entry point escapes plugin directory: ${manifest.entry_point}`);

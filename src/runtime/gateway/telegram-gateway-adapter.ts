@@ -4,11 +4,12 @@ import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from 
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import type { ChatEvent } from "../../interface/chat/chat-events.js";
-import { renderOperationProgress } from "../../interface/chat/operation-progress.js";
-import { formatLifecycleFailureMessage } from "../../interface/chat/failure-recovery.js";
-import { renderAgentTimelineItemForChat } from "../../interface/chat/chat-event-state.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import {
+  formatGatewayLifecycleFailureMessage,
+  renderGatewayAgentTimelineItem,
+  renderGatewayOperationProgress,
+} from "./chat-event-rendering.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
@@ -217,7 +218,12 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         message_id: String(messageId),
         goal_id: route.goalId,
         cwd: process.cwd(),
-        onEvent: (event) => eventAdapter.handle(event),
+        onEvent: (event) => {
+          if (isGatewayChatEvent(event)) {
+            return eventAdapter.handle(event);
+          }
+          return undefined;
+        },
         metadata: {
           ...route.metadata,
           chat_id: chatId,
@@ -407,7 +413,7 @@ class TelegramChatEventAdapter {
     return this.hasAssistantOutput;
   }
 
-  async handle(event: ChatEvent): Promise<void> {
+  async handle(event: GatewayChatEvent): Promise<void> {
     switch (event.type) {
       case "lifecycle_start":
         this.assistantMessage = null;
@@ -427,11 +433,11 @@ class TelegramChatEventAdapter {
         return;
       case "operation_progress":
         if (event.item.metadata?.["source"] === "agent_timeline_activity_summary") return;
-        await this.upsertActivityMessage(event.item.id, renderOperationProgress(event.item));
+        await this.upsertActivityMessage(event.item.id, renderGatewayOperationProgress(event.item));
         return;
       case "agent_timeline": {
         if (event.item.visibility !== "user") return;
-        const text = renderAgentTimelineItemForChat(event.item).trim();
+        const text = renderGatewayAgentTimelineItem(event.item).trim();
         if (!text) return;
         if (event.item.kind === "final") {
           this.hasAssistantOutput = true;
@@ -456,7 +462,7 @@ class TelegramChatEventAdapter {
         );
         return;
       case "lifecycle_error":
-        await this.sendFinalFallback(formatLifecycleFailureMessage(event.error, event.partialText, event.recovery));
+        await this.sendFinalFallback(formatGatewayLifecycleFailureMessage(event.error, event.partialText, event.recovery));
         return;
       case "lifecycle_end":
         return;
@@ -512,6 +518,64 @@ class TelegramChatEventAdapter {
     await this.api.editMessageText(this.chatId, existing.messageId, text);
     existing.text = text;
   }
+}
+
+type GatewayChatEvent =
+  | { type: "lifecycle_start" }
+  | { type: "assistant_delta"; text: string }
+  | { type: "assistant_final"; text: string }
+  | { type: "activity"; kind: string; sourceId?: string; message: string }
+  | {
+      type: "operation_progress";
+      item: {
+        id: string;
+        title: string;
+        detail?: string;
+        metadata?: Record<string, unknown>;
+      };
+    }
+  | {
+      type: "agent_timeline";
+      item: {
+        visibility?: string;
+        kind: "lifecycle" | "turn_context" | "model_request" | "assistant_message" | "tool" | "plan" | "approval" | "compaction" | "activity_summary" | "final" | "stopped";
+        status?: string;
+        restoredMessages?: number;
+        fromUpdatedAt?: string;
+        model?: string;
+        visibleTools?: unknown[];
+        toolCount?: number;
+        text?: string;
+        inputPreview?: string;
+        outputPreview?: string;
+        success?: boolean;
+        toolName?: string;
+        summary?: string;
+        reason?: string;
+        phase?: string;
+        inputMessages?: number;
+        outputMessages?: number;
+        reasonDetail?: string;
+        sourceEventId: string;
+      };
+    }
+  | { type: "tool_start"; presentation?: { suppressTranscript?: boolean }; toolCallId: string; toolName: string }
+  | { type: "tool_update"; presentation?: { suppressTranscript?: boolean }; toolCallId: string; toolName: string; status: string; message: string }
+  | { type: "tool_end"; presentation?: { suppressTranscript?: boolean }; toolCallId: string; toolName: string; success: boolean; summary: string }
+  | {
+      type: "lifecycle_error";
+      error: string;
+      partialText: string;
+      recovery: {
+        label: string;
+        summary: string;
+        nextActions: string[];
+      };
+    }
+  | { type: "lifecycle_end" };
+
+function isGatewayChatEvent(event: { type?: unknown }): event is GatewayChatEvent {
+  return typeof event.type === "string";
 }
 
 function loadTelegramGatewayConfig(pluginDir: string): TelegramGatewayConfig {

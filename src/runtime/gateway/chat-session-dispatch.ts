@@ -1,25 +1,18 @@
-import type { ChatEventHandler } from "../../interface/chat/chat-events.js";
-import { getGlobalCrossPlatformChatSessionManager } from "../../interface/chat/cross-platform-session.js";
+import {
+  getRegisteredGatewayChatSessionPort,
+  type GatewayChatDispatchInput,
+} from "./chat-session-port.js";
 
-export interface GatewayChatDispatchInput {
-  text: string;
-  platform: string;
-  identity_key?: string;
-  conversation_id: string;
-  sender_id: string;
-  message_id?: string;
-  goal_id?: string;
-  cwd?: string;
-  metadata?: Record<string, unknown>;
-  onEvent?: ChatEventHandler;
-}
+export type { GatewayChatDispatchInput } from "./chat-session-port.js";
 
 export async function dispatchGatewayChatInput(
   input: GatewayChatDispatchInput
 ): Promise<string | null> {
   try {
-    const manager = await getGlobalCrossPlatformChatSessionManager();
-    const result = await manager.processIncomingMessage({
+    const portGetter = getRegisteredGatewayChatSessionPort();
+    if (!portGetter) return null;
+    const port = await portGetter();
+    const result = await port.processIncomingMessage({
       text: input.text,
       platform: input.platform,
       identity_key: input.identity_key,
