@@ -6,7 +6,7 @@ import type { ApprovalOrigin, ApprovalRecord } from "./store/runtime-schemas.js"
 const MIN_CONVERSATIONAL_APPROVAL_CONFIDENCE = 0.7;
 
 export const ConversationalApprovalDecisionSchema = z.object({
-  decision: z.enum(["approve", "reject", "clarify", "unknown"]),
+  decision: z.enum(["approve", "reject", "clarify", "side_question", "new_intent", "unknown"]),
   confidence: z.number().min(0).max(1),
   clarification: z.string().optional(),
   rationale: z.string().optional(),
@@ -72,7 +72,9 @@ Decision meanings:
 - approve: explicitly approves the active approval request.
 - reject: explicitly denies, rejects, cancels, or stops the active approval request.
 - clarify: asks a question or requests explanation while keeping the approval pending.
-- unknown: ambiguous, unrelated, stale, wrong-context, or too low-confidence.
+- side_question: asks about the active approval or nearby runtime/setup status without approving or rejecting it.
+- new_intent: asks PulSeed to handle an unrelated task or conversation turn while the approval remains pending.
+- unknown: ambiguous approval/rejection, stale, wrong-context, or too low-confidence.
 
 Active approval context:
 ${describeApprovalContext(context.approval)}
@@ -85,7 +87,7 @@ ${context.priorTurnState ?? "none"}
 
 Respond only as JSON:
 {
-  "decision": "approve" | "reject" | "clarify" | "unknown",
+  "decision": "approve" | "reject" | "clarify" | "side_question" | "new_intent" | "unknown",
   "confidence": 0.0-1.0,
   "clarification": "short clarification prompt when clarify or unknown",
   "rationale": "short rationale"

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { recognizeRuntimeControlIntent } from "../runtime-control-intent.js";
+import { RuntimeControlOperationKindSchema } from "../../store/runtime-operation-schemas.js";
 import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 describe("recognizeRuntimeControlIntent", () => {
@@ -17,6 +18,18 @@ describe("recognizeRuntimeControlIntent", () => {
       "PulSeed を再起動して",
       createSingleMockLLMClient(JSON.stringify({ intent: "restart_daemon", reason: "restart daemon" }))
     )).resolves.toMatchObject({ kind: "restart_daemon" });
+  });
+
+  it("keeps classifier operation decisions aligned with the runtime operation schema", async () => {
+    for (const operation of RuntimeControlOperationKindSchema.options) {
+      const llm = createSingleMockLLMClient(JSON.stringify({
+        intent: operation,
+        reason: `classify ${operation}`,
+      }));
+      await expect(recognizeRuntimeControlIntent(`classify ${operation}`, llm)).resolves.toMatchObject({
+        kind: operation,
+      });
+    }
   });
 
   it("uses the LLM decision for natural-language run inspection", async () => {
@@ -51,6 +64,19 @@ describe("recognizeRuntimeControlIntent", () => {
 
     await expect(recognizeRuntimeControlIntent("この実行を続けて", llm)).resolves.toMatchObject({
       kind: "resume_run",
+    });
+  });
+
+  it("preserves typed natural-language target selectors for caller-path resolution", async () => {
+    const llm = createSingleMockLLMClient(JSON.stringify({
+      intent: "pause_run",
+      reason: "pause current run",
+      targetSelector: { scope: "run", reference: "current", sourceText: "この実行" },
+    }));
+
+    await expect(recognizeRuntimeControlIntent("この実行を止めて", llm)).resolves.toMatchObject({
+      kind: "pause_run",
+      targetSelector: { scope: "run", reference: "current", sourceText: "この実行" },
     });
   });
 

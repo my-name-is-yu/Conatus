@@ -1,6 +1,8 @@
 export { classifyRuntimeControlIntent, recognizeRuntimeControlIntent } from "./runtime-control-intent.js";
 export type { RuntimeControlIntent, RuntimeControlIntentClassification } from "./runtime-control-intent.js";
 export { RuntimeControlService } from "./runtime-control-service.js";
+export { resolveRuntimeTarget } from "./runtime-target-resolver.js";
+export type { RuntimeTargetResolution } from "./runtime-target-resolver.js";
 export { createDaemonRuntimeControlExecutor } from "./daemon-runtime-control-executor.js";
 export {
   publishRuntimeControlResult,

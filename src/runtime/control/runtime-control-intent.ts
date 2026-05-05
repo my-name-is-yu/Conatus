@@ -1,11 +1,15 @@
 import { z } from "zod";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
-import type { RuntimeControlOperationKind } from "../store/runtime-operation-schemas.js";
+import {
+  RuntimeControlOperationKindSchema,
+  type RuntimeControlOperationKind,
+} from "../store/runtime-operation-schemas.js";
 
 export interface RuntimeControlIntent {
   kind: RuntimeControlOperationKind;
   reason: string;
   target?: RuntimeControlTargetHint;
+  targetSelector?: RuntimeControlTargetSelector;
   externalActions?: string[];
   irreversible?: boolean;
 }
@@ -15,25 +19,28 @@ export interface RuntimeControlTargetHint {
   sessionId?: string;
 }
 
+export interface RuntimeControlTargetSelector {
+  scope: "run" | "session";
+  reference: "current" | "latest" | "previous" | "mentioned" | "exact";
+  sourceText: string;
+}
+
 export type RuntimeControlIntentClassification =
   | { status: "intent"; intent: RuntimeControlIntent }
   | { status: "none" }
   | { status: "unclassified" };
 
 const RuntimeControlIntentDecisionSchema = z.object({
-  intent: z.enum([
-    "none",
-    "inspect_run",
-    "pause_run",
-    "resume_run",
-    "finalize_run",
-    "restart_daemon",
-    "restart_gateway",
-  ]),
+  intent: z.enum(["none", ...RuntimeControlOperationKindSchema.options]),
   reason: z.string().min(1).optional(),
   target: z.object({
     runId: z.string().min(1).optional(),
     sessionId: z.string().min(1).optional(),
+  }).optional(),
+  targetSelector: z.object({
+    scope: z.enum(["run", "session"]),
+    reference: z.enum(["current", "latest", "previous", "mentioned", "exact"]),
+    sourceText: z.string().min(1),
   }).optional(),
   externalActions: z.array(z.enum([
     "submit",
@@ -54,9 +61,10 @@ Decide whether the user's primary intent is to operate on an existing active or 
 
 Return only JSON matching:
 {
-  "intent": "none" | "inspect_run" | "pause_run" | "resume_run" | "finalize_run" | "restart_daemon" | "restart_gateway",
+  "intent": "none" | "restart_daemon" | "restart_gateway" | "reload_config" | "self_update" | "inspect_run" | "pause_run" | "resume_run" | "finalize_run",
   "reason": "short reason using the user's words",
   "target": { "runId": "optional exact run id", "sessionId": "optional exact session id" },
+  "targetSelector": { "scope": "run" | "session", "reference": "current" | "latest" | "previous" | "mentioned" | "exact", "sourceText": "quoted user reference" },
   "externalActions": ["submit" | "publish" | "secret" | "production_mutation" | "destructive_cleanup"],
   "irreversible": true | false
 }
@@ -65,9 +73,12 @@ Classification rules:
 - Choose inspect_run, pause_run, resume_run, or finalize_run only when the user is asking to inspect/control/finalize an existing runtime run/session/execution.
 - Choose none for ordinary project work, coding requests, implementation continuation, evidence/progress Q&A, status questions, explanations, help, or requests to create/start new work.
 - Choose none for broad follow-ups like "continue", "finish the implementation", or "続けて" unless the message itself clearly refers to resuming/finalizing a runtime run/session/execution.
+- Choose reload_config when the user asks to reload PulSeed runtime/gateway/daemon configuration.
+- Choose self_update when the user asks PulSeed to update itself.
 - Choose finalize_run for closing/finalizing a run. Mark irreversible true.
 - If finalize would involve external submit/publish, secrets, production mutation, or destructive cleanup, include the matching externalActions. Do not assume these actions should execute.
 - If the user names a run id or session id, copy it exactly into target. Otherwise omit target.
+- If the user refers to a run/session by natural language such as current, latest, previous, or mentioned/that run, include targetSelector instead of inventing an id.
 - Use restart_daemon/restart_gateway only when the user is asking to restart the PulSeed daemon or gateway, not for run/session pause/resume/finalize.
 - When uncertain, choose none.`;
 }
@@ -115,6 +126,7 @@ function toRuntimeControlIntent(
     kind: decision.intent,
     reason: decision.reason?.trim() || input,
     ...(target ? { target } : {}),
+    ...(decision.targetSelector ? { targetSelector: decision.targetSelector } : {}),
     ...(decision.externalActions && decision.externalActions.length > 0
       ? { externalActions: [...new Set(decision.externalActions)] }
       : {}),

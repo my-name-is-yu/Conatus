@@ -759,6 +759,54 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
+  it("fails closed for denied reload_config and self_update runtime-control requests", async () => {
+    for (const operation of ["reload_config", "self_update"] as const) {
+      const stateManager = makeMockStateManager();
+      const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "agent loop should not run shell fallback",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      };
+      const runtimeControlService = {
+        request: vi.fn().mockResolvedValue({
+          success: true,
+          message: "runtime control should not run",
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        adapter,
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        llmClient: createMockLLMClient([
+          JSON.stringify({ intent: operation, reason: `request ${operation}` }),
+        ]),
+        runtimeControlService,
+      }));
+
+      const result = await manager.execute(`Please ${operation}`, {
+        identity_key: "owner",
+        platform: "telegram",
+        conversation_id: "telegram-chat-1",
+        user_id: "user-1",
+        cwd: "/repo",
+        metadata: { runtime_control_denied: true },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("operation was not executed");
+      expect(result.output).toContain("will not fall back to shell tools");
+      expect(runtimeControlService.request).not.toHaveBeenCalled();
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      expect(adapter.execute).not.toHaveBeenCalled();
+    }
+  });
+
   it("blocks explicit runtime-control metadata when no typed operation can be derived", async () => {
     const stateManager = makeMockStateManager();
     const adapter = makeMockAdapter();
@@ -1182,6 +1230,99 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       await approvalBroker.resolveConversationalApproval("approval-clarify", false, {
+        channel: "slack",
+        conversation_id: "C123:1700.1",
+        user_id: "U123",
+        session_id: "identity:workspace:U123",
+        turn_id: "1700.2",
+      });
+      await expect(resultPromise).resolves.toContain("not approved");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("routes approval side questions through normal chat while keeping the approval pending", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-side-question",
+      });
+      const runtimeControlService = {
+        request: vi.fn(async (request: {
+          approvalFn?: (description: string) => Promise<boolean>;
+        }) => {
+          const approved = await request.approvalFn?.("Restart the resident daemon.");
+          return {
+            success: approved === true,
+            message: approved === true ? "restart queued" : "not approved",
+            operationId: "op-side-question",
+            state: approved === true ? "acknowledged" as const : "blocked" as const,
+          };
+        }),
+      };
+      const adapter = makeMockAdapter({
+        ...CANNED_RESULT,
+        output: "The daemon restart target is the resident daemon.",
+      });
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        adapter,
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+          JSON.stringify({
+            decision: "side_question",
+            confidence: 0.93,
+            clarification: "Route the side question through normal chat.",
+          }),
+          JSON.stringify({
+            kind: "assist",
+            confidence: 0.9,
+            rationale: "side question",
+          }),
+          "The daemon restart target is the resident daemon.",
+        ]),
+        runtimeControlService,
+        approvalBroker,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "PulSeed を再起動して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: () => undefined,
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-side-question")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await expect(manager.processIncomingMessage({
+        text: "Before deciding, which daemon will restart?",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toBe("The daemon restart target is the resident daemon.");
+      await expect(store.loadPending("approval-side-question")).resolves.toMatchObject({
+        state: "pending",
+      });
+
+      await approvalBroker.resolveConversationalApproval("approval-side-question", false, {
         channel: "slack",
         conversation_id: "C123:1700.1",
         user_id: "U123",
