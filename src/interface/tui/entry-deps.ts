@@ -78,7 +78,7 @@ export async function buildStandaloneTuiDeps() {
       toolRegistry.register(tool);
     }
   };
-  for (const tool of createBuiltinTools({ stateManager, trustManager, registry: toolRegistry })) {
+  for (const tool of createBuiltinTools({ stateManager, trustManager, registry: toolRegistry, llmClient })) {
     registerToolIfMissing(tool);
   }
 
@@ -290,6 +290,7 @@ export async function buildStandaloneTuiDeps() {
     stateManager,
     trustManager,
     registry: toolRegistry,
+    llmClient,
     scheduleEngine,
     adapterRegistry,
     sessionManager,
@@ -438,6 +439,18 @@ export async function buildDaemonModeChatSurface(
     const { ObservationEngine } = await import("../../platform/observation/observation-engine.js");
     const { RuntimeControlService, createDaemonRuntimeControlExecutor } = await import("../../runtime/control/index.js");
     llmClient = await buildLLMClient();
+    for (const tool of createBuiltinTools({
+      stateManager,
+      trustManager,
+      registry: toolRegistry,
+      scheduleEngine,
+      llmClient,
+      daemonClient,
+    })) {
+      if (!toolRegistry.get(tool.metadata.name)) {
+        toolRegistry.register(tool);
+      }
+    }
     const adapterRegistry = await buildAdapterRegistry(llmClient);
     const observationEngine = new ObservationEngine(stateManager, dataSourceRegistry.getAllSources(), llmClient);
     const ethicsGate = new EthicsGate(stateManager, llmClient);

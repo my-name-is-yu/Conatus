@@ -51,7 +51,8 @@ export interface ChatRunnerRouteHost {
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
   getTurnLanguageHint(): TurnLanguageHint;
   setPendingSetupDialogue(dialogue: SetupDialogueRuntimeState): Promise<void>;
-  setPendingRunSpecConfirmation(confirmation: RunSpecConfirmationState): Promise<void>;
+  setPendingRunSpecConfirmation(confirmation: RunSpecConfirmationState | null): Promise<void>;
+  getPendingRunSpecConfirmation(): RunSpecConfirmationState | null;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
   setSessionExecutionPolicy(policy: ExecutionPolicy): void;
 }
@@ -230,6 +231,7 @@ export async function executeAgentLoopRoute(
       recordUsage(phase: string, usage: ChatUsageCounter): void;
     };
     gitRoot: string;
+    runtimeControlContext: RuntimeControlChatContext | null;
     activeAbortSignal: AbortSignal;
     start: number;
   }
@@ -245,6 +247,7 @@ export async function executeAgentLoopRoute(
     eventContext,
     history,
     gitRoot,
+    runtimeControlContext,
     activeAbortSignal,
     start,
   } = params;
@@ -291,6 +294,12 @@ export async function executeAgentLoopRoute(
       toolCallContext: {
         executionPolicy: await host.getSessionExecutionPolicy(),
         ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
+        runSpecConfirmation: {
+          get: () => host.getPendingRunSpecConfirmation(),
+          set: (confirmation) => host.setPendingRunSpecConfirmation(confirmation as RunSpecConfirmationState | null),
+          currentTurnStartedAt: new Date(start).toISOString(),
+        },
+        runtimeReplyTarget: (runtimeControlContext?.replyTarget ?? host.deps.runtimeReplyTarget ?? null) as Record<string, unknown> | null,
       },
       ...(host.getNativeAgentLoopStatePath() ? { resumeStatePath: host.getNativeAgentLoopStatePath()! } : {}),
       ...(resumeState ? { resumeState } : {}),
@@ -372,6 +381,7 @@ export async function executeToolLoopRoute(
       recordUsage(phase: string, usage: ChatUsageCounter): void;
     };
     gitRoot: string;
+    runtimeControlContext: RuntimeControlChatContext | null;
     start: number;
   }
 ): Promise<ChatRunResult> {
@@ -383,7 +393,9 @@ export async function executeToolLoopRoute(
       params.eventContext,
       params.assistantBuffer,
       params.systemPrompt,
-      params.executionGoalId
+      params.executionGoalId,
+      params.runtimeControlContext,
+      params.start,
     );
     const elapsed_ms = Date.now() - params.start;
     if (hasUsage(toolResult.usage)) {
@@ -575,11 +587,13 @@ async function executeWithTools(
   eventContext: ChatEventContext,
   assistantBuffer: AssistantBuffer,
   systemPrompt?: string,
-  goalId?: string
+  goalId?: string,
+  runtimeControlContext?: RuntimeControlChatContext | null,
+  start?: number,
 ): Promise<{ output: string; usage: ChatUsageCounter }> {
   const llmClient = host.deps.llmClient!;
   const messages: LLMMessage[] = [{ role: "user", content: prompt }];
-  const toolCallContext = await buildToolCallContext(host, goalId);
+  const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start);
   const usage = zeroUsageCounter();
 
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
@@ -1192,7 +1206,12 @@ async function sendLLMMessage(
   return response;
 }
 
-async function buildToolCallContext(host: ChatRunnerRouteHost, goalId = host.deps.goalId): Promise<ToolCallContext> {
+async function buildToolCallContext(
+  host: ChatRunnerRouteHost,
+  goalId = host.deps.goalId,
+  runtimeControlContext?: RuntimeControlChatContext | null,
+  start?: number,
+): Promise<ToolCallContext> {
   const executionPolicy = await host.getSessionExecutionPolicy();
   return {
     cwd: host.getSessionCwd() ?? process.cwd(),
@@ -1206,6 +1225,13 @@ async function buildToolCallContext(host: ChatRunnerRouteHost, goalId = host.dep
       return false;
     },
     executionPolicy,
+    ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
+    runSpecConfirmation: {
+      get: () => host.getPendingRunSpecConfirmation(),
+      set: (confirmation) => host.setPendingRunSpecConfirmation(confirmation as RunSpecConfirmationState | null),
+      ...(typeof start === "number" ? { currentTurnStartedAt: new Date(start).toISOString() } : {}),
+    },
+    runtimeReplyTarget: (runtimeControlContext?.replyTarget ?? host.deps.runtimeReplyTarget ?? null) as Record<string, unknown> | null,
   };
 }
 
