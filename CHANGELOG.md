@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.2] - 2026-05-05
+
+### Added
+- Added AgentLoop-visible setup/runtime-control tools, RunSpec handoff tools, resident readiness reporting, Telegram setup self-apply, and natural-language RunSpec draft/confirmation/start flows for safer chat-driven runtime setup and long-running work (#993, #1004, #1005, #1006, #1008, #1009, #1010, #1011, #1062, #1063)
+- Added typed runtime target selection for natural-language current/latest/previous run references, plus approval side-question/new-intent handling so gateway conversations can keep chatting while approvals remain pending (#1085)
+- Added typed Dream, curiosity, stall, evidence, and runtime presence contracts for better long-running companion context and runtime evidence tracking (#1028, #1037, #1038, #1039, #1040, #1041)
+
+### Changed
+- Made chat ingress AgentLoop-first and continued replacing freeform semantic shortcuts with structured classifiers, typed contracts, schemas, and production caller-path tests across safety, goal, schedule, runtime-control, TUI input, and gateway dispatch paths (#1013, #1064, #1065, #1067, #1068, #1073, #1074, #1075, #1076, #1077)
+- Renamed and documented DurableLoop terminology and compatibility aliases while cleaning up long-running runtime documentation (#1020, #1021, #1022, #1023, #1024)
+- Bumped the package version to `0.6.2`
+
+### Fixed
+- Fixed runtime lifecycle and approval reporting so approval-denied, runtime-control-disallowed, unclassified, unsupported, and stale target states fail closed without shell fallback or false executed summaries (#1002, #1003, #1014, #1085)
+- Fixed gateway and chat routing regressions for Telegram configure guidance, async event draining, direct route intent copy, inline-code spacing, setup/runtime routing, and RunSpec routing after configure misclassification (#961, #962, #963, #991, #992, #1056, #1084)
+- Fixed runtime evidence, code-search, candidate ranking, and evidence ledger internals to preserve typed fields and avoid inert or divergent retrieval paths (#1025, #1027, #1042, #1069, #1070, #1071)
+
 ## [0.6.1] - 2026-05-03
 
 ### Added
