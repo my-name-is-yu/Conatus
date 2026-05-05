@@ -732,6 +732,169 @@ describe("Heartbeat execution", () => {
     expect(persistedHistory).toHaveLength(2);
   });
 
+  it("uses structured permanent failure kind even when the message looks retryable", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-08T00:00:00.000Z"));
+
+    const entry = await engine.addEntry({
+      name: "structured-permanent",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      heartbeat: {
+        check_type: "custom",
+        check_config: { command: "echo ok" },
+        failure_threshold: 3,
+        timeout_ms: 5000,
+      },
+      retry_policy: {
+        enabled: true,
+        initial_delay_ms: 10_000,
+        max_delay_ms: 60_000,
+        multiplier: 2,
+        jitter_factor: 0,
+        max_attempts: 3,
+        max_retry_window_ms: 120_000,
+        retryable_failure_kinds: ["transient"],
+      },
+    });
+
+    const entries = engine.getEntries();
+    entries[0]!.next_fire_at = new Date("2026-04-07T23:59:00.000Z").toISOString();
+    await engine.saveEntries();
+    await engine.loadEntries();
+
+    vi.spyOn(engine as any, "executeEntry").mockImplementation(async (executingEntry: unknown) => {
+      const runningEntry = executingEntry as ScheduleEntry;
+      return {
+        entry_id: runningEntry.id,
+        status: "error" as const,
+        duration_ms: 1,
+        fired_at: new Date().toISOString(),
+        error_message: "timeout while contacting provider",
+        failure_kind: "permanent" as const,
+      };
+    });
+
+    const results = await engine.tick();
+    expect(results[0]!.failure_kind).toBe("permanent");
+
+    const updated = engine.getEntries().find((candidate) => candidate.id === entry.id)!;
+    expect(updated.retry_state).toBeNull();
+
+    const history = await engine.getRecentHistory(10, entry.id);
+    expect(history[0]!.failure_kind).toBe("permanent");
+  });
+
+  it("defaults missing failure kind to conservative retry behavior without English message inference", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-08T00:00:00.000Z"));
+
+    const entry = await engine.addEntry({
+      name: "localized-message",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      heartbeat: {
+        check_type: "custom",
+        check_config: { command: "echo ok" },
+        failure_threshold: 3,
+        timeout_ms: 5000,
+      },
+      retry_policy: {
+        enabled: true,
+        initial_delay_ms: 10_000,
+        max_delay_ms: 60_000,
+        multiplier: 2,
+        jitter_factor: 0,
+        max_attempts: 3,
+        max_retry_window_ms: 120_000,
+        retryable_failure_kinds: ["transient"],
+      },
+    });
+
+    const entries = engine.getEntries();
+    entries[0]!.next_fire_at = new Date("2026-04-07T23:59:00.000Z").toISOString();
+    await engine.saveEntries();
+    await engine.loadEntries();
+
+    vi.spyOn(engine as any, "executeEntry").mockImplementation(async (executingEntry: unknown) => {
+      const runningEntry = executingEntry as ScheduleEntry;
+      return {
+        entry_id: runningEntry.id,
+        status: "error" as const,
+        duration_ms: 1,
+        fired_at: new Date().toISOString(),
+        error_message: "設定が無効です。管理者の確認が必要です。",
+      };
+    });
+
+    await engine.tick();
+
+    const updated = engine.getEntries().find((candidate) => candidate.id === entry.id)!;
+    expect(updated.retry_state).not.toBeNull();
+    expect(updated.retry_state!.attempts).toBe(1);
+    expect(updated.retry_state!.last_failure_kind).toBe("transient");
+    expect(updated.retry_state!.next_retry_at).toBe("2026-04-08T00:00:10.000Z");
+
+    const history = await engine.getRecentHistory(10, entry.id);
+    expect(history[0]!.failure_kind).toBe("transient");
+  });
+
+  it("does not infer permanent failures from legacy English hints when failure kind is missing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-08T00:00:00.000Z"));
+
+    const entry = await engine.addEntry({
+      name: "legacy-hint-message",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      heartbeat: {
+        check_type: "custom",
+        check_config: { command: "echo ok" },
+        failure_threshold: 3,
+        timeout_ms: 5000,
+      },
+      retry_policy: {
+        enabled: true,
+        initial_delay_ms: 10_000,
+        max_delay_ms: 60_000,
+        multiplier: 2,
+        jitter_factor: 0,
+        max_attempts: 3,
+        max_retry_window_ms: 120_000,
+        retryable_failure_kinds: ["transient"],
+      },
+    });
+
+    const entries = engine.getEntries();
+    entries[0]!.next_fire_at = new Date("2026-04-07T23:59:00.000Z").toISOString();
+    await engine.saveEntries();
+    await engine.loadEntries();
+
+    vi.spyOn(engine as any, "executeEntry").mockImplementation(async (executingEntry: unknown) => {
+      const runningEntry = executingEntry as ScheduleEntry;
+      return {
+        entry_id: runningEntry.id,
+        status: "error" as const,
+        duration_ms: 1,
+        fired_at: new Date().toISOString(),
+        error_message: "invalid provider config: no cron config",
+      };
+    });
+
+    await engine.tick();
+
+    const updated = engine.getEntries().find((candidate) => candidate.id === entry.id)!;
+    expect(updated.retry_state).not.toBeNull();
+    expect(updated.retry_state!.last_failure_kind).toBe("transient");
+    expect(updated.retry_state!.next_retry_at).toBe("2026-04-08T00:00:10.000Z");
+
+    const history = await engine.getRecentHistory(10, entry.id);
+    expect(history[0]!.failure_kind).toBe("transient");
+  });
+
   it("does not create retry state for permanent cron failures", async () => {
     const entry = await engine.addEntry({
       name: "bad-cron",
