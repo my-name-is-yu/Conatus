@@ -103,6 +103,7 @@ export {
 } from "./runtime-operation-schemas.js";
 
 export {
+  RuntimeArtifactRetentionClassSchema,
   RuntimeEvidenceArtifactRefSchema,
   RuntimeEvidenceEvaluatorBudgetSchema,
   RuntimeEvidenceEvaluatorCalibrationSchema,
@@ -231,15 +232,14 @@ export type {
   RuntimeEvidenceReadResult,
   RuntimeEvidenceReadWarning,
   RuntimeEvidenceSummary,
+  RuntimeArtifactRetentionClass,
 } from "./evidence-ledger.js";
 export {
-  RuntimeArtifactRetentionClassSchema,
   summarizeArtifactRetention,
 } from "./artifact-retention.js";
 export type {
   RuntimeArtifactCleanupActionKind,
   RuntimeArtifactCleanupPlan,
-  RuntimeArtifactRetentionClass,
   RuntimeArtifactRetentionDecision,
   RuntimeArtifactRetentionSummary,
 } from "./artifact-retention.js";

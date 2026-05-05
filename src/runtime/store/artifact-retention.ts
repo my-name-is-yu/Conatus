@@ -1,24 +1,18 @@
-import { z } from "zod";
 import type {
+  RuntimeArtifactRetentionClass,
   RuntimeEvidenceArtifactRef,
   RuntimeEvidenceCandidateRecord,
   RuntimeEvidenceEntry,
-} from "./evidence-ledger.js";
-import type { RuntimeReproducibilityManifest } from "./reproducibility-manifest.js";
+} from "./evidence-types.js";
 
-export const RuntimeArtifactRetentionClassSchema = z.enum([
-  "final_deliverable",
-  "best_candidate",
-  "robust_candidate",
-  "near_miss",
-  "reproducibility_critical",
-  "evidence_report",
-  "low_value_smoke",
-  "cache_intermediate",
-  "duplicate_superseded",
-  "other",
-]);
-export type RuntimeArtifactRetentionClass = z.infer<typeof RuntimeArtifactRetentionClassSchema>;
+interface RuntimeArtifactRetentionManifest {
+  artifacts?: Array<{
+    label: string;
+    path?: string;
+    state_relative_path?: string;
+    url?: string;
+  }>;
+}
 
 export type RuntimeArtifactCleanupActionKind =
   | "protect"
@@ -74,7 +68,7 @@ interface ArtifactRecord {
 
 export function summarizeArtifactRetention(
   entries: RuntimeEvidenceEntry[],
-  options: { manifests?: RuntimeReproducibilityManifest[] } = {}
+  options: { manifests?: RuntimeArtifactRetentionManifest[] } = {}
 ): RuntimeArtifactRetentionSummary {
   const records = collectArtifactRecords(entries, options.manifests ?? []);
   const decisions = [...records.values()].map(classifyArtifactRecord);
@@ -107,7 +101,7 @@ export function summarizeArtifactRetention(
 
 function collectArtifactRecords(
   entries: RuntimeEvidenceEntry[],
-  manifests: RuntimeReproducibilityManifest[]
+  manifests: RuntimeArtifactRetentionManifest[]
 ): Map<string, ArtifactRecord> {
   const candidateRoles = candidateRoleMap(entries);
   const manifestArtifactKeys = new Set<string>();

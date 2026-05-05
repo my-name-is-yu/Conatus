@@ -1,4 +1,4 @@
-import type { RuntimeEvidenceEntry } from "./evidence-ledger.js";
+import type { RuntimeEvidenceEntry } from "./evidence-types.js";
 import {
   summarizeMetricTrends,
   type MetricDirection,

@@ -8,7 +8,7 @@
 
 ## #1054: CoreLoop Real-Store Evidence Contract
 
-Status: in progress on `codex/issue-1054-coreloop-evidence-contract`.
+Status: merged via PR #1069.
 
 Plan:
 - Keep existing mock-heavy integration tests intact.
@@ -28,3 +28,28 @@ Verification:
 Review:
 - Fresh review found that the initial contract tests were excluded from the requested integration lane, had an unwired ApprovalStore assertion, and did not pin the failed append kinds tightly enough.
 - Fixed by including the test in the integration lane, routing a wait approval through a real `ApprovalBroker` backed by real `ApprovalStore`, and asserting failed `task_generation` and `verification` append warnings.
+
+## #1044: Runtime Evidence Schema/Type Split
+
+Status: in progress on `codex/issue-1044-evidence-type-split`.
+
+Plan:
+- Extract runtime evidence schemas and entry/read types from `src/runtime/store/evidence-ledger.ts` to `src/runtime/store/evidence-types.ts`.
+- Keep public re-exports from `evidence-ledger.ts` stable for existing imports.
+- Move store helper modules that only need entry/schema contracts to import `evidence-types.ts`.
+- Avoid candidate ranking, append/read/index, or summary behavior changes.
+
+Implementation notes:
+- Added `evidence-types.ts` for evidence schemas/types and moved `RuntimeArtifactRetentionClassSchema` there so artifact refs do not depend on the artifact-retention summarizer.
+- Updated helper imports in `metric-history.ts`, `artifact-retention.ts`, `evaluator-results.ts`, `research-evidence.ts`, `dream-checkpoints.ts`, `experiment-queue-store.ts`, `postmortem-report.ts`, and `reproducibility-manifest.ts` where they only need lower-level contracts.
+- Replaced type-only reproducibility manifest imports in ledger/artifact retention with local minimal manifest shapes to remove store-helper cycles without changing runtime parsing behavior.
+- `src/runtime/store/evidence-ledger.ts` shrank from 2682 lines to 2253 lines; `evidence-types.ts` is 549 lines.
+
+Verification:
+- `npm run typecheck`: pass.
+- `npx vitest run src/runtime/__tests__/runtime-evidence-ledger.test.ts --config vitest.integration.config.ts`: pass, 41 tests.
+- `npx madge --circular --extensions ts,tsx --ts-config tsconfig.json src/runtime/store`: pass, no circular dependency found.
+
+Review:
+- Fresh review found two public export regressions: missing `RuntimeEvidenceMemoryUsageStats*` re-exports from `evidence-ledger.ts` and missing retention-class exports from the `runtime/store` barrel.
+- Restored those re-exports while keeping helper imports pointed at lower-level contracts.

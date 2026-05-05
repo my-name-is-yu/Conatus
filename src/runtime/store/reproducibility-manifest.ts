@@ -9,11 +9,13 @@ import {
 } from "./runtime-paths.js";
 import {
   RuntimeEvidenceLedger,
-  type RuntimeEvidenceArtifactRef,
-  type RuntimeEvidenceCandidateRecord,
-  type RuntimeEvidenceEntry,
-  type RuntimeEvidenceEvaluatorObservation,
 } from "./evidence-ledger.js";
+import type {
+  RuntimeEvidenceArtifactRef,
+  RuntimeEvidenceCandidateRecord,
+  RuntimeEvidenceEntry,
+  RuntimeEvidenceEvaluatorObservation,
+} from "./evidence-types.js";
 
 export const RuntimeReproducibilityFileRefSchema = z.object({
   label: z.string().min(1),

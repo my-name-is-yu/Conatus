@@ -1,7 +1,7 @@
 import type {
   RuntimeEvidenceDreamCheckpoint,
   RuntimeEvidenceEntry,
-} from "./evidence-ledger.js";
+} from "./evidence-types.js";
 
 export interface RuntimeDreamCheckpointContext extends RuntimeEvidenceDreamCheckpoint {
   entry_id: string;
