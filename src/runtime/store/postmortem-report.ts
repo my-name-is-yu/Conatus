@@ -9,9 +9,9 @@ import {
 } from "./runtime-paths.js";
 import {
   RuntimeEvidenceLedger,
-  type RuntimeEvidenceEntry,
   type RuntimeEvidenceSummary,
 } from "./evidence-ledger.js";
+import type { RuntimeEvidenceEntry } from "./evidence-types.js";
 import { extractMetricObservationsFromEvidence } from "./metric-history.js";
 import {
   RuntimeReproducibilityManifestSchema,

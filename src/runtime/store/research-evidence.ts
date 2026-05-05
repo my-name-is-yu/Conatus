@@ -1,7 +1,7 @@
 import type {
   RuntimeEvidenceEntry,
   RuntimeEvidenceResearchMemo,
-} from "./evidence-ledger.js";
+} from "./evidence-types.js";
 
 export interface RuntimeResearchMemoContext extends RuntimeEvidenceResearchMemo {
   entry_id: string;

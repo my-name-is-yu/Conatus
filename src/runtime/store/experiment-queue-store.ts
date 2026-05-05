@@ -9,7 +9,7 @@ import {
   RuntimeEvidenceMetricSchema,
   type RuntimeEvidenceArtifactRef,
   type RuntimeEvidenceMetric,
-} from "./evidence-ledger.js";
+} from "./evidence-types.js";
 
 export const RuntimeExperimentQueuePhaseSchema = z.enum(["designing", "executing_frozen_queue"]);
 export type RuntimeExperimentQueuePhase = z.infer<typeof RuntimeExperimentQueuePhaseSchema>;

@@ -9,7 +9,7 @@ import type {
   RuntimeEvidenceEvaluatorPublishAction,
   RuntimeEvidenceEvaluatorStatus,
   RuntimeEvidenceMetric,
-} from "./evidence-ledger.js";
+} from "./evidence-types.js";
 
 type EvaluatorDirection = "maximize" | "minimize" | "neutral";
 
