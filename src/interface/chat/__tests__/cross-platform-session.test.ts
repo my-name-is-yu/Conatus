@@ -864,6 +864,64 @@ describe("CrossPlatformChatSessionManager", () => {
     );
   });
 
+  it("routes gateway natural-language run pause through processIncomingMessage without adapter fallback", async () => {
+    const adapter = makeMockAdapter();
+    const runtimeControlService = {
+      request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "pause queued",
+        operationId: "op-process-ingress",
+        state: "running",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      adapter,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        intent: "pause_run",
+        reason: "pause the currently active gateway run",
+      })),
+      runtimeControlService,
+      runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
+    }));
+
+    const result = await manager.processIncomingMessage({
+      text: "Pause the currently active run.",
+      platform: "telegram",
+      identity_key: "telegram:user-1",
+      conversation_id: "telegram-chat-1",
+      sender_id: "user-1",
+      message_id: "message-1",
+      cwd: "/repo",
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "interactive",
+      },
+    });
+
+    expect(result).toBe("pause queued");
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect(runtimeControlService.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: expect.objectContaining({ kind: "pause_run" }),
+        replyTarget: expect.objectContaining({
+          surface: "gateway",
+          platform: "telegram",
+          conversation_id: "telegram-chat-1",
+          identity_key: "telegram:user-1",
+          user_id: "user-1",
+          message_id: "message-1",
+        }),
+        requestedBy: expect.objectContaining({
+          surface: "gateway",
+          platform: "telegram",
+          conversation_id: "telegram-chat-1",
+          identity_key: "telegram:user-1",
+          user_id: "user-1",
+        }),
+      })
+    );
+  });
+
   it("routes runtime-control approval through the originating conversation metadata", async () => {
     const tmpDir = makeTempDir();
     const events: string[] = [];
