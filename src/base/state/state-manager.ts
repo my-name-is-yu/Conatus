@@ -17,6 +17,7 @@ import type { CheckpointTrustPort } from "./checkpoint-trust-port.js";
 import { initDirs, atomicWrite, atomicRead } from "./state-persistence.js";
 import { GoalWriteCoordinator } from "./state-manager-goal-write.js";
 import { recoverStateManagerWAL } from "./state-manager-wal.js";
+import type { StateWriteFence } from "./state-write-fence.js";
 import {
   archiveCompleteMarkerPath,
   archiveGoalDir,
@@ -33,14 +34,7 @@ import {
 } from "./state-manager-goal-state.js";
 
 export { initDirs, atomicWrite, atomicRead };
-
-export interface StateWriteFenceContext {
-  goalId: string;
-  op: string;
-  data: unknown;
-}
-
-export type StateWriteFence = (context: StateWriteFenceContext) => Promise<void> | void;
+export type { StateWriteFence, StateWriteFenceContext } from "./state-write-fence.js";
 
 const MAX_HISTORY_ENTRIES = 500;
 

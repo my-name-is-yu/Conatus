@@ -4,7 +4,7 @@ import { acquireLock, releaseLock } from "./state-lock.js";
 import { appendWALRecord, compactWAL } from "./state-wal.js";
 import { writeSnapshot } from "./state-snapshot.js";
 import type { Goal } from "../types/goal.js";
-import type { StateWriteFence, StateWriteFenceContext } from "./state-manager.js";
+import type { StateWriteFence, StateWriteFenceContext } from "./state-write-fence.js";
 
 export interface GoalWriteCoordinatorOptions {
   baseDir: string;
