@@ -41,6 +41,7 @@ import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { ReportingEngine as RealReportingEngine } from "../../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
+import { ApprovalBroker } from "../../../runtime/approval-broker.js";
 import { WaitDeadlineResolver, getDueWaitGoalIds } from "../../../runtime/daemon/wait-deadline-resolver.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 import { RuntimeReproducibilityManifestStore } from "../../../runtime/store/reproducibility-manifest.js";
@@ -362,6 +363,22 @@ function createMockDeps(tmpDir: string): {
   };
 }
 
+async function waitForPendingApproval(
+  store: ApprovalStore,
+  approvalId: string,
+  timeoutMs = 1_000
+) {
+  const startedAt = Date.now();
+  for (;;) {
+    const record = await store.loadPending(approvalId);
+    if (record) return record;
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for pending approval ${approvalId}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function makeWaitStrategyForCoreLoop(overrides: Record<string, unknown> = {}) {
   return {
     id: "wait-strategy-1",
@@ -411,6 +428,182 @@ describe("CoreLoop", async () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+  });
+
+  describe("runtime evidence ledger contracts", () => {
+    it("writes task-cycle runtime evidence through a real loop iteration with real stores", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const evidenceLedger = new RuntimeEvidenceLedger(runtimeRoot);
+
+      const loop = new CoreLoop(
+        { ...deps, evidenceLedger },
+        { delayBetweenLoopsMs: 0, autoDecompose: false },
+      );
+      const result = await loop.run("goal-1", {
+        maxIterations: 1,
+        activation: {
+          backgroundRun: { backgroundRunId: "run-coreloop-evidence-contract" },
+        },
+      });
+
+      const runEvidence = await evidenceLedger.readByRun("run-coreloop-evidence-contract");
+      const goalEvidence = await evidenceLedger.readByGoal("goal-1");
+      const taskGeneration = runEvidence.entries.find((entry) => entry.kind === "task_generation");
+      const verification = runEvidence.entries.find((entry) => entry.kind === "verification");
+
+      expect(result.totalIterations).toBe(1);
+      expect(taskGeneration).toMatchObject({
+        kind: "task_generation",
+        scope: {
+          goal_id: "goal-1",
+          run_id: "run-coreloop-evidence-contract",
+          loop_index: 0,
+          task_id: "task-1",
+        },
+      });
+      expect(verification).toMatchObject({
+        kind: "verification",
+        scope: {
+          goal_id: "goal-1",
+          run_id: "run-coreloop-evidence-contract",
+          loop_index: 0,
+          task_id: "task-1",
+        },
+      });
+      expect(goalEvidence.entries.map((entry) => entry.id)).toContain(taskGeneration!.id);
+    });
+
+    it("persists wait approvals through a real ApprovalStore when the loop routes through the broker", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const waitStrategy = {
+        id: "wait-real-approval-store",
+        state: "active",
+        goal_id: "goal-1",
+      };
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+      const portfolioManager = {
+        selectNextStrategyForTask: vi.fn().mockReturnValue(null),
+        recordTaskCompletion: vi.fn(),
+        shouldRebalance: vi.fn().mockReturnValue(null),
+        rebalance: vi.fn().mockReturnValue({
+          triggered_by: "periodic",
+          adjustments: [],
+          new_generation_needed: false,
+          timestamp: new Date().toISOString(),
+        }),
+        isWaitStrategy: vi.fn().mockReturnValue(true),
+        handleWaitStrategyExpiry: vi.fn().mockReturnValue({
+          status: "approval_required",
+          goal_id: "goal-1",
+          strategy_id: waitStrategy.id,
+          details: "Approve external submission",
+        }),
+        getRebalanceHistory: vi.fn().mockReturnValue([]),
+      };
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const approvalStore = new ApprovalStore(runtimeRoot);
+      const evidenceLedger = new RuntimeEvidenceLedger(runtimeRoot);
+      const approvalBroker = new ApprovalBroker({
+        store: approvalStore,
+        defaultTimeoutMs: 60_000,
+      });
+
+      try {
+        const loop = new CoreLoop(
+          {
+            ...deps,
+            evidenceLedger,
+            portfolioManager: portfolioManager as any,
+            waitApprovalBroker: approvalBroker,
+          },
+          { delayBetweenLoopsMs: 0, autoDecompose: false },
+        );
+        const result = await loop.runOneIteration("goal-1", 0);
+        const pending = await waitForPendingApproval(approvalStore, result.waitApprovalId!);
+
+        expect(result.waitExpired).toBe(true);
+        expect(result.waitApprovalId).toBe(`wait-goal-1-${waitStrategy.id}`);
+        expect(pending).toMatchObject({
+          approval_id: result.waitApprovalId,
+          goal_id: "goal-1",
+          state: "pending",
+          payload: {
+            task: {
+              id: `wait:${waitStrategy.id}`,
+              action: "wait_strategy_resume_approval",
+              description: "Approve external submission",
+            },
+          },
+        });
+        await approvalBroker.resolveApproval(result.waitApprovalId!, false);
+      } finally {
+        await approvalBroker.stop();
+      }
+    });
+
+    it("logs real runtime evidence ledger write failures without aborting the iteration", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const runtimeRootFile = path.join(tmpDir, "runtime-file");
+      fs.writeFileSync(runtimeRootFile, "not a directory");
+      const evidenceLedger = new RuntimeEvidenceLedger(runtimeRootFile);
+      const logger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      };
+
+      const loop = new CoreLoop(
+        { ...deps, evidenceLedger, logger: logger as any },
+        { delayBetweenLoopsMs: 0, autoDecompose: false },
+      );
+      const result = await loop.run("goal-1", {
+        maxIterations: 1,
+        activation: {
+          backgroundRun: { backgroundRunId: "run-coreloop-evidence-failure" },
+        },
+      });
+
+      expect(result.totalIterations).toBe(1);
+      expect(logger.warn).toHaveBeenCalledWith(
+        "CoreLoop: failed to append runtime evidence ledger entry",
+        expect.objectContaining({
+          goalId: "goal-1",
+          loopIndex: 0,
+          error: expect.any(String),
+        }),
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        "CoreLoop: failed to append runtime evidence ledger entry",
+        expect.objectContaining({
+          goalId: "goal-1",
+          loopIndex: 0,
+          kind: "task_generation",
+          error: expect.any(String),
+        }),
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        "CoreLoop: failed to append runtime evidence ledger entry",
+        expect.objectContaining({
+          goalId: "goal-1",
+          loopIndex: 0,
+          kind: "verification",
+          error: expect.any(String),
+        }),
+      );
+    });
   });
 
   describe("deadline finalization", () => {
