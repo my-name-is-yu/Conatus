@@ -11,6 +11,7 @@ export const fullInclude = [
 ];
 
 export const integrationInclude = [
+  "src/orchestrator/loop/__tests__/core-loop-integrations.test.ts",
   "src/runtime/**/*.test.ts",
   "src/platform/soil/**/*.test.ts",
   "src/platform/dream/**/*.test.ts",
@@ -46,6 +47,7 @@ export const integrationPathPrefixes = [
 ];
 
 export const integrationPathPatterns = [
+  /^src\/orchestrator\/loop\/__tests__\/core-loop-integrations\.test\.ts$/,
   /^src\/runtime\/schedule\//,
   /^src\/interface\/chat\/__tests__\/chat-schedule-integration\.test\.ts$/,
   /^src\/interface\/cli\/__tests__\/cli-daemon-.*\.test\.ts$/,
