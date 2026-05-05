@@ -30,6 +30,8 @@ import { NotificationDispatcher } from "../../../runtime/notification-dispatcher
 import { getNotificationConfigPath, loadNotificationConfig } from "../../../runtime/notification-routing.js";
 import { getProviderRuntimeFingerprint } from "../../../base/llm/provider-config.js";
 import { buildDeps } from "../setup.js";
+import { getGlobalCrossPlatformChatSessionManager } from "../../chat/cross-platform-session.js";
+import { registerGlobalCrossPlatformChatSessionManager } from "../../chat/cross-platform-session-global.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { getPulseedDirPath, getLogsDir, getEventsDir } from "../../../base/utils/paths.js";
@@ -296,6 +298,7 @@ export async function cmdStart(
   };
 
   const pluginLoader = await loadPluginsIntoDeps(deps);
+  registerGlobalCrossPlatformChatSessionManager(getGlobalCrossPlatformChatSessionManager);
   const daemonBaseDir = deps.stateManager.getBaseDir();
   const notificationConfig = await loadNotificationConfig(getNotificationConfigPath(daemonBaseDir));
   const notificationDispatcher = new NotificationDispatcher(notificationConfig, notifierRegistry);

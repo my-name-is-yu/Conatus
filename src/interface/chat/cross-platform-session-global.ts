@@ -1,27 +1,22 @@
-export type GlobalCrossPlatformChatSessionManagerGetter = () => Promise<unknown>;
+import {
+  clearRegisteredGatewayChatSessionPort,
+  exposeRegisteredGatewayChatSessionPort,
+  registerGatewayChatSessionPort,
+  type GatewayChatSessionPortGetter,
+} from "../../runtime/gateway/chat-session-port.js";
 
-interface PulseedRuntimeGlobal {
-  __pulseedGetGlobalCrossPlatformChatSessionManager?: GlobalCrossPlatformChatSessionManagerGetter;
-}
-
-let registeredGetter: GlobalCrossPlatformChatSessionManagerGetter | undefined;
+export type GlobalCrossPlatformChatSessionManagerGetter = GatewayChatSessionPortGetter;
 
 export function registerGlobalCrossPlatformChatSessionManager(
   getter: GlobalCrossPlatformChatSessionManagerGetter,
 ): void {
-  registeredGetter = getter;
+  registerGatewayChatSessionPort(getter);
 }
 
 export function exposeRegisteredCrossPlatformChatSessionManager(): void {
-  const runtimeGlobal = globalThis as typeof globalThis & PulseedRuntimeGlobal;
-  if (registeredGetter) {
-    runtimeGlobal.__pulseedGetGlobalCrossPlatformChatSessionManager = registeredGetter;
-    return;
-  }
-  delete runtimeGlobal.__pulseedGetGlobalCrossPlatformChatSessionManager;
+  exposeRegisteredGatewayChatSessionPort();
 }
 
 export function clearRegisteredCrossPlatformChatSessionManager(): void {
-  registeredGetter = undefined;
-  delete (globalThis as typeof globalThis & PulseedRuntimeGlobal).__pulseedGetGlobalCrossPlatformChatSessionManager;
+  clearRegisteredGatewayChatSessionPort();
 }

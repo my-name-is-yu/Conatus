@@ -11,6 +11,11 @@ import { RuntimeOperationStore } from "../../store/runtime-operation-store.js";
 import type { Envelope } from "../../types/envelope.js";
 import { createEnvelope } from "../../types/envelope.js";
 import type { ChannelAdapter, EnvelopeHandler, ReplyChannel } from "../channel-adapter.js";
+import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
+import {
+  clearRegisteredGatewayChatSessionPort,
+  registerGatewayChatSessionPort,
+} from "../chat-session-port.js";
 import { IngressGateway } from "../ingress-gateway.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
@@ -103,12 +108,13 @@ describe("IngressGateway runtime-control contract", () => {
         ]),
         runtimeControlService,
       }));
+      registerGatewayChatSessionPort(async () => manager);
 
       gateway.registerAdapter(adapter);
       gateway.onEnvelope(async (envelope) => {
         const payload = envelope.payload as Record<string, unknown>;
         const metadata = (envelope as Envelope & { metadata?: Record<string, unknown> }).metadata ?? {};
-        await manager.processIncomingMessage({
+        await dispatchGatewayChatInput({
           text: String(payload["text"] ?? ""),
           platform: String(payload["platform"] ?? envelope.source),
           identity_key: String(payload["identity_key"] ?? ""),
@@ -200,6 +206,7 @@ describe("IngressGateway runtime-control contract", () => {
       expect(daemonRestart?.reply_target.platform).not.toBe(gatewayRestart?.reply_target.platform);
       expect(daemonRestart?.reply_target.conversation_id).not.toBe(gatewayRestart?.reply_target.conversation_id);
     } finally {
+      clearRegisteredGatewayChatSessionPort();
       cleanupTempDir(tmpDir);
     }
   });
