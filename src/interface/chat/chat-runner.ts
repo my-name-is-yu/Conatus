@@ -76,6 +76,7 @@ import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import {
   createRunSpecStore,
   formatRunSpecSetupProposal,
+  arbitrateRunSpecPendingDialogue,
   handleRunSpecConfirmationInput,
   RunSpecHandoffService,
   validateRunSpecStartSafety,
@@ -882,6 +883,12 @@ export class ChatRunner {
       };
     }
 
+    const dialogue = await arbitrateRunSpecPendingDialogue(pending.spec, input, {
+      llmClient: this.deps.llmClient,
+    });
+    if (dialogue.outcome === "new_intent") {
+      return null;
+    }
     return {
       success: false,
       output: result.message,

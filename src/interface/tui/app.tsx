@@ -49,6 +49,7 @@ import { RuntimeEvidenceLedger, type RuntimeEvidenceSummary } from "../../runtim
 import { RuntimeHealthStore } from "../../runtime/store/health-store.js";
 import type { RuntimeHealthSnapshot } from "../../runtime/store/runtime-schemas.js";
 import {
+  arbitrateRunSpecPendingDialogue,
   createRunSpecStore,
   handleRunSpecConfirmationInput,
   type RunSpec,
@@ -648,6 +649,15 @@ export function App({
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             llmClient,
           });
+          if (result.kind === "unrecognized") {
+            const dialogue = await arbitrateRunSpecPendingDialogue(pendingRunSpec, input, {
+              llmClient,
+            });
+            if (dialogue.outcome === "new_intent") {
+              await chatRunner.execute(input, effectiveCwd);
+              return;
+            }
+          }
           const savedRunSpec = await createRunSpecStore(stateManager).save(result.spec);
           if (result.kind === "cancelled") {
             setPendingRunSpec(null);

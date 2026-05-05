@@ -708,8 +708,8 @@ async function formatConfigureGuidance(
       id: "telegram-configure:started",
       kind: "started",
       operation: "telegram_setup",
-      title: shouldRenderJapanese(languageHint) ? "Telegram setup を開始しました" : "Started Telegram setup",
-      detail: shouldRenderJapanese(languageHint) ? "daemon と gateway config の状態を確認します。" : "Checking daemon and gateway config state.",
+      title: "Started Telegram setup",
+      detail: "Checking daemon and gateway config state.",
       createdAt: new Date().toISOString(),
       languageHint,
     }), eventContext);
@@ -718,14 +718,10 @@ async function formatConfigureGuidance(
       id: "telegram-configure:checked-status",
       kind: "checked_status",
       operation: "telegram_setup",
-      title: shouldRenderJapanese(languageHint) ? "Daemon status を確認しました" : "Checked daemon status",
+      title: "Checked daemon status",
       detail: status.daemon.running
-        ? shouldRenderJapanese(languageHint)
-          ? `port ${status.daemon.port} で起動中です。`
-          : `Running on port ${status.daemon.port}.`
-        : shouldRenderJapanese(languageHint)
-          ? `port ${status.daemon.port} で応答していません。`
-          : `Not responding on port ${status.daemon.port}.`,
+        ? `Running on port ${status.daemon.port}.`
+        : `Not responding on port ${status.daemon.port}.`,
       createdAt: new Date().toISOString(),
       languageHint,
       metadata: {
@@ -737,8 +733,8 @@ async function formatConfigureGuidance(
       id: "telegram-configure:read-config",
       kind: "read_config",
       operation: "telegram_setup",
-      title: shouldRenderJapanese(languageHint) ? "Telegram config を読み取りました" : "Read Telegram config",
-      detail: formatTelegramConfigProgressDetail(status, languageHint),
+      title: "Read Telegram config",
+      detail: formatTelegramConfigProgressDetail(status),
       createdAt: new Date().toISOString(),
       languageHint,
       metadata: {
@@ -758,18 +754,12 @@ async function formatConfigureGuidance(
       id: "telegram-configure:planned-action",
       kind: telegramSecret ? "awaiting_approval" : "planned_action",
       operation: "telegram_setup",
-      title: shouldRenderJapanese(languageHint) ? "次の手順を準備しました" : "Prepared next setup step",
+      title: "Prepared next setup step",
       detail: telegramSecret
-        ? shouldRenderJapanese(languageHint)
-          ? status.config.hasBotToken
-            ? "redacted token から approval-gated config write を準備しました。confirm すると既存 token を置き換えます。"
-            : "redacted token から approval-gated config write を準備しました。"
-          : status.config.hasBotToken
+        ? status.config.hasBotToken
             ? "Prepared an approval-gated config write from the redacted token. Confirming will replace the existing token."
             : "Prepared an approval-gated config write from the redacted token."
-        : shouldRenderJapanese(languageHint)
-          ? "guidance を返します。token が貼られた場合は redaction 後に confirmation を準備します。"
-          : "Returning guidance. If a token is pasted, PulSeed will redact it and prepare confirmation.",
+        : "Returning guidance. If a token is pasted, PulSeed will redact it and prepare confirmation.",
       createdAt: new Date().toISOString(),
       languageHint,
       metadata: {
@@ -783,24 +773,6 @@ async function formatConfigureGuidance(
     if (discordSecret) {
       const dialogue = createDiscordAdapterPlanDialogue();
       await host.setPendingSetupDialogue({ publicState: dialogue });
-      if (shouldRenderJapanese(languageHint)) {
-        return [
-          "Discord gateway setup plan",
-          "",
-          "- Setup dialogue state: blocked.",
-          "- Selected channel: discord.",
-          "- Discord bot token は受け取り redacted しましたが、chat-assisted config write を安全に準備するには application ID、home channel ID、identity key、webhook host/port、access policy が必要です。",
-          "",
-          "Recommended command path:",
-          "```sh",
-          dialogue.action?.command ?? "pulseed gateway setup",
-          "pulseed daemon start",
-          "pulseed daemon status",
-          "```",
-          "",
-          "Telegram と同じ typed setup dialogue contract を使っていますが、Discord は不足している non-secret field を安全に集められるまで adapter-plan path のままです。",
-        ].join("\n");
-      }
       return [
         "Discord gateway setup plan",
         "",
@@ -818,24 +790,10 @@ async function formatConfigureGuidance(
         "This uses the same typed setup dialogue contract as Telegram, but Discord remains an adapter-plan path until the missing non-secret fields can be collected safely.",
       ].join("\n");
     }
-    if (shouldRenderJapanese(languageHint)) {
-      return [
-        "Gateway setup は configuration flow です。",
-        "",
-        "`pulseed gateway setup` を実行し、その後 `pulseed daemon start` で daemon を起動または再起動してください。",
-      ].join("\n");
-    }
     return [
       "Gateway setup is a configuration flow.",
       "",
       "Run `pulseed gateway setup`, then start or restart the daemon with `pulseed daemon start`.",
-    ].join("\n");
-  }
-  if (shouldRenderJapanese(languageHint)) {
-    return [
-      "これは code-edit task ではなく、setup/configuration のリクエストに見えます。",
-      "",
-      "main wizard には `pulseed setup`、chat channel には `pulseed gateway setup`、利用可能な場合は channel-specific setup command を使ってください。",
     ].join("\n");
   }
   return [
@@ -845,13 +803,7 @@ async function formatConfigureGuidance(
   ].join("\n");
 }
 
-function formatTelegramConfigProgressDetail(status: TelegramSetupStatus, languageHint: TurnLanguageHint): string {
-  if (shouldRenderJapanese(languageHint)) {
-    if (!status.config.exists) return "config file はまだありません。";
-    if (!status.config.hasBotToken) return "config file はありますが bot token が未設定です。";
-    if (!status.config.hasHomeChat) return "bot token は設定済みですが home chat が未設定です。";
-    return "bot token と home chat は設定済みです。";
-  }
+function formatTelegramConfigProgressDetail(status: TelegramSetupStatus): string {
   if (!status.config.exists) return "Config file does not exist yet.";
   if (!status.config.hasBotToken) return "Config file exists, but no bot token is configured.";
   if (!status.config.hasHomeChat) return "Bot token is configured, but no home chat is set.";
@@ -862,158 +814,218 @@ export function formatTelegramConfigureGuidance(
   status: TelegramSetupStatus,
   suppliedTelegramToken: boolean,
   pendingActionCreated: boolean,
-  languageHint: TurnLanguageHint
+  languageHint?: TurnLanguageHint
 ): string {
-  if (shouldRenderJapanese(languageHint)) {
-    return formatTelegramConfigureGuidanceJa(status, suppliedTelegramToken, pendingActionCreated);
-  }
+  const guidance = buildTelegramSetupGuidanceData(status, suppliedTelegramToken, pendingActionCreated);
+  const renderJa = shouldRenderJapanese(languageHint);
   const lines = [
     "Telegram gateway status",
     "",
-    status.daemon.running
-      ? `- Daemon: running on port ${status.daemon.port}; gateway load state is not proven from chat status.`
-      : `- Daemon: not responding on port ${status.daemon.port}.`,
+    guidance.daemon.running
+      ? renderJa
+        ? `- Daemon: port ${guidance.daemon.port} で起動中です。gateway load state は ${guidance.gateway.load_state} です。`
+        : `- Daemon: running on port ${guidance.daemon.port}; gateway load state is ${guidance.gateway.load_state}.`
+      : renderJa
+        ? `- Daemon: port ${guidance.daemon.port} で応答していません。`
+        : `- Daemon: not responding on port ${guidance.daemon.port}.`,
   ];
 
-  if (status.state === "unconfigured") {
+  if (guidance.state === "unconfigured") {
     lines.push(
-      "- Telegram: not configured.",
+      renderJa ? "- Telegram: まだ設定されていません。" : "- Telegram: not configured.",
       "",
       "Recommended command path:",
       "```sh",
-      "pulseed telegram setup",
-      "pulseed gateway setup",
-      "pulseed daemon start",
-      "pulseed daemon status",
+      ...guidance.command_tokens.recommended_path,
       "```",
       "",
-      "Create or open a bot with @BotFather, then enter the token in `pulseed telegram setup`."
+      renderJa
+        ? "@BotFather で bot を作成または開き、`pulseed telegram setup` で token を入力してください。"
+        : "Create or open a bot with @BotFather, then enter the token in `pulseed telegram setup`."
     );
-  } else if (status.state === "partially_configured") {
+  } else if (guidance.state === "partially_configured") {
     lines.push(
-      "- Telegram config: bot token is configured, but no home chat is set.",
-      "- Gateway loaded in daemon: unknown from chat status.",
+      renderJa
+        ? "- Telegram config: bot token は設定済みですが、home chat が未設定です。"
+        : "- Telegram config: bot token is configured, but no home chat is set.",
+      renderJa
+        ? `- Gateway loaded in daemon: ${guidance.gateway.load_state} です。`
+        : "- Gateway loaded in daemon: unknown from chat status.",
       "",
       "Next step:",
-      "- Send `/sethome` to the Telegram bot from the chat that should receive PulSeed replies.",
-      "- Then run `pulseed daemon status` to verify the gateway."
+      renderJa
+        ? `- PulSeed の返信先にしたい Telegram chat から bot に \`${guidance.command_tokens.set_home}\` を送ってください。`
+        : `- Send \`${guidance.command_tokens.set_home}\` to the Telegram bot from the chat that should receive PulSeed replies.`,
+      renderJa
+        ? "- その後 `pulseed daemon status` で gateway を確認してください。"
+        : "- Then run `pulseed daemon status` to verify the gateway."
     );
   } else {
     lines.push(
-      "- Telegram config: configured.",
-      status.config.hasHomeChat
-        ? "- Home chat: configured."
-        : "- Home chat: not set; send `/sethome` if this bot should reply into a specific chat.",
-      "- Gateway loaded in daemon: unknown from chat status.",
+      renderJa ? "- Telegram config: 設定済みです。" : "- Telegram config: configured.",
+      guidance.config.has_home_chat
+        ? renderJa ? "- Home chat: 設定済みです。" : "- Home chat: configured."
+        : renderJa
+          ? `- Home chat: 未設定です。この bot が特定 chat に返信する必要がある場合は \`${guidance.command_tokens.set_home}\` を送ってください。`
+          : `- Home chat: not set; send \`${guidance.command_tokens.set_home}\` if this bot should reply into a specific chat.`,
+      renderJa
+        ? `- Gateway loaded in daemon: ${guidance.gateway.load_state} です。`
+        : `- Gateway loaded in daemon: ${guidance.gateway.load_state}.`,
       "",
       "Verification:",
-      "- Send a message to the Telegram bot.",
-      "- Run `pulseed daemon status` if delivery does not work."
+      renderJa ? "- Telegram bot にメッセージを送ってください。" : "- Send a message to the Telegram bot.",
+      renderJa ? "- 配信されない場合は `pulseed daemon status` を実行してください。" : "- Run `pulseed daemon status` if delivery does not work."
     );
   }
 
   lines.push(
     "",
-    suppliedTelegramToken
-      ? pendingActionCreated
-        ? status.config.hasBotToken
-          ? `I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Confirming will replace the existing configured token. Reply \`${SETUP_WRITE_CONFIRM_COMMAND}\` or approve in natural language to request an approval-gated config write.`
-          : `I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Reply \`${SETUP_WRITE_CONFIRM_COMMAND}\` or approve in natural language to request an approval-gated config write.`
-        : "I received a Telegram bot token in this turn and kept it redacted from chat history and activity, but no setup action could be prepared."
-      : "If you prefer chat-assisted setup, paste the token here; PulSeed will redact it from history and prepare an approval-gated confirmation before writing config."
+    guidance.pending_write.exists
+      ? guidance.pending_write.replaces_existing_secret
+        ? renderJa
+          ? `この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しました。confirm すると既存の configured token を置き換えます。approval-gated config write を依頼するには \`${guidance.command_tokens.confirm_write}\` または自然文で承認してください。`
+          : `I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Confirming will replace the existing configured token. Reply \`${guidance.command_tokens.confirm_write}\` or approve in natural language to request an approval-gated config write.`
+        : renderJa
+          ? `この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しました。approval-gated config write を依頼するには \`${guidance.command_tokens.confirm_write}\` または自然文で承認してください。`
+          : `I received a Telegram bot token in this turn and kept it redacted from chat history and activity. Reply \`${guidance.command_tokens.confirm_write}\` or approve in natural language to request an approval-gated config write.`
+      : suppliedTelegramToken
+        ? renderJa
+          ? "この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しましたが、setup action は準備できませんでした。"
+          : "I received a Telegram bot token in this turn and kept it redacted from chat history and activity, but no setup action could be prepared."
+      : renderJa
+        ? "chat-assisted setup を使う場合は、ここに token を貼ってください。PulSeed は history から redaction し、config 書き込み前に approval-gated confirmation を準備します。"
+        : "If you prefer chat-assisted setup, paste the token here; PulSeed will redact it from history and prepare an approval-gated confirmation before writing config."
   );
 
-  if (!status.daemon.running && status.state !== "unconfigured") {
+  if (!guidance.daemon.running && guidance.state !== "unconfigured") {
     lines.push(
       "",
-      "The config will not take effect until the daemon is started or restarted."
+      renderJa
+        ? "config は daemon を起動または再起動するまで反映されません。"
+        : "The config will not take effect until the daemon is started or restarted."
     );
-  } else if (status.daemon.running && status.state !== "unconfigured") {
+  } else if (guidance.daemon.running && guidance.state !== "unconfigured") {
     lines.push(
       "",
-      "If Telegram was configured or changed through chat-assisted setup, PulSeed will request an internal gateway refresh after the approved write.",
-      "For config changes made outside PulSeed chat setup, run `pulseed daemon restart` if delivery does not pick up the updated gateway config."
+      renderJa
+        ? "chat-assisted setup で Telegram config を追加または変更した場合は、承認済み write 後に PulSeed が internal gateway refresh を要求します。"
+        : "If Telegram was configured or changed through chat-assisted setup, PulSeed will request an internal gateway refresh after the approved write.",
+      renderJa
+        ? "PulSeed chat setup 以外で config を変更した場合、配信が最新 gateway config を拾わなければ `pulseed daemon restart` を実行してください。"
+        : "For config changes made outside PulSeed chat setup, run `pulseed daemon restart` if delivery does not pick up the updated gateway config."
     );
   }
 
   return lines.join("\n");
 }
 
-function formatTelegramConfigureGuidanceJa(
+export interface TelegramSetupGuidanceData {
+  channel: "telegram";
+  state: TelegramSetupStatus["state"];
+  config_path: string;
+  daemon: { running: boolean; port: number };
+  gateway: { load_state: string };
+  config: {
+    exists: boolean;
+    has_bot_token: boolean;
+    has_home_chat: boolean;
+    allow_all: boolean;
+    allowed_user_count: number;
+    runtime_control_allowed_user_count: number;
+    identity_key_configured: boolean;
+  };
+  next_action: {
+    kind: "configure_bot_token" | "send_sethome" | "verify_delivery";
+    required: boolean;
+    description: string;
+  };
+  command_tokens: {
+    recommended_path: string[];
+    confirm_write: typeof SETUP_WRITE_CONFIRM_COMMAND;
+    set_home: "/sethome";
+  };
+  safety: {
+    writes_config: false;
+    writes_secret: false;
+    requires_approval_before_write: true;
+    shell_fallback_allowed: false;
+    access_closed_by_default: boolean;
+  };
+  pending_write: {
+    exists: boolean;
+    state: "none" | "confirm_write";
+    replaces_existing_secret: boolean;
+    secret_kind: "telegram_bot_token" | null;
+  };
+  redaction: {
+    raw_secret_in_summary: false;
+    raw_secret_in_data: false;
+    redaction_marker_present: boolean;
+  };
+}
+
+export function buildTelegramSetupGuidanceData(
   status: TelegramSetupStatus,
   suppliedTelegramToken: boolean,
   pendingActionCreated: boolean
-): string {
-  const lines = [
-    "Telegram gateway status",
-    "",
-    status.daemon.running
-      ? `- Daemon: port ${status.daemon.port} で起動中です。chat status だけでは gateway の load state までは確定できません。`
-      : `- Daemon: port ${status.daemon.port} で応答していません。`,
-  ];
-
-  if (status.state === "unconfigured") {
-    lines.push(
-      "- Telegram: まだ設定されていません。",
-      "",
-      "Recommended command path:",
-      "```sh",
-      "pulseed telegram setup",
-      "pulseed gateway setup",
-      "pulseed daemon start",
-      "pulseed daemon status",
-      "```",
-      "",
-      "@BotFather で bot を作成または開き、`pulseed telegram setup` で token を入力してください。"
-    );
-  } else if (status.state === "partially_configured") {
-    lines.push(
-      "- Telegram config: bot token は設定済みですが、home chat が未設定です。",
-      "- Gateway loaded in daemon: chat status からは未確認です。",
-      "",
-      "Next step:",
-      "- PulSeed の返信先にしたい Telegram chat から bot に `/sethome` を送ってください。",
-      "- その後 `pulseed daemon status` で gateway を確認してください。"
-    );
-  } else {
-    lines.push(
-      "- Telegram config: 設定済みです。",
-      status.config.hasHomeChat
-        ? "- Home chat: 設定済みです。"
-        : "- Home chat: 未設定です。この bot が特定 chat に返信する必要がある場合は `/sethome` を送ってください。",
-      "- Gateway loaded in daemon: chat status からは未確認です。",
-      "",
-      "Verification:",
-      "- Telegram bot にメッセージを送ってください。",
-      "- 配信されない場合は `pulseed daemon status` を実行してください。"
-    );
-  }
-
-  lines.push(
-    "",
-    suppliedTelegramToken
-      ? pendingActionCreated
-        ? status.config.hasBotToken
-          ? `この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しました。confirm すると既存の configured token を置き換えます。approval-gated config write を依頼するには \`${SETUP_WRITE_CONFIRM_COMMAND}\` または自然文で承認してください。`
-          : `この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しました。approval-gated config write を依頼するには \`${SETUP_WRITE_CONFIRM_COMMAND}\` または自然文で承認してください。`
-        : "この turn で Telegram bot token を受け取り、chat history と activity には redacted のまま保持しましたが、setup action は準備できませんでした。"
-      : "chat-assisted setup を使う場合は、ここに token を貼ってください。PulSeed は history から redaction し、config 書き込み前に approval-gated confirmation を準備します。"
-  );
-
-  if (!status.daemon.running && status.state !== "unconfigured") {
-    lines.push(
-      "",
-      "config は daemon を起動または再起動するまで反映されません。"
-    );
-  } else if (status.daemon.running && status.state !== "unconfigured") {
-    lines.push(
-      "",
-      "chat-assisted setup で Telegram config を追加または変更した場合は、承認済み write 後に PulSeed が internal gateway refresh を要求します。",
-      "PulSeed chat setup 以外で config を変更した場合、配信が最新 gateway config を拾わなければ `pulseed daemon restart` を実行してください。"
-    );
-  }
-
-  return lines.join("\n");
+): TelegramSetupGuidanceData {
+  const nextAction = status.state === "unconfigured"
+    ? {
+      kind: "configure_bot_token" as const,
+      required: true,
+      description: "Configure a Telegram bot token before gateway delivery can work.",
+    }
+    : !status.config.hasHomeChat
+      ? {
+        kind: "send_sethome" as const,
+        required: true,
+        description: "Send /sethome from the Telegram chat that should receive PulSeed replies.",
+      }
+      : {
+        kind: "verify_delivery" as const,
+        required: false,
+        description: "Send a Telegram message and inspect daemon status if delivery fails.",
+      };
+  return {
+    channel: "telegram",
+    state: status.state,
+    config_path: status.configPath,
+    daemon: { running: status.daemon.running, port: status.daemon.port },
+    gateway: { load_state: status.gateway.loadState },
+    config: {
+      exists: status.config.exists,
+      has_bot_token: status.config.hasBotToken,
+      has_home_chat: status.config.hasHomeChat,
+      allow_all: status.config.allowAll,
+      allowed_user_count: status.config.allowedUserCount,
+      runtime_control_allowed_user_count: status.config.runtimeControlAllowedUserCount,
+      identity_key_configured: status.config.identityKeyConfigured,
+    },
+    next_action: nextAction,
+    command_tokens: {
+      recommended_path: ["pulseed telegram setup", "pulseed gateway setup", "pulseed daemon start", "pulseed daemon status"],
+      confirm_write: SETUP_WRITE_CONFIRM_COMMAND,
+      set_home: "/sethome",
+    },
+    safety: {
+      writes_config: false,
+      writes_secret: false,
+      requires_approval_before_write: true,
+      shell_fallback_allowed: false,
+      access_closed_by_default: !status.config.allowAll && status.config.allowedUserCount === 0,
+    },
+    pending_write: {
+      exists: pendingActionCreated,
+      state: pendingActionCreated ? "confirm_write" : "none",
+      replaces_existing_secret: pendingActionCreated && status.config.hasBotToken,
+      secret_kind: pendingActionCreated ? "telegram_bot_token" : null,
+    },
+    redaction: {
+      raw_secret_in_summary: false,
+      raw_secret_in_data: false,
+      redaction_marker_present: suppliedTelegramToken,
+    },
+  };
 }
 
 async function dispatchToolCall(
