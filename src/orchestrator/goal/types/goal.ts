@@ -30,6 +30,15 @@ export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
 export const SatisficingAggregationEnum = z.enum(["min", "avg", "max", "all_required"]);
 export type SatisficingAggregation = z.infer<typeof SatisficingAggregationEnum>;
 
+export const DimensionObservationMappingSchema = z.object({
+  kind: z.literal("data_source"),
+  data_source: z.string().min(1),
+  dimension: z.string().min(1),
+  confidence: z.enum(["high", "medium", "low"]),
+  rationale: z.string().optional(),
+}).strict();
+export type DimensionObservationMapping = z.infer<typeof DimensionObservationMappingSchema>;
+
 // --- Dimension ---
 
 export const DimensionSchema = z.object({
@@ -59,6 +68,7 @@ export const DimensionSchema = z.object({
   last_observed_layer: z
     .enum(["self_report", "independent_review", "mechanical"])
     .optional(),
+  observation_mapping: DimensionObservationMappingSchema.nullable().optional(),
   /**
    * Maps this subgoal dimension to a parent goal dimension with an aggregation strategy.
    * When set, propagateSubgoalCompletion uses parent_dimension (not name matching)

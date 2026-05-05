@@ -28,6 +28,7 @@ export function decompositionToDimension(d: DimensionDecomposition): Dimension {
     weight: 1.0,
     uncertainty_weight: null,
     state_integrity: "ok",
+    observation_mapping: d.dimension_mapping ?? null,
     dimension_mapping: null,
   };
 }
@@ -83,25 +84,21 @@ export function deduplicateDimensionKeys(dimensions: DimensionDecomposition[]): 
   return dimensions;
 }
 
-/**
- * Find the best matching DataSource dimension name for a given dimension name.
- * Uses simple keyword overlap matching.
- */
-export function findBestDimensionMatch(name: string, candidates: string[]): string | null {
-  const nameTokens = name.toLowerCase().split(/[_\s-]+/);
-  let bestMatch: string | null = null;
-  let bestScore = 0;
+export function validateDataSourceDimensionMappings(
+  dimensions: DimensionDecomposition[],
+  availableDataSources: Array<{ name: string; dimensions: string[] }>
+): DimensionDecomposition[] {
+  const sources = new Map(availableDataSources.map((source) => [source.name, new Set(source.dimensions)]));
 
-  for (const candidate of candidates) {
-    const candidateTokens = candidate.toLowerCase().split(/[_\s-]+/);
-    // Count overlapping tokens
-    const overlap = nameTokens.filter(t => candidateTokens.includes(t)).length;
-    const score = overlap / Math.max(nameTokens.length, candidateTokens.length);
-    if (score > bestScore && score >= 0.6) {  // At least 60% token overlap
-      bestScore = score;
-      bestMatch = candidate;
+  for (const dimension of dimensions) {
+    const mapping = dimension.dimension_mapping;
+    if (!mapping) continue;
+
+    const sourceDimensions = sources.get(mapping.data_source);
+    if (!sourceDimensions?.has(mapping.dimension)) {
+      dimension.dimension_mapping = null;
     }
   }
 
-  return bestMatch;
+  return dimensions;
 }

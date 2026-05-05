@@ -9,7 +9,7 @@ import type { ObservationLogEntry } from "../../../base/types/state.js";
 import type { WorkspaceContextFetcher } from "./observe-context.js";
 import type { CrossValidationResult } from "../observation-helpers.js";
 
-type ObserveFromDataSource = (goalId: string, dimensionName: string, sourceId: string) => Promise<ObservationLogEntry>;
+type ObserveFromDataSource = (goalId: string, dimensionName: string, sourceId: string, queryDimensionName?: string) => Promise<ObservationLogEntry>;
 type ObserveWithLLM = (
   goalId: string,
   dimensionName: string,
@@ -34,6 +34,7 @@ interface ObserveDataSourceStageParams {
   goalId: string;
   goal: Goal;
   dimension: Dimension;
+  queryDimensionName?: string;
   method: ObservationMethod;
   dataSource: IDataSourceAdapter;
   workspacePath?: string;
@@ -52,6 +53,7 @@ export async function runDataSourceObservationStage({
   goalId,
   goal,
   dimension,
+  queryDimensionName,
   dataSource,
   workspacePath,
   crossValidationEnabled,
@@ -65,7 +67,7 @@ export async function runDataSourceObservationStage({
   hookManager,
 }: ObserveDataSourceStageParams): Promise<boolean> {
   try {
-    await observeFromDataSource(goalId, dimension.name, dataSource.sourceId);
+    await observeFromDataSource(goalId, dimension.name, dataSource.sourceId, queryDimensionName);
 
     if (crossValidationEnabled && llmAvailable) {
       await runCrossValidation({

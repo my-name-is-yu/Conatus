@@ -12,7 +12,8 @@ import type { DataSourceQuery } from "../../base/types/data-source.js";
 export function findDataSourceForDimension(
   dataSources: IDataSourceAdapter[],
   dimensionName: string,
-  goalId?: string
+  goalId?: string,
+  preferredSourceName?: string
 ): IDataSourceAdapter | null {
   const matches = (ds: IDataSourceAdapter): boolean => {
     if (ds.supportsDimension?.(dimensionName, goalId)) return true;
@@ -21,15 +22,22 @@ export function findDataSourceForDimension(
     if (ds.config?.dimension_mapping && dimensionName in ds.config.dimension_mapping) return true;
     return false;
   };
+  const sourceMatches = (ds: IDataSourceAdapter): boolean =>
+    preferredSourceName === undefined ||
+    ds.config.name === preferredSourceName ||
+    ds.sourceId === preferredSourceName;
+  const candidates = preferredSourceName
+    ? dataSources.filter(sourceMatches)
+    : dataSources;
 
   // First pass: prefer a datasource explicitly scoped to this goalId
-  for (const ds of dataSources) {
+  for (const ds of candidates) {
     const scopeGoalId = ds.config?.scope_goal_id as string | undefined;
     if (scopeGoalId === goalId && goalId !== undefined && matches(ds)) return ds;
   }
 
   // Second pass: fall back to an unscoped datasource
-  for (const ds of dataSources) {
+  for (const ds of candidates) {
     const scopeGoalId = ds.config?.scope_goal_id as string | undefined;
     if (scopeGoalId === undefined && matches(ds)) return ds;
   }
@@ -37,7 +45,7 @@ export function findDataSourceForDimension(
   // Third pass: fall back to a datasource scoped to a different goal.
   // This handles the case where dedup prevented creating a goal-specific
   // datasource because an identical one already exists for another goal.
-  for (const ds of dataSources) {
+  for (const ds of candidates) {
     if (matches(ds)) return ds;
   }
 
@@ -60,7 +68,8 @@ export async function observeFromDataSource(
   goalId: string,
   dimensionName: string,
   sourceId: string,
-  applyObservation: (goalId: string, entry: ObservationLogEntry) => void
+  applyObservation: (goalId: string, entry: ObservationLogEntry) => void,
+  queryDimensionName = dimensionName
 ): Promise<ObservationLogEntry> {
   const source = dataSources.find((s) => s.sourceId === sourceId);
   if (!source) {
@@ -71,11 +80,11 @@ export async function observeFromDataSource(
   }
 
   const query: DataSourceQuery = {
-    dimension_name: dimensionName,
+    dimension_name: queryDimensionName,
     timeout_ms: 10000,
   };
 
-  const expression = source.config.dimension_mapping?.[dimensionName];
+  const expression = source.config.dimension_mapping?.[queryDimensionName];
   if (expression !== undefined) {
     query.expression = expression;
   }

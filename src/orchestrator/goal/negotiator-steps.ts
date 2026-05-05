@@ -32,7 +32,7 @@ import {
 } from "./goal-suggest.js";
 import {
   deduplicateDimensionKeys,
-  findBestDimensionMatch,
+  validateDataSourceDimensionMappings,
 } from "./goal-validation.js";
 import { REALISTIC_TARGET_ACCELERATION_FACTOR } from "./negotiator-feasibility.js";
 export {
@@ -87,19 +87,16 @@ export async function runDecompositionStep(
     );
   }
 
-  // Post-process: map dimension names to DataSource dimensions when similar
-  if (availableDataSources.length > 0) {
-    const allDsNames = availableDataSources.flatMap((ds) => ds.dimensions);
-    for (const dim of dimensions) {
-      if (!allDsNames.includes(dim.name)) {
-        const match = findBestDimensionMatch(dim.name, allDsNames);
-        if (match) {
-          dim.name = match;
-        }
-      }
-    }
+  for (const dim of dimensions) {
+    dim.dimension_mapping ??= null;
+  }
 
-    // Warn if all dimensions were remapped to DataSource dimensions
+  // Post-process: validate explicit typed DataSource mappings without changing
+  // the goal dimension names. Unknown or ambiguous mappings remain null.
+  if (availableDataSources.length > 0) {
+    validateDataSourceDimensionMappings(dimensions, availableDataSources);
+
+    const allDsNames = availableDataSources.flatMap((ds) => ds.dimensions);
     const allRemapped =
       dimensions.length > 0 && dimensions.every((dim) => allDsNames.includes(dim.name));
     if (allRemapped) {

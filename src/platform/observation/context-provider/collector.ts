@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import * as path from "node:path";
 import { promisify } from "node:util";
 import { readFile } from "fs/promises";
 import type { ToolExecutor } from "../../../tools/executor.js";
@@ -29,6 +30,8 @@ export type CollectorOptions = {
   cwd?: string;
   maxFileContentLines?: number;
   maxTotalChars?: number;
+  searchTerms?: string[];
+  explicitPaths?: string[];
   toolExecutor?: ToolExecutor;
   toolContext?: Partial<ToolCallContext>;
 };
@@ -50,7 +53,7 @@ type CodeSearchBundle = {
 };
 
 function createCollector(goalId: string, options?: CollectorOptions): ContextCollector {
-  const cwd = options?.cwd || process.cwd();
+  const cwd = path.resolve(options?.cwd || process.cwd());
   return {
     cwd,
     toolExecutor: options?.toolExecutor,
@@ -292,6 +295,32 @@ async function collectSearchTermItems(
   return { items, addedChars };
 }
 
+async function collectExplicitPathItems(
+  collector: ContextCollector,
+  paths: string[],
+  readMaxLines: () => number
+): Promise<ContextItem[]> {
+  const items: ContextItem[] = [];
+  for (const explicitPath of paths) {
+    const filePath = path.resolve(collector.cwd, explicitPath);
+    if (!filePath.startsWith(collector.cwd + path.sep) && filePath !== collector.cwd) {
+      continue;
+    }
+    try {
+      const lines = await readFileExcerpt(collector, filePath, readMaxLines());
+      if (lines.length > 0) {
+        items.push(toContextItem(
+          `[explicit_path "${toRelativePath(collector.cwd, filePath)}"]`,
+          lines.join("\n")
+        ));
+      }
+    } catch {
+      // skip unreadable explicit paths
+    }
+  }
+  return items;
+}
+
 async function maybeAppendContextItem(
   items: ContextItem[],
   cumulativeChars: number,
@@ -332,7 +361,13 @@ export async function collectContextItems(
       : (options?.maxFileContentLines ?? DEFAULT_FILE_CONTENT_LINES);
   };
 
-  const searchTerms = dimensionNameToSearchTerms(dimensionName);
+  const explicitItems = await collectExplicitPathItems(collector, options?.explicitPaths ?? [], effectiveMaxLines);
+  items.push(...explicitItems);
+  cumulativeChars += explicitItems.reduce((total, item) => total + item.label.length + item.content.length, 0);
+
+  const searchTerms = options?.searchTerms?.length
+    ? options.searchTerms
+    : dimensionNameToSearchTerms(dimensionName);
   for (const term of searchTerms) {
     if (cumulativeChars >= maxTotalChars) {
       break;

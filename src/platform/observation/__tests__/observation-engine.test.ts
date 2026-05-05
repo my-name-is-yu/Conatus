@@ -915,6 +915,70 @@ describe("observeFromDataSource", () => {
     );
   });
 
+  it("observes semantic dimensions through typed DataSource observation mappings", async () => {
+    const wrongDs = makeMockDataSource({
+      sourceId: "wrong-ds",
+      config: makeDsConfig({ id: "wrong-ds", name: "wrong" }),
+      getSupportedDimensions: () => ["test_coverage_percent"],
+      query: vi.fn().mockResolvedValue({
+        value: 1,
+        raw: { coverage: 1 },
+        timestamp: new Date().toISOString(),
+        source_id: "wrong-ds",
+      }),
+    });
+    const typedMappedDs = makeMockDataSource({
+      sourceId: "ci-ds",
+      config: makeDsConfig({ id: "ci-ds", name: "ci" }),
+      getSupportedDimensions: () => ["test_coverage_percent"],
+      query: vi.fn().mockResolvedValue({
+        value: 83,
+        raw: { coverage: 83 },
+        timestamp: new Date().toISOString(),
+        source_id: "ci-ds",
+      }),
+    });
+    const engineMapped = new ObservationEngine(stateManager, [wrongDs, typedMappedDs]);
+
+    const goal = makeGoal({
+      id: "goal-observation-mapping",
+      dimensions: [
+        {
+          name: "test_coverage",
+          label: "Test Coverage",
+          current_value: 0,
+          threshold: { type: "min", value: 80 },
+          confidence: 0.6,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          observation_mapping: {
+            kind: "data_source",
+            data_source: "ci",
+            dimension: "test_coverage_percent",
+            confidence: "high",
+          },
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engineMapped.observe("goal-observation-mapping", []);
+
+    const queryMock = typedMappedDs.query as ReturnType<typeof vi.fn>;
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dimension_name: "test_coverage_percent" })
+    );
+    expect(wrongDs.query).not.toHaveBeenCalled();
+    const updated = await stateManager.loadGoal("goal-observation-mapping");
+    expect(updated?.dimensions[0]?.name).toBe("test_coverage");
+    expect(updated?.dimensions[0]?.current_value).toBe(83);
+  });
+
   it("handles non-numeric values from data source", async () => {
     const stringDs = makeMockDataSource({
       query: vi.fn().mockResolvedValue({

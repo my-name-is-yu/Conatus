@@ -297,11 +297,13 @@ export class ObservationEngine {
         continue;
       }
 
-      const dataSource = this.findDataSourceForDimension(dim.name, goalId);
+      const dataSourceDimensionName = dim.observation_mapping?.dimension ?? dim.name;
+      const dataSource = this.findDataSourceForDimension(dataSourceDimensionName, goalId, dim.observation_mapping?.data_source);
       if (dataSource && await runDataSourceObservationStage({
         goalId,
         goal,
         dimension: dim,
+        queryDimensionName: dataSourceDimensionName,
         method,
         dataSource,
         workspacePath,
@@ -309,7 +311,7 @@ export class ObservationEngine {
         llmAvailable: !!this.llmClient,
         stateManager: this.stateManager,
         fetchWorkspaceContext,
-        observeFromDataSource: (gId, dimensionName, sourceId) => this.observeFromDataSource(gId, dimensionName, sourceId),
+        observeFromDataSource: (gId, dimensionName, sourceId, queryDimensionName) => this.observeFromDataSource(gId, dimensionName, sourceId, queryDimensionName),
         observeWithLLM: (...args) => this.observeWithLLM(...args),
         crossValidate: (gId, dimensionName, mechanicalValue, llmValue) =>
           this.crossValidate(gId, dimensionName, mechanicalValue, llmValue),
@@ -362,14 +364,16 @@ export class ObservationEngine {
   async observeFromDataSource(
     goalId: string,
     dimensionName: string,
-    sourceId: string
+    sourceId: string,
+    queryDimensionName?: string
   ): Promise<ObservationLogEntry> {
     return observeFromDataSourceFn(
       goalId,
       dimensionName,
       sourceId,
       this.dataSources,
-      (gId, entry) => this.applyObservation(gId, entry)
+      (gId, entry) => this.applyObservation(gId, entry),
+      queryDimensionName
     );
   }
 
@@ -378,8 +382,8 @@ export class ObservationEngine {
   /**
    * Find the first DataSource adapter that can serve the given dimension name.
    */
-  private findDataSourceForDimension(dimensionName: string, goalId?: string): IDataSourceAdapter | null {
-    return findDataSourceForDimensionFn(this.dataSources, dimensionName, goalId);
+  private findDataSourceForDimension(dimensionName: string, goalId?: string, preferredSourceName?: string): IDataSourceAdapter | null {
+    return findDataSourceForDimensionFn(this.dataSources, dimensionName, goalId, preferredSourceName);
   }
 
   // ─── LLM Observation ───

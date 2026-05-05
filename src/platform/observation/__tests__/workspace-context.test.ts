@@ -411,6 +411,35 @@ describe("createWorkspaceContextProvider — Phase 3 grep content match", () => 
     expect(result).toContain("impl.ts");
     expect(result).toContain("TODO: finish this implementation");
   });
+
+  it("uses typed DataSource mapping terms instead of dimension-name keyword terms", async () => {
+    for (let i = 1; i <= 10; i++) {
+      fs.writeFileSync(path.join(tmpWorkDir, `unrelated${i}.ts`), `// file ${i}`, "utf-8");
+    }
+    fs.writeFileSync(path.join(tmpWorkDir, "coverage-keyword.ts"), "// keyword-only coverage hit", "utf-8");
+    fs.writeFileSync(path.join(tmpWorkDir, "typed-metric.ts"), "// metric emitted as ci.branch_coverage_percent", "utf-8");
+
+    const provider = createWorkspaceContextProvider(
+      { workDir: tmpWorkDir },
+      () => ({
+        description: "Improve coverage",
+        dimensionMappings: {
+          coverage: {
+            kind: "data_source",
+            data_source: "ci",
+            dimension: "branch_coverage_percent",
+            confidence: "high",
+          },
+        },
+      })
+    );
+
+    const result = await provider("goal-grep-typed", "coverage");
+    expect(result).toContain("typed-metric.ts");
+    expect(result).toContain("branch_coverage_percent");
+    expect(result).not.toContain("## coverage-keyword.ts");
+    expect(result).not.toContain("keyword-only coverage hit");
+  });
 });
 
 describe("createWorkspaceContextProvider — existing workspace behavior unchanged", () => {

@@ -139,7 +139,10 @@ export async function buildDeps(
             desc = `${desc}\n${parent.description}`;
           }
         }
-        return desc;
+        const dimensionMappings = Object.fromEntries(
+          goal.dimensions.map((dimension) => [dimension.name, dimension.observation_mapping ?? null])
+        );
+        return { description: desc, dimensionMappings };
       } catch (err) {
         getCliLogger().error(formatOperationError(`resolve workspace context goal description for "${goalId}"`, err));
         return undefined;

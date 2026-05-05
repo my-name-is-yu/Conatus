@@ -1026,7 +1026,7 @@ describe("GoalNegotiator", () => {
       await negotiator.negotiate("Maintain comfortable environment");
 
       expect(capturedPrompt).toContain("DataSources");
-      expect(capturedPrompt).toContain("use exact dimension names");
+      expect(capturedPrompt).toContain("exact DataSource dimension");
       expect(capturedPrompt).toContain("temperature_celsius");
       expect(capturedPrompt).toContain("humidity_percent");
     });

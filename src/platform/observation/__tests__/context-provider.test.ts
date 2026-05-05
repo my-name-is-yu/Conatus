@@ -583,6 +583,27 @@ describe("collectContextItems with toolExecutor", () => {
     expect(result).toContain("const alpha = 1;");
     expect(result).not.toContain("10\tconst alpha = 1;");
   });
+
+  it("prefers typed search terms and explicit paths over dimension-name keyword hits", async () => {
+    const executor = createMockExecutor();
+    const executeFn = executor.execute as ReturnType<typeof vi.fn>;
+
+    const result = await buildWorkspaceContext("goal-typed-context", "test_coverage", {
+      cwd: projectRoot,
+      toolExecutor: executor,
+      explicitPaths: ["src/platform/observation/context-provider.ts"],
+      searchTerms: ["structured-mapping"],
+    });
+
+    expect(result).toContain('[explicit_path "src/platform/observation/context-provider.ts"]');
+    const codeSearchCall = executeFn.mock.calls.find((call: unknown[]) => call[0] === "code_search");
+    expect(codeSearchCall?.[1]).toMatchObject({
+      queryTerms: ["structured-mapping", "test_coverage"],
+    });
+    expect(executeFn.mock.calls.some((call: unknown[]) =>
+      call[0] === "grep" && (call[1] as { pattern?: string }).pattern === "coverage"
+    )).toBe(false);
+  });
 });
 
 describe("buildChatContext with toolExecutor", () => {
