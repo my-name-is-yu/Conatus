@@ -87,8 +87,8 @@ export type SelectedChatRoute =
     }
   | {
       kind: "runtime_control_blocked";
-      reason: "runtime_control_unavailable" | "runtime_control_disallowed";
-      intent: RuntimeControlIntent;
+      reason: "runtime_control_unavailable" | "runtime_control_disallowed" | "runtime_control_unclassified";
+      intent?: RuntimeControlIntent;
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
@@ -99,6 +99,7 @@ export interface IngressRouterCapabilities {
   hasToolLoop: boolean;
   hasRuntimeControlService?: boolean;
   runtimeControlIntent?: RuntimeControlIntent | null;
+  runtimeControlUnclassified?: boolean;
   freeformRouteIntent?: FreeformRouteIntent | null;
   setupSecretIntake?: SetupSecretIntakeResult | null;
   runSpecDraft?: RunSpec | null;
@@ -122,8 +123,55 @@ function selectRouteForText(
   const canUseRuntimeControlRoute =
     runtimeControl.allowed && runtimeControl.approvalMode !== "disallowed";
 
+  if (deps.hasAgentLoop) {
+    const intent = deps.runtimeControlIntent ?? null;
+    if (intent === null && deps.runtimeControlUnclassified === true) {
+      return {
+        kind: "runtime_control_blocked",
+        reason: "runtime_control_unclassified",
+        ...runtimeControlPolicy,
+      };
+    }
+    if (intent !== null && !canUseRuntimeControlRoute) {
+      return {
+        kind: "runtime_control_blocked",
+        reason: "runtime_control_disallowed",
+        intent,
+        ...runtimeControlPolicy,
+      };
+    }
+    if (intent !== null && deps.hasRuntimeControlService !== true) {
+      return {
+        kind: "runtime_control_blocked",
+        reason: "runtime_control_unavailable",
+        intent,
+        ...runtimeControlPolicy,
+      };
+    }
+    if (intent !== null) {
+      return {
+        kind: "runtime_control",
+        reason: "runtime_control_intent",
+        intent,
+        ...runtimeControlPolicy,
+      };
+    }
+    return {
+      kind: "agent_loop",
+      reason: "agent_loop_available",
+      ...baseTurnPolicy,
+    };
+  }
+
   if (canUseRuntimeControlRoute) {
     const intent = deps.runtimeControlIntent ?? null;
+    if (intent === null && deps.runtimeControlUnclassified === true) {
+      return {
+        kind: "runtime_control_blocked",
+        reason: "runtime_control_unclassified",
+        ...runtimeControlPolicy,
+      };
+    }
     if (intent !== null && deps.hasRuntimeControlService === true) {
       return {
         kind: "runtime_control",
@@ -142,6 +190,13 @@ function selectRouteForText(
     }
   } else {
     const intent = deps.runtimeControlIntent ?? null;
+    if (intent === null && deps.runtimeControlUnclassified === true) {
+      return {
+        kind: "runtime_control_blocked",
+        reason: "runtime_control_unclassified",
+        ...runtimeControlPolicy,
+      };
+    }
     if (intent !== null) {
       return {
         kind: "runtime_control_blocked",
@@ -206,14 +261,6 @@ function selectRouteForText(
       kind: "clarify",
       reason: "freeform_semantic_route",
       intent: { ...freeformIntent, kind: "clarify" },
-      ...baseTurnPolicy,
-    };
-  }
-
-  if (deps.hasAgentLoop) {
-    return {
-      kind: "agent_loop",
-      reason: "agent_loop_available",
       ...baseTurnPolicy,
     };
   }

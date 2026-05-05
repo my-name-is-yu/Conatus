@@ -10,6 +10,8 @@ import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-
 import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from "../app.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import type { TelegramSetupStatus } from "../../chat/gateway-setup-status.js";
+import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
+import type { ToolCallContext } from "../../../tools/types.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
@@ -517,7 +519,7 @@ describe("standalone slash command routing", () => {
     screen.unmount();
   });
 
-  it("persists a RunSpec draft and waits for confirmation before forwarding long-running runs", async () => {
+  it("routes long-running freeform requests through ChatRunner for AgentLoop RunSpec tools", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
     const llmClient = createMockLLMClient([
@@ -546,29 +548,16 @@ describe("standalone slash command routing", () => {
 
     await testState.lastChatProps!.onSubmit("Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.");
 
-    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.execute).toHaveBeenCalledWith(
+      "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
+      "/work/kaggle",
+    );
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
-
-    await flush();
-    await testState.lastChatProps!.onSubmit("confirm");
-
-    expect(chatRunner.executeIngressMessage).toHaveBeenCalledOnce();
-    const calls = chatRunner.executeIngressMessage.mock.calls as unknown as Array<[
-      { metadata: Record<string, unknown> },
-      string,
-    ]>;
-    const [ingress, cwd] = calls[0]!;
-    expect(cwd).toBe("/work/kaggle");
-    expect(ingress.metadata).toMatchObject({
-      run_spec_profile: "kaggle",
-      run_spec_status: "confirmed",
-    });
-    expect(String(ingress.metadata.run_spec_id)).toMatch(/^runspec-/);
 
     screen.unmount();
   });
 
-  it("executes a confirmed RunSpec in the structured workspace rather than the stale TUI cwd", async () => {
+  it("leaves workspace derivation to ChatRunner instead of creating a TUI RunSpec draft", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
     const llmClient = createMockLLMClient([
@@ -603,25 +592,17 @@ describe("standalone slash command routing", () => {
 
     await testState.lastChatProps!.onSubmit("Run the Kaggle competition in /work/explicit-kaggle until tomorrow morning.");
     await flush();
-    await testState.lastChatProps!.onSubmit("confirm");
 
-    expect(chatRunner.executeIngressMessage).toHaveBeenCalledOnce();
-    const calls = chatRunner.executeIngressMessage.mock.calls as unknown as Array<[
-      { cwd: string; metadata: Record<string, unknown> },
-      string,
-    ]>;
-    const [ingress, cwd] = calls[0]!;
-    expect(cwd).toBe("/work/explicit-kaggle");
-    expect(ingress.cwd).toBe("/work/explicit-kaggle");
-    expect(ingress.metadata).toMatchObject({
-      run_spec_profile: "kaggle",
-      run_spec_status: "confirmed",
-    });
+    expect(chatRunner.execute).toHaveBeenCalledWith(
+      "Run the Kaggle competition in /work/explicit-kaggle until tomorrow morning.",
+      "/work/stale-tui-cwd",
+    );
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
 
     screen.unmount();
   });
 
-  it("does not start a long-running run when required RunSpec fields remain unresolved", async () => {
+  it("does not pre-agent confirm a long-running run when no TUI RunSpec draft is pending", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
     const llmClient = createMockLLMClient([
@@ -654,7 +635,12 @@ describe("standalone slash command routing", () => {
     await flush();
     await testState.lastChatProps!.onSubmit("confirm");
 
-    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.execute).toHaveBeenNthCalledWith(
+      1,
+      "Run this Kaggle competition and aim for top 15%. Keep submissions approval-gated.",
+      "/work/kaggle",
+    );
+    expect(chatRunner.execute).toHaveBeenNthCalledWith(2, "confirm", "/work/kaggle");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
 
     screen.unmount();
@@ -663,7 +649,7 @@ describe("standalone slash command routing", () => {
   it.each([
     ["Japanese", "明日のレビューまでコンペの改善を進めて、提出は承認制にして"],
     ["Spanish", "Sigue trabajando en la competición hasta la revisión y no envíes nada sin aprobación."],
-  ])("persists a RunSpec draft for %s caller-path phrasing", async (_label, requestText) => {
+  ])("routes %s long-running caller-path phrasing through ChatRunner", async (_label, requestText) => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();
     const llmClient = createMockLLMClient([
@@ -692,10 +678,9 @@ describe("standalone slash command routing", () => {
     await testState.lastChatProps!.onSubmit(requestText);
     await flush();
 
-    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.execute).toHaveBeenCalledWith(requestText, "/work/kaggle");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
-    expect(llmClient.callCount).toBe(2);
-    expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("Proposed long-running run");
+    expect(llmClient.callCount).toBe(1);
 
     screen.unmount();
   });
@@ -808,7 +793,7 @@ describe("standalone slash command routing", () => {
     await testState.lastChatProps!.onSubmit("このタスクの進め方を説明して");
     await flush();
 
-    expect(llmClient.callCount).toBe(2);
+    expect(llmClient.callCount).toBe(1);
     expect(chatRunner.execute).toHaveBeenCalledWith("このタスクの進め方を説明して", "/work/kaggle");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
 
@@ -826,13 +811,24 @@ describe("standalone slash command routing", () => {
       }),
     };
     const chatAgentLoopRunner = {
-      execute: vi.fn().mockResolvedValue({
-        success: true,
-        output: "agent loop should not run",
-        error: null,
-        exit_code: null,
-        elapsed_ms: 42,
-        stopped_reason: "completed",
+      execute: vi.fn().mockImplementation(async (input: { toolCallContext?: ToolCallContext }) => {
+        const guidanceTool = createSetupRuntimeControlTools({
+          stateManager: stateManager as unknown as StateManager,
+          gatewaySetupStatusProvider,
+        }).find((tool) => tool.metadata.name === "prepare_gateway_setup_guidance")!;
+        const result = await guidanceTool.call({
+          channel: "telegram",
+          request: "telegramからseedyと会話できるようにしたい",
+          language: "ja",
+        }, input.toolCallContext!);
+        return {
+          success: result.success,
+          output: result.summary,
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
       }),
     } as unknown as ChatAgentLoopRunner;
     let tuiEventHandler: TuiChatSurface["onEvent"];
@@ -902,7 +898,7 @@ describe("standalone slash command routing", () => {
     const submit = testState.lastChatProps!.onSubmit("telegramからseedyと会話できるようにしたい");
     await vi.waitFor(() => {
       const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
-      expect(visibleText).toContain("Telegram setup を開始しました");
+      expect(visibleText).toContain("Agent loop started");
       expect(visibleText).not.toContain("pulseed telegram setup");
     });
     statusLookupCanFinish.resolve();
@@ -917,14 +913,13 @@ describe("standalone slash command routing", () => {
     expect(chatRunnerOutput).toContain("pulseed gateway setup");
     await vi.waitFor(() => {
       const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
-      expect(visibleText).toContain("Telegram setup を開始しました");
       expect(visibleText).toContain("pulseed telegram setup");
       expect(visibleText).not.toContain("I understand the request");
       expect(visibleText).not.toContain("Next I will");
       expect(visibleText).not.toContain("This is needed");
       expect(visibleText).not.toContain("resume the saved agent loop state");
     });
-    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
     expect(adapter.execute).not.toHaveBeenCalled();
 
     screen.unmount();
@@ -970,7 +965,7 @@ describe("standalone slash command routing", () => {
 
     expect(chatRunner.execute).toHaveBeenCalledWith("この実行を一時停止して", "/work/kaggle");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
-    expect(llmClient.callCount).toBe(2);
+    expect(llmClient.callCount).toBe(1);
 
     screen.unmount();
   });

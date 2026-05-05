@@ -45,8 +45,6 @@ import { RuntimeHealthStore } from "../../runtime/store/health-store.js";
 import type { RuntimeHealthSnapshot } from "../../runtime/store/runtime-schemas.js";
 import {
   createRunSpecStore,
-  deriveRunSpecFromText,
-  formatRunSpecSetupProposal,
   handleRunSpecConfirmationInput,
   type RunSpec,
 } from "../../runtime/run-spec/index.js";
@@ -789,25 +787,7 @@ export function App({
             }
           } else if (freeformRoute === "chat_runner" && chatRunner) {
             const effectiveCwd = cwd ?? process.cwd();
-            const runSpec = await deriveRunSpecFromText(input, {
-              cwd: effectiveCwd,
-              conversationId: chatRunner.getConversationId?.() ?? null,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-              llmClient,
-            });
-            if (runSpec) {
-              const savedRunSpec = await createRunSpecStore(stateManager).save(runSpec);
-              setPendingRunSpec(savedRunSpec);
-              setMessages((prev) => [...prev, {
-                id: randomUUID(),
-                role: "pulseed" as const,
-                text: formatRunSpecSetupProposal(savedRunSpec),
-                timestamp: new Date(),
-                messageType: savedRunSpec.missing_fields.length > 0 ? ("warning" as const) : ("info" as const),
-              }].slice(-MAX_MESSAGES));
-            } else {
-              await chatRunner.execute(input, effectiveCwd);
-            }
+            await chatRunner.execute(input, effectiveCwd);
           } else {
             setMessages((prev) => [...prev, {
               id: randomUUID(), role: "pulseed" as const,

@@ -29,7 +29,7 @@ import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loo
 import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type { ApprovalBroker } from "../../runtime/approval-broker.js";
-import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
+import { classifyRuntimeControlIntent } from "../../runtime/control/index.js";
 import { classifyConfirmationDecision } from "../../runtime/confirmation-decision.js";
 import type {
   RuntimeControlActor,
@@ -512,14 +512,6 @@ export class ChatRunner {
     }
     const historyBlock = historySections.length > 0 ? `${historySections.join("\n\n")}\n\nCurrent message:\n` : "";
 
-    const selectedRoute = resumeOnly
-      ? null
-      : (options.selectedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
-    this.lastSelectedRoute = selectedRoute;
-    if (selectedRoute?.kind !== "configure") {
-      this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
-    }
-
     const start = Date.now();
     const assistantBuffer: AssistantBuffer = { text: "" };
     const identityResponse = resumeOnly ? null : resolveSelfIdentityResponse(safeInput, this.providerConfigBaseDir());
@@ -540,6 +532,14 @@ export class ChatRunner {
         output: identityResponse,
         elapsed_ms,
       };
+    }
+
+    const selectedRoute = resumeOnly
+      ? null
+      : (options.selectedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
+    this.lastSelectedRoute = selectedRoute;
+    if (selectedRoute?.kind !== "configure") {
+      this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
     }
 
     if (selectedRoute?.kind === "runtime_control") {
@@ -766,28 +766,46 @@ export class ChatRunner {
 
   private async resolveRouteFromIngress(ingress: ChatIngressMessage): Promise<SelectedChatRoute> {
     const capabilities = getRouteCapabilities(this.deps);
+    const hasSetupSecret = (this.setupSecretIntake?.suppliedSecrets.length ?? 0) > 0;
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
-      ingress.metadata["runtime_control_denied"] === true
+      !hasSetupSecret
+      && !capabilities.hasAgentLoop
+      && ingress.metadata["runtime_control_denied"] === true
       && ingress.metadata["runtime_control_approved"] !== true
-      && ingress.metadata["runtime_control_explicit"] !== true
-      && capabilities.hasAgentLoop;
+      && ingress.metadata["runtime_control_explicit"] !== true;
+    const shouldClassifyRuntimeControlForSafety =
+      !hasSetupSecret
+      && capabilities.hasAgentLoop
+      && (
+        ingress.metadata["runtime_control_approved"] === true
+        || ingress.metadata["runtime_control_denied"] === true
+        || ingress.metadata["runtime_control_explicit"] === true
+      );
+    const shouldClassifyRuntimeControl =
+      shouldClassifyRuntimeControlForSafety
+      || (!hasSetupSecret && !capabilities.hasAgentLoop && (
+        (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
+        || ingress.metadata["runtime_control_approved"] === true
+        || ingress.metadata["runtime_control_denied"] === true
+        || ingress.metadata["runtime_control_explicit"] === true
+      ));
     let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
       ? await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient)
       : null;
-    const shouldClassifyRuntimeControl =
-      (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
-      || ingress.metadata["runtime_control_approved"] === true
-      || ingress.metadata["runtime_control_denied"] === true
-      || ingress.metadata["runtime_control_explicit"] === true;
-    const runtimeControlIntent = freeformRouteIntent === null && shouldClassifyRuntimeControl
-      ? await recognizeRuntimeControlIntent(ingress.text, this.deps.llmClient)
+    const runtimeControlClassification = freeformRouteIntent == null && shouldClassifyRuntimeControl
+      ? await classifyRuntimeControlIntent(ingress.text, this.deps.llmClient)
       : null;
-    if (freeformRouteIntent === null && runtimeControlIntent === null && capabilities.hasAgentLoop) {
+    const runtimeControlIntent = runtimeControlClassification?.status === "intent"
+      ? runtimeControlClassification.intent
+      : null;
+    if (!hasSetupSecret && !capabilities.hasAgentLoop && freeformRouteIntent == null && runtimeControlIntent === null) {
       freeformRouteIntent = await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient);
     }
     const shouldDeriveRunSpecDraft =
-      runtimeControlIntent === null
-      && freeformRouteIntent !== null
+      !capabilities.hasAgentLoop
+      && !hasSetupSecret
+      && runtimeControlIntent === null
+      && freeformRouteIntent != null
       && (
         freeformRouteIntent.kind === "run_spec"
         || freeformRouteIntent.kind === "configure"
@@ -814,6 +832,9 @@ export class ChatRunner {
     return standaloneIngressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
+      runtimeControlUnclassified: shouldClassifyRuntimeControlForSafety
+        && runtimeControlClassification?.status === "unclassified"
+        && ingress.metadata["runtime_control_explicit"] === true,
       freeformRouteIntent,
       setupSecretIntake: this.setupSecretIntake,
       runSpecDraft,
