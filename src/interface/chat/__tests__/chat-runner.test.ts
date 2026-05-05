@@ -2377,7 +2377,7 @@ describe("ChatRunner", () => {
         });
         const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
 
-        const reasoningResult = await runner.execute("/models high", "/repo");
+        const reasoningResult = await runner.execute("/model high", "/repo");
         const afterReasoning = await stateManager.readRaw("provider.json") as Record<string, unknown>;
         const modelResult = await runner.execute("/model gpt-5.5", "/repo");
         const afterModel = await stateManager.readRaw("provider.json") as Record<string, unknown>;

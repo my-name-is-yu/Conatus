@@ -147,7 +147,6 @@ const CHAT_RUNNER_OWNED_COMMANDS = new Set([
   "/tend",
   "/config",
   "/model",
-  "/models",
   "/permissions",
   "/plugins",
   "/usage",
