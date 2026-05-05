@@ -52,6 +52,7 @@ export async function buildLLMClient(): Promise<ILLMClient> {
           timeoutMs: config.codex_timeout_ms,
           idleTimeoutMs: config.codex_idle_timeout_ms,
           retryAttempts: config.codex_retry_attempts,
+          reasoningEffort: config.reasoning_effort,
           sandboxPolicy: executionPolicy.sandboxMode === "danger_full_access" ? "danger-full-access" : executionPolicy.sandboxMode.replace("_", "-"),
         });
       }
@@ -66,6 +67,7 @@ export async function buildLLMClient(): Promise<ILLMClient> {
         model: config.model,
         baseURL: config.base_url,
         lightModel: config.light_model,
+        reasoningEffort: config.reasoning_effort,
       });
     }
 
@@ -96,6 +98,7 @@ export async function buildLLMClient(): Promise<ILLMClient> {
         model: config.model,
         baseURL: config.base_url,
         lightModel: config.light_model,
+        reasoningEffort: config.reasoning_effort,
       });
   }
 }
@@ -118,6 +121,7 @@ export async function buildAdapterRegistry(
   registry.register(new OpenAICodexCLIAdapter({
     cliPath: config.codex_cli_path,
     model: config.model,
+    reasoningEffort: config.reasoning_effort,
     sandboxPolicy: resolveExecutionPolicy({
       workspaceRoot: process.cwd(),
       security: config.agent_loop?.security,

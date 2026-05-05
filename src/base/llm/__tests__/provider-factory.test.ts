@@ -34,6 +34,10 @@ vi.mock("../../adapters/agents/openai-codex.js", () => ({
   OpenAICodexCLIAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
+vi.mock("../../../adapters/agents/openai-codex.js", () => ({
+  OpenAICodexCLIAdapter: vi.fn().mockImplementation(function() { return {}; }),
+}));
+
 vi.mock("../../adapters/github-issue.js", () => ({
   GitHubIssueAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
@@ -46,10 +50,11 @@ vi.mock("../provider-config.js", () => ({
   loadProviderConfig: () => mockLoadProviderConfig(),
 }));
 
-import { buildLLMClient } from "../provider-factory.js";
+import { buildAdapterRegistry, buildLLMClient } from "../provider-factory.js";
 import { LLMClient } from "../llm-client.js";
 import { OpenAILLMClient } from "../openai-client.js";
 import { CodexLLMClient } from "../codex-llm-client.js";
+import { OpenAICodexCLIAdapter } from "../../../adapters/agents/openai-codex.js";
 
 // ─── Tests ───
 
@@ -159,6 +164,25 @@ describe("buildLLMClient — early API key validation", () => {
 
       expect(MockedOpenAILLMClient).toHaveBeenCalledOnce();
     });
+
+    it("passes reasoning effort to OpenAILLMClient", async () => {
+      const MockedOpenAILLMClient = vi.mocked(OpenAILLMClient);
+      MockedOpenAILLMClient.mockClear();
+      mockLoadProviderConfig.mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.5",
+        reasoning_effort: "low",
+        adapter: "agent_loop",
+        api_key: "sk-test",
+      });
+
+      await buildLLMClient();
+
+      expect(MockedOpenAILLMClient).toHaveBeenCalledWith(expect.objectContaining({
+        model: "gpt-5.5",
+        reasoningEffort: "low",
+      }));
+    });
   });
 
   // ── openai with codex adapter ─────────────────────────────────────────────
@@ -186,6 +210,7 @@ describe("buildLLMClient — early API key validation", () => {
         codex_timeout_ms: 180000,
         codex_idle_timeout_ms: 30000,
         codex_retry_attempts: 4,
+        reasoning_effort: "high",
       });
 
       await buildLLMClient();
@@ -197,6 +222,7 @@ describe("buildLLMClient — early API key validation", () => {
         timeoutMs: 180000,
         idleTimeoutMs: 30000,
         retryAttempts: 4,
+        reasoningEffort: "high",
       }));
     });
 
@@ -209,6 +235,25 @@ describe("buildLLMClient — early API key validation", () => {
       });
 
       await expect(buildLLMClient()).resolves.not.toThrow();
+    });
+  });
+
+  describe("adapter registry", () => {
+    it("passes reasoning effort to OpenAICodexCLIAdapter", async () => {
+      const MockedOpenAICodexCLIAdapter = vi.mocked(OpenAICodexCLIAdapter);
+      MockedOpenAICodexCLIAdapter.mockClear();
+
+      await buildAdapterRegistry({} as never, {
+        provider: "openai",
+        model: "gpt-5.5",
+        reasoning_effort: "xhigh",
+        adapter: "openai_codex_cli",
+      });
+
+      expect(MockedOpenAICodexCLIAdapter).toHaveBeenCalledWith(expect.objectContaining({
+        model: "gpt-5.5",
+        reasoningEffort: "xhigh",
+      }));
     });
   });
 

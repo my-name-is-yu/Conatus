@@ -9,7 +9,7 @@ import { writeJsonFile, readJsonFile } from "../../../base/utils/json-io.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 
-import { loadProviderConfig, saveProviderConfig } from "../../../base/llm/provider-config.js";
+import { isReasoningEffort, loadProviderConfig, saveProviderConfig } from "../../../base/llm/provider-config.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { buildLLMClient } from "../../../base/llm/provider-factory.js";
 import { ReportingEngine } from "../../../reporting/reporting-engine.js";
@@ -45,6 +45,7 @@ export async function cmdProvider(argv: string[]): Promise<number> {
       "agentloop-worktree-base-dir"?: string;
       "agentloop-worktree-keep-debug"?: string;
       "agentloop-worktree-cleanup"?: string;
+      "reasoning-effort"?: string;
     };
     try {
       ({ values } = parseArgs({
@@ -58,6 +59,7 @@ export async function cmdProvider(argv: string[]): Promise<number> {
           "agentloop-worktree-base-dir": { type: "string" },
           "agentloop-worktree-keep-debug": { type: "string" },
           "agentloop-worktree-cleanup": { type: "string" },
+          "reasoning-effort": { type: "string" },
         },
         strict: false,
       }) as {
@@ -70,6 +72,7 @@ export async function cmdProvider(argv: string[]): Promise<number> {
           "agentloop-worktree-base-dir"?: string;
           "agentloop-worktree-keep-debug"?: string;
           "agentloop-worktree-cleanup"?: string;
+          "reasoning-effort"?: string;
         };
       });
     } catch (err) {
@@ -113,6 +116,10 @@ export async function cmdProvider(argv: string[]): Promise<number> {
       getCliLogger().error('Error: --agentloop-worktree-cleanup must be one of "on_success", "always", "never".');
       return 1;
     }
+    if (values["reasoning-effort"] && !isReasoningEffort(values["reasoning-effort"])) {
+      getCliLogger().error('Error: --reasoning-effort must be one of "none", "minimal", "low", "medium", "high", "xhigh".');
+      return 1;
+    }
 
     const current = await loadProviderConfig();
     const resolvedProvider = (values.provider ?? providerValue) as ProviderConfig["provider"] | undefined;
@@ -127,6 +134,9 @@ export async function cmdProvider(argv: string[]): Promise<number> {
       ...current,
       ...(resolvedProvider ? { provider: resolvedProvider } : {}),
       ...(values.model ? { model: values.model } : {}),
+      ...(values["reasoning-effort"] && (resolvedProvider ?? current.provider) === "openai"
+        ? { reasoning_effort: values["reasoning-effort"] as ProviderConfig["reasoning_effort"] }
+        : {}),
       ...(values.adapter ? { adapter: values.adapter as ProviderConfig["adapter"] } : {}),
       ...((values["agentloop-worktree"]
         || values["agentloop-worktree-base-dir"] !== undefined
@@ -135,6 +145,9 @@ export async function cmdProvider(argv: string[]): Promise<number> {
         ? { agent_loop: { ...(current.agent_loop ?? {}), worktree: nextWorktree } }
         : {}),
     };
+    if ((resolvedProvider ?? updated.provider) !== "openai") {
+      delete updated.reasoning_effort;
+    }
 
     await saveProviderConfig(updated);
     console.log("Provider config updated:");

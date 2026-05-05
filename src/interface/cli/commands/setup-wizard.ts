@@ -19,7 +19,7 @@ import { readCodexOAuthToken } from "../../../base/llm/provider-config.js";
 import { isDaemonRunning } from "../../../runtime/daemon/client.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { ROOT_PRESETS } from "./presets/root-presets.js";
-import { MODEL_REGISTRY, detectApiKeys, getAdaptersForModel, maskKey } from "./setup-shared.js";
+import { MODEL_REGISTRY, REASONING_EFFORTS, detectApiKeys, getAdaptersForModel, maskKey } from "./setup-shared.js";
 import type { Provider } from "./setup-shared.js";
 import { getBanner, stepExistingConfig, stepUserName, stepSeedyName } from "./setup/steps-identity.js";
 import { stepRootPreset, stepProvider, stepModel, stepApiKey, runCodexOAuthLogin, stepOpenAIAuthMethod } from "./setup/steps-provider.js";
@@ -44,6 +44,7 @@ type SetupAnswers = {
   importedUserContent?: string;
   provider: Provider;
   model: string;
+  reasoningEffort?: ProviderConfig["reasoning_effort"];
   adapter: string;
   apiKey?: string;
   startDaemon: boolean;
@@ -53,7 +54,7 @@ type SetupAnswers = {
 };
 
 type IdentityAnswers = Pick<SetupAnswers, "userName" | "agentName" | "rootPreset">;
-type ExecutionAnswers = Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">;
+type ExecutionAnswers = Pick<SetupAnswers, "provider" | "model" | "reasoningEffort" | "adapter" | "apiKey">;
 type RuntimeAnswers = Pick<SetupAnswers, "startDaemon" | "daemonPort" | "notificationConfig" | "gatewaySetup">;
 type FullSetupSection = "identity" | "execution" | "runtime" | "review";
 type ResidentReadinessState = "ready" | "partial" | "blocked";
@@ -80,6 +81,7 @@ function formatSummary(answers: SetupAnswers): string {
     `Style:     ${ROOT_PRESETS[answers.rootPreset].name}`,
     `Provider:  ${answers.provider}`,
     `Model:     ${answers.model}`,
+    ...(answers.reasoningEffort ? [`Reasoning: ${answers.reasoningEffort}`] : []),
     formatAuthSummary(answers),
     formatCredentialSummary(answers),
     `Daemon:    ${answers.startDaemon ? `configured (port ${answers.daemonPort})` : "not configured"}`,
@@ -89,11 +91,12 @@ function formatSummary(answers: SetupAnswers): string {
 }
 
 function formatExecutionSummary(
-  execution: Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">
+  execution: Pick<SetupAnswers, "provider" | "model" | "reasoningEffort" | "adapter" | "apiKey">
 ): string {
   return [
     `Provider:  ${execution.provider}`,
     `Model:     ${execution.model}`,
+    ...(execution.reasoningEffort ? [`Reasoning: ${execution.reasoningEffort}`] : []),
     formatAuthSummary(execution),
     formatCredentialSummary(execution),
   ].join("\n");
@@ -145,6 +148,7 @@ function formatImportSetupSummary(
     `Source:    ${sourceNames}`,
     `Provider:  ${providerPatch.provider}`,
     `Model:     ${providerPatch.model ?? "not found"}`,
+    ...(providerPatch.reasoning_effort ? [`Reasoning: ${providerPatch.reasoning_effort}`] : []),
     formatAuthSummary({
       provider: providerPatch.provider,
       adapter: providerPatch.adapter ?? "agent_loop",
@@ -156,7 +160,7 @@ function formatImportSetupSummary(
 }
 
 function buildProviderConfig(
-  execution: Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">,
+  execution: Pick<SetupAnswers, "provider" | "model" | "reasoningEffort" | "adapter" | "apiKey">,
   base?: Partial<ProviderConfig>
 ): ProviderConfig {
   const config: ProviderConfig = {
@@ -165,6 +169,11 @@ function buildProviderConfig(
     model: execution.model,
     adapter: execution.adapter as ProviderConfig["adapter"],
   };
+  if (execution.provider === "openai" && execution.reasoningEffort) {
+    config.reasoning_effort = execution.reasoningEffort;
+  } else {
+    delete config.reasoning_effort;
+  }
 
   if (execution.apiKey) {
     config.api_key = execution.apiKey;
@@ -296,6 +305,29 @@ function defaultExecutionAdapter(provider: Provider, model: string): string {
   return adapters[0] ?? "";
 }
 
+async function stepReasoningEffort(
+  provider: Provider,
+  model: string,
+  initialReasoningEffort?: ProviderConfig["reasoning_effort"]
+): Promise<ProviderConfig["reasoning_effort"] | undefined> {
+  if (provider !== "openai") return undefined;
+  if (!initialReasoningEffort && model !== "gpt-5.5") return undefined;
+  const choice = guardCancel(
+    await p.select({
+      message: "Select OpenAI reasoning effort:",
+      options: [
+        { value: "__unset__" as const, label: "Default", hint: "use provider/model default" },
+        ...REASONING_EFFORTS.map((effort) => ({
+          value: effort,
+          label: effort,
+        })),
+      ],
+      initialValue: initialReasoningEffort ?? "__unset__",
+    })
+  );
+  return choice === "__unset__" ? undefined : choice as ProviderConfig["reasoning_effort"];
+}
+
 async function stepExecutionConfig(
   current?: ExecutionAnswers,
   mode: "interactive" | "imported" = "interactive"
@@ -309,13 +341,20 @@ async function stepExecutionConfig(
           provider,
           mode === "interactive" && current?.provider === provider ? current.model : undefined
         );
+  const reasoningEffort = mode === "imported"
+    ? current?.reasoningEffort
+    : await stepReasoningEffort(
+        provider,
+        model,
+        current?.provider === provider ? current.reasoningEffort : undefined
+      );
   const adaptersForModel = getAdaptersForModel(model, provider);
   const compatibleCurrentAdapter =
     current?.adapter && adaptersForModel.includes(current.adapter)
       ? current.adapter
       : undefined;
   let adapter = compatibleCurrentAdapter ?? defaultExecutionAdapter(provider, model);
-  if (!adapter) return { provider, model, adapter, apiKey: current?.apiKey };
+  if (!adapter) return { provider, model, reasoningEffort, adapter, apiKey: current?.apiKey };
 
   if (
     provider === "openai" &&
@@ -348,7 +387,7 @@ async function stepExecutionConfig(
     !validImportedApiKey
   ) {
     const auth = await stepMissingOpenAiAuth(model, adapter, adaptersForModel, current?.apiKey);
-    return { provider, model, adapter: auth.adapter, apiKey: auth.apiKey };
+    return { provider, model, reasoningEffort, adapter: auth.adapter, apiKey: auth.apiKey };
   }
 
   const apiKey =
@@ -357,7 +396,7 @@ async function stepExecutionConfig(
       : current?.provider === provider
         ? await stepApiKey(provider, detectedKeys, current.apiKey, adapter)
         : await stepApiKey(provider, detectedKeys, undefined, adapter);
-  return { provider, model, adapter, apiKey };
+  return { provider, model, reasoningEffort, adapter, apiKey };
 }
 
 async function stepIdentityConfig(
@@ -633,6 +672,7 @@ export async function runSetupWizard(): Promise<number> {
       let execution = await stepExecutionConfig({
         provider: existingConfig.provider,
         model: existingConfig.model,
+        reasoningEffort: existingConfig.reasoning_effort,
         adapter: existingConfig.adapter,
         apiKey: existingConfig.api_key,
       });
@@ -676,6 +716,7 @@ export async function runSetupWizard(): Promise<number> {
     importedUserContent: importSelection?.userSettings?.content,
     provider: importedProviderPatch?.provider ?? "openai",
     model: importedProviderPatch?.model ?? "",
+    reasoningEffort: importedProviderPatch?.reasoning_effort,
     adapter: importedProviderPatch?.adapter ?? "",
     apiKey: importedProviderPatch?.api_key,
     startDaemon: false,

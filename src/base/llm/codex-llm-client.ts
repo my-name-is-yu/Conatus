@@ -53,6 +53,8 @@ export interface CodexLLMClientConfig {
   model?: string;
   /** Light model for routine/cheap calls (model_tier: 'light'). Optional. */
   lightModel?: string;
+  /** Optional Codex reasoning effort override for supported models. */
+  reasoningEffort?: string;
   /** Repository path passed to Codex for workspace-aware execution. Default: "." */
   repoPath?: string;
   /** Total request timeout per call in milliseconds. Default: 120000 (2 minutes) */
@@ -82,6 +84,7 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
   private readonly cliPath: string;
   private readonly model: string | undefined;
   private readonly repoPath: string;
+  private readonly reasoningEffort: string | undefined;
   private readonly totalTimeoutMs: number;
   private readonly idleTimeoutMs: number;
   private readonly retryAttempts: number;
@@ -93,6 +96,7 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
     this.cliPath = config.cliPath ?? "codex";
     this.model = config.model;
     this.lightModel = config.lightModel;
+    this.reasoningEffort = config.reasoningEffort;
     this.repoPath = config.repoPath?.trim() || ".";
     this.totalTimeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.idleTimeoutMs = typeof config.idleTimeoutMs === "number" && Number.isFinite(config.idleTimeoutMs)
@@ -177,6 +181,10 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
 
       if (model) {
         spawnArgs.push("--model", model);
+      }
+
+      if (this.reasoningEffort) {
+        spawnArgs.push("-c", `model_reasoning_effort="${this.reasoningEffort}"`);
       }
 
       spawnArgs.push("-");

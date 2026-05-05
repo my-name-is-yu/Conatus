@@ -14,6 +14,7 @@ import {
   RECOMMENDED_MODELS,
   RECOMMENDED_ADAPTERS,
   MODEL_REGISTRY,
+  REASONING_EFFORTS,
   getAdaptersForModel,
 } from "./setup-shared.js";
 import type { Provider } from "./setup-shared.js";
@@ -30,6 +31,7 @@ async function runNonInteractive(argv: string[]): Promise<number> {
     "agentloop-worktree-base-dir"?: string;
     "agentloop-worktree-keep-debug"?: string;
     "agentloop-worktree-cleanup"?: string;
+    "reasoning-effort"?: string;
   };
   try {
     ({ values } = parseArgs({
@@ -42,6 +44,7 @@ async function runNonInteractive(argv: string[]): Promise<number> {
         "agentloop-worktree-base-dir": { type: "string" },
         "agentloop-worktree-keep-debug": { type: "string" },
         "agentloop-worktree-cleanup": { type: "string" },
+        "reasoning-effort": { type: "string" },
       },
       strict: false,
     }) as {
@@ -52,7 +55,8 @@ async function runNonInteractive(argv: string[]): Promise<number> {
         "agentloop-worktree"?: string;
         "agentloop-worktree-base-dir"?: string;
         "agentloop-worktree-keep-debug"?: string;
-        "agentloop-worktree-cleanup"?: string;
+          "agentloop-worktree-cleanup"?: string;
+          "reasoning-effort"?: string;
       };
     });
   } catch {
@@ -105,6 +109,10 @@ async function runNonInteractive(argv: string[]): Promise<number> {
     console.error('Error: --agentloop-worktree-cleanup must be one of "on_success", "always", "never".');
     return 1;
   }
+  if (values["reasoning-effort"] && !REASONING_EFFORTS.includes(values["reasoning-effort"] as (typeof REASONING_EFFORTS)[number])) {
+    console.error(`Error: --reasoning-effort must be one of ${REASONING_EFFORTS.join(", ")}.`);
+    return 1;
+  }
 
   // Validate adapter compatibility
   if (registryEntry && !registryEntry.adapters.includes(adapter)) {
@@ -141,6 +149,9 @@ async function runNonInteractive(argv: string[]): Promise<number> {
       },
     };
   }
+  if (provider === "openai" && values["reasoning-effort"]) {
+    config.reasoning_effort = values["reasoning-effort"] as ProviderConfig["reasoning_effort"];
+  }
 
   const validation = validateProviderConfig(config);
   if (!validation.valid) {
@@ -154,6 +165,7 @@ async function runNonInteractive(argv: string[]): Promise<number> {
   console.log("Setup complete! Configuration saved to ~/.pulseed/provider.json");
   console.log(`  Provider: ${config.provider}`);
   console.log(`  Model:    ${config.model}`);
+  if (config.reasoning_effort) console.log(`  Reasoning:${config.reasoning_effort}`);
   console.log(`  Auth:     ${formatAuthForSetup(config)}`);
   return 0;
 }
@@ -175,6 +187,8 @@ Interactive setup wizard for provider configuration.
 Options:
   --provider <name>   LLM provider (openai, anthropic, ollama)
   --model <name>      Model name (e.g., gpt-5.4-mini)
+  --reasoning-effort <effort>
+                      OpenAI reasoning effort (none, minimal, low, medium, high, xhigh)
   --agentloop-worktree <on|off>
                       Enable isolated git worktrees for native task agentloop
   --agentloop-worktree-base-dir <path>

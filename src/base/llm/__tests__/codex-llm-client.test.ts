@@ -155,6 +155,20 @@ describe("CodexLLMClient", () => {
       expect(spawnArgs[modelIdx + 1]).toBe("o4-mini");
     });
 
+    it("includes model_reasoning_effort config when reasoning effort is configured", async () => {
+      const client = new CodexLLMClient({ model: "gpt-5.5", reasoningEffort: "low" });
+      const child = makeFakeChild();
+
+      const promise = client.sendMessage([{ role: "user", content: "hi" }]);
+      await flushMicrotasks();
+      child.emit("close", 0);
+      await promise;
+
+      const [, spawnArgs] = mockSpawn.mock.calls[0] as [string, string[]];
+      expect(spawnArgs).toContain("-c");
+      expect(spawnArgs).toContain('model_reasoning_effort="low"');
+    });
+
     it("omits --model flag when no model is configured", async () => {
       vi.stubEnv("OPENAI_MODEL", "");
       const client = new CodexLLMClient();

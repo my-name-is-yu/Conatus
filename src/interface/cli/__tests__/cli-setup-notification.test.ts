@@ -352,6 +352,7 @@ describe("setup notification step", () => {
       options: Array<{ label: string; value: string; hint?: string }>;
     };
     expect(prompt.options.map((option) => option.label)).toEqual([
+      "GPT-5.5",
       "GPT-5.4",
       "GPT-5.2-Codex",
       "GPT-5.1-Codex-Max",

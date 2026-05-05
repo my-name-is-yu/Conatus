@@ -14,6 +14,7 @@ export type ConfigToolInput = z.infer<typeof ConfigToolInputSchema>;
 interface ProviderConfig {
   provider?: unknown;
   model?: unknown;
+  reasoning_effort?: unknown;
   default_adapter?: unknown;
   pulseed_home_dir?: unknown;
   [key: string]: unknown;
@@ -57,6 +58,7 @@ export class ConfigTool implements ITool<ConfigToolInput, unknown> {
           config = {
             provider: parsed["provider"] ?? defaults.provider,
             model: parsed["model"] ?? defaults.model,
+            reasoning_effort: parsed["reasoning_effort"],
             default_adapter: parsed["default_adapter"] ?? defaults.default_adapter,
             pulseed_home_dir: defaults.pulseed_home_dir,
           };

@@ -69,7 +69,7 @@ export type ResolveAgentLoopDefaultProfileInput =
 export interface ResolveAgentLoopDefaultProfileFromProviderConfigInput {
   surface: "task" | "chat" | "review";
   workspaceRoot: string;
-  providerConfig?: Pick<ProviderConfig, "agent_loop">;
+  providerConfig?: Pick<ProviderConfig, "agent_loop" | "provider" | "reasoning_effort">;
   budget?: Partial<AgentLoopBudget>;
   toolPolicy?: AgentLoopToolPolicy;
   worktreePolicy?: AgentLoopWorktreePolicy;
@@ -425,6 +425,10 @@ export function resolveAgentLoopDefaultProfileFromProviderConfig(
   input: ResolveAgentLoopDefaultProfileFromProviderConfigInput,
 ): AgentLoopResolvedProfile {
   const providerDefaults = resolveProviderNativeAgentLoopDefaults(input.providerConfig);
+  const providerReasoningEffort =
+    input.providerConfig?.provider === "openai"
+      ? input.providerConfig.reasoning_effort
+      : undefined;
   return resolveAgentLoopDefaultProfile({
     surface: input.surface,
     workspaceRoot: input.workspaceRoot,
@@ -432,7 +436,7 @@ export function resolveAgentLoopDefaultProfileFromProviderConfig(
     budget: input.budget,
     toolPolicy: input.toolPolicy,
     worktreePolicy: mergeWorktreePolicy(providerDefaults.worktreePolicy, input.worktreePolicy),
-    reasoningEffort: input.reasoningEffort,
+    reasoningEffort: input.reasoningEffort ?? providerReasoningEffort,
   });
 }
 

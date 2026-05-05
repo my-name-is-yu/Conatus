@@ -93,8 +93,27 @@ describe("cmdSetup non-interactive", () => {
 
     const config = await readConfig();
     expect(config.provider).toBe("openai");
-    expect(config.model).toBe("gpt-5.4-mini");
+    expect(config.model).toBe("gpt-5.5");
     expect(config.adapter).toBe("agent_loop");
+  });
+
+  it("saves OpenAI reasoning effort when provided", async () => {
+    process.env["OPENAI_API_KEY"] = "sk-test-key-12345678";
+    const { cmdSetup } = await import("../commands/setup.js");
+
+    const result = await cmdSetup([
+      "--provider", "openai",
+      "--model", "gpt-5.5",
+      "--adapter", "openai_api",
+      "--reasoning-effort", "low",
+    ]);
+
+    expect(result).toBe(0);
+
+    const config = await readConfig();
+    expect(config.provider).toBe("openai");
+    expect(config.model).toBe("gpt-5.5");
+    expect(config.reasoning_effort).toBe("low");
   });
 
   it("uses default model for anthropic when --model is not provided", async () => {

@@ -200,6 +200,44 @@ describe("OpenAILLMClient", () => {
       expect(callArgs).not.toHaveProperty("temperature");
     });
 
+    it("omits temperature for GPT-5 reasoning models", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test", model: "gpt-5.5" });
+      mockCreate.mockResolvedValueOnce(makeCompletionResponse("ok"));
+
+      await client.sendMessage([{ role: "user", content: "hi" }]);
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs).not.toHaveProperty("temperature");
+    });
+
+    it("passes configured reasoning effort to chat completions", async () => {
+      const client = new OpenAILLMClient({
+        apiKey: "sk-test",
+        model: "gpt-5.5",
+        reasoningEffort: "low",
+      });
+      mockCreate.mockResolvedValueOnce(makeCompletionResponse("ok"));
+
+      await client.sendMessage([{ role: "user", content: "hi" }]);
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.reasoning_effort).toBe("low");
+    });
+
+    it("does not pass reasoning effort to non-reasoning models", async () => {
+      const client = new OpenAILLMClient({
+        apiKey: "sk-test",
+        model: "gpt-4o",
+        reasoningEffort: "low",
+      });
+      mockCreate.mockResolvedValueOnce(makeCompletionResponse("ok"));
+
+      await client.sendMessage([{ role: "user", content: "hi" }]);
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs).not.toHaveProperty("reasoning_effort");
+    });
+
     it("includes temperature for non-reasoning models", async () => {
       const client = new OpenAILLMClient({ apiKey: "sk-test", model: "gpt-4o" });
       mockCreate.mockResolvedValueOnce(makeCompletionResponse("ok"));
@@ -340,6 +378,35 @@ describe("OpenAILLMClient", () => {
 
       expect(result.content).toBe("fallback output");
       expect(mockResponsesCreate).toHaveBeenCalledOnce();
+    });
+
+    it("passes reasoning effort to the Responses API fallback", async () => {
+      const client = new OpenAILLMClient({
+        apiKey: "sk-test",
+        model: "codex-mini-latest",
+        reasoningEffort: "high",
+      });
+      mockStream.mockImplementationOnce(() => {
+        throw new Error("This is not a chat model and not supported in the v1/chat/completions endpoint");
+      });
+      mockResponsesCreate.mockResolvedValueOnce({
+        output_text: "fallback output",
+        status: "completed",
+        usage: {
+          input_tokens: 12,
+          output_tokens: 7,
+        },
+      });
+
+      await client.sendMessageStream(
+        [{ role: "user", content: "hello" }],
+        undefined,
+        { onTextDelta: vi.fn() }
+      );
+
+      expect(mockResponsesCreate).toHaveBeenCalledWith(expect.objectContaining({
+        reasoning: { effort: "high" },
+      }));
     });
   });
 

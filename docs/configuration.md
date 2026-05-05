@@ -36,7 +36,8 @@ Typical shape:
 ```json
 {
   "provider": "openai",
-  "model": "gpt-5.4-mini",
+  "model": "gpt-5.5",
+  "reasoning_effort": "low",
   "adapter": "agent_loop",
   "api_key": "sk-...",
   "agent_loop": {
@@ -54,6 +55,7 @@ Important top-level fields:
 
 - `provider`: `openai`, `anthropic`, or `ollama`
 - `model`: provider-specific model name
+- `reasoning_effort`: optional OpenAI reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`
 - `adapter`: `agent_loop`, `openai_codex_cli`, `claude_code_cli`, `openai_api`, `claude_api`, or other registered adapters
 - `api_key`: when required by the provider
 - `base_url`: optional provider override
@@ -98,6 +100,8 @@ Environment variables override file config.
 | `ANTHROPIC_API_KEY` | Anthropic key |
 | `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint override |
 | `OLLAMA_BASE_URL` | Optional Ollama endpoint override |
+| `PULSEED_REASONING_EFFORT` | OpenAI reasoning effort override |
+| `OPENAI_REASONING_EFFORT` | OpenAI-specific reasoning effort override |
 
 ### Notes
 
