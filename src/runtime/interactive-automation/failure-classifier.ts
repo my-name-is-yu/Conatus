@@ -8,7 +8,6 @@ export interface ClassifiedAutomationFailure {
 
 export function classifyAutomationFailure(params: {
   status?: number;
-  error?: string;
   failureCode?: AutomationFailureCode;
 }): ClassifiedAutomationFailure {
   if (params.failureCode) {
@@ -20,13 +19,6 @@ export function classifyAutomationFailure(params: {
   }
 
   const status = params.status ?? 0;
-  const error = (params.error ?? "").toLowerCase();
-  if (error.includes("expired") && (error.includes("session") || error.includes("auth"))) {
-    return { failureCode: "auth_expired", authRequired: true, retryable: false };
-  }
-  if (error.includes("login") || error.includes("sign in") || error.includes("authenticate")) {
-    return { failureCode: "auth_required", authRequired: true, retryable: false };
-  }
   if (status === 401) {
     return { failureCode: "auth_required", authRequired: true, retryable: false };
   }
@@ -38,19 +30,6 @@ export function classifyAutomationFailure(params: {
   }
   if (status >= 500 && status <= 599) {
     return { failureCode: "provider_unavailable", authRequired: false, retryable: true };
-  }
-
-  if (error.includes("rate limit") || error.includes("too many requests")) {
-    return { failureCode: "rate_limited", authRequired: false, retryable: true };
-  }
-  if (error.includes("blocked") || error.includes("captcha") || error.includes("unsafe browser")) {
-    return { failureCode: "site_blocked", authRequired: false, retryable: true };
-  }
-  if (error.includes("navigate") || error.includes("navigation")) {
-    return { failureCode: "navigation_failed", authRequired: false, retryable: true };
-  }
-  if (error.includes("permission") || error.includes("forbidden")) {
-    return { failureCode: "permission_denied", authRequired: false, retryable: false };
   }
 
   return { failureCode: "unknown_automation_error", authRequired: false, retryable: true };

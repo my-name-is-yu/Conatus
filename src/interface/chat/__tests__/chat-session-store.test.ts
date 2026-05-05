@@ -166,7 +166,7 @@ describe("ChatSessionCatalog", () => {
     });
   });
 
-  it("resolves selectors by id prefix and unique title with clear errors", async () => {
+  it("resolves selectors by exact id and id prefix with clear errors", async () => {
     await stateManager.writeRaw(
       "chat/sessions/alpha-001.json",
       makeSession({
@@ -211,17 +211,14 @@ describe("ChatSessionCatalog", () => {
     const resolvedByPrefix = await catalog.resolveSelector("alpha-001");
     expect(resolvedByPrefix.id).toBe("alpha-001");
 
-    const resolvedByTitle = await catalog.resolveSelector("Alpha Run");
-    expect(resolvedByTitle.id).toBe("alpha-001");
-
     await expect(catalog.resolveSelector("beta-00")).rejects.toMatchObject({
       kind: "ambiguous",
       selector: "beta-00",
     });
 
-    await expect(catalog.resolveSelector("Unique Title")).rejects.toMatchObject({
-      kind: "ambiguous",
-      selector: "Unique Title",
+    await expect(catalog.resolveSelector("Alpha Run")).rejects.toMatchObject({
+      kind: "not_found",
+      selector: "Alpha Run",
     });
 
     await expect(catalog.resolveSelector("missing")).rejects.toMatchObject({

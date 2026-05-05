@@ -501,17 +501,6 @@ export class ChatSessionCatalog {
     const exactId = sessions.find((session) => session.id === normalizedSelector);
     if (exactId) return exactId;
 
-    const exactTitleMatches = sessions.filter((session) => session.title === normalizedSelector);
-    if (exactTitleMatches.length === 1) return exactTitleMatches[0];
-    if (exactTitleMatches.length > 1) {
-      throw new ChatSessionSelectorError(
-        `Ambiguous chat session title "${normalizedSelector}" matches ${exactTitleMatches.length} sessions.`,
-        selector,
-        "ambiguous",
-        exactTitleMatches.map((session) => session.id),
-      );
-    }
-
     const prefixMatches = sessions.filter((session) => session.id.startsWith(normalizedSelector));
     if (prefixMatches.length === 1) return prefixMatches[0];
     if (prefixMatches.length > 1) {

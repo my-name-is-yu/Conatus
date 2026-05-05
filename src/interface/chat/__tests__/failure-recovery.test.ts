@@ -26,7 +26,7 @@ describe("failure recovery guidance", () => {
 
     expect(guidance.kind).toBe("resume");
     expect(guidance.nextActions.join("\n")).toContain("/sessions");
-    expect(guidance.nextActions.join("\n")).toContain("/resume <id|title>");
+    expect(guidance.nextActions.join("\n")).toContain("/resume <id>");
   });
 
   it("classifies permission failures from approval and tool dispositions", () => {

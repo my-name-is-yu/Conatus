@@ -114,7 +114,7 @@ const GUIDANCE_BY_KIND: Record<FailureRecoveryKind, FailureRecoveryGuidance> = {
     summary: "PulSeed could not find or load the session state needed to continue this turn.",
     nextActions: [
       "Run /sessions to find the intended chat session.",
-      "Run /resume <id|title> when the target session is available.",
+      "Run /resume <id> when the target session is available.",
       "Start a new turn with the missing context if no resumable state exists.",
     ],
   },

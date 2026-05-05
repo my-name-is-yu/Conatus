@@ -185,7 +185,7 @@ describe("ActionHandler — handle()", () => {
       expect(result.messages.join("\n")).toContain("No runnable goal found");
     });
 
-    it("does not select a goal by title substring", async () => {
+    it("does not select a goal by title text", async () => {
       const goals = [
         makeGoal({ id: "goal-alpha", title: "Improve alpha routing", status: "active" }),
         makeGoal({ id: "goal-beta", title: "Improve beta routing", status: "active" }),
@@ -195,17 +195,25 @@ describe("ActionHandler — handle()", () => {
       vi.mocked(deps.stateManager.loadGoal).mockImplementation(async (id) => goals.find((goal) => goal.id === id) ?? null);
 
       const handler = new ActionHandler(deps);
-      const result = await handler.handle({
+
+      const substringResult = await handler.handle({
         intent: "loop_start",
         params: { goalArg: "routing" },
         raw: "/start routing",
       });
+      const exactTitleResult = await handler.handle({
+        intent: "loop_start",
+        params: { goalArg: "Improve beta routing" },
+        raw: "/start Improve beta routing",
+      });
 
-      expect(result.startLoop).toBeUndefined();
-      expect(result.messages.join("\n")).toContain('No goal matching "routing"');
+      expect(substringResult.startLoop).toBeUndefined();
+      expect(substringResult.messages.join("\n")).toContain('No goal matching "routing"');
+      expect(exactTitleResult.startLoop).toBeUndefined();
+      expect(exactTitleResult.messages.join("\n")).toContain('No goal matching "Improve beta routing"');
     });
 
-    it("selects by exact title or list number", async () => {
+    it("selects by exact id or list number", async () => {
       const goals = [
         makeGoal({ id: "goal-alpha", title: "Improve alpha routing", status: "active" }),
         makeGoal({ id: "goal-beta", title: "Improve beta routing", status: "active" }),
@@ -218,8 +226,8 @@ describe("ActionHandler — handle()", () => {
 
       await expect(handler.handle({
         intent: "loop_start",
-        params: { goalArg: "Improve beta routing" },
-        raw: "/start Improve beta routing",
+        params: { goalArg: "goal-beta" },
+        raw: "/start goal-beta",
       })).resolves.toMatchObject({ startLoop: { goalId: "goal-beta" } });
 
       await expect(handler.handle({

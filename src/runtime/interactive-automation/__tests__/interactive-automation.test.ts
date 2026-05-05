@@ -118,8 +118,26 @@ describe("providers", () => {
     );
   });
 
-  it("treats HTTP 403 login responses as auth handoff candidates", async () => {
+  it("treats Manus HTTP 403 as an auth handoff status without parsing freeform error text", async () => {
     const fetchMock = vi.fn(async () => new Response("Login required to continue", { status: 403 }));
+    const provider = new ManusBrowserProvider({
+      apiKey: "test-key",
+      baseUrl: "https://manus.test",
+      fetch: fetchMock,
+    });
+
+    await expect(provider.runBrowserWorkflow({ task: "Open inbox" })).resolves.toMatchObject({
+      success: false,
+      authRequired: true,
+      failureCode: "auth_required",
+    });
+  });
+
+  it("uses typed Manus failure codes instead of parsing freeform error text", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      error: "Login required to continue",
+      failure_code: "auth_required",
+    }), { status: 403 }));
     const provider = new ManusBrowserProvider({
       apiKey: "test-key",
       baseUrl: "https://manus.test",

@@ -1719,7 +1719,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("No resumable native agentloop state found");
       expect(result.output).toContain("Type: Resume failure");
       expect(result.output).toContain("/sessions");
-      expect(result.output).toContain("/resume <id|title>");
+      expect(result.output).toContain("/resume <id>");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     });
 
@@ -1770,7 +1770,7 @@ describe("ChatRunner", () => {
         } as unknown as ChatAgentLoopRunner;
         const runner = new ChatRunner(makeDeps({ stateManager, chatAgentLoopRunner }));
 
-        const result = await runner.execute("/resume Work Session", "/repo");
+        const result = await runner.execute("/resume saved-session", "/repo");
 
         expect(result.success).toBe(true);
         expect(result.output).toBe("Resumed selected session");
@@ -3784,67 +3784,30 @@ describe("ChatRunner", () => {
       expect(result.output).not.toContain("tool_loop");
     });
 
-    it("answers Japanese self-identity questions from PulSeed identity without calling the model", async () => {
-      const pulseedHome = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-identity-"));
-      const previousHome = process.env["PULSEED_HOME"];
-      process.env["PULSEED_HOME"] = pulseedHome;
-      clearIdentityCache();
-      const adapter = makeMockAdapter();
-      const llmClient = {
-        sendMessage: vi.fn().mockResolvedValue({
-          content: "Codex",
-          usage: { input_tokens: 2, output_tokens: 3 },
-          stop_reason: "end_turn",
-        }),
-        parseJSON: vi.fn(),
-      };
-
-      try {
-        const runner = new ChatRunner(makeDeps({ adapter, llmClient: llmClient as never }));
-        const result = await runner.execute("あなたは誰？", "/repo");
-
-        expect(result.success).toBe(true);
-        expect(result.output).toContain("Seedy");
-        expect(result.output).toContain("PulSeed");
-        expect(result.output).not.toContain("Codex");
-        expect(llmClient.sendMessage).not.toHaveBeenCalled();
-        expect(adapter.execute).not.toHaveBeenCalled();
-      } finally {
-        if (previousHome === undefined) {
-          delete process.env["PULSEED_HOME"];
-        } else {
-          process.env["PULSEED_HOME"] = previousHome;
-        }
-        clearIdentityCache();
-        fs.rmSync(pulseedHome, { recursive: true, force: true });
-      }
-    });
-
-    it("answers Japanese name questions from custom SEED.md identity without saying Codex", async () => {
+    it("answers Japanese self-identity questions through model-grounded chat instead of host phrase matching", async () => {
       const pulseedHome = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-identity-"));
       const previousHome = process.env["PULSEED_HOME"];
       process.env["PULSEED_HOME"] = pulseedHome;
       clearIdentityCache();
       fs.writeFileSync(path.join(pulseedHome, "SEED.md"), "# Sprout\n\nCustom identity.\n", "utf-8");
       const adapter = makeMockAdapter();
-      const llmClient = {
-        sendMessage: vi.fn().mockResolvedValue({
-          content: "Codex",
-          usage: { input_tokens: 2, output_tokens: 3 },
-          stop_reason: "end_turn",
-        }),
-        parseJSON: vi.fn(),
-      };
+      const llmClient = createMockLLMClient([
+        freeformRouteDecision("assist"),
+        "Sprout is the configured PulSeed identity.",
+      ]);
 
       try {
-        const runner = new ChatRunner(makeDeps({ adapter, llmClient: llmClient as never }));
-        const result = await runner.execute("名前は何？", "/repo");
+        const sendSpy = vi.spyOn(llmClient, "sendMessage");
+        const runner = new ChatRunner(makeDeps({ adapter, llmClient }));
+        const result = await runner.execute("あなたは誰？", "/repo");
 
         expect(result.success).toBe(true);
         expect(result.output).toContain("Sprout");
         expect(result.output).toContain("PulSeed");
-        expect(result.output).not.toContain("Codex");
-        expect(llmClient.sendMessage).not.toHaveBeenCalled();
+        expect(sendSpy).toHaveBeenCalledTimes(2);
+        const assistOptions = sendSpy.mock.calls[1]?.[1] as { system?: string } | undefined;
+        expect(assistOptions?.system).toContain("Sprout");
+        expect(assistOptions?.system).toContain("configured agent identity running PulSeed");
         expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         if (previousHome === undefined) {
@@ -3857,44 +3820,7 @@ describe("ChatRunner", () => {
       }
     });
 
-    it("answers English name questions from custom SEED.md identity without saying ChatGPT", async () => {
-      const pulseedHome = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-identity-"));
-      const previousHome = process.env["PULSEED_HOME"];
-      process.env["PULSEED_HOME"] = pulseedHome;
-      clearIdentityCache();
-      fs.writeFileSync(path.join(pulseedHome, "SEED.md"), "# Sprout\n\nCustom identity.\n", "utf-8");
-      const adapter = makeMockAdapter();
-      const llmClient = {
-        sendMessage: vi.fn().mockResolvedValue({
-          content: "ChatGPT",
-          usage: { input_tokens: 2, output_tokens: 3 },
-          stop_reason: "end_turn",
-        }),
-        parseJSON: vi.fn(),
-      };
-
-      try {
-        const runner = new ChatRunner(makeDeps({ adapter, llmClient: llmClient as never }));
-        const result = await runner.execute("What is your name?", "/repo");
-
-        expect(result.success).toBe(true);
-        expect(result.output).toContain("I am Sprout");
-        expect(result.output).toContain("PulSeed");
-        expect(result.output).not.toContain("ChatGPT");
-        expect(llmClient.sendMessage).not.toHaveBeenCalled();
-        expect(adapter.execute).not.toHaveBeenCalled();
-      } finally {
-        if (previousHome === undefined) {
-          delete process.env["PULSEED_HOME"];
-        } else {
-          process.env["PULSEED_HOME"] = previousHome;
-        }
-        clearIdentityCache();
-        fs.rmSync(pulseedHome, { recursive: true, force: true });
-      }
-    });
-
-    it("resolves self-identity from the ChatRunner stateManager base dir", async () => {
+    it("grounds self-identity chat from the ChatRunner stateManager base dir", async () => {
       const pulseedHome = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-identity-"));
       const previousHome = process.env["PULSEED_HOME"];
       delete process.env["PULSEED_HOME"];
@@ -3905,24 +3831,22 @@ describe("ChatRunner", () => {
         getBaseDir: () => pulseedHome,
       } as unknown as StateManager;
       const adapter = makeMockAdapter();
-      const llmClient = {
-        sendMessage: vi.fn().mockResolvedValue({
-          content: "Codex",
-          usage: { input_tokens: 2, output_tokens: 3 },
-          stop_reason: "end_turn",
-        }),
-        parseJSON: vi.fn(),
-      };
+      const llmClient = createMockLLMClient([
+        freeformRouteDecision("assist"),
+        "BaseDirSeed is the configured PulSeed identity.",
+      ]);
 
       try {
-        const runner = new ChatRunner(makeDeps({ adapter, stateManager, llmClient: llmClient as never }));
+        const sendSpy = vi.spyOn(llmClient, "sendMessage");
+        const runner = new ChatRunner(makeDeps({ adapter, stateManager, llmClient }));
         const result = await runner.execute("あなたは誰？", "/repo");
 
         expect(result.success).toBe(true);
         expect(result.output).toContain("BaseDirSeed");
         expect(result.output).toContain("PulSeed");
-        expect(result.output).not.toContain("Codex");
-        expect(llmClient.sendMessage).not.toHaveBeenCalled();
+        expect(sendSpy).toHaveBeenCalledTimes(2);
+        const assistOptions = sendSpy.mock.calls[1]?.[1] as { system?: string } | undefined;
+        expect(assistOptions?.system).toContain("BaseDirSeed");
         expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         if (previousHome === undefined) {

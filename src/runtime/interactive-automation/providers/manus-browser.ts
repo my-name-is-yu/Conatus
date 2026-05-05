@@ -1,4 +1,5 @@
 import type {
+  AutomationFailureCode,
   AutomationEnvironment,
   BrowserStateInput,
   BrowserWorkflowInput,
@@ -91,9 +92,10 @@ export class ManusBrowserProvider implements InteractiveAutomationProvider {
 
     if (!response.ok) {
       const rawText = await response.text().catch(() => "");
+      const typedFailureCode = extractFailureCode(rawText) ?? failureCodeForManusStatus(response.status);
       const classified = classifyAutomationFailure({
         status: response.status,
-        error: rawText,
+        ...(typedFailureCode ? { failureCode: typedFailureCode } : {}),
       });
       return {
         success: false,
@@ -106,6 +108,34 @@ export class ManusBrowserProvider implements InteractiveAutomationProvider {
 
     return response.json();
   }
+}
+
+function extractFailureCode(rawText: string): AutomationFailureCode | undefined {
+  if (!rawText.trim()) return undefined;
+  try {
+    const raw = JSON.parse(rawText) as Record<string, unknown>;
+    const candidate = raw["failure_code"] ?? raw["failureCode"];
+    return isAutomationFailureCode(candidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function failureCodeForManusStatus(status: number): AutomationFailureCode | undefined {
+  if (status === 403) return "auth_required";
+  return undefined;
+}
+
+function isAutomationFailureCode(value: unknown): value is AutomationFailureCode {
+  return value === "auth_required"
+    || value === "auth_expired"
+    || value === "permission_denied"
+    || value === "provider_unavailable"
+    || value === "rate_limited"
+    || value === "site_blocked"
+    || value === "navigation_failed"
+    || value === "verification_failed"
+    || value === "unknown_automation_error";
 }
 
 function normalizeBrowserResult(raw: unknown, fallbackSummary: string): BrowserWorkflowResult {

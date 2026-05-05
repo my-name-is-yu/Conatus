@@ -264,7 +264,7 @@ export class RuntimeControlService {
       return blocked(`Runtime run ${run.id} is stale or terminal for ${request.intent.kind}; refusing to reuse previous-session state.`);
     }
 
-    return { ok: true, run, goalId: resolveGoalId(run, snapshot) };
+    return { ok: true, run, goalId: resolveGoalId(run) };
   }
 
   private async proposeFinalize(
@@ -579,15 +579,10 @@ function isCurrentRunForControl(run: BackgroundRun, kind: RuntimeControlOperatio
   return false;
 }
 
-function resolveGoalId(run: BackgroundRun, snapshot: RuntimeSessionRegistrySnapshot): string | null {
+function resolveGoalId(run: BackgroundRun): string | null {
   if (run.kind !== "coreloop_run") return null;
   if (run.goal_id) return run.goal_id;
-  const child = run.child_session_id
-    ? snapshot.sessions.find((session) => session.id === run.child_session_id)
-    : null;
-  const title = child?.title ?? run.title ?? "";
-  const match = title.match(/^(?:DurableLoop|CoreLoop) goal\s+(.+)$/);
-  return match?.[1]?.trim() || null;
+  return null;
 }
 
 function compareUpdated(left: BackgroundRun, right: BackgroundRun): number {
