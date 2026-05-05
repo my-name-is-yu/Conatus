@@ -657,6 +657,11 @@ export async function loadProviderConfig(options: LoadProviderConfigOptions = {}
   return config;
 }
 
+export async function loadProviderConfigFile(options: { baseDir?: string } = {}): Promise<Partial<ProviderConfig>> {
+  const { fileConfig } = await loadProviderFileConfig(providerConfigPath(options.baseDir));
+  return fileConfig;
+}
+
 export async function resolveOpenAIApiKey(): Promise<string | undefined> {
   const envFile = await readProviderEnvFile();
   const envKey = process.env["OPENAI_API_KEY"] ?? envFile["OPENAI_API_KEY"];
@@ -700,8 +705,8 @@ export async function getProviderRuntimeFingerprint(): Promise<string> {
  * Save provider configuration to ~/.pulseed/provider.json.
  * Creates the ~/.pulseed directory if it does not exist.
  */
-export async function saveProviderConfig(config: ProviderConfig): Promise<void> {
-  await writeJsonFileAtomic(providerConfigPath(), config, {
+export async function saveProviderConfig(config: ProviderConfig | Partial<ProviderConfig>, options: { baseDir?: string } = {}): Promise<void> {
+  await writeJsonFileAtomic(providerConfigPath(options.baseDir), config, {
     mode: 0o600,
     directoryMode: 0o700,
   });

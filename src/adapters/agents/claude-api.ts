@@ -8,12 +8,11 @@ import type { IAdapter, AgentTask, AgentResult } from "../../orchestrator/execut
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 
 export class ClaudeAPIAdapter implements IAdapter {
-  readonly adapterType = "claude_api";
   readonly capabilities = ["text_generation", "analysis", "planning"] as const;
 
   private readonly llmClient: ILLMClient;
 
-  constructor(llmClient: ILLMClient) {
+  constructor(llmClient: ILLMClient, readonly adapterType = "claude_api") {
     this.llmClient = llmClient;
   }
 

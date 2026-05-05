@@ -40,6 +40,7 @@ describe("TUI app routing helpers", () => {
     expect(isChatRunnerOwnedSlashCommand("/tend")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/config")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/model")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/models")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/permissions read-only")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/plugins")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/usage session")).toBe(true);

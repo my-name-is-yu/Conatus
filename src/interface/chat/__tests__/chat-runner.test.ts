@@ -2161,7 +2161,7 @@ describe("ChatRunner", () => {
       }
     });
 
-    it("/config, /model, and /plugins are read-only command surfaces", async () => {
+    it("/config, /model without arguments, and /plugins do not invoke the execution adapter", async () => {
       const adapter = makeMockAdapter();
       const pluginLoader = {
         loadAll: vi.fn().mockResolvedValue([{ name: "demo", type: "notifier", enabled: true }]),
@@ -2310,6 +2310,168 @@ describe("ChatRunner", () => {
           delete process.env["PULSEED_MODEL"];
         } else {
           process.env["PULSEED_MODEL"] = oldModel;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/model updates file-owned fields without persisting env-resolved secrets", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-model-edit-"));
+      const oldEnv = {
+        OPENAI_API_KEY: process.env["OPENAI_API_KEY"],
+        OPENAI_BASE_URL: process.env["OPENAI_BASE_URL"],
+        PULSEED_LIGHT_MODEL: process.env["PULSEED_LIGHT_MODEL"],
+      };
+      try {
+        process.env["OPENAI_API_KEY"] = "sk-env-secret";
+        process.env["OPENAI_BASE_URL"] = "https://env.example.test/v1";
+        process.env["PULSEED_LIGHT_MODEL"] = "gpt-env-light";
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("provider.json", {
+          provider: "openai",
+          model: "gpt-5.4-mini",
+          adapter: "openai_codex_cli",
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
+
+        const result = await runner.execute("/model gpt-5.5 high", "/repo");
+        const raw = await stateManager.readRaw("provider.json") as Record<string, unknown>;
+
+        expect(result.success).toBe(true);
+        expect(raw).toMatchObject({
+          provider: "openai",
+          model: "gpt-5.5",
+          adapter: "openai_codex_cli",
+          reasoning_effort: "high",
+        });
+        expect(raw).not.toHaveProperty("api_key");
+        expect(raw).not.toHaveProperty("base_url");
+        expect(raw).not.toHaveProperty("light_model");
+      } finally {
+        for (const [key, value] of Object.entries(oldEnv)) {
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/model does not persist env-derived model or reasoning defaults", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-model-env-runtime-"));
+      const oldEnv = {
+        PULSEED_MODEL: process.env["PULSEED_MODEL"],
+        OPENAI_REASONING_EFFORT: process.env["OPENAI_REASONING_EFFORT"],
+      };
+      try {
+        process.env["PULSEED_MODEL"] = "gpt-env-model";
+        process.env["OPENAI_REASONING_EFFORT"] = "xhigh";
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("provider.json", {
+          provider: "openai",
+          adapter: "openai_codex_cli",
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
+
+        const reasoningResult = await runner.execute("/models high", "/repo");
+        const afterReasoning = await stateManager.readRaw("provider.json") as Record<string, unknown>;
+        const modelResult = await runner.execute("/model gpt-5.5", "/repo");
+        const afterModel = await stateManager.readRaw("provider.json") as Record<string, unknown>;
+
+        expect(reasoningResult.success).toBe(true);
+        expect(afterReasoning).not.toHaveProperty("model");
+        expect(afterReasoning["reasoning_effort"]).toBe("high");
+        expect(modelResult.success).toBe(true);
+        expect(afterModel["model"]).toBe("gpt-5.5");
+        expect(afterModel["reasoning_effort"]).toBe("high");
+      } finally {
+        for (const [key, value] of Object.entries(oldEnv)) {
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/model rejects env-only OpenAI provider overrides before saving", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-model-env-provider-"));
+      const oldEnv = {
+        PULSEED_PROVIDER: process.env["PULSEED_PROVIDER"],
+        PULSEED_ADAPTER: process.env["PULSEED_ADAPTER"],
+      };
+      try {
+        process.env["PULSEED_PROVIDER"] = "openai";
+        process.env["PULSEED_ADAPTER"] = "openai_codex_cli";
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("provider.json", {
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          adapter: "anthropic_api",
+          api_key: "sk-file-secret",
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
+
+        const result = await runner.execute("/model gpt-5.5 high", "/repo");
+        const raw = await stateManager.readRaw("provider.json") as Record<string, unknown>;
+
+        expect(result.success).toBe(false);
+        expect(result.output).toContain("file-owned OpenAI provider configuration");
+        expect(raw).toMatchObject({
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          adapter: "anthropic_api",
+        });
+        expect(raw).not.toHaveProperty("reasoning_effort");
+      } finally {
+        for (const [key, value] of Object.entries(oldEnv)) {
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/model keeps secret-free OpenAI API config valid when the key comes from env", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-model-env-key-"));
+      const oldApiKey = process.env["OPENAI_API_KEY"];
+      try {
+        process.env["OPENAI_API_KEY"] = "sk-env-secret";
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("provider.json", {
+          provider: "openai",
+          model: "gpt-5.4-mini",
+          adapter: "openai_api",
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
+
+        const result = await runner.execute("/model gpt-5.5 high", "/repo");
+        const raw = await stateManager.readRaw("provider.json") as Record<string, unknown>;
+
+        expect(result.success).toBe(true);
+        expect(raw).toMatchObject({
+          provider: "openai",
+          model: "gpt-5.5",
+          adapter: "openai_api",
+          reasoning_effort: "high",
+        });
+        expect(raw).not.toHaveProperty("api_key");
+      } finally {
+        if (oldApiKey === undefined) {
+          delete process.env["OPENAI_API_KEY"];
+        } else {
+          process.env["OPENAI_API_KEY"] = oldApiKey;
         }
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }

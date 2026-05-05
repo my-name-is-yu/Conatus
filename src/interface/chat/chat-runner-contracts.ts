@@ -130,6 +130,7 @@ export interface ChatRunnerCommandHost {
   setPendingTend(value: PendingTendState | null): void;
   getLastSelectedRoute(): SelectedChatRoute | null;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
+  reloadProviderRuntime?(): Promise<void>;
   emitEvent(event: ChatEvent): void;
   getActiveSubscribers(): Map<string, EventSubscriber>;
 }

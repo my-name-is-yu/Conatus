@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { StateManager as RealStateManager } from "../../../base/state/state-manager.js";
@@ -9,7 +9,26 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import type { ReviewAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
+import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { ChatSessionCatalog } from "../chat-session-store.js";
+
+const providerConfigMock = vi.hoisted(() => ({
+  current: {
+    provider: "openai" as const,
+    model: "gpt-5.4-mini",
+    adapter: "openai_codex_cli" as const,
+    agent_loop: {
+      security: {
+        sandbox_mode: "workspace_write" as const,
+        approval_policy: "on_request" as const,
+        network_access: false,
+        trust_project_instructions: true,
+      },
+    },
+  } as ProviderConfig,
+  load: vi.fn(),
+  save: vi.fn(),
+}));
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -20,19 +39,9 @@ vi.mock("../../../base/llm/provider-config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../base/llm/provider-config.js")>();
   return {
     ...actual,
-    loadProviderConfig: vi.fn().mockResolvedValue({
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      adapter: "openai_codex_cli",
-      agent_loop: {
-        security: {
-          sandbox_mode: "workspace_write",
-          approval_policy: "on_request",
-          network_access: false,
-          trust_project_instructions: true,
-        },
-      },
-    }),
+    loadProviderConfig: providerConfigMock.load,
+    loadProviderConfigFile: providerConfigMock.load,
+    saveProviderConfig: providerConfigMock.save,
   };
 });
 
@@ -40,6 +49,7 @@ function makeMockStateManager(): StateManager {
   return {
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
+    getBaseDir: vi.fn().mockReturnValue(os.tmpdir()),
   } as unknown as StateManager;
 }
 
@@ -66,10 +76,36 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
 }
 
 afterEach(() => {
+  providerConfigMock.current = {
+    provider: "openai",
+    model: "gpt-5.4-mini",
+    adapter: "openai_codex_cli",
+    agent_loop: {
+      security: {
+        sandbox_mode: "workspace_write",
+        approval_policy: "on_request",
+        network_access: false,
+        trust_project_instructions: true,
+      },
+    },
+  };
+  providerConfigMock.load.mockReset();
+  providerConfigMock.load.mockImplementation(async () => providerConfigMock.current);
+  providerConfigMock.save.mockReset();
+  providerConfigMock.save.mockImplementation(async (config: ProviderConfig) => {
+    providerConfigMock.current = config;
+  });
   vi.restoreAllMocks();
 });
 
 describe("ChatRunner policy commands", () => {
+  beforeEach(() => {
+    providerConfigMock.load.mockImplementation(async () => providerConfigMock.current);
+    providerConfigMock.save.mockImplementation(async (config: ProviderConfig) => {
+      providerConfigMock.current = config;
+    });
+  });
+
   it("/permissions shows the current execution policy", async () => {
     const runner = new ChatRunner(makeDeps());
     runner.startSession("/repo");
@@ -91,6 +127,42 @@ describe("ChatRunner policy commands", () => {
     expect(result.output).toContain("sandbox_mode: read_only");
     expect(result.output).toContain("network_access: on");
     expect(result.output).toContain("approval_policy: never");
+  });
+
+  it("/model updates the OpenAI model and reasoning effort through the chat runner command path", async () => {
+    const runner = new ChatRunner(makeDeps());
+    runner.startSession("/repo");
+
+    const result = await runner.execute("/model gpt-5.5 high", "/repo");
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Model: gpt-5.5");
+    expect(result.output).toContain("Reasoning: high");
+    expect(providerConfigMock.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openai",
+        model: "gpt-5.5",
+        reasoning_effort: "high",
+      }),
+      { baseDir: os.tmpdir() },
+    );
+  });
+
+  it("/model accepts reasoning-only changes through the chat runner command path", async () => {
+    providerConfigMock.current = {
+      ...providerConfigMock.current,
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh",
+    };
+    const runner = new ChatRunner(makeDeps());
+    runner.startSession("/repo");
+
+    const result = await runner.execute("/models high", "/repo");
+
+    expect(result.success).toBe(true);
+    const saved = providerConfigMock.save.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(saved["model"]).toBe("gpt-5.5");
+    expect(saved["reasoning_effort"]).toBe("high");
   });
 
   it("/review falls back to a read-only summary when no runner is configured", async () => {

@@ -35,6 +35,15 @@ import {
 import { checkGitChanges } from "./chat-runner-support.js";
 import { formatFailureRecovery } from "./failure-recovery.js";
 import {
+  isReasoningEffort,
+  loadProviderConfig,
+  loadProviderConfigFile,
+  MODEL_REGISTRY,
+  saveProviderConfig,
+  validateProviderConfig,
+  type ProviderConfig,
+} from "../../base/llm/provider-config.js";
+import {
   summarizeExecutionPolicy,
   withExecutionPolicyOverrides,
   type ExecutionPolicy,
@@ -78,7 +87,10 @@ Goals and tasks
 
 Configuration
   /config               Show provider configuration with secrets masked
-  /model                Show the active provider/model/adapter
+  /model                Show model and reasoning choices
+  /model <model> [effort]
+                        Select OpenAI model and optional reasoning effort
+  /models               Alias for /model
   /permissions [args]   Show or update session execution policy
   /plugins              List installed plugins when plugin metadata is available
   /usage [scope]        Show usage summary (session, goal <id>, daemon <goal-id>, schedule [7d|24h|2w])
@@ -182,8 +194,8 @@ export class ChatRunnerCommandHandler {
     if (cmd === "/config") {
       return this.handleConfig(start);
     }
-    if (cmd === "/model") {
-      return this.handleModel(start);
+    if (cmd === "/model" || cmd === "/models") {
+      return this.handleModel(trimmed.slice(cmd.length).trim(), start);
     }
     if (cmd === "/permissions") {
       return this.handlePermissions(trimmed.slice("/permissions".length).trim(), start);
@@ -575,11 +587,155 @@ export class ChatRunnerCommandHandler {
     return { success: true, output: `Provider configuration:\n${this.formatConfig(config)}`, elapsed_ms: Date.now() - start };
   }
 
-  private async handleModel(start: number): Promise<ChatRunResult> {
-    const config = await this.readProviderConfigSummary();
+  private parseModelArgs(args: string): { model?: string; reasoning?: ProviderConfig["reasoning_effort"]; error?: string } {
+    const tokens = args.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return {};
+
+    if (tokens.length === 1 && isReasoningEffort(tokens[0])) {
+      return { reasoning: tokens[0] };
+    }
+
+    const model = tokens[0];
+    if (tokens.length > 2) {
+      return { error: "Usage: /model <model> [none|minimal|low|medium|high|xhigh]" };
+    }
+    const reasoning = tokens[1];
+    if (reasoning !== undefined && !isReasoningEffort(reasoning)) {
+      return { error: `Invalid reasoning effort "${reasoning}". Valid: none, minimal, low, medium, high, xhigh` };
+    }
+    return { model, reasoning };
+  }
+
+  private formatModelSummary(config: ProviderConfigSummary): string {
+    return [
+      `Model: ${config.model}`,
+      `Provider: ${config.provider}`,
+      `Adapter: ${config.adapter}`,
+      `Reasoning: ${config.reasoning_effort ?? "default"}`,
+    ].join("\n");
+  }
+
+  private async handleModel(args: string, start: number): Promise<ChatRunResult> {
+    if (!args) {
+      const config = await this.readProviderConfigSummary();
+      return {
+        success: true,
+        output: [
+          "Select Model and Effort",
+          this.formatModelSummary(config),
+          "",
+          "Usage:",
+          "  /model <model>",
+          "  /model <model> <none|minimal|low|medium|high|xhigh>",
+          "  /model <none|minimal|low|medium|high|xhigh>",
+          "",
+          `Available OpenAI models: ${Object.keys(MODEL_REGISTRY).filter((model) => MODEL_REGISTRY[model]?.provider === "openai").join(", ")}`,
+        ].join("\n"),
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    const parsed = this.parseModelArgs(args);
+    if (parsed.error) {
+      return { success: false, output: parsed.error, elapsed_ms: Date.now() - start };
+    }
+
+    const baseDir = this.host.deps.stateManager.getBaseDir();
+    const [current, fileConfig] = await Promise.all([
+      loadProviderConfig({ baseDir, saveMigration: false }),
+      loadProviderConfigFile({ baseDir }),
+    ]);
+    if (current.provider !== "openai") {
+      return {
+        success: false,
+        output: `/model switching is currently available for provider "openai". Current provider: ${current.provider}`,
+        elapsed_ms: Date.now() - start,
+      };
+    }
+    const fileProvider = fileConfig.provider ?? "openai";
+    const fileAdapter = fileConfig.adapter ?? "openai_codex_cli";
+    const fileTargetModel = parsed.model ?? fileConfig.model ?? current.model;
+    const fileRegistryEntry = MODEL_REGISTRY[fileTargetModel];
+    const fileAdapterSupportsModel = !fileRegistryEntry
+      || (fileRegistryEntry.provider === fileProvider && fileRegistryEntry.adapters.includes(fileAdapter));
+    if (fileProvider !== "openai" || !fileAdapterSupportsModel) {
+      return {
+        success: false,
+        output: [
+          "/model can only update a file-owned OpenAI provider configuration.",
+          `Current runtime provider is openai, but provider.json resolves as provider "${fileProvider}" with adapter "${fileAdapter}".`,
+          "Update provider.json to OpenAI first, then run /model again.",
+        ].join("\n"),
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    const nextResolved: ProviderConfig = {
+      ...current,
+      ...(parsed.model ? { model: parsed.model } : {}),
+    };
+    const nextFile: Partial<ProviderConfig> = {
+      provider: fileProvider,
+      adapter: fileAdapter,
+    };
+    if (parsed.model ?? fileConfig.model) {
+      nextFile.model = parsed.model ?? fileConfig.model;
+    }
+    if (parsed.reasoning !== undefined) {
+      nextResolved.reasoning_effort = parsed.reasoning;
+    }
+    if (parsed.reasoning !== undefined && parsed.reasoning !== null) {
+      nextFile.reasoning_effort = parsed.reasoning;
+    } else if (fileConfig.reasoning_effort !== undefined) {
+      nextFile.reasoning_effort = fileConfig.reasoning_effort;
+    }
+    if (fileConfig.api_key !== undefined) nextFile.api_key = fileConfig.api_key;
+    if (fileConfig.base_url !== undefined) nextFile.base_url = fileConfig.base_url;
+    if (fileConfig.light_model !== undefined) nextFile.light_model = fileConfig.light_model;
+    if (fileConfig.codex_cli_path !== undefined) nextFile.codex_cli_path = fileConfig.codex_cli_path;
+    if (fileConfig.codex_timeout_ms !== undefined) nextFile.codex_timeout_ms = fileConfig.codex_timeout_ms;
+    if (fileConfig.codex_idle_timeout_ms !== undefined) nextFile.codex_idle_timeout_ms = fileConfig.codex_idle_timeout_ms;
+    if (fileConfig.codex_retry_attempts !== undefined) nextFile.codex_retry_attempts = fileConfig.codex_retry_attempts;
+    if (fileConfig.terminal_backend !== undefined) nextFile.terminal_backend = fileConfig.terminal_backend;
+    if (fileConfig.a2a !== undefined) nextFile.a2a = fileConfig.a2a;
+    if (fileConfig.openclaw !== undefined) nextFile.openclaw = fileConfig.openclaw;
+    if (fileConfig.agent_loop !== undefined) {
+      nextFile.agent_loop = fileConfig.agent_loop;
+    }
+
+    const registryEntry = parsed.model ? MODEL_REGISTRY[parsed.model] : undefined;
+    if (registryEntry && registryEntry.provider !== nextResolved.provider) {
+      return {
+        success: false,
+        output: `Model "${parsed.model}" requires provider "${registryEntry.provider}" but current provider is "${nextResolved.provider}".`,
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    const validation = validateProviderConfig(nextResolved);
+    if (!validation.valid) {
+      return {
+        success: false,
+        output: `Model configuration was not saved:\n${validation.errors.map((error) => `- ${error}`).join("\n")}`,
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    await saveProviderConfig(nextFile, { baseDir });
+    await this.host.reloadProviderRuntime?.();
+    const effective = await this.readProviderConfigSummary();
+    const saved = this.formatModelSummary({
+      ...effective,
+      model: nextFile.model ?? "(unchanged)",
+      reasoning_effort: nextFile.reasoning_effort,
+    });
+    const effectiveSummary = this.formatModelSummary(effective);
+    const envOverrideNote = saved === effectiveSummary
+      ? ""
+      : `\n\nEffective config still differs, likely due to environment overrides:\n${effectiveSummary}`;
     return {
       success: true,
-      output: `Model: ${config.model}\nProvider: ${config.provider}\nAdapter: ${config.adapter}`,
+      output: `Updated model configuration:\n${saved}${envOverrideNote}`,
       elapsed_ms: Date.now() - start,
     };
   }
