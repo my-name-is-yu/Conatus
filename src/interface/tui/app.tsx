@@ -21,7 +21,12 @@ import { HelpOverlay } from "./help-overlay.js";
 import { SettingsOverlay } from "./settings-overlay.js";
 import { ReportView } from "./report-view.js";
 import { SEEDY_PIXEL } from "./seedy-art.js";
-import { extractBashCommand, formatShellOutput } from "./bash-mode.js";
+import { formatShellOutput } from "./bash-mode.js";
+import {
+  resolveFreeformInputRoute,
+  resolveTuiInputAction,
+  type FreeformInputRoute,
+} from "./input-action.js";
 import type { Report } from "../../base/types/report.js";
 import { useLoop } from "./use-loop.js";
 import type { LoopState } from "./use-loop.js";
@@ -122,25 +127,7 @@ function formatApprovalNotice(task: Task): string {
   ].join("\n");
 }
 
-export type FreeformInputRoute = "daemon_goal_chat" | "chat_runner" | "unavailable";
-
-export function resolveFreeformInputRoute({
-  isDaemonMode,
-  daemonGoalId,
-  hasChatRunner,
-}: {
-  isDaemonMode: boolean;
-  daemonGoalId: string | null;
-  hasChatRunner: boolean;
-}): FreeformInputRoute {
-  if (hasChatRunner) {
-    return "chat_runner";
-  }
-  if (isDaemonMode && daemonGoalId) {
-    return "daemon_goal_chat";
-  }
-  return "unavailable";
-}
+export { resolveFreeformInputRoute, type FreeformInputRoute } from "./input-action.js";
 
 const CHAT_RUNNER_OWNED_COMMANDS = new Set([
   "/resume",
@@ -572,7 +559,21 @@ export function App({
 
   const handleInput = useCallback(
     async (input: string) => {
-      if (isProcessing) {
+      const action = resolveTuiInputAction(input, {
+        isProcessing,
+        hasChatRunner: chatRunner !== undefined,
+        hasPendingRunSpec: pendingRunSpec !== null,
+        hasStandaloneSlashHandlers: intentRecognizer !== undefined && actionHandler !== undefined,
+        isDaemonMode,
+        daemonGoalId: daemonLoopState.goalId,
+        isChatRunnerOwnedSlashCommand,
+      });
+
+      if (action.kind === "ignore_processing") {
+        return;
+      }
+
+      if (action.kind === "interrupt_redirect") {
         if (!chatRunner) return;
         setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
         try {
@@ -595,21 +596,19 @@ export function App({
 
       try {
         // Local-only commands — no LLM round-trip needed
-        const trimmedInput = input.trim().toLowerCase();
-        const bashCommand = extractBashCommand(input);
-        if (bashCommand !== null) {
-          if (!bashCommand) {
-            setMessages((prev) => [...prev, {
-              id: randomUUID(),
-              role: "pulseed" as const,
-              text: "Shell command required after !",
-              timestamp: new Date(),
-              messageType: "warning" as const,
-            }].slice(-MAX_MESSAGES));
-            return;
-          }
+        if (action.kind === "shell_missing_command") {
+          setMessages((prev) => [...prev, {
+            id: randomUUID(),
+            role: "pulseed" as const,
+            text: "Shell command required after !",
+            timestamp: new Date(),
+            messageType: "warning" as const,
+          }].slice(-MAX_MESSAGES));
+          return;
+        }
 
-          const shellInput = { command: bashCommand, cwd: process.cwd(), timeoutMs: 120_000 };
+        if (action.kind === "shell") {
+          const shellInput = { command: action.command, cwd: process.cwd(), timeoutMs: 120_000 };
           const shellTool = new ShellTool();
           const result = await shellTool.call(shellInput, {
             cwd: process.cwd(),
@@ -621,7 +620,7 @@ export function App({
           });
           const shellOutput = result.data as { stdout?: string; stderr?: string; exitCode?: number } | null;
           const text = shellOutput
-            ? formatShellOutput(bashCommand, {
+            ? formatShellOutput(action.command, {
                 stdout: shellOutput.stdout ?? "",
                 stderr: shellOutput.stderr ?? "",
                 exitCode: shellOutput.exitCode ?? (result.success ? 0 : 1),
@@ -638,12 +637,12 @@ export function App({
           return;
         }
 
-        if (chatRunner && isChatRunnerOwnedSlashCommand(input)) {
+        if (action.kind === "chat_runner_slash" && chatRunner) {
           await chatRunner.execute(input, cwd ?? process.cwd());
           return;
         }
 
-        if (pendingRunSpec && chatRunner) {
+        if (action.kind === "pending_run_spec_confirmation" && pendingRunSpec && chatRunner) {
           const effectiveCwd = cwd ?? process.cwd();
           const result = await handleRunSpecConfirmationInput(pendingRunSpec, input, {
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -676,7 +675,7 @@ export function App({
 
         // Slash commands go through IntentRecognizer -> ActionHandler (standalone)
         // or through daemon REST API (daemon mode)
-        if (input.startsWith("/") && intentRecognizer && actionHandler) {
+        if (action.kind === "standalone_slash" && intentRecognizer && actionHandler) {
           const intent = await intentRecognizer.recognize(input);
           const result = await actionHandler.handle(intent);
 
@@ -685,7 +684,7 @@ export function App({
             return;
           }
 
-          if (trimmedInput === "/settings" || trimmedInput === "/config") {
+          if (action.trimmedInput === "/settings" || action.trimmedInput === "/config") {
             setShowSettings(true);
             return;
           }
@@ -716,9 +715,9 @@ export function App({
           if (result.stopLoop) {
             stopLoop();
           }
-        } else if (input.startsWith("/") && isDaemonMode) {
+        } else if (action.kind === "daemon_slash") {
           // Daemon mode: handle basic slash commands locally
-          const trimmed = input.trim().toLowerCase();
+          const trimmed = action.trimmedInput;
           if (trimmed === "/help" || trimmed === "/?") {
             setShowHelp(true);
           } else if (trimmed === "/settings" || trimmed === "/config") {
@@ -765,7 +764,7 @@ export function App({
             return;
           }
 
-          const freeformRoute = resolveFreeformInputRoute({
+          const freeformRoute = action.kind === "freeform" ? action.route : resolveFreeformInputRoute({
             isDaemonMode,
             daemonGoalId: daemonLoopState.goalId,
             hasChatRunner: chatRunner !== undefined,
