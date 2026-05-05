@@ -53,6 +53,7 @@ import {
 } from "./task-verifier-rules.js";
 import { runLLMReview } from "./task-verifier-llm.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
+import { resolveTaskWorkspacePath } from "./task-workspace.js";
 
 function formatSelfReportEvidence(executorReport: import("./task-verifier-types.js").ExecutorReport): string {
   const segments = [
@@ -90,7 +91,7 @@ async function collectVerificationDiffs(
   const cwd =
     executionResult.agentLoop?.requestedCwd ??
     executionResult.agentLoop?.executionCwd ??
-    task.constraints.find((constraint) => constraint.startsWith("workspace_path:"))?.slice("workspace_path:".length) ??
+    await resolveTaskWorkspacePath({ stateManager: deps.stateManager, task }) ??
     process.cwd();
 
   const changedPaths = [

@@ -4,6 +4,7 @@ import type { VerificationResult } from "../../../base/types/task.js";
 import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
 import type { VerifierDeps } from "./task-verifier-types.js";
 import { syncTaskOutcomeSummary } from "./task-outcome-ledger.js";
+import { resolveTaskWorkspacePath } from "./task-workspace.js";
 
 // ─── runMechanicalVerification ───
 
@@ -238,37 +239,11 @@ export function isDirectionCorrect(verificationResult: VerificationResult): bool
 // ─── attemptRevert ───
 
 async function resolveRevertCwd(deps: VerifierDeps, task: Task): Promise<string | null> {
-  const explicitCwd = deps.revertCwd?.trim();
-  if (explicitCwd) {
-    return explicitCwd;
-  }
-
-  const taskWorkspaceConstraint = task.constraints.find((constraint) =>
-    constraint.startsWith("workspace_path:")
-  );
-  if (taskWorkspaceConstraint) {
-    const taskWorkspace = taskWorkspaceConstraint.slice("workspace_path:".length).trim();
-    if (taskWorkspace) {
-      return taskWorkspace;
-    }
-  }
-
-  try {
-    const goal = await deps.stateManager.loadGoal(task.goal_id);
-    const goalWorkspaceConstraint = goal?.constraints.find((constraint) =>
-      constraint.startsWith("workspace_path:")
-    );
-    if (goalWorkspaceConstraint) {
-      const goalWorkspace = goalWorkspaceConstraint.slice("workspace_path:".length).trim();
-      if (goalWorkspace) {
-        return goalWorkspace;
-      }
-    }
-  } catch {
-    // Non-fatal: absence of goal state should just disable raw git restore.
-  }
-
-  return null;
+  return await resolveTaskWorkspacePath({
+    stateManager: deps.stateManager,
+    task,
+    fallbackCwd: deps.revertCwd?.trim() || undefined,
+  }) ?? null;
 }
 
 export async function attemptRevert(deps: VerifierDeps, task: Task): Promise<boolean> {
