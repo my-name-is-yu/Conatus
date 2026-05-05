@@ -1457,7 +1457,7 @@ function scoreCandidateSelectionContexts(
     const diversityScore = clamp01(candidate.robustness?.diversity_score === undefined
       ? inferredDiversity
       : Math.min(candidate.robustness.diversity_score, inferredDiversity));
-    const riskPenalty = clamp01(candidate.robustness?.risk_penalty ?? inferredCandidateRiskPenalty(candidate));
+    const riskPenalty = clamp01(candidate.robustness?.risk_penalty ?? 0);
     const evidenceConfidence = clamp01(candidate.robustness?.evidence_confidence ?? context.metric?.confidence ?? 0.5);
     const calibrationAdjustment = evaluatorCalibrationAdjustment(candidate.candidate_id, calibration);
     const robustScore = clamp01(candidate.robustness?.robust_score
@@ -1543,20 +1543,6 @@ function highestKnownSimilarity(
     }
   }
   return highest;
-}
-
-function inferredCandidateRiskPenalty(candidate: RuntimeEvidenceCandidateRecord): number {
-  const lineageText = [
-    ...candidate.lineage.config_lineage,
-    ...candidate.lineage.postprocess_lineage,
-  ].map(normalizeLineageText).join(" ");
-  if (lineageText.includes("manual") || lineageText.includes("threshold") || lineageText.includes("postprocess")) {
-    return 0.15;
-  }
-  if (lineageText.includes("calibration") || lineageText.includes("weight")) {
-    return 0.08;
-  }
-  return 0;
 }
 
 function candidateSelectionReasons(
@@ -1658,6 +1644,7 @@ function nearMissReasonsForCandidate(
   scored: RuntimeCandidateSelectionCandidate | undefined
 ): RuntimeEvidenceCandidateNearMissReason[] {
   const explicit = context.candidate.near_miss?.reason_to_keep ?? [];
+  if (explicit.length > 0) return [...explicit];
   const reasons = new Set<RuntimeEvidenceCandidateNearMissReason>(explicit);
   if (context.candidate.near_miss?.status === "retained" || context.candidate.near_miss?.status === "promoted") {
     for (const reason of inferredNearMissReasons(context, rawBest, scored)) reasons.add(reason);
@@ -1687,14 +1674,6 @@ function inferredNearMissReasons(
   }
   if (complementaryCandidateIds(context.candidate).length > 0 || highestKnownSimilarity(context.candidate, [context.candidate, rawBest.candidate]) <= 0.5) {
     reasons.push("complementarity");
-  }
-  const lineageText = [
-    ...context.candidate.lineage.model_lineage,
-    ...context.candidate.lineage.config_lineage,
-    ...(context.candidate.near_miss?.summary ? [context.candidate.near_miss.summary] : []),
-  ].map(normalizeLineageText).join(" ");
-  if (lineageText.includes("stack") || lineageText.includes("ensemble") || lineageText.includes("blend")) {
-    reasons.push("ensemble_potential");
   }
   return reasons;
 }
@@ -1876,23 +1855,10 @@ function resolvePrimaryCandidateMetricKey(entriesOldestFirst: RuntimeEvidenceEnt
   return [...byMetric.values()].sort((a, b) => {
     const coverageDelta = b.candidate_count - a.candidate_count;
     if (coverageDelta !== 0) return coverageDelta;
-    const localityDelta = Number(isLocalValidationMetricLabel(b.key.label)) - Number(isLocalValidationMetricLabel(a.key.label));
-    if (localityDelta !== 0) return localityDelta;
     const positionDelta = a.position_sum / a.candidate_count - b.position_sum / b.candidate_count;
     if (positionDelta !== 0) return positionDelta;
     return b.latest_index - a.latest_index;
   })[0]?.key ?? null;
-}
-
-function isLocalValidationMetricLabel(label: string): boolean {
-  const normalized = normalizeLineageText(label);
-  const externalHints = ["public", "private", "leaderboard", "external", "lb", "submission"];
-  for (const hint of externalHints) {
-    if (normalized === hint || normalized.includes(hint)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function candidateComparableMetric(
