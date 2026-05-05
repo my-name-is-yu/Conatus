@@ -11,7 +11,7 @@ import {
   type ChatIngressRuntimeControl,
   type SelectedChatRoute,
 } from "./ingress-router.js";
-import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
+import { classifyRuntimeControlIntent } from "../../runtime/control/index.js";
 import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
@@ -815,28 +815,46 @@ export class CrossPlatformChatSessionManager {
     };
     const setupSecretIntake = intakeSetupSecrets(ingress.text);
     const safeIngressText = setupSecretIntake.redactedText;
+    const hasSetupSecret = setupSecretIntake.suppliedSecrets.length > 0;
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
-      ingress.metadata["runtime_control_denied"] === true
+      !hasSetupSecret
+      && !capabilities.hasAgentLoop
+      && ingress.metadata["runtime_control_denied"] === true
       && ingress.metadata["runtime_control_approved"] !== true
-      && ingress.metadata["runtime_control_explicit"] !== true
-      && capabilities.hasAgentLoop;
+      && ingress.metadata["runtime_control_explicit"] !== true;
+    const shouldClassifyRuntimeControlForSafety =
+      !hasSetupSecret
+      && capabilities.hasAgentLoop
+      && (
+        ingress.metadata["runtime_control_approved"] === true
+        || ingress.metadata["runtime_control_denied"] === true
+        || ingress.metadata["runtime_control_explicit"] === true
+      );
+    const shouldClassifyRuntimeControl =
+      shouldClassifyRuntimeControlForSafety
+      || (!hasSetupSecret && !capabilities.hasAgentLoop && (
+        (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
+        || ingress.metadata["runtime_control_approved"] === true
+        || ingress.metadata["runtime_control_denied"] === true
+        || ingress.metadata["runtime_control_explicit"] === true
+      ));
     let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
       ? await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient)
       : null;
-    const shouldClassifyRuntimeControl =
-      (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
-      || ingress.metadata["runtime_control_approved"] === true
-      || ingress.metadata["runtime_control_denied"] === true
-      || ingress.metadata["runtime_control_explicit"] === true;
-    const runtimeControlIntent = freeformRouteIntent === null && shouldClassifyRuntimeControl
-      ? await recognizeRuntimeControlIntent(safeIngressText, this.deps.llmClient)
+    const runtimeControlClassification = freeformRouteIntent == null && shouldClassifyRuntimeControl
+      ? await classifyRuntimeControlIntent(safeIngressText, this.deps.llmClient)
       : null;
-    if (freeformRouteIntent === null && runtimeControlIntent === null && capabilities.hasAgentLoop) {
+    const runtimeControlIntent = runtimeControlClassification?.status === "intent"
+      ? runtimeControlClassification.intent
+      : null;
+    if (!hasSetupSecret && !capabilities.hasAgentLoop && freeformRouteIntent == null && runtimeControlIntent === null) {
       freeformRouteIntent = await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient);
     }
     const shouldDeriveRunSpecDraft =
-      runtimeControlIntent === null
-      && freeformRouteIntent !== null
+      !capabilities.hasAgentLoop
+      && !hasSetupSecret
+      && runtimeControlIntent === null
+      && freeformRouteIntent != null
       && (
         freeformRouteIntent.kind === "run_spec"
         || freeformRouteIntent.kind === "configure"
@@ -863,6 +881,9 @@ export class CrossPlatformChatSessionManager {
     const selectedRoute = this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
+      runtimeControlUnclassified: shouldClassifyRuntimeControlForSafety
+        && runtimeControlClassification?.status === "unclassified"
+        && ingress.metadata["runtime_control_explicit"] === true,
       freeformRouteIntent,
       setupSecretIntake,
       runSpecDraft,

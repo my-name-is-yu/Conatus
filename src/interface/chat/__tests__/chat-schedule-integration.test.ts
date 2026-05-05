@@ -124,6 +124,18 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   };
 }
 
+function parseMockJSON(content: string, schema: z.ZodTypeAny) {
+  return schema.parse(JSON.parse(content));
+}
+
+function freeformExecuteDecision(): string {
+  return JSON.stringify({
+    kind: "execute",
+    confidence: 0.95,
+    rationale: "operator asked to execute a chat tool",
+  });
+}
+
 describe("ChatRunner schedule integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -161,6 +173,12 @@ describe("ChatRunner schedule integration", () => {
       supportsToolCalling: () => true,
       sendMessage: vi.fn()
         .mockResolvedValueOnce({
+          content: freeformExecuteDecision(),
+          tool_calls: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
+        })
+        .mockResolvedValueOnce({
           content: "",
           tool_calls: [
             {
@@ -180,13 +198,14 @@ describe("ChatRunner schedule integration", () => {
           usage: { input_tokens: 1, output_tokens: 1 },
           stop_reason: "completed",
         }),
+      parseJSON: vi.fn(parseMockJSON),
     };
 
     const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
     await runner.execute("list schedules", "/tmp");
 
     expect(vi.mocked(scheduleEngine.getEntries)).toHaveBeenCalledTimes(1);
-    const secondCallMessages = llmClient.sendMessage.mock.calls[1]?.[0] as Array<{ role: string; content: string }>;
+    const secondCallMessages = llmClient.sendMessage.mock.calls[2]?.[0] as Array<{ role: string; content: string }>;
     const toolResultMessage = secondCallMessages.find(
       (message) => message.role === "user" && message.content.startsWith("Tool result for list_schedules:\n"),
     );
@@ -205,6 +224,12 @@ describe("ChatRunner schedule integration", () => {
     const llmClient = {
       supportsToolCalling: () => true,
       sendMessage: vi.fn()
+        .mockResolvedValueOnce({
+          content: freeformExecuteDecision(),
+          tool_calls: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
+        })
         .mockResolvedValueOnce({
           content: "",
           tool_calls: [
@@ -233,6 +258,7 @@ describe("ChatRunner schedule integration", () => {
           usage: { input_tokens: 1, output_tokens: 1 },
           stop_reason: "completed",
         }),
+      parseJSON: vi.fn(parseMockJSON),
     };
 
     const runner = new ChatRunner(makeDeps({
@@ -273,6 +299,12 @@ describe("ChatRunner schedule integration", () => {
       supportsToolCalling: () => true,
       sendMessage: vi.fn()
         .mockResolvedValueOnce({
+          content: freeformExecuteDecision(),
+          tool_calls: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
+        })
+        .mockResolvedValueOnce({
           content: "",
           tool_calls: [
             {
@@ -294,6 +326,7 @@ describe("ChatRunner schedule integration", () => {
           usage: { input_tokens: 1, output_tokens: 1 },
           stop_reason: "completed",
         }),
+      parseJSON: vi.fn(parseMockJSON),
     };
 
     const runner = new ChatRunner(makeDeps({
@@ -324,6 +357,12 @@ describe("ChatRunner schedule integration", () => {
       supportsToolCalling: () => true,
       sendMessage: vi.fn()
         .mockResolvedValueOnce({
+          content: freeformExecuteDecision(),
+          tool_calls: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
+        })
+        .mockResolvedValueOnce({
           content: "",
           tool_calls: [
             {
@@ -345,6 +384,7 @@ describe("ChatRunner schedule integration", () => {
           usage: { input_tokens: 1, output_tokens: 1 },
           stop_reason: "completed",
         }),
+      parseJSON: vi.fn(parseMockJSON),
     };
 
     const runner = new ChatRunner(makeDeps({

@@ -62,7 +62,19 @@ function makeLLMClientWithToolCall(toolName: string, toolArgs: Record<string, un
     sendMessage: vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
-        // First call: return a tool_call response
+        return {
+          content: JSON.stringify({
+            kind: "execute",
+            confidence: 0.93,
+            rationale: "tool-backed request",
+          }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        } satisfies LLMResponse;
+      }
+      if (callCount === 2) {
+        // Tool-loop call: return a tool_call response
         return {
           content: "",
           usage: { input_tokens: 1, output_tokens: 1 },
@@ -79,7 +91,7 @@ function makeLLMClientWithToolCall(toolName: string, toolArgs: Record<string, un
           ],
         } satisfies LLMResponse;
       }
-      // Second call: return final text (after tool result)
+      // Final call: return text after the tool result
       return {
         content: "Tool executed, here is the result.",
         usage: { input_tokens: 1, output_tokens: 1 },

@@ -93,6 +93,16 @@ function makeLLMClientWithToolCall(toolName: string) {
     supportsToolCalling: () => true,
     sendMessage: vi.fn()
       .mockResolvedValueOnce({
+        content: JSON.stringify({
+          kind: "execute",
+          confidence: 0.93,
+          rationale: "tool-backed request",
+        }),
+        tool_calls: [],
+        usage: { input_tokens: 10, output_tokens: 10 },
+        stop_reason: "end_turn",
+      })
+      .mockResolvedValueOnce({
         content: "",
         tool_calls: [
           {
@@ -139,7 +149,7 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
       expect(result.output).toBe("Final answer");
 
       // Verify the tool result message sent to LLM contains denial text
-      const secondCall = llmClient.sendMessage.mock.calls[1];
+      const secondCall = llmClient.sendMessage.mock.calls[2];
       const messages = secondCall[0] as Array<{ role: string; content: string }>;
       const toolResultMsg = messages.find((m) => m.role === "user" && m.content.includes("denied"));
       expect(toolResultMsg).toBeDefined();
@@ -177,7 +187,7 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
       expect(tool.call).not.toHaveBeenCalled();
 
       // The tool result message sent to LLM should indicate "not approved"
-      const secondCall = llmClient.sendMessage.mock.calls[1];
+      const secondCall = llmClient.sendMessage.mock.calls[2];
       const messages = secondCall[0] as Array<{ role: string; content: string }>;
       const toolResultMsg = messages.find((m) => m.role === "user" && m.content.includes("not approved"));
       expect(toolResultMsg).toBeDefined();

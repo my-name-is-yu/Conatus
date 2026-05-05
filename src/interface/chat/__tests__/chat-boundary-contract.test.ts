@@ -228,7 +228,6 @@ describe("chat boundary contracts", () => {
         }),
       } as never,
       llmClient: createMockLLMClient([
-        JSON.stringify({ kind: "execute", confidence: 0.93, rationale: "ordinary greeting" }),
         JSON.stringify({ intent: "restart_daemon", reason: "PulSeed を再起動して" }),
       ]),
       runtimeControlService,

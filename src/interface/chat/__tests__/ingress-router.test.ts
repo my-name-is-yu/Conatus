@@ -40,7 +40,7 @@ describe("IngressRouter", () => {
     expect(route.kind).toBe("tool_loop");
   });
 
-  it("routes explicit runtime-control requests when allowed", () => {
+  it("keeps allowed runtime-control intent on agent_loop when available", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "PulSeed を再起動して",
@@ -118,6 +118,35 @@ describe("IngressRouter", () => {
     expect(route.reason).toBe("runtime_control_disallowed");
   });
 
+  it("blocks explicit runtime-control turns when no typed intent was derived", () => {
+    const route = router.selectRoute(
+      buildStandaloneIngressMessage({
+        text: "that lifecycle operation",
+        channel: "plugin_gateway",
+        platform: "telegram",
+        runtimeControl: {
+          allowed: false,
+          approvalMode: "disallowed",
+        },
+        metadata: {
+          runtime_control_explicit: true,
+          runtime_control_denied: true,
+        },
+      }),
+      {
+        hasAgentLoop: true,
+        hasToolLoop: true,
+        hasRuntimeControlService: true,
+        runtimeControlIntent: null,
+        runtimeControlUnclassified: true,
+      }
+    );
+
+    expect(route.kind).toBe("runtime_control_blocked");
+    expect(route.reason).toBe("runtime_control_unclassified");
+    expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
+  });
+
   it("keeps long-running natural-language work on agent_loop so tools can decide handoff", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
@@ -180,7 +209,7 @@ describe("IngressRouter", () => {
     expect(route.kind).toBe("agent_loop");
   });
 
-  it("routes a precomputed typed RunSpec draft without keyword-derived route logic", () => {
+  it("keeps precomputed typed RunSpec drafts on agent_loop when tools can decide handoff", () => {
     const draft = {
       schema_version: "run-spec-v1",
       id: "runspec-00000000-0000-4000-8000-000000000001",
@@ -231,6 +260,66 @@ describe("IngressRouter", () => {
       }),
       {
         hasAgentLoop: true,
+        hasToolLoop: true,
+        runSpecDraft: draft,
+      }
+    );
+
+    expect(route.kind).toBe("agent_loop");
+    expect(route.reason).toBe("agent_loop_available");
+  });
+
+  it("falls back to precomputed typed RunSpec drafts when agent_loop is unavailable", () => {
+    const draft = {
+      schema_version: "run-spec-v1",
+      id: "runspec-00000000-0000-4000-8000-000000000001",
+      status: "draft",
+      profile: "kaggle",
+      source_text: "Kaggle score 0.98を超えるまで長期で回して",
+      objective: "Improve Kaggle score until it exceeds 0.98",
+      workspace: { path: "/repo/kaggle", source: "context", confidence: "medium" },
+      execution_target: { kind: "daemon", remote_host: null, confidence: "medium" },
+      metric: {
+        name: "kaggle_score",
+        direction: "maximize",
+        target: 0.98,
+        target_rank_percent: null,
+        datasource: "kaggle_leaderboard",
+        confidence: "high",
+      },
+      progress_contract: {
+        kind: "metric_target",
+        dimension: "kaggle_score",
+        threshold: 0.98,
+        semantics: "Kaggle score exceeds 0.98.",
+        confidence: "high",
+      },
+      deadline: null,
+      budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
+      approval_policy: {
+        submit: "approval_required",
+        publish: "unspecified",
+        secret: "approval_required",
+        external_action: "approval_required",
+        irreversible_action: "approval_required",
+      },
+      artifact_contract: { expected_artifacts: [], discovery_globs: [], primary_outputs: [] },
+      risk_flags: ["external_submit_requires_approval"],
+      missing_fields: [],
+      confidence: "high",
+      links: { goal_id: null, runtime_session_id: null, conversation_id: "chat-1" },
+      origin: { channel: "plugin_gateway", session_id: "chat-1", reply_target: null, metadata: {} },
+      created_at: "2026-05-03T00:00:00.000Z",
+      updated_at: "2026-05-03T00:00:00.000Z",
+    } satisfies RunSpec;
+    const route = router.selectRoute(
+      buildStandaloneIngressMessage({
+        text: draft.source_text,
+        channel: "plugin_gateway",
+        platform: "telegram",
+      }),
+      {
+        hasAgentLoop: false,
         hasToolLoop: true,
         runSpecDraft: draft,
       }

@@ -15,6 +15,11 @@ export interface RuntimeControlTargetHint {
   sessionId?: string;
 }
 
+export type RuntimeControlIntentClassification =
+  | { status: "intent"; intent: RuntimeControlIntent }
+  | { status: "none" }
+  | { status: "unclassified" };
+
 const RuntimeControlIntentDecisionSchema = z.object({
   intent: z.enum([
     "none",
@@ -71,8 +76,16 @@ export async function recognizeRuntimeControlIntent(
   input: string,
   llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">
 ): Promise<RuntimeControlIntent | null> {
+  const classification = await classifyRuntimeControlIntent(input, llmClient);
+  return classification.status === "intent" ? classification.intent : null;
+}
+
+export async function classifyRuntimeControlIntent(
+  input: string,
+  llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">
+): Promise<RuntimeControlIntentClassification> {
   const trimmed = input.trim();
-  if (!trimmed || !llmClient) return null;
+  if (!trimmed || !llmClient) return { status: "none" };
 
   const response = await llmClient.sendMessage(
     [{ role: "user", content: trimmed }],
@@ -85,9 +98,10 @@ export async function recognizeRuntimeControlIntent(
   );
   try {
     const decision = llmClient.parseJSON(response.content, RuntimeControlIntentDecisionSchema);
-    return toRuntimeControlIntent(trimmed, decision);
+    const intent = toRuntimeControlIntent(trimmed, decision);
+    return intent ? { status: "intent", intent } : { status: "none" };
   } catch {
-    return null;
+    return { status: "unclassified" };
   }
 }
 

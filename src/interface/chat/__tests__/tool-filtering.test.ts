@@ -194,7 +194,19 @@ describe("ChatRunner tool filtering integration", () => {
         const toolNames = (opts?.tools ?? []).map((t: { function: { name: string } }) => t.function.name);
 
         if (callCount === 1) {
-          // First call: request tool_search
+          return {
+            content: JSON.stringify({
+              kind: "execute",
+              confidence: 0.93,
+              rationale: "tool-backed request",
+            }),
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "end_turn",
+            tool_calls: [],
+          } satisfies LLMResponse;
+        }
+        if (callCount === 2) {
+          // Tool-loop call: request tool_search
           return {
             content: "",
             usage: { input_tokens: 1, output_tokens: 1 },
