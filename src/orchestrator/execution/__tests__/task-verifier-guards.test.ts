@@ -18,6 +18,7 @@ import type { Task, VerificationResult } from "../../../base/types/task.js";
 import type { Logger } from "../../../runtime/logger.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Fixtures ───
 
@@ -503,6 +504,46 @@ describe("attemptRevert safety", () => {
       expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("original\n");
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses goal workspace_path instead of stale daemon revertCwd", async () => {
+    const daemonRepo = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-daemon-"));
+    const goalRepo = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-goal-"));
+    initGitRepo(daemonRepo);
+    initGitRepo(goalRepo);
+    fs.writeFileSync(path.join(daemonRepo, "tracked.txt"), "daemon changed\n", "utf-8");
+    fs.writeFileSync(path.join(goalRepo, "tracked.txt"), "goal changed\n", "utf-8");
+
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: daemonRepo,
+    };
+    const task = makeTask({
+      scope_boundary: { in_scope: ["tracked.txt"], out_of_scope: [], blast_radius: "low" },
+      reversibility: "reversible",
+    });
+
+    try {
+      await stateManager.saveGoal(makeGoal({
+        id: task.goal_id,
+        constraints: [`workspace_path:${goalRepo}`],
+      }));
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await handleFailure(deps, task, makeFailureVerificationResult());
+
+      expect(result.action).toBe("discard");
+      expect(fs.readFileSync(path.join(goalRepo, "tracked.txt"), "utf-8")).toBe("original\n");
+      expect(fs.readFileSync(path.join(daemonRepo, "tracked.txt"), "utf-8")).toBe("daemon changed\n");
+    } finally {
+      fs.rmSync(daemonRepo, { recursive: true, force: true });
+      fs.rmSync(goalRepo, { recursive: true, force: true });
     }
   });
 });

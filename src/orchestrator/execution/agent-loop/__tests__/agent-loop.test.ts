@@ -16,6 +16,7 @@ import { StallDetector } from "../../../../platform/drive/stall-detector.js";
 import { TaskLifecycle } from "../../task/task-lifecycle.js";
 import type { Task } from "../../../../base/types/task.js";
 import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../../tests/helpers/fixtures.js";
 import {
   BoundedAgentLoopRunner,
   buildAgentLoopBaseInstructions,
@@ -896,6 +897,90 @@ describe("agentloop phase 2", () => {
       verificationHints: ["hint"],
       filesChangedPaths: ["src/example.ts"],
     });
+  });
+
+  it("uses the goal workspace_path for native task execution when daemon cwd differs", async () => {
+    const daemonDir = tmpDir;
+    const goalWorkspace = makeTempDir();
+    try {
+      fs.mkdirSync(goalWorkspace, { recursive: true });
+      const modelInfo = makeModelInfo();
+      const modelClient = new ScriptedModelClient(modelInfo, [
+        {
+          content: "",
+          toolCalls: [{ id: "call-1", name: "verify", input: { command: "test -d ." } }],
+          stopReason: "tool_use",
+        },
+        {
+          content: finalJson(),
+          toolCalls: [],
+          stopReason: "end_turn",
+        },
+      ]);
+      const registry = new ToolRegistry();
+      registry.register(new EchoTool());
+      registry.register(new VerifyTool());
+      const router = new ToolRegistryAgentLoopToolRouter(registry);
+      const executor = new ToolExecutor({
+        registry,
+        permissionManager: new ToolPermissionManager({}),
+        concurrency: new ConcurrencyController(),
+      });
+      const runtime = new ToolExecutorAgentLoopToolRuntime(executor, router);
+      const boundedRunner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+      const taskRunner = new TaskAgentLoopRunner({
+        boundedRunner,
+        modelClient,
+        modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
+        defaultModel: modelInfo.ref,
+        defaultToolPolicy: { allowedTools: ["echo", "verify"] },
+        cwd: daemonDir,
+      });
+      const diffCwds: string[] = [];
+      const stateManager = new StateManager(daemonDir);
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-1",
+        constraints: [`workspace_path:${goalWorkspace}`],
+      }));
+      const llmClient: ILLMClient = {
+        async sendMessage(): Promise<LLMResponse> {
+          return { content: finalJson(), usage: { input_tokens: 1, output_tokens: 1 }, stop_reason: "end_turn" };
+        },
+        parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
+          return schema.parse(JSON.parse(content));
+        },
+        supportsToolCalling: () => true,
+      };
+      const sessionManager = new SessionManager(stateManager);
+      const lifecycle = new TaskLifecycle(
+        stateManager,
+        llmClient,
+        sessionManager,
+        new TrustManager(stateManager),
+        new StrategyManager(stateManager, llmClient),
+        new StallDetector(stateManager),
+        {
+          agentLoopRunner: taskRunner,
+          execFileSyncFn: (_cmd, args, opts) => {
+            diffCwds.push(opts.cwd);
+            return args[0] === "diff" || args[0] === "ls-files" ? "" : "";
+          },
+        },
+      );
+      const task = makeTask();
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      expect(result.success).toBe(true);
+      expect(result.agentLoop?.requestedCwd).toBe(fs.realpathSync(goalWorkspace));
+      expect(result.agentLoop?.executionCwd).toBe(fs.realpathSync(goalWorkspace));
+      expect(result.agentLoop?.requestedCwd).not.toBe(fs.realpathSync(daemonDir));
+      expect(diffCwds).toEqual(expect.arrayContaining([fs.realpathSync(goalWorkspace)]));
+      expect(diffCwds).not.toContain(fs.realpathSync(daemonDir));
+    } finally {
+      fs.rmSync(goalWorkspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
   });
 
   it("rejects premature done until runtime verification evidence exists", async () => {

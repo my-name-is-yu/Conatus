@@ -52,6 +52,7 @@ import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/kno
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import type { MemoryLifecycleManager } from "../../../platform/knowledge/memory/memory-lifecycle.js";
 import { captureExecutionDiffArtifacts } from "./task-diff-capture.js";
+import { resolveTaskWorkspacePath } from "./task-workspace.js";
 import type { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
 import type { HookManager } from "../../../runtime/hook-manager.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
@@ -534,10 +535,15 @@ export class TaskLifecycle {
 
     let result: AgentResult;
     try {
+      const taskCwd = await resolveTaskWorkspacePath({
+        stateManager: this.stateManager,
+        task: runningTask,
+      });
       const agentLoopResult = await this.agentLoopRunner.runTask({
         task: runningTask,
         workspaceContext,
         knowledgeContext,
+        cwd: taskCwd,
       });
       result = taskAgentLoopResultToAgentResult(agentLoopResult);
       if (agentLoopResult.workspace?.executionCwd) {
