@@ -102,6 +102,24 @@ function makeExecutionResult(
   };
 }
 
+function makePassingAdapterRegistry(adapterType = "openai_codex_cli"): AdapterRegistry {
+  const registry = new AdapterRegistry();
+  registry.register({
+    adapterType,
+    async execute() {
+      return {
+        success: true,
+        output: "mechanical verification passed",
+        error: null,
+        exit_code: 0,
+        elapsed_ms: 1,
+        stopped_reason: "completed",
+      };
+    },
+  });
+  return registry;
+}
+
 // LLM responses for verification
 const LLM_REVIEW_PASS = '{"verdict": "pass", "reasoning": "All criteria satisfied", "criteria_met": 1, "criteria_total": 1}';
 const LLM_REVIEW_FAIL = '{"verdict": "fail", "reasoning": "Criteria not met", "criteria_met": 0, "criteria_total": 1}';
@@ -134,12 +152,18 @@ describe("TaskLifecycle", async () => {
     options?: {
       approvalFn?: (task: Task) => Promise<boolean>;
       logger?: import("../../../runtime/logger.js").Logger;
-      adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry;
+      adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry | null;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
       toolExecutor?: ToolExecutor;
     }
   ): TaskLifecycle {
     strategyManager = new StrategyManager(stateManager, llmClient);
+    const hasAdapterRegistryOption = options
+      ? Object.prototype.hasOwnProperty.call(options, "adapterRegistry")
+      : false;
+    const adapterRegistry = hasAdapterRegistryOption
+      ? options?.adapterRegistry ?? undefined
+      : makePassingAdapterRegistry();
     return new TaskLifecycle(
       stateManager,
       llmClient,
@@ -147,7 +171,7 @@ describe("TaskLifecycle", async () => {
       trustManager,
       strategyManager,
       stallDetector,
-      options
+      { ...options, adapterRegistry }
     );
   }
 
@@ -619,11 +643,11 @@ describe("TaskLifecycle", async () => {
       expect(adapterCwd).toBe(workspace);
     });
 
-    it("still runs cheap local failures before assuming pass when adapter is unavailable", async () => {
+    it("still runs cheap local failures before fail-closed adapter-unavailable evidence", async () => {
       const llm = createMockLLMClient([LLM_REVIEW_PASS]);
       const workspace = path.join(tmpDir, "non-git-workspace-no-adapter");
       fs.mkdirSync(workspace, { recursive: true });
-      const lifecycle = createLifecycle(llm);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
       const task = makeTask({
         success_criteria: [
           {
@@ -648,6 +672,128 @@ describe("TaskLifecycle", async () => {
 
       expect(verification.verdict).toBe("fail");
       expect(verification.evidence[0]?.description).toContain("missing-marker.txt");
+    });
+
+    it("fails closed when blocking mechanical commands need an adapter but no registry is configured", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Full test suite passes",
+            verification_method: "npm test",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult());
+      const mechanicalEvidence = verification.evidence.find((entry) => entry.layer === "mechanical");
+
+      expect(verification.verdict).toBe("fail");
+      expect(mechanicalEvidence?.description).toContain("could not execute");
+      expect(mechanicalEvidence?.description).toContain("no adapter registry is configured");
+      expect(mechanicalEvidence?.description).toContain("command(s) did not run: npm test");
+      expect(mechanicalEvidence?.description).toContain("unknown/Uncertain");
+    });
+
+    it("fails closed when the adapter registry is empty for a blocking mechanical command", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: new AdapterRegistry() });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Full test suite passes",
+            verification_method: "npm test",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult());
+      const mechanicalEvidence = verification.evidence.find((entry) => entry.layer === "mechanical");
+
+      expect(verification.verdict).toBe("fail");
+      expect(mechanicalEvidence?.description).toContain("no adapters are registered");
+      expect(mechanicalEvidence?.description).toContain("command(s) did not run: npm test");
+      expect(mechanicalEvidence?.description).toContain("fails closed");
+    });
+
+    it("fails closed when adapter lookup fails for a blocking mechanical command", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const registry = new AdapterRegistry();
+      const execute = vi.fn(async () => ({
+        success: true,
+        output: "should not execute",
+        error: null,
+        exit_code: 0,
+        elapsed_ms: 1,
+        stopped_reason: "completed" as const,
+      }));
+      registry.register({
+        adapterType: "openai_codex_cli",
+        execute,
+      });
+      vi.spyOn(registry, "getAdapter").mockImplementation(() => {
+        throw new Error("lookup unavailable");
+      });
+      const lifecycle = createLifecycle(llm, { adapterRegistry: registry });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Full test suite passes",
+            verification_method: "npm test",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      const verification = await lifecycle.verifyTask(
+        task,
+        makeExecutionResult(),
+        "openai_codex_cli"
+      );
+      const mechanicalEvidence = verification.evidence.find((entry) => entry.layer === "mechanical");
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(verification.verdict).toBe("fail");
+      expect(mechanicalEvidence?.description).toContain("adapter lookup failed for openai_codex_cli");
+      expect(mechanicalEvidence?.description).toContain("command(s) did not run: npm test");
+    });
+
+    it("fails closed with unknown evidence when adapter execution throws for a blocking mechanical command", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const registry = new AdapterRegistry();
+      const execute = vi.fn(async () => {
+        throw new Error("adapter process unavailable");
+      });
+      registry.register({
+        adapterType: "openai_codex_cli",
+        execute,
+      });
+      const lifecycle = createLifecycle(llm, { adapterRegistry: registry });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Full test suite passes",
+            verification_method: "npm test",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      const verification = await lifecycle.verifyTask(
+        task,
+        makeExecutionResult(),
+        "openai_codex_cli"
+      );
+      const mechanicalEvidence = verification.evidence.find((entry) => entry.layer === "mechanical");
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect(verification.verdict).toBe("fail");
+      expect(mechanicalEvidence?.description).toContain("adapter execution failed for openai_codex_cli");
+      expect(mechanicalEvidence?.description).toContain("command(s) did not run to completion: npm test");
+      expect(mechanicalEvidence?.description).toContain("unknown/Uncertain");
     });
 
     it("keeps glob path operands on the adapter path while preserving workspace cwd", async () => {

@@ -67,7 +67,6 @@ export async function runMechanicalVerification(
   }));
   const needsAdapter = commandPlans.some((plan) => !plan.directLocal);
 
-  // If no adapter registry is available, fall back to assumed pass (backward compat)
   if (needsAdapter && !deps.adapterRegistry) {
     const directFailure = await runDirectLocalPlansBeforeAdapterFallback(
       commandPlans,
@@ -75,11 +74,7 @@ export async function runMechanicalVerification(
       verificationTimeoutMs
     );
     if (directFailure) return directFailure;
-    return {
-      applicable: true,
-      passed: true,
-      description: `Mechanical verification criteria detected (${verificationCommands.length} command(s), no adapter: assumed pass)`,
-    };
+    return failClosedMechanicalVerification(commandPlans, "no adapter registry is configured");
   }
 
   // Select the first available adapter from the registry for command execution
@@ -91,11 +86,7 @@ export async function runMechanicalVerification(
       verificationTimeoutMs
     );
     if (directFailure) return directFailure;
-    return {
-      applicable: true,
-      passed: true,
-      description: `Mechanical verification criteria detected (${verificationCommands.length} command(s), no adapters registered: assumed pass)`,
-    };
+    return failClosedMechanicalVerification(commandPlans, "no adapters are registered");
   }
 
   const adapterType =
@@ -112,11 +103,7 @@ export async function runMechanicalVerification(
       verificationTimeoutMs
     );
     if (directFailure) return directFailure;
-    return {
-      applicable: true,
-      passed: true,
-      description: `Mechanical verification criteria detected (${verificationCommands.length} command(s), adapter lookup failed: assumed pass)`,
-    };
+    return failClosedMechanicalVerification(commandPlans, `adapter lookup failed for ${adapterType}`);
   }
 
   const passedCommands: string[] = [];
@@ -138,11 +125,7 @@ export async function runMechanicalVerification(
     }
 
     if (!adapter) {
-      return {
-        applicable: true,
-        passed: true,
-        description: `Mechanical verification criteria detected (${verificationCommands.length} command(s), adapter unavailable: assumed pass)`,
-      };
+      return failClosedMechanicalVerification(commandPlans, `adapter unavailable for ${adapterType}`);
     }
 
     const agentTask: AgentTask = {
@@ -158,11 +141,11 @@ export async function runMechanicalVerification(
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       deps.logger?.error("runMechanicalVerification: adapter.execute() threw", { error: errMsg });
-      return {
-        applicable: true,
-        passed: false,
-        description: `Mechanical verification command threw: ${verificationCommand} — ${errMsg}`,
-      };
+      return failClosedMechanicalVerification(
+        [{ command: verificationCommand, directLocal: false }],
+        `adapter execution failed for ${adapterType}: ${errMsg}`,
+        "command(s) did not run to completion"
+      );
     }
 
     if (result.stopped_reason === "timeout") {
@@ -188,6 +171,28 @@ export async function runMechanicalVerification(
     applicable: true,
     passed: true,
     description: `Mechanical verification passed (${passedCommands.length} command(s)): ${passedCommands.join("; ")}`,
+  };
+}
+
+function failClosedMechanicalVerification(
+  commandPlans: Array<{ command: string; directLocal: boolean }>,
+  reason: string,
+  commandStatus = "command(s) did not run"
+): { applicable: true; passed: false; description: string } {
+  const unexecutedCommands = commandPlans
+    .filter((plan) => !plan.directLocal)
+    .map((plan) => plan.command);
+  const commandSummary =
+    unexecutedCommands.length > 0
+      ? `${commandStatus}: ${unexecutedCommands.join("; ")}`
+      : "blocking command did not run";
+  return {
+    applicable: true,
+    passed: false,
+    description:
+      `Mechanical verification could not execute blocking command(s) (${reason}); ` +
+      `${unexecutedCommands.length}/${commandPlans.length} ${commandSummary}. ` +
+      "Result is unknown/Uncertain and fails closed.",
   };
 }
 
