@@ -28,6 +28,7 @@ import { createRunSpecHandoffTools } from "../../../tools/runtime/RunSpecHandoff
 import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
 import type { ApprovalRequest, ToolCallContext } from "../../../tools/types.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { createTextUserInput } from "../user-input.js";
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -65,6 +66,7 @@ function makeIngress(text: string): ChatIngressMessage {
     conversation_id: "chat-1",
     message_id: "message-1",
     text,
+    userInput: createTextUserInput(text),
     actor: {
       surface: "gateway",
       identity_key: "telegram:user-1",

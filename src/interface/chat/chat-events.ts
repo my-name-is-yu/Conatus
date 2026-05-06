@@ -2,6 +2,7 @@ import type { FailureRecoveryGuidance } from "./failure-recovery.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 import type { TurnLanguageHint } from "./turn-language.js";
 import type { OperationProgressItem } from "./operation-progress.js";
+import type { UserInput } from "./user-input.js";
 
 export interface ChatEventBase {
   runId: string;
@@ -13,6 +14,7 @@ export interface ChatEventBase {
 export interface LifecycleStartEvent extends ChatEventBase {
   type: "lifecycle_start";
   input: string;
+  userInput: UserInput;
 }
 
 export interface AssistantDeltaEvent extends ChatEventBase {

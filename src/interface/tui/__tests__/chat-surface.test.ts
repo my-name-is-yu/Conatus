@@ -2,6 +2,9 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ChatRunnerDeps } from "../../chat/chat-runner.js";
+import type { ChatEvent } from "../../chat/chat-events.js";
+import { CrossPlatformChatSessionManager } from "../../chat/cross-platform-session.js";
+import { createTextUserInput } from "../../chat/user-input.js";
 import { SharedManagerTuiChatSurface } from "../chat-surface.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -67,6 +70,7 @@ describe("SharedManagerTuiChatSurface", () => {
 
     await surface.executeIngressMessage({
       text: "first",
+      userInput: createTextUserInput("first"),
       channel: "tui",
       platform: "local_tui",
       actor: { surface: "tui", platform: "local_tui" },
@@ -77,6 +81,7 @@ describe("SharedManagerTuiChatSurface", () => {
 
     await surface.executeIngressMessage({
       text: "second",
+      userInput: createTextUserInput("second"),
       channel: "tui",
       platform: "local_tui",
       actor: { surface: "tui", platform: "local_tui" },
@@ -200,5 +205,35 @@ describe("SharedManagerTuiChatSurface", () => {
         conversation_id: surface.getConversationId(),
       }),
     });
+  });
+
+  it("emits equivalent typed UserInput for TUI and non-TUI ingress", async () => {
+    const text = "Please inspect the current workspace.";
+    const tuiEvents: ChatEvent[] = [];
+    const gatewayEvents: ChatEvent[] = [];
+    const surface = new SharedManagerTuiChatSurface(makeDeps());
+    surface.onEvent = (event) => {
+      tuiEvents.push(event);
+    };
+    surface.startSession("/repo");
+    const manager = new CrossPlatformChatSessionManager(makeDeps());
+
+    await surface.execute(text, "/repo");
+    await manager.execute(text, {
+      channel: "plugin_gateway",
+      platform: "slack",
+      conversation_id: "slack-thread-1",
+      user_id: "user-1",
+      message_id: "msg-1",
+      onEvent: (event) => {
+        gatewayEvents.push(event);
+      },
+    });
+
+    const tuiStart = tuiEvents.find((event) => event.type === "lifecycle_start");
+    const gatewayStart = gatewayEvents.find((event) => event.type === "lifecycle_start");
+    expect(tuiStart?.userInput).toEqual(createTextUserInput(text));
+    expect(gatewayStart?.userInput).toEqual(createTextUserInput(text));
+    expect(gatewayStart?.userInput).toEqual(tuiStart?.userInput);
   });
 	});

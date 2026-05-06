@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { IngressRouter, buildStandaloneIngressMessage } from "../ingress-router.js";
+import { createTextUserInput } from "../user-input.js";
 import type { RunSpec } from "../../../runtime/run-spec/index.js";
 
 describe("IngressRouter", () => {
   const router = new IngressRouter();
+
+  it("normalizes ordinary natural language into canonical UserInput text items", () => {
+    const message = buildStandaloneIngressMessage({
+      text: "今の作業フォルダを確認して",
+      channel: "plugin_gateway",
+      platform: "slack",
+    });
+
+    expect(message.userInput).toEqual(createTextUserInput("今の作業フォルダを確認して"));
+    expect(message.userInput).not.toHaveProperty("intent");
+    expect(message.userInput).not.toHaveProperty("route");
+  });
 
   it("routes ordinary natural-language input to agent_loop when available", () => {
     const route = router.selectRoute(

@@ -55,6 +55,7 @@ import {
   type RunSpec,
 } from "../../runtime/run-spec/index.js";
 import { answerRuntimeEvidenceQuestion } from "../../runtime/evidence-answer.js";
+import { createTextUserInput } from "../chat/user-input.js";
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
@@ -176,6 +177,7 @@ function buildRunSpecIngress(input: string, spec: RunSpec, effectiveCwd: string)
     channel: "tui" as const,
     platform: "local_tui",
     text: input,
+    userInput: createTextUserInput(input),
     actor: {
       surface: "tui" as const,
       platform: "local_tui",

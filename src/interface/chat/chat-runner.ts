@@ -73,6 +73,7 @@ import {
 } from "./chat-runner-routes.js";
 import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
+import { createTextUserInput, replaceUserInputText } from "./user-input.js";
 import {
   createRunSpecStore,
   formatRunSpecSetupProposal,
@@ -326,6 +327,7 @@ export class ChatRunner {
       selectedRoute,
       runtimeControlContext,
       goalId: ingress.goal_id,
+      userInput: ingress.userInput,
     });
   }
 
@@ -343,6 +345,9 @@ export class ChatRunner {
     const setupSecretIntake = intakeSetupSecrets(input);
     this.setupSecretIntake = setupSecretIntake;
     const safeInput = setupSecretIntake.redactedText;
+    const safeUserInput = options.userInput
+      ? replaceUserInputText(options.userInput, safeInput)
+      : createTextUserInput(safeInput);
     this.turnLanguageHint = detectTurnLanguageHint(safeInput);
     eventContext.languageHint = this.turnLanguageHint;
     const persistedSecretIntake = setupSecretIntake.suppliedSecrets.map(({ value: _value, ...metadata }) => metadata);
@@ -415,6 +420,7 @@ export class ChatRunner {
     this.eventBridge.emitEvent({
       type: "lifecycle_start",
       input: safeInput,
+      userInput: safeUserInput,
       ...this.eventBridge.eventBase(eventContext),
     });
 

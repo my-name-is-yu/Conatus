@@ -1,7 +1,10 @@
+import type { UserInput } from "../../interface/chat/user-input.js";
+
 export type GatewayChatEventHandler = <T extends { type?: unknown; text?: unknown }>(event: T) => void | Promise<void>;
 
 export interface GatewayChatDispatchInput {
   text: string;
+  userInput?: UserInput;
   platform: string;
   identity_key?: string;
   conversation_id: string;

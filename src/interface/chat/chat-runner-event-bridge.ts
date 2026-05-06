@@ -30,6 +30,7 @@ import {
   operationProgressFromAgentActivitySummary,
   type OperationProgressItem,
 } from "./operation-progress.js";
+import { createTextUserInput } from "./user-input.js";
 
 export interface AssistantBuffer {
   text: string;
@@ -118,6 +119,7 @@ export class ChatRunnerEventBridge {
     this.emitEvent({
       type: "lifecycle_start",
       input,
+      userInput: createTextUserInput(input),
       ...this.eventBase(context),
     });
     this.emitEvent({
