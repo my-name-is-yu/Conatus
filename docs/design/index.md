@@ -38,3 +38,4 @@ The design index is a pointer into background material, not a replacement for th
 ## Active Interaction Contracts
 
 - [Codex-Like User Interaction Contract](execution/codex-like-interaction-contract.md)
+- [Exact Protocol Grammar Boundaries](execution/exact-protocol-boundaries.md)

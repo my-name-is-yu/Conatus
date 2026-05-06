@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
+import {
+  parseExactSlashCommand,
+  parseExactSlashCommandToken,
+  type ExactSlashCommandDefinition,
+} from "../../base/protocol/exact-protocol.js";
 
 // ─── Types ───
 
@@ -27,24 +32,15 @@ export interface RecognizedIntent {
 
 // ─── Exact command grammar ───
 
-const COMMAND_ALIASES: Record<string, IntentType> = {
-  "?": "help",
-  "/?": "help",
-  "/help": "help",
-  "/stop": "loop_stop",
-  "/quit": "loop_stop",
-  "/exit": "loop_stop",
-  "/run": "loop_start",
-  "/start": "loop_start",
-  "/status": "status",
-  "/report": "report",
-  "/goals": "goal_list",
-  "/goal": "goal_list",
-  "/goals list": "goal_list",
-  "/goal list": "goal_list",
-  "/dashboard": "dashboard",
-  "/d": "dashboard",
-};
+const COMMAND_DEFINITIONS: readonly ExactSlashCommandDefinition<IntentType>[] = [
+  { command: "help", aliases: ["/?", "/help"] },
+  { command: "loop_stop", aliases: ["/stop", "/quit", "/exit"] },
+  { command: "loop_start", aliases: ["/run", "/start"], allowArguments: true },
+  { command: "status", aliases: ["/status"] },
+  { command: "report", aliases: ["/report"] },
+  { command: "goal_list", aliases: ["/goals", "/goal", "/goals list", "/goal list"] },
+  { command: "dashboard", aliases: ["/dashboard", "/d"] },
+];
 
 // ─── LLM response schema ───
 
@@ -94,24 +90,25 @@ export class IntentRecognizer {
     const commandResult = this.parseExactCommand(input);
     if (commandResult) return commandResult;
 
+    if (parseExactSlashCommandToken(input)) {
+      return { intent: "unknown", raw: input, source: "command", confidence: 1 };
+    }
+
     if (this.llmClient) return this.classifyNaturalLanguage(input);
 
     return { intent: "unknown", raw: input, source: "unavailable" };
   }
 
   private parseExactCommand(input: string): RecognizedIntent | null {
-    const trimmed = input.trim();
-    const normalized = trimmed.toLowerCase().replace(/\s+/g, " ");
-    const [commandToken, ...argTokens] = normalized.split(" ");
-    if (!commandToken) return null;
-    const command = COMMAND_ALIASES[normalized] ?? COMMAND_ALIASES[commandToken];
-    if (!command) return null;
+    const parsed = parseExactSlashCommand(input, COMMAND_DEFINITIONS, {
+      bareSymbolCommands: { "?": "help" },
+    });
+    if (!parsed) return null;
 
-    if (command === "loop_start" && (commandToken === "/run" || commandToken === "/start")) {
-      const originalTokens = trimmed.split(/\s+/);
-      const goalArg = originalTokens.slice(1).join(" ").trim();
+    if (parsed.command === "loop_start") {
+      const goalArg = parsed.rawArgs;
       return {
-        intent: command,
+        intent: parsed.command,
         params: goalArg ? { goalArg } : undefined,
         raw: input,
         source: "command",
@@ -119,12 +116,8 @@ export class IntentRecognizer {
       };
     }
 
-    if (argTokens.length > 0 && !COMMAND_ALIASES[normalized]) {
-      return null;
-    }
-
     return {
-      intent: command,
+      intent: parsed.command,
       raw: input,
       source: "command",
       confidence: 1,

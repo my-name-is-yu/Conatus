@@ -48,6 +48,7 @@ import {
   withExecutionPolicyOverrides,
   type ExecutionPolicy,
 } from "../../orchestrator/execution/agent-loop/execution-policy.js";
+import { parseExactSlashCommandToken } from "../../base/protocol/exact-protocol.js";
 import { formatRoute, formatRuntimeSessionsList, formatRuntimeStatus } from "./chat-runner-runtime.js";
 import type {
   ChatRunResult,
@@ -106,18 +107,19 @@ export class ChatRunnerCommandHandler {
   constructor(private readonly host: ChatRunnerCommandHost) {}
 
   parseResumeCommand(input: string): ResumeCommand | null {
-    const trimmed = input.trim();
-    const match = /^\/resume(?:\s+(.+))?$/i.exec(trimmed);
-    if (!match) return null;
-    const selector = match[1]?.trim();
+    const parsed = parseExactSlashCommandToken(input);
+    if (!parsed || parsed.command !== "/resume") return null;
+    const selector = parsed.rawArgs.trim();
     return selector ? { selector } : {};
   }
 
   async handleCommand(input: string, cwd?: string): Promise<ChatRunResult | null> {
-    const trimmed = input.trim();
-    if (!trimmed.startsWith("/")) return null;
+    const parsed = parseExactSlashCommandToken(input);
+    if (!parsed) return null;
 
-    const cmd = trimmed.toLowerCase().split(/\s+/)[0];
+    const trimmed = input.trim();
+    const cmd = parsed.command;
+    const args = parsed.rawArgs;
     const start = Date.now();
 
     if (cmd === "/help") {
@@ -134,7 +136,7 @@ export class ChatRunnerCommandHandler {
     }
     if (cmd === "/history") {
       const catalog = new ChatSessionCatalog(this.host.deps.stateManager);
-      const selector = trimmed.slice("/history".length).trim();
+      const selector = args.trim();
       const history = this.host.getHistory();
       const session = selector
         ? await catalog.loadSessionBySelector(selector)
@@ -147,7 +149,7 @@ export class ChatRunnerCommandHandler {
       return { success: true, output: this.formatHistory(session), elapsed_ms: Date.now() - start };
     }
     if (cmd === "/title") {
-      const title = trimmed.slice("/title".length).trim();
+      const title = args.trim();
       if (!title) {
         return { success: false, output: "Usage: /title <title>", elapsed_ms: Date.now() - start };
       }
@@ -179,31 +181,31 @@ export class ChatRunnerCommandHandler {
       return this.handleCompact(start);
     }
     if (cmd === "/status") {
-      return this.handleStatus(trimmed.slice("/status".length).trim(), start);
+      return this.handleStatus(args.trim(), start);
     }
     if (cmd === "/goals") {
       return this.handleGoals(start);
     }
     if (cmd === "/tasks") {
-      return this.handleTasks(trimmed.slice("/tasks".length).trim(), start);
+      return this.handleTasks(args.trim(), start);
     }
     if (cmd === "/task") {
-      return this.handleTask(trimmed.slice("/task".length).trim(), start);
+      return this.handleTask(args.trim(), start);
     }
     if (cmd === "/config") {
       return this.handleConfig(start);
     }
     if (cmd === "/model") {
-      return this.handleModel(trimmed.slice("/model".length).trim(), start);
+      return this.handleModel(args.trim(), start);
     }
     if (cmd === "/permissions") {
-      return this.handlePermissions(trimmed.slice("/permissions".length).trim(), start);
+      return this.handlePermissions(args.trim(), start);
     }
     if (cmd === "/plugins") {
       return this.handlePlugins(start);
     }
     if (cmd === "/usage") {
-      return this.handleUsage(trimmed.slice("/usage".length).trim(), start);
+      return this.handleUsage(args.trim(), start);
     }
     if (cmd === "/context" || cmd === "/working-memory") {
       return this.handleContext(start, cwd);
@@ -212,7 +214,7 @@ export class ChatRunnerCommandHandler {
       return this.handleReview(start);
     }
     if (cmd === "/fork") {
-      return this.handleFork(trimmed.slice("/fork".length).trim(), start);
+      return this.handleFork(args.trim(), start);
     }
     if (cmd === "/undo") {
       return this.handleUndo(start);
@@ -244,8 +246,7 @@ export class ChatRunnerCommandHandler {
       return this.handleTrack(start);
     }
     if (cmd === "/tend") {
-      const args = trimmed.slice("/tend".length).trim();
-      return this.handleTend(args, start);
+      return this.handleTend(args.trim(), start);
     }
 
     if (this.host.getPendingTend() !== null) {

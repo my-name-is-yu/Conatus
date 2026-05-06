@@ -23,8 +23,8 @@ same contract in a machine-checkable form for later production tests.
 ## Non-Goals
 
 - This contract does not add new tool execution behavior.
-- This contract does not define exact command grammar beyond saying exact
-  protocol surfaces can remain deterministic.
+- Exact protocol grammar is defined separately in
+  [Exact Protocol Grammar Boundaries](exact-protocol-boundaries.md).
 - This contract does not allow keyword lists, regex phrase tables, string
   `includes`, title matching, or language-specific shortcuts to become the
   primary decision mechanism for freeform semantic behavior.
