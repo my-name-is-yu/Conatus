@@ -209,6 +209,7 @@ export const RuntimeLongRunHealthSignalsSchema = z.object({
   metric_progress: RuntimeLongRunSignalBaseSchema.extend({
     status: RuntimeLongRunMetricProgressStatusSchema,
     metric_name: z.string().optional(),
+    direction: z.enum(["maximize", "minimize"]).optional(),
     previous_value: z.number().optional(),
     current_value: z.number().optional(),
   }),

@@ -72,10 +72,7 @@ function applyWaitDeadlineStatus(context: GoalCycleRunnerContext, waitDeadlines:
   context.state.waiting_goals = waitingGoals;
   context.state.next_observe_at = resolution?.next_observe_at ?? null;
   context.state.last_wait_reason = waitingGoals[0]?.wait_reason ?? null;
-  context.state.approval_pending_count = waitingGoals.filter((goal) =>
-    goal.approval_pending === true
-      || (typeof goal.wait_reason === "string" && goal.wait_reason.toLowerCase().includes("approval"))
-  ).length;
+  context.state.approval_pending_count = waitingGoals.filter((goal) => goal.approval_pending === true).length;
 }
 
 function buildLoopErrorPayload(goalId: string, error: unknown, context: GoalCycleRunnerContext): Record<string, unknown> {

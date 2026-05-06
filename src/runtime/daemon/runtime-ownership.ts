@@ -57,7 +57,7 @@ interface LatestFileEvidence {
   metric?: {
     name: string;
     value: number;
-    direction: "maximize" | "minimize";
+    direction?: "maximize" | "minimize";
     observedAt: number;
   };
 }
@@ -262,7 +262,9 @@ export class RuntimeOwnershipCoordinator {
         return {
           name: record["label"],
           value: record["value"],
-          direction: this.extractMetricDirection(record["summary"]),
+          ...(record["direction"] === "maximize" || record["direction"] === "minimize"
+            ? { direction: record["direction"] }
+            : {}),
           observedAt,
         };
       }
@@ -270,13 +272,6 @@ export class RuntimeOwnershipCoordinator {
       return undefined;
     }
     return undefined;
-  }
-
-  private extractMetricDirection(summary: unknown): "maximize" | "minimize" {
-    if (typeof summary === "string" && summary.includes("direction=minimize")) {
-      return "minimize";
-    }
-    return "maximize";
   }
 
   private async readSupervisorActivity(checkedAt: number): Promise<{
@@ -321,23 +316,25 @@ export class RuntimeOwnershipCoordinator {
     ]);
     const previousMetric = previous?.long_running?.signals.metric_progress.current_value;
     const currentMetric = artifactEvidence?.metric?.value;
-    const metricDirection = artifactEvidence?.metric?.direction ?? "maximize";
+    const metricDirection = artifactEvidence?.metric?.direction;
     const metricProgress =
       currentMetric === undefined
         ? "missing"
         : previousMetric === undefined
           ? "unknown"
-          : metricDirection === "minimize"
-            ? currentMetric < previousMetric
-              ? "improved"
+          : metricDirection === undefined
+            ? "unknown"
+            : metricDirection === "minimize"
+              ? currentMetric < previousMetric
+                ? "improved"
+                : currentMetric > previousMetric
+                  ? "regressed"
+                  : "plateau"
               : currentMetric > previousMetric
-                ? "regressed"
-                : "plateau"
-            : currentMetric > previousMetric
-            ? "improved"
-            : currentMetric < previousMetric
-              ? "regressed"
-              : "plateau";
+                ? "improved"
+                : currentMetric < previousMetric
+                  ? "regressed"
+                  : "plateau";
     const approvalCount = pendingApprovals?.length ?? 0;
     return buildLongRunHealth({
       process: {
@@ -377,6 +374,7 @@ export class RuntimeOwnershipCoordinator {
         checked_at: checkedAt,
         observed_at: artifactEvidence?.metric?.observedAt,
         metric_name: artifactEvidence?.metric?.name,
+        ...(artifactEvidence?.metric?.direction ? { direction: artifactEvidence.metric.direction } : {}),
         previous_value: previousMetric,
         current_value: currentMetric,
       },

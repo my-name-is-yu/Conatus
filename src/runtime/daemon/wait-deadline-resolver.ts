@@ -110,6 +110,7 @@ function isApprovalPending(metadata: WaitMetadata): boolean {
     approval_pending?: unknown;
   };
   if (extra.approval_pending) return true;
+  if (metadata.resume_plan.action === "request_approval") return true;
   const evidence = metadata.latest_observation?.evidence;
   return Boolean(evidence && typeof evidence === "object" && evidence["approval_pending"]);
 }

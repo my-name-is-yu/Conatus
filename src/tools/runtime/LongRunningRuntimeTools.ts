@@ -65,6 +65,7 @@ export const LongRunningEvidenceSchema = z.object({
   label: z.string().min(1),
   value: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
   unit: z.string().min(1).optional(),
+  direction: z.enum(["maximize", "minimize"]).optional(),
   path: z.string().min(1).optional(),
   summary: z.string().min(1).optional(),
   confidence: z.number().min(0).max(1).optional(),
@@ -465,7 +466,8 @@ function normalizeKaggleMetricEvidence(
       kind: "metric",
       label: resolvedMetricName,
       value: score,
-      summary: input.metric_direction ? `direction=${input.metric_direction}` : "normalized metric",
+      ...(input.metric_direction ? { direction: input.metric_direction } : {}),
+      summary: "normalized metric",
     });
   }
   const cvStd = numberField(value, "cv_std");
@@ -716,6 +718,7 @@ async function appendLongRunningEvidence(
         label: item.label,
         value: item.value,
         unit: item.unit,
+        ...(item.direction ? { direction: item.direction } : {}),
         summary: item.summary,
       })),
       artifacts: [

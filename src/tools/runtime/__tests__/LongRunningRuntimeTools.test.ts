@@ -120,6 +120,7 @@ describe("LongRunningRuntimeTools", () => {
             kind: "metric",
             label: "balanced_accuracy",
             value: 0.8123,
+            direction: "maximize",
           }),
           expect.objectContaining({
             kind: "metric",
