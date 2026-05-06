@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { getGatewayChannelDir } from "../../../base/utils/paths.js";
 import { intakeSetupSecrets } from "../../../interface/chat/setup-secret-intake.js";
+import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import type { SetupDialogueRuntimeState } from "../../../interface/chat/setup-dialogue.js";
 import type { ToolCallContext } from "../../types.js";
 import { createSetupRuntimeControlTools } from "../SetupRuntimeControlTools.js";
@@ -284,6 +285,28 @@ describe("setup and runtime-control AgentLoop tools", () => {
     }));
   });
 
+  it("keeps generic request_runtime_control scoped to daemon and gateway operations", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-tools-generic-scope-"));
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    const tools = createSetupRuntimeControlTools({
+      stateManager,
+      runtimeControlService: { request: vi.fn() },
+    });
+    const requestTool = tools.find((tool) => tool.metadata.name === "request_runtime_control")!;
+    const runCancel = tools.find((tool) => tool.metadata.name === "run_cancel")!;
+
+    expect(requestTool.inputSchema.safeParse({
+      operation: "pause_run",
+      run_id: "run:coreloop:bypass",
+      reason: "pause without observing",
+    }).success).toBe(false);
+    expect(requestTool.inputSchema.safeParse({
+      operation: "restart_gateway",
+      reason: "restart after config change",
+    }).success).toBe(true);
+    expect(runCancel.metadata.isDestructive).toBe(true);
+  });
+
   it("blocks disallowed runtime-control lifecycle requests without service fallback", async () => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-tools-denied-"));
     const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
@@ -312,5 +335,130 @@ describe("setup and runtime-control AgentLoop tools", () => {
     expect(blocked.summary).toContain("will not fall back to shell tools");
     expect(status.success).toBe(true);
     expect(runtimeControlService.request).not.toHaveBeenCalled();
+  });
+
+  it("requests run_pause only when the exact observed run epoch still matches", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-tools-run-pause-"));
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    const ledger = new BackgroundRunLedger(path.join(baseDir, "runtime"));
+    await ledger.create({
+      id: "run:coreloop:pause-target",
+      kind: "coreloop_run",
+      goal_id: "goal-pause",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      status: "running",
+      title: "Pause target",
+      workspace: "/repo",
+      created_at: "2026-05-06T00:00:00.000Z",
+      started_at: "2026-05-06T00:01:00.000Z",
+      updated_at: "2026-05-06T00:02:00.000Z",
+    });
+    const runtimeControlService = { request: vi.fn().mockResolvedValue({
+      success: true,
+      message: "pause queued",
+      operationId: "op-run-pause",
+      state: "approved",
+    }) };
+    const runPause = createSetupRuntimeControlTools({ stateManager, runtimeControlService }).find((tool) => tool.metadata.name === "run_pause")!;
+
+    const result = await runPause.call({
+      run_id: "run:coreloop:pause-target",
+      observed_run_epoch: "2026-05-06T00:02:00.000Z",
+      reason: "safe pause requested by operator",
+    }, makeContext(baseDir));
+
+    expect(result.success).toBe(true);
+    expect(runtimeControlService.request).toHaveBeenCalledWith(expect.objectContaining({
+      intent: {
+        kind: "pause_run",
+        reason: "safe pause requested by operator",
+        target: { runId: "run:coreloop:pause-target" },
+      },
+      approvalFn: expect.any(Function),
+    }));
+  });
+
+  it("rejects run control when the observed run epoch is stale", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-tools-run-stale-"));
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    const ledger = new BackgroundRunLedger(path.join(baseDir, "runtime"));
+    await ledger.create({
+      id: "run:coreloop:stale-target",
+      kind: "coreloop_run",
+      goal_id: "goal-stale",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      status: "running",
+      title: "Stale target",
+      workspace: "/repo",
+      created_at: "2026-05-06T00:00:00.000Z",
+      started_at: "2026-05-06T00:01:00.000Z",
+      updated_at: "2026-05-06T00:03:00.000Z",
+    });
+    const runtimeControlService = { request: vi.fn() };
+    const runCancel = createSetupRuntimeControlTools({ stateManager, runtimeControlService }).find((tool) => tool.metadata.name === "run_cancel")!;
+
+    const result = await runCancel.call({
+      run_id: "run:coreloop:stale-target",
+      observed_run_epoch: "2026-05-06T00:02:00.000Z",
+      reason: "cancel stale target",
+    }, makeContext(baseDir));
+
+    expect(result.success).toBe(false);
+    expect(result.execution).toMatchObject({ status: "not_executed", reason: "stale_state" });
+    expect(result.data).toMatchObject({
+      status: "stale_state",
+      current_run_epoch: "2026-05-06T00:03:00.000Z",
+      observed_run_epoch: "2026-05-06T00:02:00.000Z",
+    });
+    expect(runtimeControlService.request).not.toHaveBeenCalled();
+  });
+
+  it("marks run_cancel approval requests as destructive", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-tools-run-cancel-approval-"));
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    const ledger = new BackgroundRunLedger(path.join(baseDir, "runtime"));
+    await ledger.create({
+      id: "run:coreloop:cancel-target",
+      kind: "coreloop_run",
+      goal_id: "goal-cancel",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      status: "running",
+      title: "Cancel target",
+      workspace: "/repo",
+      created_at: "2026-05-06T00:00:00.000Z",
+      started_at: "2026-05-06T00:01:00.000Z",
+      updated_at: "2026-05-06T00:02:00.000Z",
+    });
+    const runtimeControlService = {
+      request: vi.fn().mockImplementation(async (request: { approvalFn?: (reason: string) => Promise<boolean> }) => {
+        await request.approvalFn?.("cancel requested");
+        return {
+          success: false,
+          message: "Runtime control operation was not approved.",
+          operationId: "op-cancel",
+          state: "cancelled",
+        };
+      }),
+    };
+    const approvalFn = vi.fn().mockResolvedValue(false);
+    const runCancel = createSetupRuntimeControlTools({ stateManager, runtimeControlService }).find((tool) => tool.metadata.name === "run_cancel")!;
+
+    const result = await runCancel.call({
+      run_id: "run:coreloop:cancel-target",
+      observed_run_epoch: "2026-05-06T00:02:00.000Z",
+      reason: "cancel active runtime run",
+    }, makeContext(baseDir, {
+      runtimeControlApprovalMode: "interactive",
+      approvalFn,
+    }));
+
+    expect(result.success).toBe(false);
+    expect(approvalFn).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: "run_cancel",
+      isDestructive: true,
+    }));
   });
 });

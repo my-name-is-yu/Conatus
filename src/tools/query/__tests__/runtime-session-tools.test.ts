@@ -433,4 +433,54 @@ describe("runtime session tools", () => {
       summary: "Running tool sidecar target.",
     });
   });
+
+  it("observes runtime runs with exact ids and epochs for later typed control", async () => {
+    await stateManager.writeRaw("chat/sessions/root.json", {
+      id: "root",
+      cwd: "/repo",
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:10:00.000Z",
+      title: "Root",
+      messages: [],
+    });
+    const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
+    await ledger.create({
+      id: "run:coreloop:observe-target",
+      kind: "coreloop_run",
+      parent_session_id: "session:conversation:root",
+      goal_id: "goal-observe",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      status: "running",
+      title: "Observe target",
+      workspace: "/repo",
+      created_at: "2026-05-06T00:00:00.000Z",
+      started_at: "2026-05-06T00:01:00.000Z",
+      updated_at: "2026-05-06T00:02:00.000Z",
+    });
+
+    const observe = tools.get("runs_observe")!;
+    expect(observe.metadata.isReadOnly).toBe(true);
+    const result = await observe.call({
+      scope: "tree",
+      run_id: "run:coreloop:observe-target",
+      includeSessions: true,
+    }, makeContext({ conversationSessionId: "root" }));
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      runs: [
+        expect.objectContaining({
+          id: "run:coreloop:observe-target",
+          observed_run_epoch: "2026-05-06T00:02:00.000Z",
+          goal_id: "goal-observe",
+        }),
+      ],
+      sessions: [
+        expect.objectContaining({
+          id: "session:conversation:root",
+        }),
+      ],
+    });
+  });
 });

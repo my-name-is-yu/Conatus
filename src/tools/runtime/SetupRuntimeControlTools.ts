@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
+import type { BackgroundRun } from "../../runtime/session-registry/index.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type { RuntimeControlIntent } from "../../runtime/control/runtime-control-intent.js";
-import { RuntimeControlOperationKindSchema } from "../../runtime/store/runtime-operation-schemas.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -50,15 +50,25 @@ type PrepareConfigWriteInput = z.infer<typeof PrepareConfigWriteInputSchema>;
 const RuntimeStatusInputSchema = z.object({}).strict();
 type RuntimeStatusInput = z.infer<typeof RuntimeStatusInputSchema>;
 
+const RuntimeControlDaemonOperationSchema = z.enum([
+  "restart_daemon",
+  "restart_gateway",
+  "reload_config",
+  "self_update",
+]);
+
 const RuntimeControlInputSchema = z.object({
-  operation: RuntimeControlOperationKindSchema,
+  operation: RuntimeControlDaemonOperationSchema,
   reason: z.string().min(1),
-  run_id: z.string().min(1).optional(),
-  session_id: z.string().min(1).optional(),
-  external_actions: z.array(z.string().min(1)).optional(),
-  irreversible: z.boolean().optional(),
 }).strict();
 type RuntimeControlInput = z.infer<typeof RuntimeControlInputSchema>;
+
+const RuntimeRunControlToolInputSchema = z.object({
+  run_id: z.string().min(1),
+  observed_run_epoch: z.string().min(1),
+  reason: z.string().min(1),
+}).strict();
+type RuntimeRunControlToolInput = z.infer<typeof RuntimeRunControlToolInputSchema>;
 
 export interface SetupRuntimeControlToolDeps {
   stateManager: StateManager;
@@ -75,6 +85,9 @@ export function createSetupRuntimeControlTools(deps: SetupRuntimeControlToolDeps
     new CancelGatewayConfigWriteTool(deps),
     new GetRuntimeStatusTool(deps),
     new RequestRuntimeControlTool(deps),
+    new RunPauseTool(deps),
+    new RunResumeTool(deps),
+    new RunCancelTool(deps),
   ];
 }
 
@@ -368,12 +381,6 @@ class RequestRuntimeControlTool implements ITool<RuntimeControlInput> {
     const intent: RuntimeControlIntent = {
       kind: input.operation,
       reason: input.reason,
-      ...(input.run_id || input.session_id ? { target: {
-        ...(input.run_id ? { runId: input.run_id } : {}),
-        ...(input.session_id ? { sessionId: input.session_id } : {}),
-      } } : {}),
-      ...(input.external_actions && input.external_actions.length > 0 ? { externalActions: input.external_actions } : {}),
-      ...(input.irreversible ? { irreversible: true } : {}),
     };
     const result = await this.deps.runtimeControlService.request({
       intent,
@@ -401,8 +408,179 @@ class RequestRuntimeControlTool implements ITool<RuntimeControlInput> {
   }
 }
 
+class RunPauseTool implements ITool<RuntimeRunControlToolInput> {
+  readonly metadata = makeMetadata("run_pause", "write_local", false);
+  readonly inputSchema = RuntimeRunControlToolInputSchema;
+  constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
+
+  description(): string {
+    return "Request a typed safe pause for an exact runtime run id. Requires the observed_run_epoch returned by runs_observe.";
+  }
+
+  call(input: RuntimeRunControlToolInput, context: ToolCallContext): Promise<ToolResult> {
+    return requestObservedRunControl(this.deps, "run_pause", "pause_run", input, context);
+  }
+
+  checkPermissions(): Promise<PermissionCheckResult> {
+    return Promise.resolve({ status: "allowed" });
+  }
+
+  isConcurrencySafe(): boolean {
+    return false;
+  }
+}
+
+class RunResumeTool implements ITool<RuntimeRunControlToolInput> {
+  readonly metadata = makeMetadata("run_resume", "write_local", false);
+  readonly inputSchema = RuntimeRunControlToolInputSchema;
+  constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
+
+  description(): string {
+    return "Request a typed resume for an exact runtime run id. Requires the observed_run_epoch returned by runs_observe.";
+  }
+
+  call(input: RuntimeRunControlToolInput, context: ToolCallContext): Promise<ToolResult> {
+    return requestObservedRunControl(this.deps, "run_resume", "resume_run", input, context);
+  }
+
+  checkPermissions(): Promise<PermissionCheckResult> {
+    return Promise.resolve({ status: "allowed" });
+  }
+
+  isConcurrencySafe(): boolean {
+    return false;
+  }
+}
+
+class RunCancelTool implements ITool<RuntimeRunControlToolInput> {
+  readonly metadata = makeMetadata("run_cancel", "write_local", false, true);
+  readonly inputSchema = RuntimeRunControlToolInputSchema;
+  constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
+
+  description(): string {
+    return "Request typed cancellation for an exact runtime run id. Requires the observed_run_epoch returned by runs_observe.";
+  }
+
+  call(input: RuntimeRunControlToolInput, context: ToolCallContext): Promise<ToolResult> {
+    return requestObservedRunControl(this.deps, "run_cancel", "cancel_run", input, context);
+  }
+
+  checkPermissions(): Promise<PermissionCheckResult> {
+    return Promise.resolve({ status: "allowed" });
+  }
+
+  isConcurrencySafe(): boolean {
+    return false;
+  }
+}
+
 function setupStatusProvider(deps: SetupRuntimeControlToolDeps): GatewaySetupStatusProvider {
   return deps.gatewaySetupStatusProvider ?? createGatewaySetupStatusProvider();
+}
+
+async function requestObservedRunControl(
+  deps: SetupRuntimeControlToolDeps,
+  toolName: string,
+  operation: Extract<RuntimeControlIntent["kind"], "pause_run" | "resume_run" | "cancel_run">,
+  input: RuntimeRunControlToolInput,
+  context: ToolCallContext,
+): Promise<ToolResult> {
+  const started = Date.now();
+  if (!runtimeControlAllowed(context)) {
+    return toolResult(false, {
+      status: "not_executed",
+      reason: "runtime_control_disallowed",
+      operation,
+      run_id: input.run_id,
+    }, `Runtime control ${operation} is not authorized for this chat surface. The operation was not executed, and PulSeed will not fall back to shell tools.`, started, {
+      status: "not_executed",
+      reason: "policy_blocked",
+      message: "runtime_control_disallowed",
+    });
+  }
+  if (!deps.runtimeControlService) {
+    return toolResult(false, {
+      status: "not_executed",
+      reason: "runtime_control_unavailable",
+      operation,
+      run_id: input.run_id,
+    }, `Runtime control ${operation} is not available in this chat surface. The operation was not executed, and PulSeed will not fall back to shell tools.`, started, {
+      status: "not_executed",
+      reason: "policy_blocked",
+      message: "runtime_control_unavailable",
+    });
+  }
+
+  const freshness = await validateObservedRun(deps.stateManager, input);
+  if (!freshness.ok) {
+    return toolResult(false, freshness.data, freshness.message, started, {
+      status: "not_executed",
+      reason: "stale_state",
+      message: freshness.message,
+    });
+  }
+
+  const result = await deps.runtimeControlService.request({
+    intent: {
+      kind: operation,
+      reason: input.reason,
+      target: { runId: input.run_id },
+    },
+    cwd: context.cwd,
+    requestedBy: parseActor(context.runtimeControlActor) ?? actorFromReplyTarget(context.runtimeReplyTarget),
+    replyTarget: parseReplyTarget(context.runtimeReplyTarget) ?? { surface: "chat" },
+    approvalFn: context.runtimeControlApprovalMode === "preapproved"
+      ? async () => true
+      : toolApprovalFn(context, toolName, { ...input }, operation === "cancel_run"),
+  });
+  return toolResult(result.success, {
+    status: result.success ? "requested" : "not_executed",
+    operation,
+    run_id: freshness.run.id,
+    observed_run_epoch: input.observed_run_epoch,
+    operationId: result.operationId,
+    state: result.state,
+  }, result.message, started);
+}
+
+async function validateObservedRun(
+  stateManager: StateManager,
+  input: RuntimeRunControlToolInput,
+): Promise<
+  | { ok: true; run: BackgroundRun }
+  | { ok: false; message: string; data: Record<string, unknown> }
+> {
+  const snapshot = await createRuntimeSessionRegistry({ stateManager }).snapshot();
+  const run = snapshot.background_runs.find((candidate) => candidate.id === input.run_id);
+  if (!run) {
+    return {
+      ok: false,
+      message: `Runtime run ${input.run_id} is no longer present; refusing to reuse stale run state.`,
+      data: {
+        status: "stale_state",
+        run_id: input.run_id,
+        observed_run_epoch: input.observed_run_epoch,
+      },
+    };
+  }
+  const currentEpoch = backgroundRunEpoch(run);
+  if (currentEpoch !== input.observed_run_epoch) {
+    return {
+      ok: false,
+      message: `Runtime run ${input.run_id} changed since it was observed; refusing to control stale state.`,
+      data: {
+        status: "stale_state",
+        run_id: input.run_id,
+        current_run_epoch: currentEpoch,
+        observed_run_epoch: input.observed_run_epoch,
+      },
+    };
+  }
+  return { ok: true, run };
+}
+
+function backgroundRunEpoch(run: BackgroundRun): string | null {
+  return run.updated_at ?? run.started_at ?? run.created_at;
 }
 
 function providerConfigBaseDir(deps: SetupRuntimeControlToolDeps, context: ToolCallContext): string {
@@ -482,13 +660,14 @@ function toolApprovalFn(
   context: ToolCallContext,
   toolName: string,
   input: Record<string, unknown>,
+  isDestructive = false,
 ): (description: string) => Promise<boolean> {
   return (description) => context.approvalFn({
     toolName,
     input,
     reason: description,
     permissionLevel: "write_local",
-    isDestructive: false,
+    isDestructive,
     reversibility: "unknown",
   });
 }
@@ -501,13 +680,18 @@ function isReplyChannel(value: unknown): value is RuntimeControlReplyTarget["cha
   return value === "tui" || value === "plugin_gateway" || value === "cli" || value === "web";
 }
 
-function makeMetadata(name: string, permissionLevel: ToolMetadata["permissionLevel"], isReadOnly: boolean): ToolMetadata {
+function makeMetadata(
+  name: string,
+  permissionLevel: ToolMetadata["permissionLevel"],
+  isReadOnly: boolean,
+  isDestructive = false,
+): ToolMetadata {
   return {
     name,
     aliases: [],
     permissionLevel,
     isReadOnly,
-    isDestructive: false,
+    isDestructive,
     shouldDefer: false,
     alwaysLoad: false,
     maxConcurrency: 1,
@@ -516,12 +700,19 @@ function makeMetadata(name: string, permissionLevel: ToolMetadata["permissionLev
   };
 }
 
-function toolResult(success: boolean, data: unknown, summary: string, started: number): ToolResult {
+function toolResult(
+  success: boolean,
+  data: unknown,
+  summary: string,
+  started: number,
+  execution?: ToolResult["execution"],
+): ToolResult {
   return {
     success,
     data,
     summary,
     ...(success ? {} : { error: summary }),
+    ...(execution ? { execution } : {}),
     durationMs: Date.now() - started,
   };
 }

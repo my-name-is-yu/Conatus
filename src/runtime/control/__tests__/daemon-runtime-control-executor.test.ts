@@ -3,10 +3,11 @@ import { createDaemonRuntimeControlExecutor } from "../daemon-runtime-control-ex
 import { DaemonClient, isDaemonRunning } from "../../daemon/client.js";
 import type { RuntimeControlOperation } from "../../store/index.js";
 
-const { requestRuntimeControlMock, pauseGoalMock, resumeGoalMock } = vi.hoisted(() => ({
+const { requestRuntimeControlMock, pauseGoalMock, resumeGoalMock, stopGoalMock } = vi.hoisted(() => ({
   requestRuntimeControlMock: vi.fn(),
   pauseGoalMock: vi.fn(),
   resumeGoalMock: vi.fn(),
+  stopGoalMock: vi.fn(),
 }));
 
 vi.mock("../../daemon/client.js", () => ({
@@ -15,6 +16,7 @@ vi.mock("../../daemon/client.js", () => ({
       requestRuntimeControl: requestRuntimeControlMock,
       pauseGoal: pauseGoalMock,
       resumeGoal: resumeGoalMock,
+      stopGoal: stopGoalMock,
     };
   }),
   isDaemonRunning: vi.fn(),
@@ -43,6 +45,7 @@ describe("createDaemonRuntimeControlExecutor", () => {
     requestRuntimeControlMock.mockResolvedValue({ ok: true });
     pauseGoalMock.mockResolvedValue({ ok: true });
     resumeGoalMock.mockResolvedValue({ ok: true });
+    stopGoalMock.mockResolvedValue({ ok: true });
   });
 
   it("submits daemon restart requests through the daemon HTTP command surface", async () => {
@@ -107,7 +110,7 @@ describe("createDaemonRuntimeControlExecutor", () => {
     expect(requestRuntimeControlMock).not.toHaveBeenCalled();
   });
 
-  it("submits pause and resume through typed daemon goal APIs", async () => {
+  it("submits pause, resume, and cancel through typed daemon goal APIs", async () => {
     vi.mocked(isDaemonRunning).mockResolvedValue({
       running: true,
       port: 41700,
@@ -123,6 +126,10 @@ describe("createDaemonRuntimeControlExecutor", () => {
       ...makeOperation("resume_run"),
       target: { run_id: "run:coreloop:abc", goal_id: "goal-1" },
     };
+    const cancelOperation = {
+      ...makeOperation("cancel_run"),
+      target: { run_id: "run:coreloop:abc", goal_id: "goal-1" },
+    };
 
     await expect(executor(pauseOperation, {
       intent: { kind: "pause_run", reason: "pause run" },
@@ -132,9 +139,14 @@ describe("createDaemonRuntimeControlExecutor", () => {
       intent: { kind: "resume_run", reason: "resume run" },
       cwd: "/repo",
     })).resolves.toMatchObject({ ok: true, state: "running" });
+    await expect(executor(cancelOperation, {
+      intent: { kind: "cancel_run", reason: "cancel run" },
+      cwd: "/repo",
+    })).resolves.toMatchObject({ ok: true, state: "running" });
 
     expect(pauseGoalMock).toHaveBeenCalledWith("goal-1");
     expect(resumeGoalMock).toHaveBeenCalledWith("goal-1");
+    expect(stopGoalMock).toHaveBeenCalledWith("goal-1");
     expect(requestRuntimeControlMock).not.toHaveBeenCalled();
   });
 });

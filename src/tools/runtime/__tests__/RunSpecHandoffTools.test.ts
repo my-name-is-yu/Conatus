@@ -95,6 +95,17 @@ function makeContext(baseDir: string, pendingRef: { value: RunSpecConfirmationSn
   };
 }
 
+function pendingRunSpecStartInput(pendingRef: { value: RunSpecConfirmationSnapshot | null }): {
+  run_spec_id: string;
+  observed_run_spec_epoch: string;
+} {
+  if (!pendingRef.value) throw new Error("expected pending RunSpec");
+  return {
+    run_spec_id: pendingRef.value.spec.id,
+    observed_run_spec_epoch: pendingRef.value.updatedAt,
+  };
+}
+
 describe("RunSpec handoff tools", () => {
   it("drafts and persists a pending RunSpec without starting the daemon", async () => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runspec-tools-draft-"));
@@ -149,7 +160,7 @@ describe("RunSpec handoff tools", () => {
     const pendingId = pendingRef.value?.spec.id;
     expect(pendingId).toBeTruthy();
 
-    const blocked = await startTool.call({ run_spec_id: pendingId }, context);
+    const blocked = await startTool.call(pendingRunSpecStartInput(pendingRef), context);
     expect(blocked.success).toBe(false);
     expect(blocked.summary).toContain("Run cannot start until required fields are resolved");
     expect(daemonClient.startGoal).not.toHaveBeenCalled();
@@ -163,7 +174,7 @@ describe("RunSpec handoff tools", () => {
       response_channel: "other-telegram-chat",
       message_id: "later-message",
     };
-    const started = await startTool.call({ run_spec_id: pendingId }, context);
+    const started = await startTool.call(pendingRunSpecStartInput(pendingRef), context);
     expect(started.success).toBe(true);
     expect(started.summary).toContain("Started daemon-backed DurableLoop goal:");
     expect(daemonClient.startGoal).toHaveBeenCalledOnce();
@@ -188,6 +199,54 @@ describe("RunSpec handoff tools", () => {
     expect(staleCancel.summary).toContain("There is no pending RunSpec draft");
   });
 
+  it("exposes runspec_propose and rejects run_start when the observed RunSpec epoch changed", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runspec-tools-observed-"));
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
+    const pendingRef: { value: RunSpecConfirmationSnapshot | null } = { value: null };
+    const tools = new Map(createRunSpecHandoffTools({
+      stateManager,
+      llmClient: makeLLMClient(),
+      daemonClient,
+    }).map((tool) => [tool.metadata.name, tool]));
+    const propose = tools.get("runspec_propose")!;
+    const runStart = tools.get("run_start")!;
+    const context = makeContext(baseDir, pendingRef);
+
+    const proposed = await propose.call({
+      request: "Run Kaggle optimization until score exceeds 0.98",
+    }, context);
+    const proposedEpoch = (proposed.data as { observed_run_spec_epoch: string }).observed_run_spec_epoch;
+    expect(proposed.success).toBe(true);
+    expect(proposed.data).toMatchObject({
+      run_spec_id: pendingRef.value?.spec.id,
+      observed_run_spec_epoch: pendingRef.value?.updatedAt,
+    });
+
+    pendingRef.value = {
+      ...pendingRef.value!,
+      updatedAt: "2026-05-06T00:02:00.000Z",
+      spec: {
+        ...pendingRef.value!.spec,
+        updated_at: "2026-05-06T00:02:00.000Z",
+      },
+    };
+
+    const staleStart = await runStart.call({
+      run_spec_id: pendingRef.value.spec.id,
+      observed_run_spec_epoch: proposedEpoch,
+    }, context);
+
+    expect(staleStart.success).toBe(false);
+    expect(staleStart.execution).toMatchObject({ status: "not_executed", reason: "stale_state" });
+    expect(staleStart.data).toMatchObject({
+      status: "stale_state",
+      current_run_spec_epoch: "2026-05-06T00:02:00.000Z",
+      observed_run_spec_epoch: proposedEpoch,
+    });
+    expect(daemonClient.startGoal).not.toHaveBeenCalled();
+  });
+
   it("blocks disallowed policies and low-confidence workspaces before daemon start", async () => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runspec-tools-safety-"));
     const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
@@ -210,7 +269,7 @@ describe("RunSpec handoff tools", () => {
     const context = makeContext(baseDir, pendingRef);
 
     await draftTool.call({ request: "本番に不可逆な変更を入れる長期実行を開始して" }, context);
-    const result = await startTool.call({ run_spec_id: pendingRef.value?.spec.id }, context);
+    const result = await startTool.call(pendingRunSpecStartInput(pendingRef), context);
 
     expect(result.success).toBe(false);
     expect(result.summary).toContain("Workspace is missing or ambiguous");
@@ -231,7 +290,7 @@ describe("RunSpec handoff tools", () => {
     context.runSpecConfirmation!.currentTurnStartedAt = new Date(Date.now() - 1000).toISOString();
 
     await draftTool.call({ request: "Kaggle score 0.98を超えるまで長期で回して" }, context);
-    const result = await startTool.call({ run_spec_id: pendingRef.value?.spec.id }, context);
+    const result = await startTool.call(pendingRunSpecStartInput(pendingRef), context);
 
     expect(result.success).toBe(false);
     expect(result.summary).toContain("created in this same AgentLoop turn");
@@ -263,7 +322,7 @@ describe("RunSpec handoff tools", () => {
       request: "DurableloopのほうでKaggleのタスクに取り組んで",
     }, context);
     const startResult = await executor.execute("start_durable_run", {
-      run_spec_id: pendingRef.value?.spec.id,
+      ...pendingRunSpecStartInput(pendingRef),
     }, context);
 
     expect(draftResult.success).toBe(true);

@@ -173,7 +173,9 @@ describe("createNative*AgentLoopRunner", () => {
         "draft_run_spec",
         "update_run_spec_draft",
         "cancel_run_spec_draft",
-        "start_durable_run",
+        "runspec_propose",
+        "runspec_confirm",
+        "run_start",
         "get_gateway_setup_status",
         "prepare_gateway_setup_guidance",
         "prepare_gateway_config_write",
@@ -181,6 +183,10 @@ describe("createNative*AgentLoopRunner", () => {
         "cancel_gateway_config_write",
         "get_runtime_status",
         "request_runtime_control",
+        "runs_observe",
+        "run_pause",
+        "run_resume",
+        "run_cancel",
         "sessions_list",
         "sessions_read",
         "sessions_children",
@@ -242,7 +248,9 @@ describe("createNative*AgentLoopRunner", () => {
         "draft_run_spec",
         "update_run_spec_draft",
         "cancel_run_spec_draft",
-        "start_durable_run",
+        "runspec_propose",
+        "runspec_confirm",
+        "run_start",
         "get_gateway_setup_status",
         "prepare_gateway_setup_guidance",
         "prepare_gateway_config_write",
@@ -250,11 +258,16 @@ describe("createNative*AgentLoopRunner", () => {
         "cancel_gateway_config_write",
         "get_runtime_status",
         "request_runtime_control",
+        "runs_observe",
+        "run_pause",
+        "run_resume",
+        "run_cancel",
       ]),
     );
     expect(visibleTools).not.toContain("glob");
     expect(visibleTools).not.toContain("grep");
     expect(visibleTools).not.toContain("read");
+    expect(visibleTools).not.toContain("start_durable_run");
     expect(visibleTools).not.toContain("kaggle_submit");
   });
 
