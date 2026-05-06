@@ -107,13 +107,6 @@ const EXCLUDE_DIRS = new Set(["node_modules", ".git", "dist", "coverage", ".DS_S
 
 const SMALL_WORKSPACE_FILE_LIMIT = 10;
 
-function extractKeywords(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[\s\-_\/\.]+/)
-    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
-}
-
 async function collectFiles(dir: string, rootDir: string, depth: number, result: string[]): Promise<void> {
   if (depth > 3) return;
   let entries: import("node:fs").Dirent<string>[];
@@ -189,9 +182,12 @@ export function createWorkspaceContextProvider(
     const explicitGoalPaths = typeof goalInfo === "string"
       ? []
       : (goalInfo?.explicitPaths ?? []);
-    const keywords = typedMapping
+    const structuredSearchTerms = typedMapping
       ? [typedMapping.dimension, typedMapping.data_source]
-      : extractKeywords(goalDescription + " " + dimensionName);
+      : (typedSearchTerms.length > 0 ? typedSearchTerms : dimensionNameToSearchTerms(dimensionName));
+    const localMatchTerms = structuredSearchTerms
+      .map((term) => term.toLowerCase())
+      .filter((term) => term.length >= 3);
 
     // Resolve effective workDir: use workspace_path constraint from goal if available
     let effectiveWorkDir = workDir;
@@ -335,8 +331,8 @@ export function createWorkspaceContextProvider(
     const dimHintSet = new Set(dimHintPaths);
     const candidates = allFiles.filter((fp) => !alwaysSet.has(fp) && !pathMatchSet.has(fp) && !dimHintSet.has(fp));
 
-    // Phase 1: filename match
-    const nameMatched = typedMapping ? [] : candidates.filter((fp) => fileMatchesKeywords(fp, keywords));
+    // Phase 1: filename match using typed dimension/query terms, never raw goal prose.
+    const nameMatched = typedMapping ? [] : candidates.filter((fp) => fileMatchesKeywords(fp, localMatchTerms));
 
     // Phase 2: content match (only if we still need more)
     // alwaysInclude and pathMatch are treated as priority (outside maxFiles cap),
@@ -349,7 +345,7 @@ export function createWorkspaceContextProvider(
       const contentMatched: string[] = [];
       for (const fp of remaining) {
         if (contentMatched.length >= neededFromCandidates - selected.length) break;
-        if (!typedMapping && await fileContentMatchesKeywords(fp, keywords)) {
+        if (!typedMapping && await fileContentMatchesKeywords(fp, localMatchTerms)) {
           contentMatched.push(fp);
         }
       }
@@ -359,14 +355,11 @@ export function createWorkspaceContextProvider(
     // Phase 3: grep content match — find files whose content contains dimension-derived terms
     // but weren't caught by filename or keyword matching above
     if (selected.length < neededFromCandidates) {
-      const searchTerms = typedMapping
-        ? [typedMapping.dimension, typedMapping.data_source]
-        : (typedSearchTerms.length > 0 ? typedSearchTerms : dimensionNameToSearchTerms(dimensionName));
       const alreadySelected = new Set([
         ...alwaysIncludePaths, ...pathMatchedPaths, ...dimHintPaths, ...selected,
       ]);
       const grepMatched: string[] = [];
-      for (const term of searchTerms) {
+      for (const term of structuredSearchTerms) {
         try {
           const { stdout } = await execFileAsync(
             "grep",
