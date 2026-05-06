@@ -52,6 +52,8 @@ export interface ActiveChatTurn {
 export class ChatRunnerEventBridge {
   private activeTurn: ActiveChatTurn | null = null;
   private readonly timelineActivityItemsByRun = new Map<string, AgentTimelineItem[]>();
+  private eventRecorder: ((event: ChatEvent) => Promise<void> | void) | null = null;
+  private eventRecorderQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly onEventGetter: () => ChatEventHandler | undefined,
@@ -63,6 +65,14 @@ export class ChatRunnerEventBridge {
 
   getActiveTurn(): ActiveChatTurn | null {
     return this.activeTurn;
+  }
+
+  setEventRecorder(recorder: ((event: ChatEvent) => Promise<void> | void) | null): void {
+    this.eventRecorder = recorder;
+  }
+
+  async flushEventRecorder(): Promise<void> {
+    await this.eventRecorderQueue;
   }
 
   createEventContext(): ChatEventContext {
@@ -339,6 +349,7 @@ export class ChatRunnerEventBridge {
   private async deliverEvent(event: ChatEvent): Promise<void> {
     const safeEvent = redactChatEvent(event);
     this.rememberActiveTurnEvent(safeEvent);
+    this.enqueueRecordedEvent(safeEvent);
     try {
       await this.onEventGetter()?.(safeEvent);
     } catch (err) {
@@ -347,6 +358,19 @@ export class ChatRunnerEventBridge {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  private enqueueRecordedEvent(event: ChatEvent): void {
+    const recorder = this.eventRecorder;
+    if (!recorder) return;
+    this.eventRecorderQueue = this.eventRecorderQueue.then(async () => {
+      await recorder(event);
+    }).catch((err) => {
+      console.warn("[chat] event journal persist failed", {
+        eventType: event.type,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   private rememberTimelineActivityItem(eventContext: ChatEventContext, item: AgentTimelineItem): void {

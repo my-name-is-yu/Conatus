@@ -553,6 +553,108 @@ describe("CrossPlatformChatSessionManager", () => {
     await active;
   });
 
+  it("reconstructs resumed gateway history from the rollout journal instead of stale transcript messages", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const stateManager = new RealStateManager(tmpDir, undefined, { walEnabled: false });
+      await stateManager.init();
+      const firstAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "First structured answer",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 12,
+          stopped_reason: "completed",
+        }),
+      };
+      const firstManager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        chatAgentLoopRunner: firstAgentLoopRunner as never,
+      }));
+
+      await expect(firstManager.processIncomingMessage({
+        text: "First structured question",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123",
+        sender_id: "U123",
+        message_id: "1700.1",
+        cwd: "/repo",
+      })).resolves.toBe("First structured answer");
+      const sessionInfo = firstManager.getSessionInfo({ identity_key: "workspace:U123" });
+      expect(sessionInfo?.chat_session_id).toBeTruthy();
+      const sessionPath = `chat/sessions/${sessionInfo!.chat_session_id}.json`;
+      const storedSession = await stateManager.readRaw(sessionPath) as Record<string, unknown>;
+      expect(Array.isArray(storedSession["rolloutJournal"])).toBe(true);
+      await stateManager.writeRaw(sessionPath, {
+        ...storedSession,
+        messages: [
+          {
+            role: "user",
+            content: "STALE transcript user text",
+            timestamp: "2026-05-06T00:00:00.000Z",
+            turnIndex: 0,
+          },
+          {
+            role: "assistant",
+            content: "STALE transcript assistant text",
+            timestamp: "2026-05-06T00:00:01.000Z",
+            turnIndex: 1,
+          },
+        ],
+      });
+
+      const secondAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "Second structured answer",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 10,
+          stopped_reason: "completed",
+        }),
+      };
+      const secondManager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        chatAgentLoopRunner: secondAgentLoopRunner as never,
+      }));
+
+      await expect(secondManager.processIncomingMessage({
+        text: "Second structured question",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+      })).resolves.toBe("Second structured answer");
+
+      expect(secondAgentLoopRunner.execute).toHaveBeenCalledOnce();
+      const agentLoopInput = vi.mocked(secondAgentLoopRunner.execute).mock.calls[0][0] as {
+        history: Array<{ role: string; content: string }>;
+      };
+      expect(agentLoopInput.history).toEqual([
+        { role: "user", content: "First structured question" },
+        { role: "assistant", content: "First structured answer" },
+      ]);
+      expect(JSON.stringify(agentLoopInput.history)).not.toContain("STALE transcript");
+
+      const reconstructedSession = await stateManager.readRaw(sessionPath) as Record<string, unknown>;
+      const kinds = (reconstructedSession["rolloutJournal"] as Array<Record<string, unknown>>)
+        .map((record) => record["kind"]);
+      expect(kinds).toEqual(expect.arrayContaining([
+        "user_input",
+        "turn_context",
+        "model_output",
+        "display_event",
+        "completion_state",
+      ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("uses the current steer handler for approvals while the active turn keeps running", async () => {
     const tmpDir = makeTempDir();
     try {
@@ -1613,6 +1715,142 @@ describe("CrossPlatformChatSessionManager", () => {
       });
       await expect(resultPromise).resolves.toContain("not approved");
     } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("reconstructs pending permission epoch after manager restart before rejecting stale typed approvals", async () => {
+    const tmpDir = makeTempDir();
+    let approvalBroker1: ApprovalBroker | undefined;
+    let approvalBroker2: ApprovalBroker | undefined;
+    let approvalBroker3: ApprovalBroker | undefined;
+    try {
+      const stateManager = new RealStateManager(tmpDir, undefined, { walEnabled: false });
+      await stateManager.init();
+      const store = new ApprovalStore(tmpDir);
+      approvalBroker1 = new ApprovalBroker({
+        store,
+        createId: () => "approval-reconstructed-epoch",
+      });
+      const runtimeControlService = {
+        request: vi.fn(async (request: {
+          approvalFn?: (description: string) => Promise<boolean>;
+        }) => {
+          const approved = await request.approvalFn?.("Restart the resident daemon.");
+          return {
+            success: approved === true,
+            message: approved === true ? "restart queued" : "not approved",
+            operationId: "op-reconstructed-epoch",
+            state: approved === true ? "acknowledged" as const : "blocked" as const,
+          };
+        }),
+      };
+      const firstManager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+        ]),
+        runtimeControlService,
+        approvalBroker: approvalBroker1,
+      }));
+
+      void firstManager.processIncomingMessage({
+        text: "PulSeed を再起動して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: () => undefined,
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-reconstructed-epoch")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await expect(store.loadPending("approval-reconstructed-epoch")).resolves.toMatchObject({
+        state: "pending",
+        payload: {
+          task: {
+            state_epoch: "1700.2",
+          },
+        },
+      });
+      await approvalBroker1.stop();
+
+      approvalBroker2 = new ApprovalBroker({
+        store,
+        createId: () => "unused-approval-id",
+      });
+      const secondManager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            decision: "side_question",
+            confidence: 0.93,
+            clarification: "Route the side question through normal chat.",
+          }),
+          JSON.stringify({
+            kind: "assist",
+            confidence: 0.9,
+            rationale: "side question",
+          }),
+          "The daemon restart target is the resident daemon.",
+        ]),
+        approvalBroker: approvalBroker2,
+      }));
+
+      await expect(secondManager.processIncomingMessage({
+        text: "Before deciding, which daemon will restart?",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toBe("The daemon restart target is the resident daemon.");
+      expect(secondManager.getSessionInfo({ identity_key: "workspace:U123" })?.last_message_id).toBe("1700.3");
+      await expect(store.loadPending("approval-reconstructed-epoch")).resolves.toMatchObject({
+        state: "pending",
+      });
+      await approvalBroker2.stop();
+
+      approvalBroker3 = new ApprovalBroker({
+        store,
+        createId: () => "unused-approval-id",
+      });
+      const thirdManager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        approvalBroker: approvalBroker3,
+      }));
+
+      await expect(thirdManager.processIncomingMessage({
+        text: "",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.4",
+        cwd: "/repo",
+        approvalResponse: {
+          approval_id: "approval-reconstructed-epoch",
+          approved: true,
+        },
+      })).resolves.toContain("approval target changed after the prompt");
+      await expect(store.loadResolved("approval-reconstructed-epoch")).resolves.toMatchObject({
+        state: "denied",
+      });
+    } finally {
+      await approvalBroker1?.stop();
+      await approvalBroker2?.stop();
+      await approvalBroker3?.stop();
       cleanupTempDir(tmpDir);
     }
   });

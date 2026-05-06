@@ -72,6 +72,7 @@ export interface LoadedChatSession {
   agentLoopUpdatedAt?: string | null;
   agentLoop?: ChatSession["agentLoop"];
   turnContexts?: ChatSession["turnContexts"];
+  rolloutJournal?: ChatSession["rolloutJournal"];
   usage?: ChatSession["usage"];
   [key: string]: unknown;
 }
@@ -349,6 +350,7 @@ async function readSessionRecordWithMetadata(
     agentLoopUpdatedAt: discovery.updatedAt,
     ...(parsed.data.agentLoop ? { agentLoop: parsed.data.agentLoop } : {}),
     ...(parsed.data.turnContexts ? { turnContexts: [...parsed.data.turnContexts] } : {}),
+    ...(parsed.data.rolloutJournal ? { rolloutJournal: [...parsed.data.rolloutJournal] } : {}),
     ...(parsed.data.usage ? { usage: parsed.data.usage } : {}),
   };
 
@@ -406,6 +408,7 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
     ...(session.lastRetryAt !== null && session.lastRetryAt !== undefined ? { lastRetryAt: session.lastRetryAt } : {}),
     ...(session.lastResumedAt !== null && session.lastResumedAt !== undefined ? { lastResumedAt: session.lastResumedAt } : {}),
     ...(session.notificationReplyTarget !== null && session.notificationReplyTarget !== undefined ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+    ...(session.setupDialogue !== null && session.setupDialogue !== undefined ? { setupDialogue: session.setupDialogue } : {}),
     ...(session.runSpecConfirmation !== null && session.runSpecConfirmation !== undefined ? { runSpecConfirmation: session.runSpecConfirmation } : {}),
     ...(session.parentNotificationStatus !== null && session.parentNotificationStatus !== undefined ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
     ...(session.parentNotificationSummary !== null && session.parentNotificationSummary !== undefined ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
@@ -422,6 +425,7 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
       : {}),
     ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
     ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
+    ...(session.rolloutJournal ? { rolloutJournal: [...session.rolloutJournal] } : {}),
     ...(session.usage ? { usage: session.usage } : {}),
   };
 }
@@ -573,11 +577,13 @@ export class ChatSessionCatalog {
       ...(session.lastRetryAt ? { lastRetryAt: session.lastRetryAt } : {}),
       ...(session.lastResumedAt ? { lastResumedAt: session.lastResumedAt } : {}),
       ...(session.notificationReplyTarget ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+      ...(session.setupDialogue ? { setupDialogue: session.setupDialogue } : {}),
       ...(session.parentNotificationStatus ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
       ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
       ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
       ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
       ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
+      ...(session.rolloutJournal ? { rolloutJournal: [...session.rolloutJournal] } : {}),
       agentLoopStatePath: session.agentLoopStatePath,
       agentLoopStatus: session.agentLoopStatus,
       agentLoopResumable: session.agentLoopResumable,

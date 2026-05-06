@@ -177,6 +177,8 @@ export class ChatRunner {
   private setupSecretIntake: ReturnType<typeof intakeSetupSecrets> | null = null;
   private turnLanguageHint: TurnLanguageHint = UNKNOWN_TURN_LANGUAGE_HINT;
   private pendingSetupDialogue: SetupDialogueRuntimeState | null = null;
+  private eventJournalHistory: ChatHistory | null = null;
+  private eventJournalDirty = false;
 
   constructor(private readonly deps: ChatRunnerDeps) {
     this.groundingGateway = createChatGroundingGateway({
@@ -382,6 +384,9 @@ export class ChatRunner {
     const eventContext = this.eventBridge.createEventContext();
     const resolvedCwd = resolveGitRoot(cwd);
     const activeTurn = this.eventBridge.beginActiveTurn(eventContext, resolvedCwd);
+    this.eventBridge.setEventRecorder(null);
+    this.eventJournalHistory = null;
+    this.eventJournalDirty = false;
     const resumeCommand = this.commandHandler.parseResumeCommand(input);
     const resumeOnly = resumeCommand !== null;
     const setupSecretIntake = intakeSetupSecrets(input);
@@ -452,6 +457,11 @@ export class ChatRunner {
     const gitRoot = this.sessionCwd ?? resolvedCwd;
     activeTurn.cwd = gitRoot;
     const history = this.history!;
+    this.eventJournalHistory = history;
+    this.eventBridge.setEventRecorder((event) => {
+      this.eventJournalDirty = true;
+      return history.recordChatEvent(event, { persist: false });
+    });
     const pinnedReplyTarget = normalizePinnedReplyTarget(
       runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
     );
@@ -472,7 +482,11 @@ export class ChatRunner {
     });
 
     if (!resumeOnly) {
-      await history.appendUserMessage(safeInput, { setupSecretIntake: persistedSecretIntake });
+      await history.appendUserMessage(safeInput, {
+        setupSecretIntake: persistedSecretIntake,
+        eventContext,
+        userInput: safeUserInput,
+      });
     }
 
     if (this.cachedStaticSystemPrompt === null) {
@@ -483,7 +497,7 @@ export class ChatRunner {
       }
     }
 
-    const messages = history.getMessages();
+    const messages = history.getModelVisibleMessages();
     const compactionSummary = history.getSessionData().compactionSummary;
     const priorTurns = resumeOnly ? messages.slice(-10) : messages.slice(0, -1).slice(-10);
     const historySections: string[] = [];
@@ -511,7 +525,7 @@ export class ChatRunner {
       this.eventBridge.emitCheckpoint("Runtime control selected", `${selectedRoute.intent.kind} request recognized.`, eventContext, "route");
       const runtimeControlResult = await executeRuntimeControlRoute(this.routeHost(), selectedRoute, runtimeControlContext, executionCwd, start);
       if (runtimeControlResult.success) {
-        await history.appendAssistantMessage(runtimeControlResult.output);
+        await history.appendAssistantMessage(runtimeControlResult.output, { eventContext });
         this.eventBridge.emitCheckpoint("Runtime control completed", "The runtime-control operation produced a result.", eventContext, "complete");
         this.eventBridge.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
         this.eventBridge.emitEvent({
@@ -537,13 +551,13 @@ export class ChatRunner {
         );
         this.eventBridge.emitLifecycleEndEvent("error", runtimeControlResult.elapsed_ms, eventContext, false);
       }
-      return runtimeControlResult;
+      return this.flushAndReturn(runtimeControlResult);
     }
 
     if (selectedRoute?.kind === "runtime_control_blocked") {
       const output = formatBlockedRuntimeControlRoute(selectedRoute);
       this.eventBridge.pushAssistantDelta(output, assistantBuffer, eventContext);
-      await history.appendAssistantMessage(output);
+      await history.appendAssistantMessage(output, { eventContext });
       this.eventBridge.emitEvent({
         type: "assistant_final",
         text: output,
@@ -552,26 +566,26 @@ export class ChatRunner {
       });
       const elapsed_ms = Date.now() - start;
       this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, true);
-      return {
+      return this.flushAndReturn({
         success: false,
         output,
         elapsed_ms,
-      };
+      });
     }
 
     if (selectedRoute?.kind === "run_spec_draft") {
       const result = await executeRunSpecDraftRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
-      return result;
+      return this.flushAndReturn(result);
     }
 
     if (selectedRoute?.kind === "configure") {
       const result = await executeConfigureRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
-      return result;
+      return this.flushAndReturn(result);
     }
 
     if (selectedRoute?.kind === "clarify") {
       const result = await executeClarifyRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
-      return result;
+      return this.flushAndReturn(result);
     }
 
     const usesNativeAgentLoop = resumeOnly || selectedRoute?.kind === "agent_loop";
@@ -667,7 +681,7 @@ export class ChatRunner {
         this.deps.llmClient
       );
       this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
-      return { success: false, output, elapsed_ms };
+      return this.flushAndReturn({ success: false, output, elapsed_ms });
     }
 
     if (selectedRoute?.kind === "assist") {
@@ -678,11 +692,11 @@ export class ChatRunner {
         history,
         start,
       });
-      return result;
+      return this.flushAndReturn(result);
     }
 
     if (resumeOnly || selectedRoute?.kind === "agent_loop") {
-      return executeAgentLoopRoute(this.routeHost(), {
+      return this.flushAndReturn(executeAgentLoopRoute(this.routeHost(), {
         turnContext,
         resumeOnly,
         assistantBuffer,
@@ -691,11 +705,11 @@ export class ChatRunner {
         gitRoot,
         activeAbortSignal: activeTurn.abortController.signal,
         start,
-      });
+      }));
     }
 
     if (selectedRoute?.kind === "tool_loop") {
-      return executeToolLoopRoute(this.routeHost(), {
+      return this.flushAndReturn(executeToolLoopRoute(this.routeHost(), {
         turnContext,
         eventContext,
         assistantBuffer,
@@ -705,7 +719,7 @@ export class ChatRunner {
         gitRoot,
         runtimeControlContext,
         start,
-      });
+      }));
     }
 
     if (!resumeOnly && selectedRoute && selectedRoute.kind !== "adapter") {
@@ -718,10 +732,10 @@ export class ChatRunner {
         this.deps.llmClient
       );
       this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
-      return { success: false, output, elapsed_ms };
+      return this.flushAndReturn({ success: false, output, elapsed_ms });
     }
 
-    return executeAdapterRoute(this.routeHost(), {
+    return this.flushAndReturn(executeAdapterRoute(this.routeHost(), {
       turnContext,
       timeoutMs,
       systemPrompt: renderSystemPromptWithTurnContext(systemPrompt || undefined, turnContext.modelVisible),
@@ -730,7 +744,7 @@ export class ChatRunner {
       gitRoot,
       start,
       history,
-    });
+    }));
   }
 
   getSessionCwd(): string | null {
@@ -1155,7 +1169,17 @@ export class ChatRunner {
     };
   }
 
-  private finalizeNonPersistentResult(result: ChatRunResult, eventContext: Parameters<ChatRunnerEventBridge["eventBase"]>[0]): ChatRunResult {
+  private async flushAndReturn(result: ChatRunResult | Promise<ChatRunResult>): Promise<ChatRunResult> {
+    const resolved = await result;
+    await this.eventBridge.flushEventRecorder();
+    if (this.eventJournalDirty && this.eventJournalHistory) {
+      this.eventJournalDirty = false;
+      await this.eventJournalHistory.persist();
+    }
+    return resolved;
+  }
+
+  private async finalizeNonPersistentResult(result: ChatRunResult, eventContext: Parameters<ChatRunnerEventBridge["eventBase"]>[0]): Promise<ChatRunResult> {
     if (result.output) {
       this.eventBridge.emitEvent({
         type: "assistant_final",
@@ -1165,6 +1189,7 @@ export class ChatRunner {
       });
     }
     this.eventBridge.emitLifecycleEndEvent(result.success ? "completed" : "error", result.elapsed_ms, eventContext, false);
+    await this.eventBridge.flushEventRecorder();
     return result;
   }
 }

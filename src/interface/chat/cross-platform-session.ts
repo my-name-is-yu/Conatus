@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { ChatRunner } from "./chat-runner.js";
+import { ChatSessionCatalog } from "./chat-session-store.js";
 import type { ChatRunResult, ChatRunnerDeps } from "./chat-runner-contracts.js";
 import type { ChatEvent, ChatEventHandler } from "./chat-events.js";
 import {
@@ -161,6 +162,7 @@ export interface CrossPlatformChatSessionInfo {
   created_at: string;
   last_used_at: string;
   last_message_id?: string;
+  chat_session_id?: string;
   active_reply_target?: ChatIngressReplyTarget;
   active_companion_contract?: CompanionRuntimeContract;
   metadata: Record<string, unknown>;
@@ -214,6 +216,17 @@ function buildSessionKey(options: CrossPlatformChatSessionOptions): string {
 
 function cloneMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
   return metadata ? { ...metadata } : {};
+}
+
+function cloneReplyTarget(target: Record<string, unknown> | ChatIngressReplyTarget): ChatIngressReplyTarget {
+  return {
+    ...target,
+    metadata: isRecord(target.metadata) ? cloneMetadata(target.metadata) : {},
+  } as ChatIngressReplyTarget;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function buildSessionMetadata(options: {
@@ -372,6 +385,7 @@ class ChatEventDeliveryQueue {
 
 export class CrossPlatformChatSessionManager {
   private readonly sessions = new Map<string, ManagedChatSession>();
+  private readonly sessionInitializers = new Map<string, Promise<ManagedChatSession>>();
   private readonly activeApprovalEventHandlers = new Map<string, ChatEventHandler>();
   private readonly approvalSideTurnIngressIds = new Set<string>();
   private readonly ingressRouter = createIngressRouter();
@@ -416,7 +430,7 @@ export class CrossPlatformChatSessionManager {
         elapsed_ms: 0,
       };
     }
-    const session = this.getOrCreateSession(ingress, options.cwd);
+    const session = await this.getOrCreateSession(ingress, options.cwd);
     if (ingress.ingress_id && this.approvalSideTurnIngressIds.delete(ingress.ingress_id)) {
       return this.executeInSession(session, ingress, options);
     }
@@ -451,7 +465,7 @@ export class CrossPlatformChatSessionManager {
         elapsed_ms: 0,
       };
     }
-    const session = this.getOrCreateSession(ingress, input.cwd);
+    const session = await this.getOrCreateSession(ingress, input.cwd);
     const decision = evaluateCompanionOutputPolicy(ingress.companion.turn_policy);
     if (!decision.delivered) {
       return {
@@ -476,7 +490,7 @@ export class CrossPlatformChatSessionManager {
         elapsed_ms: 0,
       };
     }
-    const session = this.getOrCreateSession(normalizedIngress, options.cwd);
+    const session = await this.getOrCreateSession(normalizedIngress, options.cwd);
     if (normalizedIngress.ingress_id && this.approvalSideTurnIngressIds.delete(normalizedIngress.ingress_id)) {
       return this.executeInSession(session, normalizedIngress, options);
     }
@@ -574,7 +588,7 @@ export class CrossPlatformChatSessionManager {
     ingress: CrossPlatformIngressMessage,
     origin: ApprovalOrigin,
   ): Promise<string | null> {
-    if (!isPermissionApprovalStale(approval, this.currentApprovalStateEpoch(ingress))) {
+    if (!isPermissionApprovalStale(approval, await this.currentApprovalStateEpoch(ingress))) {
       return null;
     }
     const broker = this.deps.approvalBroker;
@@ -588,9 +602,12 @@ export class CrossPlatformChatSessionManager {
       : "The approval target changed after the prompt, and the stale approval could not be resolved.";
   }
 
-  private currentApprovalStateEpoch(ingress: CrossPlatformIngressMessage): string | null {
-    const session = this.sessions.get(buildSessionKeyFromParts(ingress));
-    return session?.info.last_message_id ?? null;
+  private async currentApprovalStateEpoch(ingress: CrossPlatformIngressMessage): Promise<string | null> {
+    const sessionKey = buildSessionKeyFromParts(ingress);
+    const session = this.sessions.get(sessionKey);
+    if (session) return session.info.last_message_id ?? null;
+    const persisted = await this.loadPersistedSessionInfo(sessionKey);
+    return persisted?.last_message_id ?? null;
   }
 
   private describeLastRouteForApproval(ingress: CrossPlatformIngressMessage): string {
@@ -745,19 +762,80 @@ export class CrossPlatformChatSessionManager {
       : null;
   }
 
-  private getOrCreateSession(
+  private sessionInfoRelativePath(sessionKey: string): string {
+    const encoded = Buffer.from(sessionKey, "utf-8").toString("base64url");
+    return path.join("chat", "cross-platform-sessions", `${encoded}.json`);
+  }
+
+  private async loadPersistedSessionInfo(sessionKey: string): Promise<CrossPlatformChatSessionInfo | null> {
+    const raw = await this.deps.stateManager.readRaw(this.sessionInfoRelativePath(sessionKey));
+    if (!isRecord(raw) || raw["session_key"] !== sessionKey) return null;
+    const cwd = typeof raw["cwd"] === "string" && raw["cwd"].trim() ? raw["cwd"] : null;
+    const createdAt = typeof raw["created_at"] === "string" && raw["created_at"].trim() ? raw["created_at"] : null;
+    const lastUsedAt = typeof raw["last_used_at"] === "string" && raw["last_used_at"].trim() ? raw["last_used_at"] : null;
+    if (!cwd || !createdAt || !lastUsedAt) return null;
+    return {
+      session_key: sessionKey,
+      ...(typeof raw["identity_key"] === "string" ? { identity_key: raw["identity_key"] } : {}),
+      ...(typeof raw["platform"] === "string" ? { platform: raw["platform"] } : {}),
+      ...(typeof raw["conversation_id"] === "string" ? { conversation_id: raw["conversation_id"] } : {}),
+      ...(typeof raw["conversation_name"] === "string" ? { conversation_name: raw["conversation_name"] } : {}),
+      ...(typeof raw["user_id"] === "string" ? { user_id: raw["user_id"] } : {}),
+      ...(typeof raw["user_name"] === "string" ? { user_name: raw["user_name"] } : {}),
+      cwd,
+      created_at: createdAt,
+      last_used_at: lastUsedAt,
+      ...(typeof raw["last_message_id"] === "string" ? { last_message_id: raw["last_message_id"] } : {}),
+      ...(typeof raw["chat_session_id"] === "string" ? { chat_session_id: raw["chat_session_id"] } : {}),
+      ...(isRecord(raw["active_reply_target"])
+        ? { active_reply_target: cloneReplyTarget(raw["active_reply_target"]) }
+        : {}),
+      ...(isRecord(raw["active_companion_contract"])
+        ? { active_companion_contract: raw["active_companion_contract"] as CompanionRuntimeContract }
+        : {}),
+      metadata: isRecord(raw["metadata"]) ? cloneMetadata(raw["metadata"]) : {},
+    };
+  }
+
+  private async persistSessionInfo(info: CrossPlatformChatSessionInfo): Promise<void> {
+    await this.deps.stateManager.writeRaw(this.sessionInfoRelativePath(info.session_key), {
+      ...info,
+      metadata: cloneMetadata(info.metadata),
+      active_reply_target: info.active_reply_target ? cloneReplyTarget(info.active_reply_target) : undefined,
+    });
+  }
+
+  private async getOrCreateSession(
     ingress: Pick<ChatIngressMessage, "identity_key" | "platform" | "conversation_id" | "user_id">,
     cwdOverride?: string
-  ): ManagedChatSession {
+  ): Promise<ManagedChatSession> {
     const sessionKey = buildSessionKeyFromParts(ingress);
     const existing = this.sessions.get(sessionKey);
     if (existing) {
       return existing;
     }
+    const pending = this.sessionInitializers.get(sessionKey);
+    if (pending) {
+      return pending;
+    }
 
+    const initializer = this.createManagedSession(sessionKey, ingress, cwdOverride)
+      .finally(() => {
+        this.sessionInitializers.delete(sessionKey);
+      });
+    this.sessionInitializers.set(sessionKey, initializer);
+    return initializer;
+  }
+
+  private async createManagedSession(
+    sessionKey: string,
+    ingress: Pick<ChatIngressMessage, "identity_key" | "platform" | "conversation_id" | "user_id">,
+    cwdOverride?: string,
+  ): Promise<ManagedChatSession> {
     const cwd = resolveGitRoot(cwdOverride?.trim() || process.cwd());
     const now = new Date().toISOString();
-    const info: CrossPlatformChatSessionInfo = {
+    const persisted = await this.loadPersistedSessionInfo(sessionKey);
+    const info: CrossPlatformChatSessionInfo = persisted ?? {
       session_key: sessionKey,
       identity_key: normalizeIdentity(ingress.identity_key) ?? undefined,
       platform: normalizePlatform(ingress.platform) ?? undefined,
@@ -776,7 +854,17 @@ export class CrossPlatformChatSessionManager {
       approvalRequestFn: approvalRequestFn ?? this.deps.approvalRequestFn,
       runtimeControlApprovalFn: approvalFn ?? this.deps.runtimeControlApprovalFn,
     });
-    runner.startSession(cwd);
+    if (info.chat_session_id) {
+      const loaded = await new ChatSessionCatalog(this.deps.stateManager).loadSession(info.chat_session_id);
+      if (loaded) {
+        runner.startSessionFromLoadedSession(loaded);
+      } else {
+        runner.startSession(info.cwd);
+      }
+    } else {
+      runner.startSession(info.cwd);
+    }
+    info.chat_session_id = runner.getSessionId() ?? info.chat_session_id;
 
     const created: ManagedChatSession = {
       runner,
@@ -785,6 +873,7 @@ export class CrossPlatformChatSessionManager {
       lastRoute: undefined,
     };
     this.sessions.set(sessionKey, created);
+    await this.persistSessionInfo(info);
     return created;
   }
 
@@ -907,6 +996,7 @@ export class CrossPlatformChatSessionManager {
     options: Pick<CrossPlatformIncomingChatMessage, "timeoutMs" | "onEvent" | "conversation_name" | "user_name"> = {}
   ): Promise<ChatRunResult> {
     this.updateSessionInfoForIngress(session, ingress, options);
+    await this.persistSessionInfo(session.info);
 
     const capabilities = {
       hasAgentLoop: this.deps.chatAgentLoopRunner !== undefined,
@@ -1021,6 +1111,7 @@ export class CrossPlatformChatSessionManager {
     options: Pick<CrossPlatformIncomingChatMessage, "conversation_name" | "user_name"> = {},
   ): void {
     session.info.last_used_at = new Date().toISOString();
+    session.info.chat_session_id = session.runner.getSessionId() ?? session.info.chat_session_id;
     session.info.conversation_name = options.conversation_name?.trim() || session.info.conversation_name;
     session.info.user_id = session.info.user_id ?? (normalizeIdentity(ingress.user_id) ?? undefined);
     session.info.user_name = options.user_name?.trim() || session.info.user_name;
@@ -1049,6 +1140,7 @@ export class CrossPlatformChatSessionManager {
     options: Pick<CrossPlatformIncomingChatMessage, "timeoutMs" | "onEvent" | "conversation_name" | "user_name"> = {},
   ): Promise<ChatRunResult> {
     this.updateSessionInfoForIngress(session, ingress, options);
+    await this.persistSessionInfo(session.info);
 
     const previousOnEvent = session.runner.onEvent;
     const approvalHandlerKey = session.info.session_key;

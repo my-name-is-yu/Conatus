@@ -1761,12 +1761,16 @@ describe("ChatRunner", () => {
       expect(input.resumeStatePath).toMatch(/^chat\/agentloop\//);
 
       const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock).toHaveBeenCalledTimes(2);
-      expect(writeRawMock.mock.calls[0][1]).toMatchObject({
-        turnContexts: [expect.objectContaining({
-          schema_version: "chat-turn-context-v1",
-        })],
-      });
+      expect(writeRawMock.mock.calls.some((call) => {
+        const data = call[1] as { turnContexts?: Array<{ schema_version?: string }> };
+        return data.turnContexts?.some((context) => context.schema_version === "chat-turn-context-v1") === true;
+      })).toBe(true);
+      expect(writeRawMock.mock.calls.some((call) => {
+        const data = call[1] as { messages?: Array<{ role: string; content: string }> };
+        return data.messages?.some((message) =>
+          message.role === "assistant" && message.content === "Resumed successfully"
+        ) === true;
+      })).toBe(true);
       expect((stateManager.readRaw as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -2586,7 +2590,8 @@ describe("ChatRunner", () => {
 
       const finalTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as { prompt: string };
       expect(finalTask.prompt).toContain("Compacted previous conversation summary");
-      expect(finalTask.prompt).toContain("Turn 1");
+      expect(finalTask.prompt).toContain("user: Turn 1");
+      expect(finalTask.prompt).not.toContain("User: Turn 1");
       expect(finalTask.prompt).toContain("Current message:");
       expect(finalTask.prompt).toContain("Continue");
     });
@@ -2607,6 +2612,23 @@ describe("ChatRunner", () => {
       const finalTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as { prompt: string };
       expect(finalTask.prompt).not.toContain("Compacted previous conversation summary");
       expect(finalTask.prompt).not.toContain("Turn 1");
+      expect(finalTask.prompt).toContain("Fresh start");
+    });
+
+    it("/undo removes the last turn from journal-backed prompts", async () => {
+      const stateManager = makeMockStateManager();
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+      runner.startSession("/repo");
+
+      await runner.execute("Turn 1", "/repo");
+      await runner.execute("Turn 2", "/repo");
+      await runner.execute("/undo", "/repo");
+      await runner.execute("Fresh start", "/repo");
+
+      const finalTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as { prompt: string };
+      expect(finalTask.prompt).toContain("User: Turn 1");
+      expect(finalTask.prompt).not.toContain("Turn 2");
       expect(finalTask.prompt).toContain("Fresh start");
     });
   });
@@ -2679,15 +2701,20 @@ describe("ChatRunner", () => {
       await runner.execute("Stream this", "/repo");
 
       const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock).toHaveBeenCalledTimes(3);
-      const firstWrite = writes[0]!;
-      const secondWrite = writes[1]!;
-      const thirdWrite = writes[2]!;
-      expect(firstWrite.messages).toHaveLength(1);
-      expect(secondWrite.messages).toHaveLength(1);
-      expect(secondWrite.turnContexts).toHaveLength(1);
-      expect(thirdWrite.messages).toHaveLength(2);
-      expect(thirdWrite.messages[1]?.content).toBe("Hello world");
+      expect(writeRawMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+      const firstWrite = writes.find((write) => write.messages.length === 1 && !write.turnContexts);
+      const secondWrite = writes.find((write) => write.messages.length === 1 && write.turnContexts?.length === 1);
+      const thirdWrite = writes.find((write) =>
+        write.messages.length === 2 && write.messages[1]?.content === "Hello world"
+      );
+      expect(firstWrite).toBeDefined();
+      expect(secondWrite).toBeDefined();
+      expect(thirdWrite).toBeDefined();
+      expect(firstWrite!.messages).toHaveLength(1);
+      expect(secondWrite!.messages).toHaveLength(1);
+      expect(secondWrite!.turnContexts).toHaveLength(1);
+      expect(thirdWrite!.messages).toHaveLength(2);
+      expect(thirdWrite!.messages[1]?.content).toBe("Hello world");
       expect(events).toContain("assistant_delta");
       expect(events).toContain("assistant_final");
     });
@@ -2721,8 +2748,8 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Recovery");
       expect(result.output).toContain("Type: Unclassified failure");
       const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock).toHaveBeenCalledTimes(2);
-      const lastWrite = writeRawMock.mock.calls[1][1] as {
+      expect(writeRawMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+      const lastWrite = writeRawMock.mock.calls.at(-1)?.[1] as {
         messages: Array<{ role: string; content: string }>;
         turnContexts?: unknown[];
       };

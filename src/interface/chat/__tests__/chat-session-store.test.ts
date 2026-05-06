@@ -318,6 +318,48 @@ describe("ChatSessionCatalog", () => {
     expect(loaded?.title).toBeNull();
   });
 
+  it("preserves rollout journal records through load and rename", async () => {
+    const rolloutRecord = {
+      schema_version: "chat-rollout-journal-record-v1",
+      id: "journal-session:0",
+      sessionId: "journal-session",
+      runId: "run-1",
+      turnId: "turn-1",
+      sequence: 0,
+      createdAt: "2026-05-06T00:00:00.000Z",
+      kind: "user_input",
+      source: "chat_history",
+      visibility: "model_visible",
+      payload: {
+        role: "user",
+        content: "persist me from structured journal",
+        turnIndex: 0,
+      },
+    };
+    await stateManager.writeRaw(
+      "chat/sessions/journal-session.json",
+      {
+        ...makeSession({
+          id: "journal-session",
+          cwd: "/repo",
+          createdAt: "2026-05-06T00:00:00.000Z",
+          messages: [
+            { role: "user", content: "legacy transcript", timestamp: "2026-05-06T00:00:00.000Z", turnIndex: 0 },
+          ],
+        }),
+        rolloutJournal: [rolloutRecord],
+      }
+    );
+
+    const loaded = await catalog.loadSession("journal-session");
+    expect(loaded?.rolloutJournal).toEqual([rolloutRecord]);
+
+    const renamed = await catalog.renameSession("journal-session", "Renamed journal session");
+    expect(renamed.rolloutJournal).toEqual([rolloutRecord]);
+    const reloaded = await catalog.loadSession("journal-session");
+    expect(reloaded?.rolloutJournal).toEqual([rolloutRecord]);
+  });
+
   it("uses agentloop updatedAt when deciding cleanup freshness", async () => {
     await stateManager.writeRaw(
       "chat/sessions/old-chat-fresh-agentloop.json",
