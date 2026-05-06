@@ -1,4 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { Dirent } from "node:fs";
+import * as fsp from "node:fs/promises";
+import * as path from "node:path";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import type { z } from "zod";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
@@ -33,6 +36,29 @@ export interface BoundedAgentLoopRunnerDeps {
   toolRuntime: AgentLoopToolRuntime;
   compactor?: AgentLoopCompactor;
 }
+
+interface FilesystemSnapshotEntry {
+  size: number;
+  mtimeMs: number;
+  hash?: string;
+}
+
+type WorkspaceSnapshot =
+  | { kind: "git"; paths: Set<string> }
+  | { kind: "filesystem"; files: Map<string, FilesystemSnapshotEntry> };
+
+const FILESYSTEM_SNAPSHOT_EXCLUDED_DIRS = new Set([
+  ".git",
+  "node_modules",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".cache",
+  "dist",
+  "build",
+]);
+const FILESYSTEM_SNAPSHOT_MAX_FILES = 5_000;
+const FILESYSTEM_SNAPSHOT_HASH_MAX_BYTES = 1_000_000;
 
 export class BoundedAgentLoopRunner {
   private readonly compactor: AgentLoopCompactor;
@@ -851,18 +877,23 @@ export class BoundedAgentLoopRunner {
     await turn.session.stateStore.save(state);
   }
 
-  private async captureWorkspaceSnapshot(cwd: string): Promise<Set<string> | null> {
+  private async captureWorkspaceSnapshot(cwd: string): Promise<WorkspaceSnapshot | null> {
     const result = await execFileNoThrow("git", ["status", "--porcelain", "--untracked-files=all"], { cwd, timeoutMs: 10_000 });
-    if ((result.exitCode ?? 1) !== 0) return null;
-    return new Set(this.parseGitStatusPaths(result.stdout));
+    if ((result.exitCode ?? 1) === 0) {
+      return { kind: "git", paths: new Set(this.parseGitStatusPaths(result.stdout)) };
+    }
+    return { kind: "filesystem", files: await this.captureFilesystemSnapshot(cwd) };
   }
 
-  private async collectChangedFiles(cwd: string, before: Set<string> | null): Promise<string[]> {
+  private async collectChangedFiles(cwd: string, before: WorkspaceSnapshot | null): Promise<string[]> {
     const afterResult = await execFileNoThrow("git", ["status", "--porcelain", "--untracked-files=all"], { cwd, timeoutMs: 10_000 });
-    if ((afterResult.exitCode ?? 1) !== 0) return [];
+    if ((afterResult.exitCode ?? 1) !== 0) {
+      if (before?.kind !== "filesystem") return [];
+      return this.collectFilesystemChangedPaths(before.files, await this.captureFilesystemSnapshot(cwd));
+    }
     const after = new Set(this.parseGitStatusPaths(afterResult.stdout));
-    if (!before) return [...after];
-    return [...after].filter((file) => !before.has(file));
+    if (!before || before.kind !== "git") return [...after];
+    return [...after].filter((file) => !before.paths.has(file));
   }
 
   private parseGitStatusPaths(stdout: string): string[] {
@@ -872,5 +903,73 @@ export class BoundedAgentLoopRunner {
       .filter((line) => line.length >= 4)
       .map((line) => line.slice(3).trim())
       .map((filePath) => filePath.includes(" -> ") ? filePath.split(" -> ").at(-1) ?? filePath : filePath);
+  }
+
+  private async captureFilesystemSnapshot(cwd: string): Promise<Map<string, FilesystemSnapshotEntry>> {
+    const files = new Map<string, FilesystemSnapshotEntry>();
+    const root = path.resolve(cwd);
+    const visit = async (dir: string): Promise<void> => {
+      if (files.size >= FILESYSTEM_SNAPSHOT_MAX_FILES) return;
+      let entries: Dirent[];
+      try {
+        entries = await fsp.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (files.size >= FILESYSTEM_SNAPSHOT_MAX_FILES) return;
+        if (entry.name.startsWith(".pulseed-")) continue;
+        const absolutePath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (!FILESYSTEM_SNAPSHOT_EXCLUDED_DIRS.has(entry.name)) {
+            await visit(absolutePath);
+          }
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const relativePath = path.relative(root, absolutePath).replace(/\\/g, "/");
+        try {
+          const stat = await fsp.stat(absolutePath);
+          const snapshotEntry: FilesystemSnapshotEntry = {
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+          };
+          if (stat.size <= FILESYSTEM_SNAPSHOT_HASH_MAX_BYTES) {
+            snapshotEntry.hash = createHash("sha256")
+              .update(await fsp.readFile(absolutePath))
+              .digest("hex");
+          }
+          files.set(relativePath, snapshotEntry);
+        } catch {
+          // File may have changed while scanning; skip and let the next scan observe it.
+        }
+      }
+    };
+    await visit(root);
+    return files;
+  }
+
+  private collectFilesystemChangedPaths(
+    before: Map<string, FilesystemSnapshotEntry>,
+    after: Map<string, FilesystemSnapshotEntry>,
+  ): string[] {
+    const changed = new Set<string>();
+    for (const [filePath, afterEntry] of after) {
+      const beforeEntry = before.get(filePath);
+      if (!beforeEntry || !this.sameFilesystemEntry(beforeEntry, afterEntry)) {
+        changed.add(filePath);
+      }
+    }
+    for (const filePath of before.keys()) {
+      if (!after.has(filePath)) {
+        changed.add(filePath);
+      }
+    }
+    return [...changed].sort();
+  }
+
+  private sameFilesystemEntry(left: FilesystemSnapshotEntry, right: FilesystemSnapshotEntry): boolean {
+    if (left.hash && right.hash) return left.hash === right.hash;
+    return left.size === right.size && left.mtimeMs === right.mtimeMs;
   }
 }

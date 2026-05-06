@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { captureExecutionDiffArtifacts, type ExecFileSyncFn } from "../task-diff-capture.js";
+import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
+
+function makeGitWorkspace(): string {
+  const workspace = makeTempDir();
+  fs.mkdirSync(path.join(workspace, ".git"), { recursive: true });
+  return workspace;
+}
 
 function makeExecFileSync(outputs: Record<string, string>, thrownOutputs: Record<string, string> = {}): ExecFileSyncFn {
   return ((cmd, args) => {
@@ -15,69 +24,139 @@ function makeExecFileSync(outputs: Record<string, string>, thrownOutputs: Record
 
 describe("captureExecutionDiffArtifacts", () => {
   it("collects tracked file diffs and changed paths", () => {
-    const execFileSyncFn = makeExecFileSync({
-      "git diff --name-only": "src/example.ts\n",
-      "git ls-files --others --exclude-standard": "",
-      "git diff -- src/example.ts": "diff --git a/src/example.ts b/src/example.ts\n@@ -1 +1 @@\n-old\n+new\n",
-    });
+    const workspace = makeGitWorkspace();
+    try {
+      const execFileSyncFn = makeExecFileSync({
+        "git diff --name-only": "src/example.ts\n",
+        "git ls-files --others --exclude-standard": "",
+        "git diff -- src/example.ts": "diff --git a/src/example.ts b/src/example.ts\n@@ -1 +1 @@\n-old\n+new\n",
+      });
 
-    const result = captureExecutionDiffArtifacts(execFileSyncFn, "/repo");
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace);
 
-    expect(result.changedPaths).toEqual(["src/example.ts"]);
-    expect(result.fileDiffs).toEqual([
-      expect.objectContaining({
-        path: "src/example.ts",
-        patch: expect.stringContaining("+new"),
-      }),
-    ]);
+      expect(result.changedPaths).toEqual(["src/example.ts"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "src/example.ts",
+          patch: expect.stringContaining("+new"),
+        }),
+      ]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it("captures untracked file diffs from git diff --no-index output", () => {
-    const execFileSyncFn = makeExecFileSync(
-      {
-        "git diff --name-only": "",
-        "git ls-files --others --exclude-standard": "src/new-file.ts\n",
-        "git diff -- src/new-file.ts": "",
-      },
-      {
-        "git diff --no-index -- /dev/null src/new-file.ts": [
-          "diff --git a/src/new-file.ts b/src/new-file.ts",
-          "new file mode 100644",
-          "--- /dev/null",
-          "+++ b/src/new-file.ts",
-          "@@ -0,0 +1 @@",
-          "+export const created = true;",
-          "",
-        ].join("\n"),
-      },
-    );
+    const workspace = makeGitWorkspace();
+    try {
+      const execFileSyncFn = makeExecFileSync(
+        {
+          "git diff --name-only": "",
+          "git ls-files --others --exclude-standard": "src/new-file.ts\n",
+          "git diff -- src/new-file.ts": "",
+        },
+        {
+          "git diff --no-index -- /dev/null src/new-file.ts": [
+            "diff --git a/src/new-file.ts b/src/new-file.ts",
+            "new file mode 100644",
+            "--- /dev/null",
+            "+++ b/src/new-file.ts",
+            "@@ -0,0 +1 @@",
+            "+export const created = true;",
+            "",
+          ].join("\n"),
+        },
+      );
 
-    const result = captureExecutionDiffArtifacts(execFileSyncFn, "/repo");
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace);
 
-    expect(result.changedPaths).toEqual(["src/new-file.ts"]);
-    expect(result.fileDiffs).toEqual([
-      expect.objectContaining({
-        path: "src/new-file.ts",
-        patch: expect.stringContaining("new file mode 100644"),
-      }),
-    ]);
+      expect(result.changedPaths).toEqual(["src/new-file.ts"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "src/new-file.ts",
+          patch: expect.stringContaining("new file mode 100644"),
+        }),
+      ]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it("ignores per-path diff read failures after collecting changed paths", () => {
-    const execFileSyncFn = makeExecFileSync(
-      {
-        "git diff --name-only": "src/example.ts\n",
+    const workspace = makeGitWorkspace();
+    try {
+      const execFileSyncFn = makeExecFileSync(
+        {
+          "git diff --name-only": "src/example.ts\n",
+          "git ls-files --others --exclude-standard": "",
+        },
+        {
+          "git diff -- src/example.ts": "",
+        },
+      );
+
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace);
+
+      expect(result.available).toBe(true);
+      expect(result.changedPaths).toEqual(["src/example.ts"]);
+      expect(result.fileDiffs).toEqual([]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("renders non-git fallback file diffs from concrete changed paths without probing git", () => {
+    const workspace = makeTempDir();
+    try {
+      fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "reports", "hgb.json"), "{\"score\":0.95}\n", "utf-8");
+      const execFileSyncFn = vi.fn(makeExecFileSync({}, {
+        "git diff --name-only": "",
         "git ls-files --others --exclude-standard": "",
-      },
-      {
-        "git diff -- src/example.ts": "",
-      },
-    );
+      }));
 
-    const result = captureExecutionDiffArtifacts(execFileSyncFn, "/repo");
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace, {
+        fallbackChangedPaths: ["reports/hgb.json"],
+      });
 
-    expect(result.available).toBe(true);
-    expect(result.changedPaths).toEqual(["src/example.ts"]);
-    expect(result.fileDiffs).toEqual([]);
+      expect(result.available).toBe(true);
+      expect(result.changedPaths).toEqual(["reports/hgb.json"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "reports/hgb.json",
+          patch: expect.stringContaining("+{\"score\":0.95}"),
+        }),
+      ]);
+      expect(execFileSyncFn).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("omits non-git fallback content when a changed path resolves outside the workspace", () => {
+    const workspace = makeTempDir();
+    const outside = makeTempDir();
+    try {
+      fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+      fs.writeFileSync(path.join(outside, "secret.txt"), "outside-secret\n", "utf-8");
+      fs.symlinkSync(path.join(outside, "secret.txt"), path.join(workspace, "reports", "secret.txt"));
+
+      const result = captureExecutionDiffArtifacts(vi.fn(), workspace, {
+        fallbackChangedPaths: ["reports/secret.txt"],
+      });
+
+      expect(result.available).toBe(true);
+      expect(result.changedPaths).toEqual(["reports/secret.txt"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "reports/secret.txt",
+          patch: expect.stringContaining("path resolves outside the workspace"),
+        }),
+      ]);
+      expect(result.fileDiffs[0]?.patch).not.toContain("outside-secret");
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
