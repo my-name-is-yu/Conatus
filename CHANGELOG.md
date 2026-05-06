@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.3] - 2026-05-06
+
+### Added
+- Added OpenAI reasoning-effort selection across setup/provider configuration, environment overrides, and chat command flows, plus Codex-style `/model` switching so operators can choose both model and reasoning profile from the command surface (#1086, #1087)
+- Added `pulseed doctor` embedding-auth preflight checks for missing, expired, rejected, or timed-out OpenAI embedding credentials (#1097)
+
+### Changed
+- Removed the legacy `/models` alias and refreshed the Kaggle durable loop status notes around the remaining follow-up batch (#1088, #1100)
+- Bumped the package version to `0.6.3`
+
+### Fixed
+- Fixed native AgentLoop, observation metric, and revert paths so goal workspaces stay authoritative across execution, metric reads, and failure rollback while concrete changed paths stay separate from natural-language task scope descriptions (#1096, #1098, #1103)
+- Fixed daemon and AgentLoop resilience so nonfatal Soil embedding failures do not abort runs, bounded daemon stops propagate aborts, and daemon status reconciles stale health snapshots with live PID state (#1097, #1099, #1102)
+- Fixed raw goal creation so `--deadline` is preserved with raw dimensions and persisted as both `deadline` and `target_date` (#1101)
+
 ## [0.6.2] - 2026-05-05
 
 ### Added
