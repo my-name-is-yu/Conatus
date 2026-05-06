@@ -246,6 +246,55 @@ describe("buildTaskGenerationPrompt — referenced issue section", () => {
     mockFetchIssueContext.mockResolvedValue("");
   });
 
+  it("uses an explicit repo root for repository and issue context instead of process cwd", async () => {
+    const goal = makeGoal({ id: "g-repo-root", title: "Improve workspace #42" });
+    const sm = makeMockStateManager({ "g-repo-root": goal });
+    const daemonRoot = path.join("/tmp", "daemon-repo");
+    const workspaceRoot = path.join("/tmp", "workspace-repo");
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(daemonRoot);
+    mockFetchIssueContext.mockResolvedValue("## Referenced Issue #42\nTitle: Workspace issue\nBody from workspace repo");
+    mockReadFile.mockImplementation(async (filePath: unknown) => {
+      if (filePath === path.join(workspaceRoot, "package.json")) {
+        return JSON.stringify({
+          name: "workspace-project",
+          description: "context from the requested workspace",
+        });
+      }
+      if (filePath === path.join(daemonRoot, "package.json")) {
+        return JSON.stringify({
+          name: "daemon-project",
+          description: "context from the daemon cwd",
+        });
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    try {
+      const prompt = await buildTaskGenerationPrompt(
+        sm,
+        "g-repo-root",
+        "coverage",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { repoRoot: workspaceRoot },
+      );
+
+      expect(prompt).toContain("Project name: workspace-project");
+      expect(prompt).toContain("Project description: context from the requested workspace");
+      expect(prompt).toContain("Body from workspace repo");
+      expect(prompt).not.toContain("daemon-project");
+      expect(mockReadFile).toHaveBeenCalledWith(path.join(workspaceRoot, "package.json"), "utf-8");
+      expect(mockFetchIssueContext).toHaveBeenCalledWith("Improve workspace #42", { cwd: workspaceRoot });
+    } finally {
+      cwdSpy.mockRestore();
+    }
+  });
+
   it("includes issue content in prompt when fetchIssueContext returns content", async () => {
     const issueContent = "## Referenced Issue #42\nTitle: Fix the regression\nSome body text here.";
     mockFetchIssueContext.mockResolvedValue(issueContent);
