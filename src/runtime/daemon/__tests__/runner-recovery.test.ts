@@ -109,6 +109,9 @@ describe("runner-recovery", () => {
       status: "error",
       primary_dimension: "dim",
       consecutive_failure_count: 1,
+      recovery_source: "daemon_startup",
+      recovery_reason: "task execution interrupted by daemon recovery",
+      retry_intent: "daemon restarted; task preserved for retry",
     });
 
     const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as { events: Array<{ type: string; action?: string }> };

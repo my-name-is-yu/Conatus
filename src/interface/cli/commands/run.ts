@@ -6,7 +6,9 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import type { LoopConfig } from "../../../orchestrator/loop/durable-loop.js";
+import { resolveLoopRunPolicy } from "../../../orchestrator/loop/run-policy.js";
 import type { Task } from "../../../base/types/task.js";
+import { reconcileInterruptedExecutions } from "../../../runtime/daemon/runner-recovery.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
@@ -92,6 +94,29 @@ export async function cmdRun(
 
   if (activeCoreLoopRef) {
     activeCoreLoopRef.value = coreLoop;
+  }
+
+  const runPolicy = resolveLoopRunPolicy(loopConfig);
+  if (runPolicy.mode === "resident") {
+    try {
+      const recoveredGoalIds = await reconcileInterruptedExecutions({
+        baseDir: stateManager.getBaseDir(),
+        stateManager,
+        logger,
+        interruptedOutputMessage: "[RECOVERED] Task execution was interrupted before resident CLI startup.",
+        failedEventReason: "task execution interrupted before resident CLI startup",
+        retryEventReason: "resident CLI startup preserved task for retry",
+        recoverySource: "resident_cli_startup",
+      });
+      if (recoveredGoalIds.length > 0) {
+        console.log(`Recovered interrupted task executions for ${recoveredGoalIds.length} goal(s) before resident loop startup.`);
+      }
+    } catch (err) {
+      logger.error(formatOperationError("reconcile interrupted resident tasks", err));
+      if (activeCoreLoopRef) activeCoreLoopRef.value = null;
+      rl?.close();
+      return 1;
+    }
   }
 
   let result: Awaited<ReturnType<typeof coreLoop.run>>;
