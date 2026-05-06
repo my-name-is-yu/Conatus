@@ -44,6 +44,20 @@ export const VerificationFileDiffSchema = z.object({
 });
 export type VerificationFileDiff = z.infer<typeof VerificationFileDiffSchema>;
 
+export const TaskArtifactRequirementSchema = z.object({
+  kind: z.enum(["metrics_json", "submission_csv"]),
+  path: z.string(),
+  required_fields: z.array(z.string()).default([]),
+  fresh_after_task_start: z.boolean().default(true),
+});
+export type TaskArtifactRequirement = z.infer<typeof TaskArtifactRequirementSchema>;
+
+export const TaskArtifactContractSchema = z.object({
+  required: z.boolean().default(false),
+  required_artifacts: z.array(TaskArtifactRequirementSchema).default([]),
+});
+export type TaskArtifactContract = z.infer<typeof TaskArtifactContractSchema>;
+
 // --- Task ---
 
 export const TaskSchema = z.object({
@@ -62,6 +76,7 @@ export const TaskSchema = z.object({
   scope_boundary: ScopeBoundarySchema,
   constraints: z.array(z.string()),
   risk_profile: TaskRiskProfileSchema.optional(),
+  artifact_contract: TaskArtifactContractSchema.optional(),
 
   plateau_until: z.string().nullable().default(null),
   estimated_duration: DurationSchema.nullable().default(null),

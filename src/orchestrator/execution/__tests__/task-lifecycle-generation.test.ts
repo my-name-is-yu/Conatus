@@ -18,6 +18,7 @@ import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { upsertDreamPlaybook } from "../../../platform/dream/playbook-memory.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
 
 // ─── Spy LLM Client ───
@@ -68,6 +69,10 @@ const VALID_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "tests/ directory only"
   },
   "constraints": ["Must not modify production code"],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": { "value": 2, "unit": "hours" }
 }
@@ -91,6 +96,10 @@ const UNKNOWN_REVERSIBILITY_RESPONSE = `\`\`\`json
     "blast_radius": "startup flow"
   },
   "constraints": [],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "unknown",
   "estimated_duration": null
 }
@@ -624,6 +633,19 @@ describe("TaskLifecycle", async () => {
       expect(task.constraints).toContain("Must not modify production code");
       expect(task.reversibility).toBe("reversible");
       expect(task.estimated_duration).toEqual({ value: 2, unit: "hours" });
+    });
+
+    it("forces artifact contract required for typed Kaggle RunSpec goals", async () => {
+      const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
+      const lifecycle = createLifecycle(llm);
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-kaggle",
+        constraints: ["run_spec_profile:kaggle"],
+      }));
+
+      const task = expectTask(await lifecycle.generateTask("goal-kaggle", "test_coverage"));
+
+      expect(task.artifact_contract).toMatchObject({ required: true, required_artifacts: [] });
     });
 
     it("sets strategy_id from active strategy", async () => {

@@ -47,7 +47,7 @@ export interface AgentLoopTurnContext<TOutput> {
     calledTools: string[];
     modelTurns: number;
     toolCalls: number;
-  }) => AgentLoopCompletionValidationResult;
+  }) => AgentLoopCompletionValidationResult | Promise<AgentLoopCompletionValidationResult>;
   resumeState?: AgentLoopSessionState;
   /** When false, skip loading persisted state from session.stateStore for this run. */
   loadPersistedState?: boolean;

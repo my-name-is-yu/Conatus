@@ -191,6 +191,266 @@ describe("TaskLifecycle", async () => {
       expect(verification.verdict).toBe("pass");
     });
 
+    it("fails artifact-contracted Kaggle progress when only source markers exist", async () => {
+      const workspace = path.join(tmpDir, "kaggle-workspace");
+      fs.mkdirSync(path.join(workspace, "src", "experiments"), { recursive: true });
+      fs.writeFileSync(
+        path.join(workspace, "src", "experiments", "train_hgb_engineered_auc.py"),
+        "print('training script only')\n"
+      );
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        work_description: "Run Kaggle HGB experiment and produce fresh metrics/submission artifacts",
+        approach: "Create the training script, run it, and retain metrics plus submission artifacts.",
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [
+          {
+            description: "Training script exists",
+            verification_method: "test -f src/experiments/train_hgb_engineered_auc.py",
+            is_blocking: true,
+          },
+        ],
+        artifact_contract: {
+          required: true,
+          required_artifacts: [
+            {
+              kind: "metrics_json",
+              path: "reports/hgb_seed_blend.json",
+              required_fields: ["balanced_accuracy"],
+              fresh_after_task_start: true,
+            },
+            {
+              kind: "submission_csv",
+              path: "submissions/hgb_seed_blend.csv",
+              required_fields: [],
+              fresh_after_task_start: true,
+            },
+          ],
+        },
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        output: "Created src/experiments/train_hgb_engineered_auc.py",
+        filesChangedPaths: ["src/experiments/train_hgb_engineered_auc.py"],
+      }));
+
+      expect(verification.verdict).toBe("fail");
+      expect(verification.evidence[0]?.description).toContain("Artifact contract verification failed");
+      expect(verification.evidence[0]?.description).toContain("reports/hgb_seed_blend.json is missing");
+      expect(verification.evidence[0]?.description).toContain("submissions/hgb_seed_blend.csv is missing");
+    });
+
+    it("does not let GitHub issue URL evidence bypass a missing artifact contract", async () => {
+      const workspace = path.join(tmpDir, "kaggle-workspace-issue-url");
+      fs.mkdirSync(path.join(workspace, "src", "experiments"), { recursive: true });
+      fs.writeFileSync(
+        path.join(workspace, "src", "experiments", "train_hgb_engineered_auc.py"),
+        "print('training script only')\n"
+      );
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        work_description: "Run Kaggle HGB experiment and produce fresh metrics/submission artifacts",
+        approach: "Create the training script, run it, and retain metrics plus submission artifacts.",
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [
+          {
+            description: "Training script exists",
+            verification_method: "test -f src/experiments/train_hgb_engineered_auc.py",
+            is_blocking: true,
+          },
+        ],
+        artifact_contract: {
+          required: true,
+          required_artifacts: [
+            {
+              kind: "metrics_json",
+              path: "reports/hgb_seed_blend.json",
+              required_fields: ["balanced_accuracy"],
+              fresh_after_task_start: true,
+            },
+          ],
+        },
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        output: "Created follow-up https://github.com/my-name-is-yu/PulSeed/issues/999 and script marker.",
+        filesChangedPaths: ["src/experiments/train_hgb_engineered_auc.py"],
+      }));
+
+      expect(verification.verdict).toBe("fail");
+      expect(verification.evidence[0]?.description).toContain("Artifact contract verification failed");
+      expect(verification.evidence[0]?.description).toContain("reports/hgb_seed_blend.json is missing");
+    });
+
+    it("fails stale required artifacts even when the generated artifact opts out of freshness", async () => {
+      const workspace = path.join(tmpDir, "kaggle-workspace-stale-artifact");
+      const metricsPath = path.join(workspace, "reports", "hgb_seed_blend.json");
+      const submissionPath = path.join(workspace, "submissions", "hgb_seed_blend.csv");
+      fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+      fs.mkdirSync(path.dirname(submissionPath), { recursive: true });
+      fs.writeFileSync(metricsPath, JSON.stringify({ balanced_accuracy: 0.9473134912423415 }), "utf8");
+      fs.writeFileSync(submissionPath, "id,target\n1,0\n", "utf8");
+      const staleMtime = new Date(Date.now() - 60_000);
+      fs.utimesSync(metricsPath, staleMtime, staleMtime);
+
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        work_description: "Run Kaggle HGB experiment and produce fresh metrics artifacts",
+        approach: "Run the local experiment and retain metrics artifacts.",
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [
+          {
+            description: "Metrics artifact exists",
+            verification_method: "test -f reports/hgb_seed_blend.json",
+            is_blocking: true,
+          },
+        ],
+        artifact_contract: {
+          required: true,
+          required_artifacts: [
+            {
+              kind: "metrics_json",
+              path: "reports/hgb_seed_blend.json",
+              required_fields: ["balanced_accuracy"],
+              fresh_after_task_start: false,
+            },
+            {
+              kind: "submission_csv",
+              path: "submissions/hgb_seed_blend.csv",
+              required_fields: [],
+              fresh_after_task_start: true,
+            },
+          ],
+        },
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        output: "Reused reports/hgb_seed_blend.json",
+        filesChangedPaths: ["reports/hgb_seed_blend.json"],
+      }));
+
+      expect(verification.verdict).toBe("fail");
+      expect(verification.evidence[0]?.description).toContain("Artifact contract verification failed");
+      expect(verification.evidence[0]?.description).toContain("reports/hgb_seed_blend.json is stale relative to task start");
+    });
+
+    it("fails required Kaggle artifacts when only fresh metrics are declared", async () => {
+      const workspace = path.join(tmpDir, "kaggle-workspace-metrics-only");
+      const metricsPath = path.join(workspace, "reports", "hgb_seed_blend.json");
+      fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+      fs.writeFileSync(metricsPath, JSON.stringify({ balanced_accuracy: 0.9473134912423415 }), "utf8");
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-1",
+        constraints: [`workspace_path:${workspace}`, "run_spec_profile:kaggle"],
+      }));
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        work_description: "Run Kaggle HGB experiment and produce fresh metrics/submission artifacts",
+        approach: "Run the local experiment and retain metrics plus submission artifacts.",
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [
+          {
+            description: "Metrics artifact exists",
+            verification_method: "test -f reports/hgb_seed_blend.json",
+            is_blocking: true,
+          },
+        ],
+        artifact_contract: {
+          required: true,
+          required_artifacts: [
+            {
+              kind: "metrics_json",
+              path: "reports/hgb_seed_blend.json",
+              required_fields: ["balanced_accuracy"],
+              fresh_after_task_start: true,
+            },
+          ],
+        },
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        output: "Produced reports/hgb_seed_blend.json",
+        filesChangedPaths: ["reports/hgb_seed_blend.json"],
+      }));
+
+      expect(verification.verdict).toBe("fail");
+      expect(verification.evidence[0]?.description).toContain("Artifact contract verification failed");
+      expect(verification.evidence[0]?.description).toContain("missing required artifact kind(s): submission_csv");
+    });
+
+    it("fails when artifact evidence is required but no artifacts are declared", async () => {
+      const workspace = path.join(tmpDir, "kaggle-workspace-required-contract");
+      fs.mkdirSync(path.join(workspace, "src", "experiments"), { recursive: true });
+      fs.writeFileSync(
+        path.join(workspace, "src", "experiments", "train_hgb_engineered_auc.py"),
+        "print('training script only')\n"
+      );
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        work_description: "Run Kaggle HGB experiment and produce fresh metrics/submission artifacts",
+        approach: "Create the training script, run it, and retain metrics plus submission artifacts.",
+        constraints: [`workspace_path:${workspace}`, "artifact_contract:required"],
+        success_criteria: [
+          {
+            description: "Training script exists",
+            verification_method: "test -f src/experiments/train_hgb_engineered_auc.py",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        output: "Created src/experiments/train_hgb_engineered_auc.py",
+        filesChangedPaths: ["src/experiments/train_hgb_engineered_auc.py"],
+      }));
+
+      expect(verification.verdict).toBe("fail");
+      expect(verification.evidence[0]?.description).toContain("Artifact contract verification failed");
+      expect(verification.evidence[0]?.description).toContain("no required_artifacts were declared");
+    });
+
+    it("fails a Kaggle RunSpec-profile task even when the generated contract says artifacts are not required", async () => {
+      const workspace = path.join(tmpDir, "kaggle-workspace-profile-contract");
+      fs.mkdirSync(path.join(workspace, "src", "experiments"), { recursive: true });
+      fs.writeFileSync(
+        path.join(workspace, "src", "experiments", "train_hgb_engineered_auc.py"),
+        "print('training script only')\n"
+      );
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-1",
+        constraints: [`workspace_path:${workspace}`, "run_spec_profile:kaggle"],
+      }));
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        work_description: "Run Kaggle HGB experiment and produce fresh metrics/submission artifacts",
+        approach: "Create the training script, run it, and retain metrics plus submission artifacts.",
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [
+          {
+            description: "Training script exists",
+            verification_method: "test -f src/experiments/train_hgb_engineered_auc.py",
+            is_blocking: true,
+          },
+        ],
+        artifact_contract: { required: false, required_artifacts: [] },
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        output: "Created src/experiments/train_hgb_engineered_auc.py",
+        filesChangedPaths: ["src/experiments/train_hgb_engineered_auc.py"],
+      }));
+
+      expect(verification.verdict).toBe("fail");
+      expect(verification.evidence[0]?.description).toContain("Artifact contract verification failed");
+      expect(verification.evidence[0]?.description).toContain("no required_artifacts were declared");
+    });
+
     it("L1 pass + L2 fail triggers re-review", async () => {
       // L1 pass (MVP auto-pass), L2 fail, L2 re-review pass → pass
       const llm = createMockLLMClient([LLM_REVIEW_FAIL, LLM_REVIEW_PASS]);

@@ -532,6 +532,8 @@ function goalConstraintsFromRunSpec(spec: RunSpec): string[] {
   return [
     `RunSpec: ${spec.id}`,
     `Profile: ${spec.profile}`,
+    `run_spec_profile:${spec.profile}`,
+    ...(spec.profile === "kaggle" ? ["artifact_contract:required"] : []),
     `Workspace: ${spec.workspace?.path ?? "unresolved"}`,
     `Progress: ${spec.progress_contract.semantics}`,
     `Submit policy: ${spec.approval_policy.submit}`,

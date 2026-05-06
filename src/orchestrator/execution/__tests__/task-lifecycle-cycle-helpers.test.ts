@@ -34,6 +34,10 @@ const VALID_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "tests/ directory only"
   },
   "constraints": [],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": { "value": 1, "unit": "hours" }
 }

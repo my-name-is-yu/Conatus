@@ -52,6 +52,10 @@ const VALID_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "verification path only"
   },
   "constraints": ["Keep changes narrow"],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": null
 }

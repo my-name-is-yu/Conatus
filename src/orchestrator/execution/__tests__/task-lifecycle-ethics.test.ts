@@ -73,6 +73,10 @@ const VALID_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "tests/ directory only"
   },
   "constraints": ["Must not modify production code"],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": { "value": 2, "unit": "hours" }
 }
@@ -96,6 +100,10 @@ const SECOND_VALID_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "tests/ directory only"
   },
   "constraints": ["Must not modify production code"],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": { "value": 2, "unit": "hours" }
 }

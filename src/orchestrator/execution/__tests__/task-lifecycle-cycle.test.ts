@@ -67,6 +67,10 @@ const VALID_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "tests/ directory only"
   },
   "constraints": ["Must not modify production code"],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": { "value": 2, "unit": "hours" }
 }
@@ -90,6 +94,10 @@ const IRREVERSIBLE_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "database schema"
   },
   "constraints": ["Must backup before dropping"],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "irreversible",
   "estimated_duration": { "value": 30, "unit": "minutes" }
 }
@@ -113,6 +121,10 @@ const UNKNOWN_REVERSIBILITY_RESPONSE = `\`\`\`json
     "blast_radius": "startup flow"
   },
   "constraints": [],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "unknown",
   "estimated_duration": null
 }

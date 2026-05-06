@@ -55,6 +55,7 @@ import {
 import { runLLMReview } from "./task-verifier-llm.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
+import { verifyTaskArtifactContract } from "./task-artifact-contract.js";
 
 function formatSelfReportEvidence(executorReport: import("./task-verifier-types.js").ExecutorReport): string {
   const segments = [
@@ -75,7 +76,7 @@ function formatSelfReportEvidence(executorReport: import("./task-verifier-types.
 }
 
 function statusAfterIncompleteVerification(task: Task): Task["status"] {
-  if (task.status === "timed_out" || task.status === "cancelled") return task.status;
+  if (task.status === "timed_out" || task.status === "cancelled" || task.status === "blocked") return task.status;
   return "error";
 }
 
@@ -158,6 +159,25 @@ export function applyVerdictHandlingContextGuards(
       },
       ...(verificationResult.evidence ?? []),
     ],
+  };
+}
+
+function mergeMechanicalAndArtifactVerification(
+  mechanical: Awaited<ReturnType<typeof runMechanicalVerification>>,
+  artifact: Awaited<ReturnType<typeof verifyTaskArtifactContract>>,
+): Awaited<ReturnType<typeof runMechanicalVerification>> {
+  if (!artifact.applicable) return mechanical;
+  if (!mechanical.applicable) {
+    return {
+      applicable: true,
+      passed: artifact.passed,
+      description: artifact.description,
+    };
+  }
+  return {
+    applicable: true,
+    passed: mechanical.passed && artifact.passed,
+    description: `${mechanical.description}; ${artifact.description}`,
   };
 }
 
@@ -291,6 +311,21 @@ export async function verifyTask(
   task: Task,
   executionResult: AgentResult
 ): Promise<VerificationResult> {
+  let goalForArtifactContract: Awaited<ReturnType<StateManager["loadGoal"]>> = null;
+  try {
+    goalForArtifactContract = await deps.stateManager.loadGoal(task.goal_id);
+  } catch {
+    goalForArtifactContract = null;
+  }
+
+  const artifactResult = await verifyTaskArtifactContract(
+    task,
+    executionResult.agentLoop?.executionCwd
+      ?? executionResult.agentLoop?.requestedCwd
+      ?? await resolveTaskWorkspacePath({ stateManager: deps.stateManager, task }),
+    { goal: goalForArtifactContract }
+  );
+
   // ─── Short-circuit: GitHub issue URL evidence ───
   // When execution succeeded and output contains a GitHub issue URL,
   // treat as mechanical pass without running full L1/L2 verification.
@@ -299,7 +334,8 @@ export async function verifyTask(
   if (
     executionResult.success === true &&
     executionResult.output &&
-    githubIssueUrlPattern.test(executionResult.output)
+    githubIssueUrlPattern.test(executionResult.output) &&
+    (!artifactResult.applicable || artifactResult.passed)
   ) {
     const scResult = VerificationResultSchema.parse({
       task_id: task.id,
@@ -312,6 +348,13 @@ export async function verifyTask(
             "GitHub issue URL found in execution output — mechanical evidence of successful issue creation",
           confidence: 0.95,
         },
+        ...(artifactResult.applicable
+          ? [{
+              layer: "mechanical" as const,
+              description: artifactResult.description,
+              confidence: 0.9,
+            }]
+          : []),
       ],
       dimension_updates: [],
       timestamp: new Date().toISOString(),
@@ -321,6 +364,7 @@ export async function verifyTask(
 
   // ─── Layer 1: Mechanical verification ───
   const l1Result = await runMechanicalVerification(deps, task);
+  const effectiveL1Result = mergeMechanicalAndArtifactVerification(l1Result, artifactResult);
 
   // ─── Build optional enrichment blocks for LLM review ───
   let knowledgeBlock = "";
@@ -368,15 +412,15 @@ export async function verifyTask(
   let confidence: number;
   let l2Retry: Awaited<ReturnType<typeof runLLMReview>> | undefined;
 
-  if (l1Result.applicable) {
-    if (l1Result.passed && l2Result.passed) {
+  if (effectiveL1Result.applicable) {
+    if (effectiveL1Result.passed && l2Result.passed) {
       verdict = "pass";
       confidence = 0.9;
-    } else if (l1Result.passed && l2Result.partial) {
+    } else if (effectiveL1Result.passed && l2Result.partial) {
       // L1 pass + L2 partial → partial
       verdict = "partial";
       confidence = 0.7;
-    } else if (l1Result.passed && !l2Result.passed && !l2Result.partial) {
+    } else if (effectiveL1Result.passed && !l2Result.passed && !l2Result.partial) {
       // L1 pass + L2 fail → re-review
       l2Retry = await runLLMReview(deps, task, executionResult, knowledgeBlock, stateBlock, 'main');
       if (l2Retry.passed) {
@@ -389,7 +433,7 @@ export async function verifyTask(
         verdict = "fail";
         confidence = 0.8;
       }
-    } else if (!l1Result.passed && l2Result.passed) {
+    } else if (!effectiveL1Result.passed && l2Result.passed) {
       // Mechanical verification takes priority
       verdict = "fail";
       confidence = 0.85;
@@ -413,7 +457,7 @@ export async function verifyTask(
   }
 
   // Handle partial from L2 when L1 is applicable but didn't fail
-  if (l1Result.applicable && l2Result.partial && verdict !== "fail") {
+  if (effectiveL1Result.applicable && l2Result.partial && verdict !== "fail") {
     verdict = "partial";
   }
 
@@ -422,11 +466,11 @@ export async function verifyTask(
 
   const now = new Date().toISOString();
   const evidence = [
-    ...(l1Result.applicable
+    ...(effectiveL1Result.applicable
       ? [
           {
             layer: "mechanical" as const,
-            description: l1Result.description,
+            description: effectiveL1Result.description,
             confidence: 0.9,
           },
         ]

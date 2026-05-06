@@ -320,14 +320,16 @@ export class BoundedAgentLoopRunner {
           }
 
           const changedFiles = await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot);
-          const completionValidation = turn.completionValidator?.({
-            output: parsed.output,
-            changedFiles,
-            commandResults,
-            calledTools: [...calledTools],
-            modelTurns,
-            toolCalls,
-          });
+          const completionValidation = turn.completionValidator
+            ? await turn.completionValidator({
+              output: parsed.output,
+              changedFiles,
+              commandResults,
+              calledTools: [...calledTools],
+              modelTurns,
+              toolCalls,
+            })
+            : undefined;
           if (completionValidation && !completionValidation.ok) {
             completionValidationAttempts++;
             if (completionValidationAttempts > turn.budget.maxCompletionValidationAttempts) {

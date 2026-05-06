@@ -141,6 +141,7 @@ export function taskAgentLoopResultToAgentResult(
     ...workspaceHandoffBlockers,
   ];
   const done = result.success && result.output?.status === "done" && blockers.length === 0;
+  const blocked = result.success && result.output?.status === "blocked";
   const runtimeVerificationCommands = result.commandResults.filter((command) =>
     command.evidenceEligible && command.relevantToTask !== false
   );
@@ -153,11 +154,13 @@ export function taskAgentLoopResultToAgentResult(
     success: done,
     output: fallbackOutput,
     error: done ? null : blockerOutput || result.finalText || result.stopReason,
+    structuredOutput: result.output ?? undefined,
     exit_code: null,
     elapsed_ms: result.elapsedMs,
     stopped_reason:
       result.stopReason === "timeout" ? "timeout" :
       result.stopReason === "cancelled" ? "cancelled" :
+      blocked ? "blocked" :
       done ? "completed" : "error",
     filesChanged: filesChangedPaths.length > 0 || Boolean(result.filesChanged),
     filesChangedPaths,

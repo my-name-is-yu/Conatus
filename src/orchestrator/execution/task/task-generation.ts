@@ -6,6 +6,7 @@ import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { TaskSchema } from "../../../base/types/task.js";
+import { TaskArtifactContractSchema } from "../../../base/types/task.js";
 import type { Task } from "../../../base/types/task.js";
 import { TaskGroupSchema } from "../../../base/types/index.js";
 import type { TaskGroup } from "../../../base/types/index.js";
@@ -19,6 +20,7 @@ import {
   isGeneratedTaskAllowedForExecutionMode,
   type ExecutionModeState,
 } from "../../../platform/time/execution-mode.js";
+import { isArtifactContractRequired } from "./task-artifact-contract.js";
 
 // ─── Schema for LLM-generated task fields ───
 
@@ -47,6 +49,7 @@ export const LLMGeneratedTaskSchema = z.object({
       rationale: z.string().nullable().default(null),
     }).default({}),
   }).default({}),
+  artifact_contract: TaskArtifactContractSchema.default({}),
   reversibility: z.enum(["reversible", "irreversible", "unknown"]).default("reversible"),
   intended_direction: z.enum(["increase", "decrease", "neutral"]).optional(),
   estimated_duration: z
@@ -178,6 +181,7 @@ const DUPLICATE_STATUS_ALLOWLIST = new Set([
   "failed",
   "error",
   "timed_out",
+  "blocked",
   "abandoned",
   "discarded",
 ]);
@@ -459,6 +463,15 @@ export async function generateTask(
 
   const taskId = randomUUID();
   const now = new Date().toISOString();
+  const goalForArtifactContract = await deps.stateManager.loadGoal(goalId).catch(() => null);
+  const artifactContractRequired = isArtifactContractRequired({
+    artifactContract: generated.artifact_contract,
+    taskConstraints: generated.constraints,
+    goal: goalForArtifactContract,
+  });
+  const artifactContract = artifactContractRequired
+    ? { ...generated.artifact_contract, required: true }
+    : generated.artifact_contract;
 
   const task = TaskSchema.parse({
     id: taskId,
@@ -473,6 +486,7 @@ export async function generateTask(
     scope_boundary: generated.scope_boundary,
     constraints: generated.constraints,
     risk_profile: generated.risk_profile,
+    artifact_contract: artifactContract,
     reversibility: generated.reversibility,
     intended_direction: generated.intended_direction,
     estimated_duration: generated.estimated_duration,
@@ -523,6 +537,7 @@ const LLMTaskGroupSchema = z.object({
           rationale: z.string().nullable().default(null),
         }).default({}),
       }).default({}),
+      artifact_contract: TaskArtifactContractSchema.default({}),
       reversibility: z.enum(["reversible", "irreversible", "unknown"]).default("reversible"),
     })
   ).min(2),
@@ -570,14 +585,16 @@ export async function generateTaskGroup(
     ``,
     `Respond with a JSON object inside a markdown code block with this structure:`,
     `{`,
-    `  "subtasks": [ { "work_description", "rationale", "approach", "target_dimension", "success_criteria", "scope_boundary", "constraints", "risk_profile", "reversibility" }, ... ],`,
+    `  "subtasks": [ { "work_description", "rationale", "approach", "target_dimension", "success_criteria", "scope_boundary", "constraints", "risk_profile", "artifact_contract", "reversibility" }, ... ],`,
     `  "dependencies": [ { "from": "<subtask index>", "to": "<subtask index>" }, ... ],`,
     `  "file_ownership": { "<subtask index>": ["file1", "file2"], ... },`,
     `  "shared_context": "<optional shared context for all subtasks>"`,
     `}`,
     ``,
     `Use subtask array index (as string) for dependency/ownership keys. Ensure at least 2 subtasks.`,
-    `Set risk_profile.external_action from each subtask's intended side effects. Use action_kind "none" only when the subtask stays local; use "unknown" with approval_required true when uncertain.`
+    `Set risk_profile.external_action from each subtask's intended side effects. Use action_kind "none" only when the subtask stays local; use "unknown" with approval_required true when uncertain.`,
+    `Always include artifact_contract. Use artifact_contract.required=false and an empty required_artifacts array when generated artifacts are not completion evidence.`,
+    `For Kaggle/profile experiment subtasks that claim score or submission progress, set artifact_contract.required=true and include required_artifacts entries for fresh metrics_json and submission_csv outputs.`
   );
 
   const prompt = promptParts.join("\n");
@@ -646,6 +663,7 @@ export async function generateTaskGroup(
       scope_boundary: sub.scope_boundary,
       constraints: sub.constraints,
       risk_profile: sub.risk_profile,
+      artifact_contract: sub.artifact_contract,
       reversibility: sub.reversibility,
       estimated_duration: null,
       status: "pending",

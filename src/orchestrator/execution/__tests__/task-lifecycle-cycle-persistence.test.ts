@@ -63,6 +63,10 @@ const VALID_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "tests/ directory only"
   },
   "constraints": ["Must not modify production code"],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": { "value": 2, "unit": "hours" }
 }
@@ -182,6 +186,37 @@ function makeNativeDirtyHandoffRunner(): TaskAgentLoopRunner {
     traceId: "trace-1",
     sessionId: "session-1",
     turnId: "turn-1",
+  };
+  return {
+    runTask: async () => result,
+  } as unknown as TaskAgentLoopRunner;
+}
+
+function makeNativeBlockedRunner(): TaskAgentLoopRunner {
+  const result: AgentLoopResult<TaskAgentLoopOutput> = {
+    success: true,
+    output: {
+      status: "blocked",
+      finalAnswer: "Experiment execution could not run.",
+      summary: "blocked",
+      filesChanged: [],
+      testsRun: [],
+      completionEvidence: [],
+      verificationHints: [],
+      blockers: ["Kaggle API token is unavailable."],
+    },
+    finalText: "Experiment execution could not run.",
+    stopReason: "completed",
+    elapsedMs: 100,
+    modelTurns: 1,
+    toolCalls: 0,
+    compactions: 0,
+    filesChanged: false,
+    changedFiles: [],
+    commandResults: [],
+    traceId: "trace-blocked",
+    sessionId: "session-blocked",
+    turnId: "turn-blocked",
   };
   return {
     runTask: async () => result,
@@ -580,6 +615,40 @@ describe("TaskLifecycle — persistence", () => {
     expect(verification.agent_loop).toMatchObject({
       isolatedWorkspace: true,
       workspaceDisposition: "handoff_required",
+    });
+  });
+
+  it("preserves native blocked task results through task status and ledger stop reason", async () => {
+    const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_FAIL]);
+    const lifecycle = createLifecycle(llm, {
+      approvalFn: async () => true,
+      agentLoopRunner: makeNativeBlockedRunner(),
+    });
+    const adapter: import("../task/task-lifecycle.js").IAdapter = {
+      adapterType: "mock",
+      async execute() {
+        throw new Error("native path should not call adapter.execute");
+      },
+    };
+
+    const result = await lifecycle.runTaskCycle(
+      "goal-1",
+      makeGapVector("goal-1", "dim"),
+      makeDriveContext("dim"),
+      adapter
+    );
+
+    const ledger = await stateManager.readRaw(`tasks/goal-1/ledger/${result.task.id}.json`) as {
+      events: Array<{ type: string; stopped_reason: string | null }>;
+      summary: { task_status: string; stopped_reason: string | null };
+    };
+
+    expect(result.task.status).toBe("blocked");
+    expect(result.task.execution_output).toContain("Kaggle API token is unavailable");
+    expect(ledger.events.map((event) => [event.type, event.stopped_reason])).toContainEqual(["failed", "blocked"]);
+    expect(ledger.summary).toMatchObject({
+      task_status: "blocked",
+      stopped_reason: "blocked",
     });
   });
 

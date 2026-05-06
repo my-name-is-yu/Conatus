@@ -542,8 +542,10 @@ export class TaskLifecycle {
         stateManager: this.stateManager,
         task: runningTask,
       });
+      const artifactGoal = await this.stateManager.loadGoal(runningTask.goal_id).catch(() => null);
       const agentLoopResult = await this.agentLoopRunner.runTask({
         task: runningTask,
+        artifactGoal,
         workspaceContext,
         knowledgeContext,
         cwd: taskCwd,
@@ -584,6 +586,7 @@ export class TaskLifecycle {
       result.success ? "completed" as const :
       result.stopped_reason === "timeout" ? "timed_out" as const :
       result.stopped_reason === "cancelled" ? "cancelled" as const :
+      result.stopped_reason === "blocked" ? "blocked" as const :
       "error" as const;
     await this.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, {
       ...runningTask,
@@ -592,6 +595,7 @@ export class TaskLifecycle {
       ...(nextStatus === "completed" ? { completed_at: completedAt } : {}),
       ...(nextStatus === "timed_out" ? { timeout_at: completedAt } : {}),
       ...(nextStatus === "cancelled" ? { stopped_at: completedAt } : {}),
+      ...(nextStatus === "blocked" ? { stopped_at: completedAt } : {}),
     });
 
     await appendTaskOutcomeEvent(this.stateManager, {

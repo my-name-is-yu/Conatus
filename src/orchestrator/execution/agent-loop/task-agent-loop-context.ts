@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { cwd as processCwd } from "node:process";
+import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
@@ -13,9 +14,11 @@ import { TaskAgentLoopOutputSchema, type TaskAgentLoopOutput } from "./task-agen
 import { buildAgentLoopBaseInstructions } from "./agent-loop-prompts.js";
 import { isTaskRelevantVerificationCommand } from "./task-agent-loop-verification.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
+import { verifyTaskArtifactContract } from "../task/task-artifact-contract.js";
 
 export interface TaskAgentLoopContextInput {
   task: Task;
+  artifactGoal?: Pick<Goal, "constraints"> | null;
   model: AgentLoopModelRef;
   modelInfo: AgentLoopModelInfo;
   session: AgentLoopSession;
@@ -79,7 +82,7 @@ export function buildTaskAgentLoopTurnContext(
     outputSchema: TaskAgentLoopOutputSchema,
     budget: withDefaultBudget(input.budget),
     toolPolicy: input.toolPolicy ?? {},
-    completionValidator: ({ output, changedFiles, commandResults }): AgentLoopCompletionValidationResult => {
+    completionValidator: async ({ output, changedFiles, commandResults }): Promise<AgentLoopCompletionValidationResult> => {
       if (output.status !== "done") return { ok: true, reasons: [] };
 
       const reasons: string[] = [];
@@ -102,6 +105,12 @@ export function buildTaskAgentLoopTurnContext(
       }
       if (claimedChangedFiles.length > 0 && runtimeVerifiedCommands.length < 1) {
         reasons.push(`You claimed changed files (${claimedChangedFiles.slice(0, 5).join(", ")}) but no successful runtime verification command was observed.`);
+      }
+      const artifactVerification = await verifyTaskArtifactContract(input.task, cwd, {
+        goal: input.artifactGoal,
+      });
+      if (artifactVerification.applicable && !artifactVerification.passed) {
+        reasons.push(artifactVerification.description);
       }
 
       return {
