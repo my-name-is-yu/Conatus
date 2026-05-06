@@ -328,6 +328,8 @@ describe("buildTaskGenerationPrompt — recent failed task history", () => {
               verification_verdict: "fail",
               consecutive_failure_count: 1,
               verification_evidence: ["execution failed before applying a durable recovery change"],
+              recovery_reason: "task execution interrupted before resident CLI startup",
+              retry_intent: "resident CLI startup preserved task for retry",
             },
           ];
         }
@@ -345,6 +347,8 @@ describe("buildTaskGenerationPrompt — recent failed task history", () => {
     expect(prompt).toContain("Recent Failed/Discarded Task Attempts");
     expect(prompt).toContain("Add focused daemon recovery regression test");
     expect(prompt).toContain("execution failed before applying a durable recovery change");
+    expect(prompt).toContain("recovery: task execution interrupted before resident CLI startup");
+    expect(prompt).toContain("retry intent: resident CLI startup preserved task for retry");
     expect(prompt).toContain("Do not generate another task that repeats the same edit/test direction");
   });
 });

@@ -176,6 +176,7 @@ import { ProactiveInterventionStore } from "../../../runtime/store/proactive-int
 import { createRelationshipProfileChangeProposal } from "../../../platform/profile/profile-change-proposal.js";
 import type { LoopResult } from "../../../orchestrator/loop/durable-loop.js";
 import type { Goal } from "../../../base/types/goal.js";
+import type { Task } from "../../../base/types/task.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 
@@ -222,6 +223,44 @@ function makeApproval(overrides: Record<string, unknown> = {}) {
     response_channel: "chat",
     ...overrides,
   });
+}
+
+function makeTask(overrides: Partial<Task> = {}): Task {
+  return {
+    id: "task-1",
+    goal_id: "goal-1",
+    strategy_id: null,
+    target_dimensions: ["dim"],
+    primary_dimension: "dim",
+    work_description: "test task",
+    rationale: "test rationale",
+    approach: "test approach",
+    success_criteria: [
+      {
+        description: "Tests pass",
+        verification_method: "npx vitest run",
+        is_blocking: true,
+      },
+    ],
+    scope_boundary: {
+      in_scope: ["module A"],
+      out_of_scope: ["module B"],
+      blast_radius: "low",
+    },
+    constraints: [],
+    plateau_until: null,
+    estimated_duration: { value: 2, unit: "hours" },
+    consecutive_failure_count: 0,
+    reversibility: "reversible",
+    task_category: "normal",
+    status: "pending",
+    started_at: null,
+    completed_at: null,
+    timeout_at: null,
+    heartbeat_at: null,
+    created_at: new Date().toISOString(),
+    ...overrides,
+  };
 }
 
 // No argv wrapper needed — run() accepts pure subcommand args directly.
@@ -679,6 +718,56 @@ describe("run subcommand", async () => {
         runPolicy: { mode: "resident", maxIterations: null },
       })
     );
+  });
+
+  it("reconciles interrupted task records before resident CoreLoop.run starts", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "g-resident-recover" }));
+    const runningTask = makeTask({
+      id: "task-resident-recover",
+      goal_id: "g-resident-recover",
+      status: "running",
+      started_at: new Date(Date.now() - 5_000).toISOString(),
+    });
+    await stateManager.writeRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`, runningTask);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const mockRun = vi.fn().mockImplementation(async () => {
+      const taskAtLoopStart = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Task;
+      expect(taskAtLoopStart.status).toBe("error");
+      expect(taskAtLoopStart.execution_output).toContain("[RECOVERED]");
+      return makeLoopResult({ goalId: "g-resident-recover" });
+    });
+    vi.mocked(CoreLoop).mockImplementation(function() { return {
+      run: mockRun,
+      stop: vi.fn(),
+      setTimeHorizonEngine: vi.fn(),
+    } as unknown as CoreLoop; });
+
+    const code = await runCLI("run", "--goal", "g-resident-recover", "--resident", "--yes");
+
+    expect(code).toBe(0);
+    expect(mockRun).toHaveBeenCalledWith("g-resident-recover");
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("Recovered interrupted task executions for 1 goal(s) before resident loop startup.");
+
+    const history = await stateManager.readRaw(`tasks/${runningTask.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
+    expect(history.at(-1)).toMatchObject({
+      task_id: "task-resident-recover",
+      status: "error",
+      recovery_source: "resident_cli_startup",
+      recovery_reason: "task execution interrupted before resident CLI startup",
+      retry_intent: "resident CLI startup preserved task for retry",
+    });
+    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as {
+      events: Array<{ type: string; action?: string; reason?: string }>;
+    };
+    expect(ledger.events.map((event) => event.type)).toEqual(["failed", "retried"]);
+    expect(ledger.events[0]?.reason).toBe("task execution interrupted before resident CLI startup");
+    expect(ledger.events[1]).toMatchObject({
+      action: "keep",
+      reason: "resident CLI startup preserved task for retry",
+    });
+    consoleSpy.mockRestore();
   });
 });
 

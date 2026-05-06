@@ -168,6 +168,8 @@ interface TaskHistoryEntry {
   status: string;
   verification_verdict?: string | null;
   consecutive_failure_count?: number;
+  recovery_reason?: string;
+  retry_intent?: string;
 }
 
 const DUPLICATE_HISTORY_WINDOW = 30;

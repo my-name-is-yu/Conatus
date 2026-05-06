@@ -11,9 +11,19 @@ export async function reconcileInterruptedExecutions(params: {
   baseDir: string;
   stateManager: StateManager;
   logger: Pick<Logger, "warn">;
+  interruptedOutputMessage?: string;
+  failedEventReason?: string;
+  retryEventReason?: string;
+  recoverySource?: string;
 }): Promise<string[]> {
   const recoveredGoalIds = new Set<string>();
   const now = new Date().toISOString();
+  const interruptedOutputMessage =
+    params.interruptedOutputMessage ??
+    "[RECOVERED] Task execution was interrupted by daemon crash or restart before completion.";
+  const failedEventReason = params.failedEventReason ?? "task execution interrupted by daemon recovery";
+  const retryEventReason = params.retryEventReason ?? "daemon restarted; task preserved for retry";
+  const recoverySource = params.recoverySource ?? "daemon_startup";
 
   for (const task of await findRunningTasks(params.baseDir, params.stateManager)) {
     const recoveredTask: Task = TaskSchema.parse({
@@ -23,26 +33,30 @@ export async function reconcileInterruptedExecutions(params: {
       heartbeat_at: now,
       execution_output: [
         task.execution_output,
-        "[RECOVERED] Task execution was interrupted by daemon crash or restart before completion.",
+        interruptedOutputMessage,
       ]
         .filter((value): value is string => typeof value === "string" && value.length > 0)
         .join("\n"),
     });
 
     await params.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, recoveredTask);
-    await appendRecoveredTaskHistory(params.stateManager, recoveredTask);
+    await appendRecoveredTaskHistory(params.stateManager, recoveredTask, {
+      recoverySource,
+      recovery_reason: failedEventReason,
+      retry_intent: retryEventReason,
+    });
     await appendTaskOutcomeEvent(params.stateManager, {
       task: recoveredTask,
       type: "failed",
       attempt: Math.max(task.consecutive_failure_count + 1, 1),
-      reason: "task execution interrupted by daemon recovery",
+      reason: failedEventReason,
     });
     await appendTaskOutcomeEvent(params.stateManager, {
       task: recoveredTask,
       type: "retried",
       attempt: Math.max(task.consecutive_failure_count + 1, 1),
       action: "keep",
-      reason: "daemon restarted; task preserved for retry",
+      reason: retryEventReason,
     });
     recoveredGoalIds.add(task.goal_id);
   }
@@ -107,7 +121,12 @@ export async function findRunningTasks(baseDir: string, stateManager: StateManag
 
 export async function appendRecoveredTaskHistory(
   stateManager: StateManager,
-  task: Task
+  task: Task,
+  recovery: {
+    recoverySource: string;
+    recovery_reason: string;
+    retry_intent: string;
+  }
 ): Promise<void> {
   const historyPath = `tasks/${task.goal_id}/task-history.json`;
   const existing = await stateManager.readRaw(historyPath);
@@ -125,6 +144,9 @@ export async function appendRecoveredTaskHistory(
     completed_at: task.completed_at ?? new Date().toISOString(),
     actual_elapsed_ms: actualElapsedMs,
     estimated_duration_ms: task.estimated_duration ? durationToMs(task.estimated_duration) : null,
+    recovery_source: recovery.recoverySource,
+    recovery_reason: recovery.recovery_reason,
+    retry_intent: recovery.retry_intent,
   });
   await stateManager.writeRaw(historyPath, history);
 }

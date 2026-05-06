@@ -28,6 +28,8 @@ interface PromptTaskHistoryEntry {
   verification_verdict?: string | null;
   verification_evidence?: string[];
   consecutive_failure_count?: number;
+  recovery_reason?: string;
+  retry_intent?: string;
 }
 
 function clampSection(content: string, maxChars: number, label: string): string {
@@ -156,7 +158,9 @@ async function buildRecentFailureHistorySection(
     const evidence = entry.verification_evidence?.length
       ? ` — evidence: ${entry.verification_evidence.slice(0, 2).join("; ")}`
       : "";
-    lines.push(`- [${entry.status ?? "unknown"}${verdict}] ${description}${evidence}`);
+    const recoveryReason = entry.recovery_reason ? ` — recovery: ${entry.recovery_reason}` : "";
+    const retryIntent = entry.retry_intent ? ` — retry intent: ${entry.retry_intent}` : "";
+    lines.push(`- [${entry.status ?? "unknown"}${verdict}] ${description}${evidence}${recoveryReason}${retryIntent}`);
   }
 
   if (lines.length === 0) return "";
