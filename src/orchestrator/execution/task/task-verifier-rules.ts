@@ -1,9 +1,8 @@
-import { z } from "zod";
 import * as path from "node:path";
 import type { Task } from "../../../base/types/task.js";
 import type { VerificationResult } from "../../../base/types/task.js";
 import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
-import type { VerifierDeps } from "./task-verifier-types.js";
+import type { RevertAttemptResult, VerifierDeps } from "./task-verifier-types.js";
 import { syncTaskOutcomeSummary } from "./task-outcome-ledger.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
@@ -462,101 +461,131 @@ function isRelativeGitPath(filePath: string): boolean {
   return !segments.includes("..");
 }
 
+function shellStdout(data: unknown): string {
+  return data &&
+    typeof data === "object" &&
+    "stdout" in data &&
+    typeof (data as { stdout?: unknown }).stdout === "string"
+    ? (data as { stdout: string }).stdout
+    : "";
+}
+
 export async function attemptRevert(
   deps: VerifierDeps,
   task: Task,
   opts: { concretePaths?: string[] } = {}
-): Promise<boolean> {
+): Promise<RevertAttemptResult> {
   const filesToRestore = [
     ...new Set((opts.concretePaths ?? []).map((filePath) => filePath.trim()).filter(Boolean)),
   ];
-  try {
-    if (filesToRestore.length > 0) {
-      const revertCwd = await resolveRevertCwd(deps, task);
-      if (!revertCwd) {
-        deps.logger?.warn?.("[attemptRevert] skipping raw git restore because no workspace_path/revertCwd was configured");
-        throw new Error("git restore disabled without explicit workspace");
-      }
-      if (deps.toolExecutor) {
-        // Use ToolExecutor (preferred): keeps all shell ops in the tool pipeline
-        const ctx: import("../../../tools/types.js").ToolCallContext = {
-          cwd: revertCwd,
-          goalId: task.goal_id,
-          trustBalance: 100,
-          preApproved: true,
-          trusted: true,
-          approvalFn: async () => true,
-        };
-        const allSafe = filesToRestore.every(isRelativeGitPath);
-        if (!allSafe) {
-          deps.logger?.warn?.(
-            "[attemptRevert] concrete changed path failed git-restore path validation; falling back to LLM revert"
-          );
-          throw new Error("git restore disabled for invalid concrete changed path");
-        } else {
-          const result = await deps.toolExecutor.execute(
-            "shell",
-            { command: "git restore -- " + filesToRestore.map(quoteShellArg).join(" ") },
-            ctx
-          );
-          if (result.success) {
-            deps.logger?.info?.(`[attemptRevert] git restore succeeded for ${filesToRestore.length} files (via ToolExecutor)`);
-            return true;
-          }
-          // Fall through to LLM-based revert if shell tool failed
-        }
-      } else {
-        // Fallback: raw child_process (no ToolExecutor available)
-        const { execFileSync } = await import("child_process");
-        execFileSync("git", ["restore", "--", ...filesToRestore], {
-          cwd: revertCwd,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-        deps.logger?.info?.(`[attemptRevert] git restore succeeded for ${filesToRestore.length} files`);
-        return true;
-      }
-    } else {
-      deps.logger?.warn?.("[attemptRevert] skipping raw git restore because no concrete changed paths were captured");
-    }
-  } catch {
-    // git not available or failed — fall back to LLM-based revert
+  if (filesToRestore.length === 0) {
+    deps.logger?.warn?.("[attemptRevert] skipping raw git restore because no concrete changed paths were captured");
+    return {
+      success: false,
+      concretePaths: [],
+      reason: "no_concrete_changed_paths",
+    };
+  }
+
+  const revertCwd = await resolveRevertCwd(deps, task);
+  if (!revertCwd) {
+    deps.logger?.warn?.("[attemptRevert] skipping raw git restore because no workspace_path/revertCwd was configured");
+    return {
+      success: false,
+      concretePaths: filesToRestore,
+      reason: "missing_explicit_workspace",
+    };
+  }
+
+  const allSafe = filesToRestore.every(isRelativeGitPath);
+  if (!allSafe) {
+    deps.logger?.warn?.("[attemptRevert] concrete changed path failed git-restore path validation; refusing revert");
+    return {
+      success: false,
+      concretePaths: filesToRestore,
+      reason: "invalid_concrete_changed_path",
+    };
   }
 
   try {
-    const revertSession = await deps.sessionManager.createSession(
-      "task_execution",
-      task.goal_id,
-      task.id
-    );
-
-    const revertTargetSummary =
-      filesToRestore.length > 0
-        ? `Concrete changed paths: ${filesToRestore.join(", ")}.`
-        : "No concrete changed paths were captured. Do not treat task scope descriptions as file paths.";
-
-    const revertPrompt = `Revert task "${task.work_description}". ${revertTargetSummary}
-
-Return JSON: {"success": true|false, "reason": "..."}`;
-
-    const response = await deps.llmClient.sendMessage(
-      [{ role: "user", content: revertPrompt }],
-      { system: "Revert failed task changes. Respond with JSON only.", max_tokens: 512, model_tier: "main" }
-    );
-
-    await deps.sessionManager.endSession(revertSession.id, response.content);
-
-    try {
-      const parsed = deps.llmClient.parseJSON(
-        response.content,
-        z.object({ success: z.boolean(), reason: z.string() })
+    if (deps.toolExecutor) {
+      // Use ToolExecutor (preferred): keeps all shell ops in the tool pipeline.
+      const ctx: import("../../../tools/types.js").ToolCallContext = {
+        cwd: revertCwd,
+        goalId: task.goal_id,
+        trustBalance: 100,
+        preApproved: true,
+        trusted: true,
+        approvalFn: async () => true,
+      };
+      const pathArgs = filesToRestore.map(quoteShellArg).join(" ");
+      const result = await deps.toolExecutor.execute(
+        "shell",
+        { command: "git restore --staged --worktree -- " + pathArgs },
+        ctx
       );
-      return parsed.success;
-    } catch {
-      return false;
+      if (result.success) {
+        const statusResult = await deps.toolExecutor.execute(
+          "shell",
+          { command: "git status --porcelain -- " + pathArgs },
+          ctx
+        );
+        const statusOutput = shellStdout(statusResult.data).trim();
+        if (!statusResult.success || statusOutput.length > 0) {
+          return {
+            success: false,
+            concretePaths: filesToRestore,
+            reason: statusOutput.length > 0
+              ? `git restore left changes for concrete paths: ${statusOutput}`
+              : statusResult.error ?? statusResult.summary ?? "git_status_after_restore_failed",
+          };
+        }
+        deps.logger?.info?.(`[attemptRevert] git restore succeeded for ${filesToRestore.length} files (via ToolExecutor)`);
+        return {
+          success: true,
+          concretePaths: filesToRestore,
+          reason: "git_restore_succeeded",
+          method: "git_restore_tool",
+        };
+      }
+      return {
+        success: false,
+        concretePaths: filesToRestore,
+        reason: result.error ?? result.summary ?? "git_restore_failed",
+      };
     }
-  } catch {
-    return false;
+
+    const { execFileSync } = await import("child_process");
+    execFileSync("git", ["restore", "--staged", "--worktree", "--", ...filesToRestore], {
+      cwd: revertCwd,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const statusOutput = execFileSync("git", ["status", "--porcelain", "--", ...filesToRestore], {
+      cwd: revertCwd,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (statusOutput.length > 0) {
+      return {
+        success: false,
+        concretePaths: filesToRestore,
+        reason: `git restore left changes for concrete paths: ${statusOutput}`,
+      };
+    }
+    deps.logger?.info?.(`[attemptRevert] git restore succeeded for ${filesToRestore.length} files`);
+    return {
+      success: true,
+      concretePaths: filesToRestore,
+      reason: "git_restore_succeeded",
+      method: "git_restore_child_process",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      concretePaths: filesToRestore,
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

@@ -454,9 +454,7 @@ describe("attemptRevert safety", () => {
     const originalCwd = process.cwd();
     process.chdir(repoDir);
     try {
-      const llmClient = createMockLLMClient([
-        '```json\n{"success": false, "reason": "Skip raw git restore in tests"}\n```',
-      ]);
+      const llmClient = createMockLLMClient([]);
       const deps: VerifierDeps = {
         stateManager,
         llmClient,
@@ -511,6 +509,42 @@ describe("attemptRevert safety", () => {
     }
   });
 
+  it("requires staged changes to be restored before discarding", async () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
+    initGitRepo(repoDir);
+    fs.writeFileSync(path.join(repoDir, "report.md"), "staged output\n", "utf-8");
+    execFileSync("git", ["add", "report.md"], { cwd: repoDir, stdio: "pipe" });
+
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: repoDir,
+    };
+    const task = makeTask({
+      scope_boundary: { in_scope: ["report.md"], out_of_scope: [], blast_radius: "low" },
+      reversibility: "reversible",
+    });
+
+    try {
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await handleFailure(deps, task, makeFailureVerificationResult(["report.md"]));
+
+      expect(result.action).toBe("discard");
+      expect(fs.existsSync(path.join(repoDir, "report.md"))).toBe(false);
+      expect(execFileSync("git", ["status", "--porcelain", "--", "report.md"], {
+        cwd: repoDir,
+        encoding: "utf-8",
+        stdio: "pipe",
+      })).toBe("");
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not treat natural-language scope descriptions as revert file paths", async () => {
     const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
     initGitRepo(repoDir);
@@ -523,9 +557,7 @@ describe("attemptRevert safety", () => {
     } as unknown as Logger;
     const deps: VerifierDeps = {
       stateManager,
-      llmClient: createMockLLMClient([
-        '```json\n{"success": false, "reason": "No concrete paths captured"}\n```',
-      ]),
+      llmClient: createMockLLMClient([]),
       sessionManager,
       trustManager,
       stallDetector,
@@ -559,6 +591,48 @@ describe("attemptRevert safety", () => {
       ).toBe(false);
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not discard non-git patch output when revert lacks concrete restore evidence", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-non-git-"));
+    fs.writeFileSync(path.join(workspace, "report.md"), "fresh task output\n", "utf-8");
+    const llmClient = createMockLLMClient([]);
+    const logger = {
+      warn: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as Logger;
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient,
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: workspace,
+      logger,
+    };
+    const task = makeTask({
+      scope_boundary: { in_scope: ["report.md"], out_of_scope: [], blast_radius: "low" },
+      reversibility: "reversible",
+    });
+
+    try {
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await handleFailure(deps, task, makeFailureVerificationResult(["report.md"]));
+
+      expect(result.action).toBe("escalate");
+      expect(fs.readFileSync(path.join(workspace, "report.md"), "utf-8")).toBe("fresh task output\n");
+      expect(llmClient.callCount).toBe(0);
+      expect(logger.warn).toHaveBeenCalledWith("[task] revert attempted", expect.objectContaining({
+        taskId: task.id,
+        success: false,
+        concretePaths: ["report.md"],
+      }));
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
     }
   });
 

@@ -129,6 +129,7 @@ describe("executeTask protected paths", () => {
     } as unknown as IAdapter;
     execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === "diff" && args[1] === "--name-only") return "src/changed.ts\n.env";
+      if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
       if (args[0] === "ls-files") return "";
       if (args[0] === "diff") return [
         `diff --git a/${args[3]} b/${args[3]}`,

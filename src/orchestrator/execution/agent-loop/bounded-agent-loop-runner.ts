@@ -15,6 +15,7 @@ import type {
   AgentLoopToolObservationState,
 } from "./agent-loop-model.js";
 import type { AgentLoopCommandResult, AgentLoopResult, AgentLoopToolResultSummary } from "./agent-loop-result.js";
+import type { AgentLoopToolOutput } from "./agent-loop-tool-output.js";
 import type { AgentLoopToolRuntime } from "./agent-loop-tool-runtime.js";
 import type { AgentLoopToolRouter } from "./agent-loop-tool-router.js";
 import type { AgentLoopTurnContext } from "./agent-loop-turn-context.js";
@@ -37,6 +38,20 @@ export interface BoundedAgentLoopRunnerDeps {
   toolRouter: AgentLoopToolRouter;
   toolRuntime: AgentLoopToolRuntime;
   compactor?: AgentLoopCompactor;
+}
+
+function readToolResultCheckOnly(result: AgentLoopToolOutput): boolean | undefined {
+  const data = result.rawResult?.data;
+  if (
+    result.toolName === "apply_patch" &&
+    data &&
+    typeof data === "object" &&
+    "checkOnly" in data &&
+    typeof (data as { checkOnly?: unknown }).checkOnly === "boolean"
+  ) {
+    return (data as { checkOnly: boolean }).checkOnly;
+  }
+  return undefined;
 }
 
 interface FilesystemSnapshotEntry {
@@ -414,10 +429,13 @@ export class BoundedAgentLoopRunner {
         if (result.success) consecutiveToolErrors = 0;
         else consecutiveToolErrors++;
 
+        const checkOnly = readToolResultCheckOnly(result);
         toolResultSummaries.push({
           toolName: result.toolName,
           success: result.success,
           ...(result.execution ? { execution: result.execution } : {}),
+          ...(result.artifacts ? { artifacts: result.artifacts } : {}),
+          ...(checkOnly !== undefined ? { checkOnly } : {}),
           outputSummary: this.preview(result.content),
           durationMs: result.durationMs,
         });
