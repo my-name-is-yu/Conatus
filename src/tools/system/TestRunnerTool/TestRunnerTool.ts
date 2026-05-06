@@ -3,6 +3,7 @@ import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMet
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
+import { resolveWorkspaceCwd, resolveWorkspacePath } from "../../workspace-scope.js";
 
 export const TestRunnerInputSchema = z.object({
   command: z.string().default("npx vitest run"),
@@ -110,6 +111,111 @@ function buildTestCommand(command: string, pattern?: string): { cmd: string; arg
   return { cmd, args };
 }
 
+function validateTestCommand(
+  input: TestRunnerInput,
+  scope?: { cwd: string; workspaceRoot: string },
+): string | null {
+  const command = input.command;
+  const parts = command.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "Test command must not be empty.";
+  if (/[;&|`$<>]/.test(command)) return "Test command contains shell control characters.";
+  const [cmd, first, second] = parts;
+  let argsStart: number | null = null;
+  if (cmd === "npx" && first === "vitest" && ["run", "list"].includes(second ?? "run")) argsStart = second ? 3 : 2;
+  if (cmd === "npx" && first === "vitest" && second === "--reporter") argsStart = 2;
+  if (cmd === "npx" && first === "jest") argsStart = 2;
+  if (cmd === "npm" && first === "test") argsStart = 2;
+  if (cmd === "npm" && first === "run" && typeof second === "string" && /^test(?::|$)/.test(second)) argsStart = 3;
+  if (cmd === "vitest" && ["run", "list"].includes(first ?? "run")) argsStart = first ? 2 : 1;
+  if (cmd === "vitest" && first === "--reporter") argsStart = 1;
+  if (cmd === "jest") argsStart = 1;
+  if (cmd === "mocha") argsStart = 1;
+  if (argsStart !== null) {
+    return validateTestArgs([...parts.slice(argsStart), ...(input.pattern ? [input.pattern] : [])], scope);
+  }
+  return `Command is not a recognized test runner invocation: ${command.trim()}`;
+}
+
+const PATH_VALUE_OPTIONS = new Set([
+  "--config",
+  "-c",
+  "--root",
+  "--dir",
+  "--project",
+  "--workspace",
+  "--globalSetup",
+  "--setupFiles",
+  "--setupFilesAfterEnv",
+  "--testMatch",
+  "--testRegex",
+  "--testPathPattern",
+  "--runTestsByPath",
+  "--require",
+  "-r",
+  "--file",
+  "--spec",
+]);
+
+function validateTestArgs(args: string[], scope?: { cwd: string; workspaceRoot: string }): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--") continue;
+
+    const equalsIndex = arg.indexOf("=");
+    if (equalsIndex > 0) {
+      const option = arg.slice(0, equalsIndex);
+      const value = arg.slice(equalsIndex + 1);
+      if (PATH_VALUE_OPTIONS.has(option) || isPathLikeArg(value) || /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+        const error = validateWorkspaceArgPath(value, scope, option);
+        if (error) return error;
+        continue;
+      }
+    }
+
+    if (PATH_VALUE_OPTIONS.has(arg)) {
+      const value = args[i + 1];
+      if (!value || value.startsWith("-")) return `Test command option ${arg} requires a workspace path value.`;
+      const error = validateWorkspaceArgPath(value, scope, arg);
+      if (error) return error;
+      i++;
+      continue;
+    }
+
+    if (isPathLikeArg(arg)) {
+      const error = validateWorkspaceArgPath(arg, scope, "test argument");
+      if (error) return error;
+    }
+  }
+  return null;
+}
+
+function validateWorkspaceArgPath(
+  value: string,
+  scope: { cwd: string; workspaceRoot: string } | undefined,
+  source: string,
+): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return `Test command ${source} must not be empty.`;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    return `Test command ${source} must be a workspace path, not a URL.`;
+  }
+  if (!scope) return null;
+  const validation = resolveWorkspacePath(trimmed, scope.cwd, scope.workspaceRoot);
+  if (validation.valid) return null;
+  return `Test command ${source} escapes workspace root: ${validation.resolved}`;
+}
+
+function isPathLikeArg(arg: string): boolean {
+  if (arg.startsWith("-")) return false;
+  return arg.startsWith("/")
+    || arg.startsWith("./")
+    || arg.startsWith("../")
+    || arg === ".."
+    || arg.startsWith("~/")
+    || arg.includes("/")
+    || /\.(?:[cm]?[jt]sx?|json)$/.test(arg);
+}
+
 export class TestRunnerTool implements ITool<TestRunnerInput, TestRunnerOutput> {
   readonly metadata: ToolMetadata = {
     name: "test-runner",
@@ -133,7 +239,32 @@ export class TestRunnerTool implements ITool<TestRunnerInput, TestRunnerOutput> 
 
   async call(input: TestRunnerInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const cwd = input.cwd ?? context.cwd;
+    const cwdValidation = resolveWorkspaceCwd(input.cwd, context);
+    if (!cwdValidation.valid) {
+      return {
+        success: false,
+        data: { passed: 0, failed: 0, skipped: 0, total: 0, success: false, rawOutput: "" },
+        summary: `Test runner blocked: ${cwdValidation.error ?? "Invalid cwd"}`,
+        error: cwdValidation.error ?? "Invalid cwd",
+        execution: { status: "not_executed", reason: "policy_blocked", message: cwdValidation.error ?? "Invalid cwd" },
+        durationMs: Date.now() - startTime,
+      };
+    }
+    const commandError = validateTestCommand(input, {
+      cwd: cwdValidation.resolved,
+      workspaceRoot: cwdValidation.workspaceRoot,
+    });
+    if (commandError) {
+      return {
+        success: false,
+        data: { passed: 0, failed: 0, skipped: 0, total: 0, success: false, rawOutput: "" },
+        summary: `Test runner blocked: ${commandError}`,
+        error: commandError,
+        execution: { status: "not_executed", reason: "policy_blocked", message: commandError },
+        durationMs: Date.now() - startTime,
+      };
+    }
+    const cwd = cwdValidation.resolved;
     const { cmd, args } = buildTestCommand(input.command, input.pattern);
 
     try {
@@ -180,13 +311,21 @@ export class TestRunnerTool implements ITool<TestRunnerInput, TestRunnerOutput> 
     }
   }
 
-  async checkPermissions(input: TestRunnerInput): Promise<PermissionCheckResult> {
-    // Only allow safe test runners — validate first token to prevent bypass (e.g., "jest; rm -rf /")
-    const ALLOWED_BINARIES = ["npx", "npm", "node", "mocha", "jest", "vitest"];
-    const parts = input.command.trim().split(/\s+/);
-    const allowed = ALLOWED_BINARIES.includes(parts[0]);
-    if (!allowed) {
-      return { status: "needs_approval", reason: `Custom test command requires approval: ${input.command.trim()}` };
+  async checkPermissions(input: TestRunnerInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
+    let scope: { cwd: string; workspaceRoot: string } | undefined;
+    if (context) {
+      const cwdValidation = resolveWorkspaceCwd(input.cwd, context);
+      if (!cwdValidation.valid) {
+        return { status: "denied", reason: cwdValidation.error ?? "Invalid cwd", executionReason: "policy_blocked" };
+      }
+      scope = {
+        cwd: cwdValidation.resolved,
+        workspaceRoot: cwdValidation.workspaceRoot,
+      };
+    }
+    const commandError = validateTestCommand(input, scope);
+    if (commandError) {
+      return { status: "denied", reason: commandError, executionReason: "policy_blocked" };
     }
     return { status: "allowed" };
   }

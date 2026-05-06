@@ -101,6 +101,45 @@ describe("agent timeline activity summaries", () => {
     ]);
   });
 
+  it("projects full typed tool observations for display-layer consumers", () => {
+    const item = projectAgentLoopEventToTimeline(baseEvent({
+      type: "tool_observation",
+      eventId: "observation-1",
+      observation: {
+        type: "tool_observation",
+        callId: "call-1",
+        toolName: "shell_command",
+        arguments: { command: "echo ok" },
+        state: "success",
+        success: true,
+        execution: { status: "executed" },
+        durationMs: 5,
+        output: {
+          content: "Command succeeded",
+          summary: "Command succeeded",
+          data: { stdout: "ok\n", stderr: "", exitCode: 0 },
+        },
+        command: "echo ok",
+        cwd: "/repo",
+        activityCategory: "command",
+      },
+    }));
+
+    expect(item).toMatchObject({
+      kind: "tool_observation",
+      callId: "call-1",
+      toolName: "shell_command",
+      observation: {
+        type: "tool_observation",
+        arguments: { command: "echo ok" },
+        execution: { status: "executed" },
+        output: {
+          data: { stdout: "ok\n", stderr: "", exitCode: 0 },
+        },
+      },
+    });
+  });
+
   it("creates a shared summary item separate from detailed timeline items", () => {
     const items = [
       finishedTool("search-1", "shell_command", JSON.stringify({ command: "rg Timeline src" })),

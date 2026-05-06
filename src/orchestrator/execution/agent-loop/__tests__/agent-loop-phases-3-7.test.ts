@@ -294,7 +294,7 @@ describe("agentloop phase 3 tools", () => {
           },
         ], turn);
         expect(outsideOutput[0].success).toBe(false);
-        expect(outsideOutput[0].content).toContain("protected PulSeed source root");
+        expect(outsideOutput[0].content).toContain("cwd escapes workspace root");
         expect(fs.existsSync(path.join(tmpDir, "absolute-blocked.txt"))).toBe(false);
       } finally {
         fs.rmSync(outsideDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

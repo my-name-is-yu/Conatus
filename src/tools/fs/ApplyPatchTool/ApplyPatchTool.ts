@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { z } from "zod";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 import { validateProtectedPath } from "../FileValidationTool/protected-path-policy.js";
+import { resolveWorkspaceCwd } from "../../workspace-scope.js";
 
 export const ApplyPatchInputSchema = z.object({
   patch: z.string().min(1),
@@ -35,18 +36,44 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
 
   async call(input: ApplyPatchInput, context: ToolCallContext): Promise<ToolResult> {
     const started = Date.now();
-    const cwd = input.cwd ?? context.cwd;
-    if (input.patch.trimStart().startsWith("*** Begin Patch")) {
-      return this.callCodexPatch(input, cwd, started, context.executionPolicy?.protectedPaths);
+    const cwdValidation = resolveWorkspaceCwd(input.cwd, context);
+    if (!cwdValidation.valid) {
+      return {
+        success: false,
+        data: { changedPaths: [], stdout: "", stderr: cwdValidation.error ?? "Invalid cwd", checkOnly: input.checkOnly },
+        summary: `Patch blocked: ${cwdValidation.error ?? "Invalid cwd"}`,
+        error: cwdValidation.error ?? "Invalid cwd",
+        execution: { status: "not_executed", reason: "policy_blocked", message: cwdValidation.error ?? "Invalid cwd" },
+        durationMs: Date.now() - started,
+        artifacts: [],
+      };
     }
-    const changedPaths = extractPatchPaths(input.patch);
-    const blockedPath = findBlockedPatchPath(changedPaths, cwd, context.executionPolicy?.protectedPaths);
+    const cwd = cwdValidation.resolved;
+    const workspaceRoot = cwdValidation.workspaceRoot;
+    if (input.patch.trimStart().startsWith("*** Begin Patch")) {
+      return this.callCodexPatch(input, cwd, workspaceRoot, started, context.executionPolicy?.protectedPaths);
+    }
+    const patchPaths = inspectUnifiedPatchPaths(input.patch);
+    if (patchPaths.error) {
+      return {
+        success: false,
+        data: { changedPaths: [], stdout: "", stderr: patchPaths.error, checkOnly: input.checkOnly },
+        summary: `Patch blocked: ${patchPaths.error}`,
+        error: patchPaths.error,
+        execution: { status: "not_executed", reason: "policy_blocked", message: patchPaths.error },
+        durationMs: Date.now() - started,
+        artifacts: [],
+      };
+    }
+    const changedPaths = patchPaths.paths;
+    const blockedPath = findBlockedPatchPath(changedPaths, cwd, workspaceRoot, context.executionPolicy?.protectedPaths);
     if (blockedPath) {
       return {
         success: false,
         data: { changedPaths, stdout: "", stderr: blockedPath.error, checkOnly: input.checkOnly },
         summary: `Patch blocked: ${blockedPath.error}`,
         error: blockedPath.error,
+        execution: { status: "not_executed", reason: "policy_blocked", message: blockedPath.error },
         durationMs: Date.now() - started,
         artifacts: changedPaths,
       };
@@ -70,13 +97,27 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
     };
   }
 
-  private async callCodexPatch(input: ApplyPatchInput, cwd: string, started: number, protectedPaths?: string[]): Promise<ToolResult> {
+  private async callCodexPatch(input: ApplyPatchInput, cwd: string, workspaceRoot: string, started: number, protectedPaths?: string[]): Promise<ToolResult> {
     try {
       const operations = parseCodexPatch(input.patch);
       const changedPaths = operations.map((operation) => operation.filePath);
-      const blockedPath = findBlockedPatchPath(changedPaths, cwd, protectedPaths);
+      const blockedPath = findBlockedPatchPath(changedPaths, cwd, workspaceRoot, protectedPaths);
       if (blockedPath) {
-        throw new Error(blockedPath.error);
+        return {
+          success: false,
+          data: {
+            changedPaths,
+            stdout: "",
+            stderr: blockedPath.error,
+            checkOnly: input.checkOnly,
+            format: "codex",
+          },
+          summary: `Patch blocked: ${blockedPath.error}`,
+          error: blockedPath.error,
+          execution: { status: "not_executed", reason: "policy_blocked", message: blockedPath.error },
+          durationMs: Date.now() - started,
+          artifacts: changedPaths,
+        };
       }
       if (input.checkOnly) {
         for (const operation of operations) {
@@ -120,6 +161,26 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
   }
 
   async checkPermissions(_input: ApplyPatchInput, _context: ToolCallContext): Promise<PermissionCheckResult> {
+    const cwdValidation = resolveWorkspaceCwd(_input.cwd, _context);
+    if (!cwdValidation.valid) {
+      return { status: "denied", reason: cwdValidation.error ?? "Invalid cwd", executionReason: "policy_blocked" };
+    }
+
+    const changedPaths = _input.patch.trimStart().startsWith("*** Begin Patch")
+      ? inspectCodexPatchPaths(_input.patch)
+      : inspectUnifiedPatchPaths(_input.patch);
+    if (changedPaths.error) {
+      return { status: "denied", reason: changedPaths.error, executionReason: "policy_blocked" };
+    }
+    const blockedPath = findBlockedPatchPath(
+      changedPaths.paths,
+      cwdValidation.resolved,
+      cwdValidation.workspaceRoot,
+      _context.executionPolicy?.protectedPaths,
+    );
+    if (blockedPath) {
+      return { status: "denied", reason: blockedPath.error, executionReason: "policy_blocked" };
+    }
     return { status: "allowed" };
   }
 
@@ -142,30 +203,89 @@ function runGitApply(args: string[], patch: string, cwd: string): Promise<{ stdo
   });
 }
 
-function extractPatchPaths(patch: string): string[] {
+function inspectUnifiedPatchPaths(patch: string): { paths: string[]; error?: string } {
   const paths = new Set<string>();
   for (const line of patch.split("\n")) {
-    const match = line.match(/^\+\+\+\s+b\/(.+)$/);
-    if (match?.[1] && match[1] !== "/dev/null") {
-      paths.add(match[1]);
+    const diffGitPaths = parseDiffGitPaths(line);
+    if (diffGitPaths?.error) {
+      return { paths: [], error: diffGitPaths.error };
     }
-    const deletedMatch = line.match(/^---\s+a\/(.+)$/);
-    if (deletedMatch?.[1] && deletedMatch[1] !== "/dev/null") {
-      paths.add(deletedMatch[1]);
+    for (const filePath of diffGitPaths?.paths ?? []) {
+      addPatchPath(paths, filePath);
+    }
+
+    const newFileMatch = line.match(/^\+\+\+\s+(.+)$/);
+    if (newFileMatch?.[1]) addPatchPath(paths, newFileMatch[1]);
+
+    const deletedFileMatch = line.match(/^---\s+(.+)$/);
+    if (deletedFileMatch?.[1]) addPatchPath(paths, deletedFileMatch[1]);
+
+    const renameOrCopyMatch = line.match(/^(?:rename|copy) (?:from|to)\s+(.+)$/);
+    if (renameOrCopyMatch?.[1]) addPatchPath(paths, renameOrCopyMatch[1]);
+  }
+  if (patch.trim().length > 0 && paths.size === 0) {
+    return { paths: [], error: "Patch paths could not be determined; refusing to apply." };
+  }
+  return { paths: [...paths] };
+}
+
+function parseDiffGitPaths(line: string): { paths: string[]; error?: string } | null {
+  if (!line.startsWith("diff --git ")) return null;
+  const rest = line.slice("diff --git ".length);
+  if (!rest.startsWith("a/")) {
+    return { paths: [], error: `Unsupported diff header path format: ${line}` };
+  }
+  const splitIndex = rest.lastIndexOf(" b/");
+  if (splitIndex <= 0) {
+    return { paths: [], error: `Unsupported diff header path format: ${line}` };
+  }
+  return {
+    paths: [
+      rest.slice(0, splitIndex),
+      rest.slice(splitIndex + 1),
+    ],
+  };
+}
+
+function addPatchPath(paths: Set<string>, rawPath: string): void {
+  const filePath = normalizePatchPath(rawPath);
+  if (filePath.length === 0 || filePath === "/dev/null") return;
+  paths.add(filePath);
+}
+
+function normalizePatchPath(rawPath: string): string {
+  let filePath = rawPath.trim().split("\t", 1)[0] ?? "";
+  if (filePath.startsWith("\"") && filePath.endsWith("\"")) {
+    try {
+      filePath = JSON.parse(filePath) as string;
+    } catch {
+      filePath = filePath.slice(1, -1);
     }
   }
-  return [...paths];
+  if (filePath.startsWith("a/") || filePath.startsWith("b/")) {
+    return filePath.slice(2);
+  }
+  return filePath;
+}
+
+function inspectCodexPatchPaths(patch: string): { paths: string[]; error?: string } {
+  try {
+    return { paths: parseCodexPatch(patch).map((operation) => operation.filePath) };
+  } catch (err) {
+    return { paths: [], error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 function findBlockedPatchPath(
   changedPaths: string[],
   cwd: string,
+  workspaceRoot: string,
   protectedPaths?: string[],
 ): { path: string; error: string } | null {
   for (const changedPath of changedPaths) {
     const validation = validateProtectedPath(changedPath, {
       cwd,
-      workspaceRoot: cwd,
+      workspaceRoot,
       protectedPaths,
     });
     if (!validation.valid) {

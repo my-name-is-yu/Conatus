@@ -5,6 +5,7 @@ import { expandTildePath } from "../../fs/FileValidationTool/protected-path-poli
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 import { assessShellCommand } from "./command-policy.js";
+import { resolveWorkspaceCwd } from "../../workspace-scope.js";
 
 export const ShellInputSchema = z.object({
   command: z.string().min(1),
@@ -32,7 +33,18 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
 
   async call(input: ShellInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const cwd = expandTildePath(input.cwd ?? context.cwd);
+    const cwdValidation = resolveWorkspaceCwd(input.cwd, context);
+    if (!cwdValidation.valid) {
+      return {
+        success: false,
+        data: { stdout: "", stderr: cwdValidation.error ?? "Invalid cwd", exitCode: -1 },
+        summary: `Shell command blocked: ${cwdValidation.error ?? "Invalid cwd"}`,
+        error: cwdValidation.error ?? "Invalid cwd",
+        execution: { status: "not_executed", reason: "policy_blocked", message: cwdValidation.error ?? "Invalid cwd" },
+        durationMs: Date.now() - startTime,
+      };
+    }
+    const cwd = expandTildePath(cwdValidation.resolved);
     try {
       const shell = process.env.SHELL ?? "/bin/zsh";
       const result = await execFileNoThrow(shell, ["-c", input.command], { cwd, timeoutMs: input.timeoutMs, signal: context.abortSignal, killProcessGroup: true });
@@ -57,11 +69,19 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
   }
 
   async checkPermissions(input: ShellInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
+    let assessmentCwd = input.cwd ?? context?.cwd;
+    if (context) {
+      const cwdValidation = resolveWorkspaceCwd(input.cwd, context);
+      if (!cwdValidation.valid) {
+        return { status: "denied", reason: cwdValidation.error ?? "Invalid cwd", executionReason: "policy_blocked" };
+      }
+      assessmentCwd = cwdValidation.resolved;
+    }
     const assessment = assessShellCommand(
       input.command,
       context?.executionPolicy,
       context?.trusted === true,
-      input.cwd ?? context?.cwd,
+      assessmentCwd,
     );
     if (assessment.status === "allowed") return { status: "allowed" };
     if (assessment.status === "needs_approval") {

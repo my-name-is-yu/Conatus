@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "./agent-loop-events.js";
+import type { AgentLoopToolObservation } from "./agent-loop-model.js";
 import type { ToolActivityCategory } from "../../../tools/types.js";
 
 export type AgentTimelineItem =
@@ -83,6 +84,7 @@ export interface AgentTimelineToolObservationItem extends AgentTimelineBaseItem 
   success: boolean;
   outputPreview: string;
   durationMs: number;
+  observation: AgentLoopToolObservation;
 }
 
 export interface AgentTimelinePlanItem extends AgentTimelineBaseItem {
@@ -217,6 +219,7 @@ export function projectAgentLoopEventToTimeline(event: AgentLoopEvent): AgentTim
         success: event.observation.success,
         outputPreview: event.observation.output.content,
         durationMs: event.observation.durationMs,
+        observation: event.observation,
       };
     case "plan_update":
       return { ...base, kind: "plan", summary: event.summary };

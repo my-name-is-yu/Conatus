@@ -118,9 +118,14 @@ describe("TestRunnerTool", () => {
       expect(result.status).toBe("allowed");
     });
 
-    it("needs_approval for unknown command", async () => {
+    it("denies unknown command", async () => {
       const result = await tool.checkPermissions({ command: "bash run-tests.sh", timeout: 60000 });
-      expect(result.status).toBe("needs_approval");
+      expect(result.status).toBe("denied");
+    });
+
+    it("denies non-test npm commands", async () => {
+      const result = await tool.checkPermissions({ command: "npm install", timeout: 60000 });
+      expect(result.status).toBe("denied");
     });
   });
 
@@ -269,11 +274,11 @@ describe("TestRunnerTool", () => {
       const spy = vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
         stdout: VITEST_PASS, stderr: "", exitCode: 0,
       });
-      await tool.call({ command: "npx vitest run", cwd: "/custom/path", timeout: 60000 }, makeContext("/other"));
+      await tool.call({ command: "npx vitest run", cwd: "/tmp/custom/path", timeout: 60000 }, makeContext("/tmp"));
       expect(spy).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),
-        expect.objectContaining({ cwd: "/custom/path" })
+        expect.objectContaining({ cwd: expect.stringMatching(/\/tmp\/custom\/path$/) })
       );
     });
   });
