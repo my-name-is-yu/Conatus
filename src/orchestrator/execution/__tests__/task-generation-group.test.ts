@@ -51,6 +51,10 @@ const VALID_TASK_GROUP_RESPONSE = `\`\`\`json
         "blast_radius": "tests/ directory only"
       },
       "constraints": [],
+      "artifact_contract": {
+        "required": false,
+        "required_artifacts": []
+      },
       "reversibility": "reversible"
     },
     {
@@ -67,6 +71,10 @@ const VALID_TASK_GROUP_RESPONSE = `\`\`\`json
         "blast_radius": "src/auth/ directory only"
       },
       "constraints": [],
+      "artifact_contract": {
+        "required": false,
+        "required_artifacts": []
+      },
       "reversibility": "reversible"
     }
   ],

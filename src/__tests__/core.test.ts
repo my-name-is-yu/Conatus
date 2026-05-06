@@ -221,6 +221,10 @@ describe("core functionality", () => {
     "blast_radius": "tests only"
   },
   "constraints": ["Keep the test deterministic"],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": { "value": 30, "unit": "minutes" }
 }

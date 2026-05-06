@@ -22,6 +22,10 @@ const VALID_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "tests/ only"
   },
   "constraints": [],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": null
 }
@@ -41,6 +45,10 @@ const EXPLORATORY_TASK_RESPONSE = `\`\`\`json
     "blast_radius": "opens a new candidate branch"
   },
   "constraints": [],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": null
 }

@@ -4,10 +4,12 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { deriveRunSpecFromText, understandRunSpecDraft } from "../derive.js";
 import { createRunSpecStore } from "../store.js";
+import { RunSpecHandoffService } from "../handoff.js";
 import {
   formatRunSpecSetupProposal,
   handleRunSpecConfirmationInput,
 } from "../confirmation.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 const NOW = new Date("2026-05-02T00:00:00.000Z");
@@ -489,5 +491,31 @@ describe("RunSpec confirmation", () => {
     expect(proposal).toContain("External actions: approval_required");
     expect(proposal).toContain("Secret policy: approval_required");
     expect(proposal).toContain("Irreversible actions: approval_required");
+  });
+});
+
+describe("RunSpec handoff", () => {
+  it("creates Kaggle goals with typed artifact-required constraints", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-handoff-"));
+    const stateManager = new StateManager(baseDir);
+    const spec = await deriveRunSpecFromText(
+      "Run this Kaggle competition until tomorrow morning and aim for top 15%. Keep submissions approval-gated.",
+      {
+        cwd: "/repo/kaggle",
+        now: NOW,
+        llmClient: llmDraft(),
+      },
+    );
+    expect(spec).not.toBeNull();
+
+    const result = await new RunSpecHandoffService({
+      stateManager,
+      daemonClient: { startGoal: async () => ({ ok: true }) } as never,
+    }).startConfirmed({ ...spec!, status: "confirmed" });
+
+    expect(result.success).toBe(true);
+    const goal = await stateManager.loadGoal(result.goalId!);
+    expect(goal?.constraints).toContain("run_spec_profile:kaggle");
+    expect(goal?.constraints).toContain("artifact_contract:required");
   });
 });

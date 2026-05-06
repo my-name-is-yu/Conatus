@@ -179,6 +179,9 @@ function summarizeStoppedReason(task: Task, events: TaskOutcomeEvent[], lastEven
   if (task.status === "cancelled") {
     return "cancelled";
   }
+  if (task.status === "blocked") {
+    return "blocked";
+  }
   return null;
 }
 
@@ -303,7 +306,7 @@ function inferMutationEvent(task: Task): TaskOutcomeEventType | null {
   if (task.status === "running") return "started";
   if (task.execution_output?.includes("[STOPPED]")) return "abandoned";
   if (task.verification_verdict === "pass") return "succeeded";
-  if (task.status === "error" || task.status === "timed_out" || task.verification_verdict === "fail") return "failed";
+  if (task.status === "error" || task.status === "timed_out" || task.status === "blocked" || task.verification_verdict === "fail") return "failed";
   return null;
 }
 

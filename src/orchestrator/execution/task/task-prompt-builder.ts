@@ -107,7 +107,7 @@ function getTaskHistoryEntryId(entry: PromptTaskHistoryEntry): string | undefine
 function isRecentFailureEntry(entry: PromptTaskHistoryEntry): boolean {
   if (entry.verification_verdict === "fail" || entry.verification_verdict === "partial") return true;
   if ((entry.consecutive_failure_count ?? 0) > 0) return true;
-  return ["failed", "error", "timed_out", "abandoned", "discarded"].includes(entry.status ?? "");
+  return ["failed", "error", "timed_out", "blocked", "abandoned", "discarded"].includes(entry.status ?? "");
 }
 
 async function resolveTaskHistoryDescription(
@@ -355,6 +355,8 @@ Requirements:
 - No vague review/triage tasks
 - Prefer minimal-change approach: make the smallest targeted change that moves the metric; avoid unrelated refactoring
 - Set risk_profile.external_action from the task's intended side effects, not from keywords. Mark approval_required true whenever the task requires submitting, publishing, notifying, deploying, uploading, sending, or mutating an external system outside the local workspace.
+- Always include artifact_contract. Use artifact_contract.required=false and an empty required_artifacts array when generated artifacts are not completion evidence.
+- For Kaggle/profile experiment tasks that claim score or submission progress, set artifact_contract.required=true and include fresh metrics_json and submission_csv outputs. Source-file or marker checks are only supporting evidence for those tasks; the artifact contract is the completion evidence.
 
 Return JSON only (inside markdown code block):
 {
@@ -366,15 +368,22 @@ Return JSON only (inside markdown code block):
   ],
   "scope_boundary": {"in_scope": ["included"], "out_of_scope": ["excluded"], "blast_radius": "what could be affected"},
   "constraints": ["any constraints"],
-  "risk_profile": {
-    "external_action": {
-      "required": false,
+	  "risk_profile": {
+	    "external_action": {
+	      "required": false,
       "approval_required": false,
       "action_kind": "none|submission|publication|notification|deployment|external_mutation|unknown",
-      "rationale": "why this is or is not an external action" | null
-    }
-  },
-  "reversibility": "reversible|irreversible|unknown",
+	      "rationale": "why this is or is not an external action" | null
+	    }
+	  },
+	  "artifact_contract": {
+	    "required": false,
+	    "required_artifacts": [
+	      {"kind": "metrics_json", "path": "reports/<run>.json", "required_fields": ["<metric_name>"], "fresh_after_task_start": true},
+	      {"kind": "submission_csv", "path": "submissions/<run>.csv", "required_fields": [], "fresh_after_task_start": true}
+	    ]
+	  },
+	  "reversibility": "reversible|irreversible|unknown",
   "intended_direction": "increase|decrease|neutral — direction this task intends to move the primary dimension",
   "estimated_duration": {"value": number, "unit": "minutes|hours|days|weeks"} | null
 }`;

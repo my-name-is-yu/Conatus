@@ -1,4 +1,5 @@
 import type { Task } from "../../../base/types/task.js";
+import type { Goal } from "../../../base/types/goal.js";
 import type { AgentResult } from "../adapter-layer.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import type {
@@ -48,6 +49,7 @@ export interface TaskAgentLoopRunnerDeps {
 
 export interface TaskAgentLoopRunInput {
   task: Task;
+  artifactGoal?: Pick<Goal, "constraints"> | null;
   workspaceContext?: string;
   knowledgeContext?: string;
   model?: AgentLoopModelRef;
@@ -90,6 +92,7 @@ export class TaskAgentLoopRunner {
       });
       const turn = buildTaskAgentLoopTurnContext({
         task: input.task,
+        artifactGoal: input.artifactGoal,
         model,
         modelInfo,
         session,

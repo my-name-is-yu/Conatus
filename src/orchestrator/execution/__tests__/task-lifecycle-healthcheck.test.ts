@@ -193,6 +193,10 @@ describe("TaskLifecycle — post-execution health check", () => {
     "blast_radius": "tests only"
   },
   "constraints": [],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": null
 }
@@ -290,6 +294,10 @@ describe("TaskLifecycle — post-execution health check", () => {
     "blast_radius": "tests only"
   },
   "constraints": [],
+  "artifact_contract": {
+    "required": false,
+    "required_artifacts": []
+  },
   "reversibility": "reversible",
   "estimated_duration": null
 }

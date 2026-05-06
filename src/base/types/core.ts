@@ -148,6 +148,7 @@ export const TaskStatusEnum = z.enum([
   "completed",
   "timed_out",
   "cancelled",
+  "blocked",
   "error",
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusEnum>;
