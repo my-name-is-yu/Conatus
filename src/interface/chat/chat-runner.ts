@@ -73,7 +73,8 @@ import {
 } from "./chat-runner-routes.js";
 import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
-import { createTextUserInput, replaceUserInputText } from "./user-input.js";
+import { createTextUserInput, normalizeUserInput, replaceUserInputText, type UserInput } from "./user-input.js";
+import { createTurnStartOperation, createTurnSteerOperation } from "./turn-protocol.js";
 import {
   createRunSpecStore,
   formatRunSpecSetupProposal,
@@ -234,13 +235,30 @@ export class ChatRunner {
     return this.eventBridge.hasActiveTurn();
   }
 
-  async interruptAndRedirect(input: string, cwd: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ChatRunResult> {
+  async interruptAndRedirect(
+    input: string,
+    cwd: string,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    options: { userInput?: UserInput } = {},
+  ): Promise<ChatRunResult> {
+    const steerUserInput = normalizeUserInput(options.userInput, input);
     const activeTurn = this.eventBridge.getActiveTurn();
     if (!activeTurn) {
-      return this.execute(input, cwd, timeoutMs);
+      return this.execute(input, cwd, timeoutMs, { userInput: steerUserInput });
     }
 
     const start = Date.now();
+    const steerOperation = createTurnSteerOperation({
+      activeTurn,
+      userInput: steerUserInput,
+    });
+    this.eventBridge.emitEvent({
+      type: "turn_steer",
+      input,
+      userInput: steerUserInput,
+      operation: steerOperation,
+      ...this.eventBridge.eventBase(activeTurn.context),
+    });
     const redirect = await classifyInterruptRedirect(input, {
       llmClient: this.deps.llmClient,
       cwd: activeTurn.cwd,
@@ -249,7 +267,7 @@ export class ChatRunner {
       sessionId: this.getSessionId(),
     });
     if (this.eventBridge.getActiveTurn() !== activeTurn) {
-      return this.execute(input, cwd, timeoutMs);
+      return this.execute(input, cwd, timeoutMs, { userInput: steerUserInput });
     }
     if (redirect === "background") {
       return this.eventBridge.emitEphemeralAssistantResult(input, [
@@ -257,7 +275,11 @@ export class ChatRunner {
         "",
         "The active turn is still running in the foreground.",
         "Use /tend for daemon-backed work, or send a narrower follow-up request.",
-      ].join("\n"), true, start);
+      ].join("\n"), true, start, {
+        context: activeTurn.context,
+        operation: steerOperation,
+        userInput: steerUserInput,
+      });
     }
 
     activeTurn.interruptRequested = true;
@@ -272,7 +294,12 @@ export class ChatRunner {
         input,
         "Interrupt requested. The active turn will stop at the next safe point.",
         false,
-        start
+        start,
+        {
+          context: activeTurn.context,
+          operation: steerOperation,
+          userInput: steerUserInput,
+        },
       );
     }
 
@@ -304,7 +331,17 @@ export class ChatRunner {
       ].join("\n");
     }
 
-    return this.eventBridge.emitEphemeralAssistantResult(input, output, true, start);
+    return this.eventBridge.emitEphemeralAssistantResult(
+      input,
+      output,
+      true,
+      start,
+      {
+        context: activeTurn.context,
+        operation: steerOperation,
+        userInput: steerUserInput,
+      },
+    );
   }
 
   setRuntimeControlContext(context: RuntimeControlChatContext | null): void {
@@ -421,6 +458,11 @@ export class ChatRunner {
       type: "lifecycle_start",
       input: safeInput,
       userInput: safeUserInput,
+      operation: createTurnStartOperation({
+        context: eventContext,
+        cwd: gitRoot,
+        userInput: safeUserInput,
+      }),
       ...this.eventBridge.eventBase(eventContext),
     });
 

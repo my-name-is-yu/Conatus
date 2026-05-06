@@ -3,6 +3,7 @@ import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/
 import type { TurnLanguageHint } from "./turn-language.js";
 import type { OperationProgressItem } from "./operation-progress.js";
 import type { UserInput } from "./user-input.js";
+import type { TurnOperation, TurnSteerOperation } from "./turn-protocol.js";
 
 export interface ChatEventBase {
   runId: string;
@@ -15,6 +16,14 @@ export interface LifecycleStartEvent extends ChatEventBase {
   type: "lifecycle_start";
   input: string;
   userInput: UserInput;
+  operation: TurnOperation;
+}
+
+export interface TurnSteerEvent extends ChatEventBase {
+  type: "turn_steer";
+  input: string;
+  userInput: UserInput;
+  operation: TurnSteerOperation;
 }
 
 export interface AssistantDeltaEvent extends ChatEventBase {
@@ -99,6 +108,7 @@ export interface LifecycleErrorEvent extends ChatEventBase {
 
 export type ChatEvent =
   | LifecycleStartEvent
+  | TurnSteerEvent
   | AssistantDeltaEvent
   | AssistantFinalEvent
   | ActivityEvent

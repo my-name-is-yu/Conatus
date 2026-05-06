@@ -30,7 +30,8 @@ import {
   operationProgressFromAgentActivitySummary,
   type OperationProgressItem,
 } from "./operation-progress.js";
-import { createTextUserInput } from "./user-input.js";
+import { createTextUserInput, type UserInput } from "./user-input.js";
+import { createTurnStartOperation, type TurnOperation } from "./turn-protocol.js";
 
 export interface AssistantBuffer {
   text: string;
@@ -110,16 +111,36 @@ export class ChatRunnerEventBridge {
     ]);
   }
 
-  emitEphemeralAssistantResult(input: string, output: string, success: boolean, start: number): {
+  emitEphemeralAssistantResult(
+    input: string,
+    output: string,
+    success: boolean,
+    start: number,
+    options: {
+      context?: ChatEventContext;
+      finishActiveTurn?: boolean;
+      operation?: TurnOperation;
+      userInput?: UserInput;
+    } = {},
+  ): {
     success: boolean;
     output: string;
     elapsed_ms: number;
   } {
-    const context = this.createEventContext();
+    const context = options.context
+      ?? (options.operation
+        ? { runId: options.operation.runId, turnId: options.operation.turnId }
+        : this.createEventContext());
+    const userInput = options.userInput ?? createTextUserInput(input);
     this.emitEvent({
       type: "lifecycle_start",
       input,
-      userInput: createTextUserInput(input),
+      userInput,
+      operation: options.operation ?? createTurnStartOperation({
+        context,
+        cwd: "",
+        userInput,
+      }),
       ...this.eventBase(context),
     });
     this.emitEvent({
@@ -129,7 +150,17 @@ export class ChatRunnerEventBridge {
       ...this.eventBase(context),
     });
     const elapsed_ms = Date.now() - start;
-    this.emitLifecycleEndEvent(success ? "completed" : "error", elapsed_ms, context, false);
+    this.emitEvent({
+      type: "lifecycle_end",
+      status: success ? "completed" : "error",
+      elapsedMs: elapsed_ms,
+      persisted: false,
+      ...this.eventBase(context),
+    });
+    const shouldFinishActiveTurn = options.finishActiveTurn ?? options.operation?.kind !== "TurnSteer";
+    if (shouldFinishActiveTurn) {
+      this.finishActiveTurn(context);
+    }
     return { success, output, elapsed_ms };
   }
 
