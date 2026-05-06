@@ -52,7 +52,7 @@ import type { PipelineCycleOptions } from "./task-pipeline-types.js";
 import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/knowledge-transfer.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import type { MemoryLifecycleManager } from "../../../platform/knowledge/memory/memory-lifecycle.js";
-import { captureExecutionDiffArtifacts } from "./task-diff-capture.js";
+import { captureExecutionDiffArtifacts, captureExecutionDiffBaseline } from "./task-diff-capture.js";
 import { resolveGoalWorkspacePath, resolveTaskWorkspacePath } from "./task-workspace.js";
 import type { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
 import type { HookManager } from "../../../runtime/hook-manager.js";
@@ -550,6 +550,7 @@ export class TaskLifecycle {
         task: runningTask,
         fallbackCwd: this.revertCwd,
       });
+      const diffBaseline = captureExecutionDiffBaseline(this.execFileSyncFn, taskCwd ?? process.cwd());
       const artifactGoal = await this.stateManager.loadGoal(runningTask.goal_id).catch(() => null);
       const agentLoopResult = await this.agentLoopRunner.runTask({
         task: runningTask,
@@ -570,7 +571,7 @@ export class TaskLifecycle {
         const diffArtifacts = captureExecutionDiffArtifacts(
           this.execFileSyncFn,
           agentLoopResult.workspace.executionCwd,
-          { fallbackChangedPaths },
+          { fallbackChangedPaths, baseline: diffBaseline },
         );
         if (diffArtifacts.available) {
           result.filesChangedPaths = diffArtifacts.changedPaths;

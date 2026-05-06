@@ -8,7 +8,8 @@ import type { Strategy } from "../../../base/types/strategy.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { validateProtectedPath } from "../../../tools/fs/FileValidationTool/protected-path-policy.js";
 import { loadProviderConfig } from "../../../base/llm/provider-config.js";
-import { captureExecutionDiffArtifacts } from "./task-diff-capture.js";
+import { captureExecutionDiffArtifacts, captureExecutionDiffBaseline } from "./task-diff-capture.js";
+import type { ExecutionDiffBaseline } from "./task-diff-capture.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
 const DEBUG = process.env.PULSEED_DEBUG === "true";
 
@@ -20,6 +21,10 @@ export interface TaskExecutorDeps {
   logger?: Logger;
   execFileSyncFn: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
   fallbackCwd?: string;
+}
+
+interface ExecuteTaskOptions {
+  diffBaseline?: ExecutionDiffBaseline;
 }
 
 // ─── durationToMs ───
@@ -47,11 +52,14 @@ export async function executeTask(
   task: Task,
   adapter: IAdapter,
   workspaceContext?: string,
-  activeStrategy?: Strategy
+  activeStrategy?: Strategy,
+  options?: ExecuteTaskOptions,
 ): Promise<AgentResult> {
   const { stateManager, sessionManager, logger, execFileSyncFn, fallbackCwd } = deps;
 
   const workspaceCwd = await resolveTaskWorkspacePath({ stateManager, task, fallbackCwd });
+  const diffBaseline =
+    options?.diffBaseline ?? captureExecutionDiffBaseline(execFileSyncFn, workspaceCwd ?? process.cwd());
 
   // Create execution session
   const session = await sessionManager.createSession(
@@ -172,6 +180,7 @@ export async function executeTask(
     execFileSyncFn,
     logger,
     fallbackChangedPaths: result.filesChangedPaths,
+    baseline: diffBaseline,
   });
 
   // End session
@@ -210,19 +219,20 @@ export async function applyPostExecutionDiffScopeChecks(input: {
   execFileSyncFn: TaskExecutorDeps["execFileSyncFn"];
   logger?: Logger;
   fallbackChangedPaths?: string[];
+  baseline?: ExecutionDiffBaseline;
 }): Promise<void> {
-  if (!input.result.success) return;
-
   try {
+    const initiallySuccessful = input.result.success;
     const diffArtifacts = captureExecutionDiffArtifacts(input.execFileSyncFn, input.cwd, {
       fallbackChangedPaths: input.fallbackChangedPaths,
+      baseline: input.baseline,
     });
     if (diffArtifacts.available) {
       const changedFiles = diffArtifacts.changedPaths;
       input.result.filesChangedPaths = changedFiles;
       input.result.fileDiffs = diffArtifacts.fileDiffs;
       input.result.filesChanged = changedFiles.length > 0;
-      if (!input.result.filesChanged) {
+      if (initiallySuccessful && !input.result.filesChanged) {
         input.logger?.warn(
           "[TaskLifecycle] Adapter reported success but no files were modified",
           { taskId: input.taskId }
@@ -233,7 +243,7 @@ export async function applyPostExecutionDiffScopeChecks(input: {
       }
     }
 
-    if (diffArtifacts.available && diffArtifacts.changedPaths.length > 0) {
+    if (initiallySuccessful && diffArtifacts.available && diffArtifacts.changedPaths.length > 0) {
       const providerConfig = await loadProviderConfig({ saveMigration: false });
       const protectedPaths = providerConfig.agent_loop?.security?.protected_paths;
       const protectedChanges = diffArtifacts.changedPaths.filter((changedFile) =>

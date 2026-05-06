@@ -14,9 +14,17 @@ export interface ExecutionDiffArtifacts {
   fileDiffs: VerificationFileDiff[];
 }
 
+export interface ExecutionDiffBaseline {
+  available: boolean;
+  cwd: string;
+  changedPaths: string[];
+  pathFingerprints: Record<string, string>;
+}
+
 export interface CaptureExecutionDiffOptions {
   fallbackChangedPaths?: string[];
   maxFallbackDiffBytes?: number;
+  baseline?: ExecutionDiffBaseline;
 }
 
 function uniqueNonEmpty(values: string[]): string[] {
@@ -59,24 +67,36 @@ function runGitRead(
   }
 }
 
-export function captureExecutionDiffArtifacts(
+function normalizeCwd(cwd: string): string {
+  try {
+    return fs.realpathSync(cwd);
+  } catch {
+    return path.resolve(cwd);
+  }
+}
+
+function captureGitChangedPaths(
   execFileSyncFn: ExecFileSyncFn,
   cwd: string,
-  options: CaptureExecutionDiffOptions = {},
-): ExecutionDiffArtifacts {
-  const fallbackPaths = uniqueNonEmpty(options.fallbackChangedPaths ?? [])
-    .filter((filePath) => isSafeRelativePath(cwd, filePath));
-  if (!hasGitMetadata(cwd)) {
-    return renderFallbackDiffArtifacts(cwd, fallbackPaths, options.maxFallbackDiffBytes);
-  }
-
+): {
+  available: boolean;
+  trackedPaths: string[];
+  stagedPaths: string[];
+  untrackedPaths: string[];
+  changedPaths: string[];
+} {
   const trackedOutput = runGitRead(execFileSyncFn, cwd, ["diff", "--name-only"]);
   const stagedOutput = runGitRead(execFileSyncFn, cwd, ["diff", "--cached", "--name-only"]);
   const untrackedOutput = runGitRead(execFileSyncFn, cwd, ["ls-files", "--others", "--exclude-standard"]);
-
   const available = trackedOutput !== null || stagedOutput !== null || untrackedOutput !== null;
   if (!available) {
-    return renderFallbackDiffArtifacts(cwd, fallbackPaths, options.maxFallbackDiffBytes);
+    return {
+      available: false,
+      trackedPaths: [],
+      stagedPaths: [],
+      untrackedPaths: [],
+      changedPaths: [],
+    };
   }
 
   const trackedPaths = (trackedOutput ?? "").split("\n");
@@ -84,21 +104,113 @@ export function captureExecutionDiffArtifacts(
   const untrackedPaths = (untrackedOutput ?? "").split("\n");
   const changedPaths = uniqueNonEmpty([...trackedPaths, ...stagedPaths, ...untrackedPaths])
     .filter((filePath) => isSafeRelativePath(cwd, filePath));
-  const untrackedSet = new Set(uniqueNonEmpty(untrackedPaths));
+  return {
+    available: true,
+    trackedPaths,
+    stagedPaths,
+    untrackedPaths,
+    changedPaths,
+  };
+}
 
-  const fileDiffs = changedPaths.flatMap((path) => {
-    const trackedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--", path])?.trim() ?? "";
-    const stagedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--cached", "--", path])?.trim() ?? "";
-    const patches = [trackedPatch, stagedPatch].filter((patch) => patch.length > 0);
-    if (patches.length > 0) return [{ path, patch: patches.join("\n") }];
+export function captureExecutionDiffBaseline(
+  execFileSyncFn: ExecFileSyncFn,
+  cwd: string,
+): ExecutionDiffBaseline {
+  const normalizedCwd = normalizeCwd(cwd);
+  if (!hasGitMetadata(cwd)) {
+    return { available: false, cwd: normalizedCwd, changedPaths: [], pathFingerprints: {} };
+  }
 
-    if (!untrackedSet.has(path)) {
-      return [];
+  const snapshot = captureGitChangedPaths(execFileSyncFn, cwd);
+  const untrackedSet = new Set(uniqueNonEmpty(snapshot.untrackedPaths));
+  return {
+    available: snapshot.available,
+    cwd: normalizedCwd,
+    changedPaths: snapshot.changedPaths,
+    pathFingerprints: Object.fromEntries(
+      snapshot.changedPaths.map((filePath) => [
+        filePath,
+        readGitPathPatch(execFileSyncFn, cwd, filePath, untrackedSet),
+      ]),
+    ),
+  };
+}
+
+function baselineChangedPathSetForCwd(
+  baseline: ExecutionDiffBaseline | undefined,
+  cwd: string,
+): Set<string> | undefined {
+  if (!baseline?.available) return undefined;
+  if (baseline.cwd !== normalizeCwd(cwd)) return undefined;
+  return new Set(baseline.changedPaths);
+}
+
+function baselinePathFingerprintsForCwd(
+  baseline: ExecutionDiffBaseline | undefined,
+  cwd: string,
+): Map<string, string> | undefined {
+  if (!baseline?.available) return undefined;
+  if (baseline.cwd !== normalizeCwd(cwd)) return undefined;
+  return new Map(Object.entries(baseline.pathFingerprints));
+}
+
+function readGitPathPatch(
+  execFileSyncFn: ExecFileSyncFn,
+  cwd: string,
+  filePath: string,
+  untrackedSet: Set<string>,
+): string {
+  const trackedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--", filePath])?.trim() ?? "";
+  const stagedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--cached", "--", filePath])?.trim() ?? "";
+  const patches = [trackedPatch, stagedPatch].filter((patch) => patch.length > 0);
+  if (patches.length > 0) return patches.join("\n");
+
+  if (!untrackedSet.has(filePath)) {
+    return "";
+  }
+
+  return runGitRead(execFileSyncFn, cwd, ["diff", "--no-index", "--", "/dev/null", filePath])?.trim() ?? "";
+}
+
+export function captureExecutionDiffArtifacts(
+  execFileSyncFn: ExecFileSyncFn,
+  cwd: string,
+  options: CaptureExecutionDiffOptions = {},
+): ExecutionDiffArtifacts {
+  const baselineChangedPaths = baselineChangedPathSetForCwd(options.baseline, cwd);
+  const baselinePathFingerprints = baselinePathFingerprintsForCwd(options.baseline, cwd);
+  const fallbackPaths = uniqueNonEmpty(options.fallbackChangedPaths ?? [])
+    .filter((filePath) => isSafeRelativePath(cwd, filePath));
+  if (!hasGitMetadata(cwd)) {
+    return renderFallbackDiffArtifacts(cwd, fallbackPaths, options.maxFallbackDiffBytes, baselineChangedPaths);
+  }
+
+  const snapshot = captureGitChangedPaths(execFileSyncFn, cwd);
+  if (!snapshot.available) {
+    return renderFallbackDiffArtifacts(cwd, fallbackPaths, options.maxFallbackDiffBytes, baselineChangedPaths);
+  }
+
+  const untrackedSet = new Set(uniqueNonEmpty(snapshot.untrackedPaths));
+  const changedPaths: string[] = [];
+  const fileDiffs: VerificationFileDiff[] = [];
+
+  for (const filePath of snapshot.changedPaths) {
+    const patch = readGitPathPatch(execFileSyncFn, cwd, filePath, untrackedSet);
+    const baselinePatch = baselinePathFingerprints?.get(filePath);
+    if (baselinePatch !== undefined && patch === baselinePatch) {
+      continue;
     }
 
-    const untrackedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--no-index", "--", "/dev/null", path])?.trim() ?? "";
-    return untrackedPatch.length > 0 ? [{ path, patch: untrackedPatch }] : [];
-  });
+    changedPaths.push(filePath);
+    if (patch.length > 0) {
+      fileDiffs.push({
+        path: filePath,
+        patch,
+        ...(baselinePatch !== undefined ? { safe_to_revert: false } : {}),
+      });
+    }
+  }
 
   return { available: true, changedPaths, fileDiffs };
 }
@@ -107,6 +219,7 @@ function renderFallbackDiffArtifacts(
   cwd: string,
   fallbackPaths: string[],
   maxFallbackDiffBytes = 200_000,
+  baselineChangedPaths?: Set<string>,
 ): ExecutionDiffArtifacts {
   if (fallbackPaths.length === 0) {
     return { available: false, changedPaths: [], fileDiffs: [] };
@@ -116,6 +229,10 @@ function renderFallbackDiffArtifacts(
     changedPaths: fallbackPaths,
     fileDiffs: fallbackPaths.flatMap((filePath) =>
       renderCurrentFileDiff(cwd, filePath, maxFallbackDiffBytes)
+        .map((diff) => ({
+          ...diff,
+          ...(baselineChangedPaths?.has(filePath) ? { safe_to_revert: false } : {}),
+        }))
     ),
   };
 }

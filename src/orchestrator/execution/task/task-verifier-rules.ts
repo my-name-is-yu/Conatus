@@ -474,12 +474,24 @@ function shellStdout(data: unknown): string {
 export async function attemptRevert(
   deps: VerifierDeps,
   task: Task,
-  opts: { concretePaths?: string[] } = {}
+  opts: { concretePaths?: string[]; unsafePaths?: string[] } = {}
 ): Promise<RevertAttemptResult> {
   const filesToRestore = [
     ...new Set((opts.concretePaths ?? []).map((filePath) => filePath.trim()).filter(Boolean)),
   ];
+  const unsafePaths = [
+    ...new Set((opts.unsafePaths ?? []).map((filePath) => filePath.trim()).filter(Boolean)),
+  ];
   if (filesToRestore.length === 0) {
+    if (unsafePaths.length > 0) {
+      deps.logger?.warn?.("[attemptRevert] skipping raw git restore because task changes share pre-existing dirty paths");
+      return {
+        success: false,
+        concretePaths: [],
+        unsafePaths,
+        reason: `unsafe task changes share pre-existing dirty paths: ${unsafePaths.join(", ")}`,
+      };
+    }
     deps.logger?.warn?.("[attemptRevert] skipping raw git restore because no concrete changed paths were captured");
     return {
       success: false,
@@ -498,12 +510,13 @@ export async function attemptRevert(
     };
   }
 
-  const allSafe = filesToRestore.every(isRelativeGitPath);
+  const allSafe = [...filesToRestore, ...unsafePaths].every(isRelativeGitPath);
   if (!allSafe) {
     deps.logger?.warn?.("[attemptRevert] concrete changed path failed git-restore path validation; refusing revert");
     return {
       success: false,
       concretePaths: filesToRestore,
+      unsafePaths,
       reason: "invalid_concrete_changed_path",
     };
   }
@@ -542,9 +555,19 @@ export async function attemptRevert(
           };
         }
         deps.logger?.info?.(`[attemptRevert] git restore succeeded for ${filesToRestore.length} files (via ToolExecutor)`);
+        if (unsafePaths.length > 0) {
+          return {
+            success: false,
+            concretePaths: filesToRestore,
+            unsafePaths,
+            reason: `unsafe task changes share pre-existing dirty paths: ${unsafePaths.join(", ")}`,
+            method: "git_restore_tool",
+          };
+        }
         return {
           success: true,
           concretePaths: filesToRestore,
+          unsafePaths,
           reason: "git_restore_succeeded",
           method: "git_restore_tool",
         };
@@ -552,6 +575,7 @@ export async function attemptRevert(
       return {
         success: false,
         concretePaths: filesToRestore,
+        unsafePaths,
         reason: result.error ?? result.summary ?? "git_restore_failed",
       };
     }
@@ -575,9 +599,19 @@ export async function attemptRevert(
       };
     }
     deps.logger?.info?.(`[attemptRevert] git restore succeeded for ${filesToRestore.length} files`);
+    if (unsafePaths.length > 0) {
+      return {
+        success: false,
+        concretePaths: filesToRestore,
+        unsafePaths,
+        reason: `unsafe task changes share pre-existing dirty paths: ${unsafePaths.join(", ")}`,
+        method: "git_restore_child_process",
+      };
+    }
     return {
       success: true,
       concretePaths: filesToRestore,
+      unsafePaths,
       reason: "git_restore_succeeded",
       method: "git_restore_child_process",
     };
@@ -585,6 +619,7 @@ export async function attemptRevert(
     return {
       success: false,
       concretePaths: filesToRestore,
+      unsafePaths,
       reason: error instanceof Error ? error.message : String(error),
     };
   }

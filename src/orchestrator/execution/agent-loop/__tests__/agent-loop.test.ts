@@ -864,6 +864,8 @@ describe("agentloop phase 1", () => {
 
   it("bounds native tool execution with the remaining wall-clock budget", async () => {
     const modelInfo = makeModelInfo();
+    const startedAt = Date.now();
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => startedAt);
     const modelClient = new ScriptedModelClient(modelInfo, [
       {
         content: "",
@@ -893,26 +895,32 @@ describe("agentloop phase 1", () => {
     };
     const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
 
-    const result = await runner.run({
-      session: createAgentLoopSession(),
-      turnId: "turn-1",
-      goalId: "goal-1",
-      taskId: "task-1",
-      cwd: process.cwd(),
-      model: modelInfo.ref,
-      modelInfo,
-      messages: [{ role: "user", content: "do it" }],
-      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
-      budget: withDefaultBudget({ maxWallClockMs: 1000, maxModelTurns: 4 }),
-      toolPolicy: {},
-      toolCallContext: {
-        cwd: process.cwd(),
-        goalId: "goal-1",
-        trustBalance: 0,
-        preApproved: true,
-        approvalFn: async () => false,
-      },
-    });
+    const result = await (async () => {
+      try {
+        return await runner.run({
+          session: createAgentLoopSession(),
+          turnId: "turn-1",
+          goalId: "goal-1",
+          taskId: "task-1",
+          cwd: process.cwd(),
+          model: modelInfo.ref,
+          modelInfo,
+          messages: [{ role: "user", content: "do it" }],
+          outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+          budget: withDefaultBudget({ maxWallClockMs: 1000, maxModelTurns: 4 }),
+          toolPolicy: {},
+          toolCallContext: {
+            cwd: process.cwd(),
+            goalId: "goal-1",
+            trustBalance: 0,
+            preApproved: true,
+            approvalFn: async () => false,
+          },
+        });
+      } finally {
+        dateNow.mockRestore();
+      }
+    })();
 
     expect(result.success).toBe(false);
     expect(result.stopReason).toBe("timeout");

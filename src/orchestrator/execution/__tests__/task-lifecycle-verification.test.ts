@@ -1540,6 +1540,37 @@ describe("TaskLifecycle", async () => {
       expect(fileDiffs[0]?.patch).toContain("+new");
     });
 
+    it("does not widen back to workspace git diff when execution captured no task-produced paths", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const execute = vi.fn().mockResolvedValue({
+        success: true,
+        data: [
+          "diff --git a/preexisting.txt b/preexisting.txt",
+          "--- a/preexisting.txt",
+          "+++ b/preexisting.txt",
+          "@@ -1 +1 @@",
+          "-clean",
+          "+dirty before task",
+        ].join("\n"),
+        summary: "workspace diff",
+        durationMs: 1,
+      });
+      const lifecycle = createLifecycle(llm, {
+        toolExecutor: { execute } as unknown as ToolExecutor,
+      });
+      const task = makeTask();
+      const result = makeExecutionResult({
+        filesChanged: false,
+        filesChangedPaths: [],
+        fileDiffs: [],
+      });
+
+      const verification = await lifecycle.verifyTask(task, result);
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(verification.file_diffs).toEqual([]);
+    });
+
     it("truncates very long output in L2 review prompt", async () => {
       const spy = createSpyLLMClient([LLM_REVIEW_PASS]);
       const lifecycle = createLifecycle(spy);

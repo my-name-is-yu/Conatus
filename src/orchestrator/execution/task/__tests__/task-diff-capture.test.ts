@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { captureExecutionDiffArtifacts, type ExecFileSyncFn } from "../task-diff-capture.js";
+import {
+  captureExecutionDiffArtifacts,
+  captureExecutionDiffBaseline,
+  type ExecFileSyncFn,
+} from "../task-diff-capture.js";
 import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
 
 function makeGitWorkspace(): string {
@@ -23,6 +27,81 @@ function makeExecFileSync(outputs: Record<string, string>, thrownOutputs: Record
 }
 
 describe("captureExecutionDiffArtifacts", () => {
+  it("filters paths that were already dirty in the pre-task baseline", () => {
+    const workspace = makeGitWorkspace();
+    try {
+      let phase: "baseline" | "post" = "baseline";
+      const execFileSyncFn: ExecFileSyncFn = ((cmd, args) => {
+        const key = `${cmd} ${args.join(" ")}`;
+        if (key === "git diff --name-only") {
+          return phase === "baseline"
+            ? "preexisting.txt\n"
+            : "preexisting.txt\ntask-output.txt\n";
+        }
+        if (key === "git diff --cached --name-only") return "";
+        if (key === "git ls-files --others --exclude-standard") return "";
+        if (key === "git diff -- preexisting.txt") {
+          return "diff --git a/preexisting.txt b/preexisting.txt\n@@ -1 +1 @@\n-clean\n+dirty\n";
+        }
+        if (key === "git diff -- task-output.txt") {
+          return "diff --git a/task-output.txt b/task-output.txt\n@@ -0,0 +1 @@\n+task output\n";
+        }
+        return "";
+      }) as ExecFileSyncFn;
+
+      const baseline = captureExecutionDiffBaseline(execFileSyncFn, workspace);
+      phase = "post";
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace, { baseline });
+
+      expect(baseline.changedPaths).toEqual(["preexisting.txt"]);
+      expect(result.changedPaths).toEqual(["task-output.txt"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "task-output.txt",
+          patch: expect.stringContaining("+task output"),
+        }),
+      ]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps further edits to baseline-dirty paths as unsafe to path-restore", () => {
+    const workspace = makeGitWorkspace();
+    try {
+      let phase: "baseline" | "post" = "baseline";
+      const execFileSyncFn: ExecFileSyncFn = ((cmd, args) => {
+        const key = `${cmd} ${args.join(" ")}`;
+        if (key === "git diff --name-only") {
+          return "preexisting.txt\n";
+        }
+        if (key === "git diff --cached --name-only") return "";
+        if (key === "git ls-files --others --exclude-standard") return "";
+        if (key === "git diff -- preexisting.txt") {
+          return phase === "baseline"
+            ? "diff --git a/preexisting.txt b/preexisting.txt\n@@ -1 +1 @@\n-clean\n+dirty before task\n"
+            : "diff --git a/preexisting.txt b/preexisting.txt\n@@ -1 +1 @@\n-clean\n+dirty before task and task edit\n";
+        }
+        return "";
+      }) as ExecFileSyncFn;
+
+      const baseline = captureExecutionDiffBaseline(execFileSyncFn, workspace);
+      phase = "post";
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace, { baseline });
+
+      expect(result.changedPaths).toEqual(["preexisting.txt"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "preexisting.txt",
+          patch: expect.stringContaining("dirty before task and task edit"),
+          safe_to_revert: false,
+        }),
+      ]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("collects tracked file diffs and changed paths", () => {
     const workspace = makeGitWorkspace();
     try {
