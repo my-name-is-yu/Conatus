@@ -170,6 +170,7 @@ export async function executeTask(
     cwd: workspaceCwd ?? process.cwd(),
     execFileSyncFn,
     logger,
+    fallbackChangedPaths: result.filesChangedPaths,
   });
 
   // End session
@@ -207,11 +208,14 @@ export async function applyPostExecutionDiffScopeChecks(input: {
   cwd: string;
   execFileSyncFn: TaskExecutorDeps["execFileSyncFn"];
   logger?: Logger;
+  fallbackChangedPaths?: string[];
 }): Promise<void> {
   if (!input.result.success) return;
 
   try {
-    const diffArtifacts = captureExecutionDiffArtifacts(input.execFileSyncFn, input.cwd);
+    const diffArtifacts = captureExecutionDiffArtifacts(input.execFileSyncFn, input.cwd, {
+      fallbackChangedPaths: input.fallbackChangedPaths,
+    });
     if (diffArtifacts.available) {
       const changedFiles = diffArtifacts.changedPaths;
       input.result.filesChangedPaths = changedFiles;

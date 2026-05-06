@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AgentResult, IAdapter } from "../adapter-layer.js";
 import { executeTask, type TaskExecutorDeps } from "../task/task-executor.js";
 import type { Task } from "../../../base/types/task.js";
 import type { SessionManager } from "../session-manager.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 vi.mock("../../../base/llm/provider-config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../base/llm/provider-config.js")>();
@@ -54,10 +57,13 @@ describe("executeTask protected paths", () => {
   let sessionManager: SessionManager;
   let adapter: IAdapter;
   let execFileSyncFn: TaskExecutorDeps["execFileSyncFn"];
+  let workspace: string;
 
   beforeEach(() => {
+    workspace = makeTempDir();
+    fs.mkdirSync(path.join(workspace, ".git"), { recursive: true });
     stateManager = {
-      loadGoal: vi.fn().mockResolvedValue({ constraints: ["workspace_path:/repo"] }),
+      loadGoal: vi.fn().mockResolvedValue({ constraints: [`workspace_path:${workspace}`] }),
       readRaw: vi.fn().mockResolvedValue(null),
       writeRaw: vi.fn().mockResolvedValue(undefined),
     } as unknown as TaskExecutorDeps["stateManager"];
@@ -84,6 +90,10 @@ describe("executeTask protected paths", () => {
     });
   });
 
+  afterEach(() => {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  });
+
   it("fails successful task results when configured protected paths are modified", async () => {
     const result = await executeTask(
       {
@@ -100,8 +110,10 @@ describe("executeTask protected paths", () => {
   });
 
   it("uses task workspace_path before goal workspace_path for adapter cwd, diff capture, and protected-path checks", async () => {
-    const goalWorkspace = "/repo/goal-workspace";
-    const taskWorkspace = "/repo/task-workspace";
+    const goalWorkspace = path.join(workspace, "goal-workspace");
+    const taskWorkspace = path.join(workspace, "task-workspace");
+    fs.mkdirSync(path.join(goalWorkspace, ".git"), { recursive: true });
+    fs.mkdirSync(path.join(taskWorkspace, ".git"), { recursive: true });
     vi.mocked(stateManager.loadGoal).mockResolvedValue({ constraints: [`workspace_path:${goalWorkspace}`] } as never);
     const execute = vi.fn().mockResolvedValue({
       success: true,

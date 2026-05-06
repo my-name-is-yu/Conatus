@@ -550,9 +550,16 @@ export class TaskLifecycle {
       });
       result = taskAgentLoopResultToAgentResult(agentLoopResult);
       if (agentLoopResult.workspace?.executionCwd) {
+        const fallbackChangedPaths = [
+          ...new Set([
+            ...(result.filesChangedPaths ?? []),
+            ...agentLoopResult.changedFiles,
+          ]),
+        ];
         const diffArtifacts = captureExecutionDiffArtifacts(
           this.execFileSyncFn,
           agentLoopResult.workspace.executionCwd,
+          { fallbackChangedPaths },
         );
         if (diffArtifacts.available) {
           result.filesChangedPaths = diffArtifacts.changedPaths;

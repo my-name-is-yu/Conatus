@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { z } from "zod";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../../base/llm/llm-client.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolResult } from "../../../../tools/types.js";
 import { ToolRegistry } from "../../../../tools/registry.js";
@@ -8,6 +9,7 @@ import { ToolPermissionManager } from "../../../../tools/permission.js";
 import { ConcurrencyController } from "../../../../tools/concurrency.js";
 import { ToolExecutor } from "../../../../tools/executor.js";
 import { ToolSearchTool } from "../../../../tools/query/ToolSearchTool/ToolSearchTool.js";
+import { ApplyPatchTool } from "../../../../tools/fs/ApplyPatchTool/ApplyPatchTool.js";
 import { StateManager } from "../../../../base/state/state-manager.js";
 import { SessionManager } from "../../session-manager.js";
 import { TrustManager } from "../../../../platform/traits/trust-manager.js";
@@ -540,6 +542,87 @@ describe("agentloop phase 1", () => {
     expect(assistantMessages).toHaveLength(2);
     expect(assistantMessages[0]).toMatchObject({ phase: "commentary" });
     expect(assistantMessages[1]).toMatchObject({ phase: "final_candidate" });
+  });
+
+  it("captures changed paths for apply_patch in a non-git workspace", async () => {
+    const workspace = makeTempDir();
+    try {
+      const modelInfo = makeModelInfo();
+      const modelClient = new ScriptedModelClient(modelInfo, [
+        {
+          content: "",
+          toolCalls: [{
+            id: "patch-1",
+            name: "apply_patch",
+            input: {
+              cwd: workspace,
+              patch: [
+                "*** Begin Patch",
+                "*** Add File: reports/hgb.json",
+                "+{\"score\":0.95}",
+                "*** End Patch",
+              ].join("\n"),
+            },
+          }],
+          stopReason: "tool_use",
+        },
+        {
+          content: JSON.stringify({
+            status: "done",
+            finalAnswer: "finished",
+            summary: "created report",
+            filesChanged: [],
+            testsRun: [],
+            completionEvidence: [],
+            verificationHints: [],
+            blockers: [],
+          }),
+          toolCalls: [],
+          stopReason: "end_turn",
+        },
+      ]);
+      const registry = new ToolRegistry();
+      registry.register(new ApplyPatchTool());
+      const router = new ToolRegistryAgentLoopToolRouter(registry);
+      const executor = new ToolExecutor({
+        registry,
+        permissionManager: new ToolPermissionManager({}),
+        concurrency: new ConcurrencyController(),
+      });
+      const runner = new BoundedAgentLoopRunner({
+        modelClient,
+        toolRouter: router,
+        toolRuntime: new ToolExecutorAgentLoopToolRuntime(executor, router),
+      });
+
+      const result = await runner.run({
+        session: createAgentLoopSession(),
+        turnId: "turn-1",
+        goalId: "goal-1",
+        taskId: "task-1",
+        cwd: workspace,
+        model: modelInfo.ref,
+        modelInfo,
+        messages: [{ role: "user", content: "write report" }],
+        outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }).passthrough(),
+        budget: withDefaultBudget({ maxModelTurns: 4 }),
+        toolPolicy: { allowedTools: ["apply_patch"] },
+        toolCallContext: {
+          cwd: workspace,
+          goalId: "goal-1",
+          trustBalance: 100,
+          preApproved: true,
+          trusted: true,
+          approvalFn: async () => true,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.changedFiles).toContain("reports/hgb.json");
+      expect(fs.readFileSync(path.join(workspace, "reports", "hgb.json"), "utf-8")).toContain("0.95");
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it("persists typed tool observations for success, failure, denied, blocked, timed out, and interrupted results", async () => {
@@ -1164,6 +1247,7 @@ describe("agentloop phase 2", () => {
     const goalWorkspace = makeTempDir();
     try {
       fs.mkdirSync(goalWorkspace, { recursive: true });
+      fs.mkdirSync(path.join(goalWorkspace, ".git"), { recursive: true });
       const modelInfo = makeModelInfo();
       const modelClient = new ScriptedModelClient(modelInfo, [
         {
@@ -1238,6 +1322,115 @@ describe("agentloop phase 2", () => {
       expect(result.agentLoop?.requestedCwd).not.toBe(fs.realpathSync(daemonDir));
       expect(diffCwds).toEqual(expect.arrayContaining([fs.realpathSync(goalWorkspace)]));
       expect(diffCwds).not.toContain(fs.realpathSync(daemonDir));
+    } finally {
+      fs.rmSync(goalWorkspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it("populates file diffs for non-git native task execution through TaskLifecycle", async () => {
+    const daemonDir = tmpDir;
+    const goalWorkspace = makeTempDir();
+    try {
+      fs.mkdirSync(goalWorkspace, { recursive: true });
+      const modelInfo = makeModelInfo();
+      const modelClient = new ScriptedModelClient(modelInfo, [
+        {
+          content: "",
+          toolCalls: [{
+            id: "patch-1",
+            name: "apply_patch",
+            input: {
+              cwd: goalWorkspace,
+              patch: [
+                "*** Begin Patch",
+                "*** Add File: reports/hgb.json",
+                "+{\"score\":0.95}",
+                "*** End Patch",
+              ].join("\n"),
+            },
+          }],
+          stopReason: "tool_use",
+        },
+        {
+          content: "",
+          toolCalls: [{ id: "verify-1", name: "verify", input: { command: "test -f reports/hgb.json" } }],
+          stopReason: "tool_use",
+        },
+        {
+          content: JSON.stringify({
+            status: "done",
+            finalAnswer: "finished",
+            summary: "created report",
+            filesChanged: [],
+            testsRun: [],
+            completionEvidence: [],
+            verificationHints: [],
+            blockers: [],
+          }),
+          toolCalls: [],
+          stopReason: "end_turn",
+        },
+      ]);
+      const registry = new ToolRegistry();
+      registry.register(new ApplyPatchTool());
+      registry.register(new VerifyTool());
+      const router = new ToolRegistryAgentLoopToolRouter(registry);
+      const executor = new ToolExecutor({
+        registry,
+        permissionManager: new ToolPermissionManager({}),
+        concurrency: new ConcurrencyController(),
+      });
+      const runtime = new ToolExecutorAgentLoopToolRuntime(executor, router);
+      const boundedRunner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+      const taskRunner = new TaskAgentLoopRunner({
+        boundedRunner,
+        modelClient,
+        modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
+        defaultModel: modelInfo.ref,
+        defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
+        cwd: daemonDir,
+      });
+      const stateManager = new StateManager(daemonDir);
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-1",
+        constraints: [`workspace_path:${goalWorkspace}`],
+      }));
+      const llmClient: ILLMClient = {
+        async sendMessage(): Promise<LLMResponse> {
+          return { content: finalJson(), usage: { input_tokens: 1, output_tokens: 1 }, stop_reason: "end_turn" };
+        },
+        parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
+          return schema.parse(JSON.parse(content));
+        },
+        supportsToolCalling: () => true,
+      };
+      const sessionManager = new SessionManager(stateManager);
+      const execFileSyncFn = vi.fn(() => {
+        throw new Error("git should not be probed for non-git fallback diff evidence");
+      });
+      const lifecycle = new TaskLifecycle(
+        stateManager,
+        llmClient,
+        sessionManager,
+        new TrustManager(stateManager),
+        new StrategyManager(stateManager, llmClient),
+        new StallDetector(stateManager),
+        { agentLoopRunner: taskRunner, execFileSyncFn },
+      );
+      const task = makeTask();
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      expect(result.success).toBe(true);
+      expect(result.filesChangedPaths).toEqual(["reports/hgb.json"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "reports/hgb.json",
+          patch: expect.stringContaining("+{\"score\":0.95}"),
+        }),
+      ]);
+      expect(execFileSyncFn).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(goalWorkspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }

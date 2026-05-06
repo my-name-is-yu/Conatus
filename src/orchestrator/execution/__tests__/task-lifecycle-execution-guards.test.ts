@@ -161,6 +161,8 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
   it("passes task workspace_path through the run-adapter caller path and diff capture", async () => {
     const goalWorkspace = `${tmpDir}/goal-workspace`;
     const taskWorkspace = `${tmpDir}/task-workspace`;
+    fs.mkdirSync(`${goalWorkspace}/.git`, { recursive: true });
+    fs.mkdirSync(`${taskWorkspace}/.git`, { recursive: true });
     await stateManager.writeRaw("goals/goal-1/goal.json", {
       id: "goal-1",
       title: "Test goal",

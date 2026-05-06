@@ -94,6 +94,7 @@ export async function executeTaskWithGuards(
             cwd: workspaceCwd ?? process.cwd(),
             execFileSyncFn,
             logger,
+            fallbackChangedPaths: result.filesChangedPaths,
           });
           return result;
         }
