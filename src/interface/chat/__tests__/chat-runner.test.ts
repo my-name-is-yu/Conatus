@@ -1326,6 +1326,45 @@ describe("ChatRunner", () => {
       expect(adapter.execute).toHaveBeenCalledOnce();
     });
 
+    it("emits a typed TurnStart operation for idle user input", async () => {
+      const adapter = makeMockAdapter();
+      const events: ChatEvent[] = [];
+      const runner = new ChatRunner(makeDeps({
+        adapter,
+        onEvent: (event) => {
+          events.push(event);
+        },
+      }));
+      runner.startSession("/repo");
+
+      const result = await runner.execute("ordinary chat", "/repo");
+
+      expect(result.success).toBe(true);
+      const start = events.find((event): event is Extract<ChatEvent, { type: "lifecycle_start" }> =>
+        event.type === "lifecycle_start"
+      );
+      expect(start).toBeDefined();
+      expect(start?.operation.kind).toBe("TurnStart");
+      if (start?.operation.kind !== "TurnStart") {
+        throw new Error("expected TurnStart operation");
+      }
+      expect(start?.operation).toMatchObject({
+        kind: "TurnStart",
+        runId: start?.runId,
+        turnId: start?.turnId,
+        cwd: "/repo",
+        userInput: {
+          schema_version: "user-input-v1",
+          rawText: "ordinary chat",
+          items: [{
+            kind: "text",
+            text: "ordinary chat",
+          }],
+        },
+      });
+      expect(start.operation.inputId).toEqual(expect.any(String));
+    });
+
     it("clears the active turn when an adapter turn times out", async () => {
       const adapter = {
         adapterType: "mock",
@@ -3221,21 +3260,60 @@ describe("ChatRunner", () => {
           });
         }),
       } as unknown as ChatAgentLoopRunner;
+      const events: ChatEvent[] = [];
       const runner = new ChatRunner(makeDeps({
         stateManager: makeMockStateManager(),
         chatAgentLoopRunner,
+        onEvent: (event) => {
+          events.push(event);
+        },
       }));
       runner.startSession("/repo");
 
       const active = runner.execute("Implement a feature", "/repo");
       await vi.waitFor(() => expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce());
 
-      const interrupted = await runner.interruptAndRedirect("stop and summarize", "/repo");
+      const interrupted = await runner.interruptAndRedirect(
+        "stop and summarize",
+        "/stale-repo",
+        30_000,
+        { userInput: createTextUserInput("stop and summarize") },
+      );
 
       expect(capturedSignal?.aborted).toBe(true);
       expect(interrupted.success).toBe(true);
       expect(interrupted.output).toContain("Interrupted the active turn");
       expect(interrupted.output).toContain("Activity before interruption");
+      const steer = events.find((event): event is Extract<ChatEvent, { type: "turn_steer" }> =>
+        event.type === "turn_steer"
+      );
+      expect(steer).toBeDefined();
+      expect(steer?.operation).toMatchObject({
+        kind: "TurnSteer",
+        runId: steer?.runId,
+        turnId: steer?.turnId,
+        activeTurn: {
+          cwd: "/repo",
+        },
+        userInput: {
+          schema_version: "user-input-v1",
+          rawText: "stop and summarize",
+          items: [{
+            kind: "text",
+            text: "stop and summarize",
+          }],
+        },
+      });
+      expect(steer?.operation.steerInputId).toEqual(expect.any(String));
+      const steerLifecycleStart = events.find((event): event is Extract<ChatEvent, { type: "lifecycle_start" }> =>
+        event.type === "lifecycle_start" && event.operation.kind === "TurnSteer"
+      );
+      expect(steerLifecycleStart?.operation).toMatchObject({
+        kind: "TurnSteer",
+        steerInputId: steer?.operation.steerInputId,
+      });
+      expect(steerLifecycleStart?.runId).toBe(steer?.operation.runId);
+      expect(steerLifecycleStart?.turnId).toBe(steer?.operation.turnId);
       await active;
     });
 

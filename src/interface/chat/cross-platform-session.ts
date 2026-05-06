@@ -415,6 +415,9 @@ export class CrossPlatformChatSessionManager {
     if (ingress.ingress_id && this.approvalSideTurnIngressIds.delete(ingress.ingress_id)) {
       return this.executeInSession(session, ingress, options);
     }
+    if (session.runner.hasActiveTurn()) {
+      return this.steerActiveSession(session, ingress, options);
+    }
     const queueEntry = session.queue.then(() => this.executeInSession(session, ingress, options));
     session.queue = queueEntry.then(() => undefined, () => undefined);
     return queueEntry;
@@ -452,18 +455,7 @@ export class CrossPlatformChatSessionManager {
         elapsed_ms: 0,
       };
     }
-    const previousOnEvent = session.runner.onEvent;
-    let deliveryQueue: ChatEventDeliveryQueue | null = null;
-    if (input.onEvent) {
-      deliveryQueue = new ChatEventDeliveryQueue(input.onEvent, this.deps.onEvent);
-      session.runner.onEvent = deliveryQueue.dispatch;
-    }
-    try {
-      return await session.runner.interruptAndRedirect(input.text, session.info.cwd, input.timeoutMs);
-    } finally {
-      await deliveryQueue?.drain();
-      session.runner.onEvent = previousOnEvent;
-    }
+    return this.steerActiveSession(session, ingress, input);
   }
 
   async executeIngress(
@@ -482,6 +474,9 @@ export class CrossPlatformChatSessionManager {
     const session = this.getOrCreateSession(normalizedIngress, options.cwd);
     if (normalizedIngress.ingress_id && this.approvalSideTurnIngressIds.delete(normalizedIngress.ingress_id)) {
       return this.executeInSession(session, normalizedIngress, options);
+    }
+    if (session.runner.hasActiveTurn()) {
+      return this.steerActiveSession(session, normalizedIngress, options);
     }
     const queueEntry = session.queue.then(() => this.executeInSession(session, normalizedIngress, options));
     session.queue = queueEntry.then(() => undefined, () => undefined);
@@ -805,27 +800,7 @@ export class CrossPlatformChatSessionManager {
     ingress: CrossPlatformIngressMessage,
     options: Pick<CrossPlatformIncomingChatMessage, "timeoutMs" | "onEvent" | "conversation_name" | "user_name"> = {}
   ): Promise<ChatRunResult> {
-    session.info.last_used_at = new Date().toISOString();
-    session.info.conversation_name = options.conversation_name?.trim() || session.info.conversation_name;
-    session.info.user_id = session.info.user_id ?? (normalizeIdentity(ingress.user_id) ?? undefined);
-    session.info.user_name = options.user_name?.trim() || session.info.user_name;
-    session.info.last_message_id = normalizeIdentity(ingress.message_id) ?? session.info.last_message_id;
-    session.info.active_reply_target = {
-      ...ingress.replyTarget,
-      metadata: cloneMetadata(ingress.replyTarget.metadata),
-    };
-    if (ingress.companion) {
-      session.info.active_companion_contract = ingress.companion;
-    }
-    session.info.metadata = cloneMetadata(buildSessionMetadata({
-      metadata: ingress.metadata,
-      channel: ingress.channel,
-      platform: ingress.platform,
-      conversation_id: ingress.conversation_id,
-      conversation_name: options.conversation_name,
-      user_id: ingress.user_id,
-      user_name: options.user_name,
-    }));
+    this.updateSessionInfoForIngress(session, ingress, options);
 
     const capabilities = {
       hasAgentLoop: this.deps.chatAgentLoopRunner !== undefined,
@@ -931,6 +906,78 @@ export class CrossPlatformChatSessionManager {
       await deliveryQueue?.drain();
       this.activeApprovalEventHandlers.delete(session.info.session_key);
       session.runner.onEvent = previousOnEvent;
+    }
+  }
+
+  private updateSessionInfoForIngress(
+    session: ManagedChatSession,
+    ingress: CrossPlatformIngressMessage,
+    options: Pick<CrossPlatformIncomingChatMessage, "conversation_name" | "user_name"> = {},
+  ): void {
+    session.info.last_used_at = new Date().toISOString();
+    session.info.conversation_name = options.conversation_name?.trim() || session.info.conversation_name;
+    session.info.user_id = session.info.user_id ?? (normalizeIdentity(ingress.user_id) ?? undefined);
+    session.info.user_name = options.user_name?.trim() || session.info.user_name;
+    session.info.last_message_id = normalizeIdentity(ingress.message_id) ?? session.info.last_message_id;
+    session.info.active_reply_target = {
+      ...ingress.replyTarget,
+      metadata: cloneMetadata(ingress.replyTarget.metadata),
+    };
+    if (ingress.companion) {
+      session.info.active_companion_contract = ingress.companion;
+    }
+    session.info.metadata = cloneMetadata(buildSessionMetadata({
+      metadata: ingress.metadata,
+      channel: ingress.channel,
+      platform: ingress.platform,
+      conversation_id: ingress.conversation_id,
+      conversation_name: options.conversation_name,
+      user_id: ingress.user_id,
+      user_name: options.user_name,
+    }));
+  }
+
+  private async steerActiveSession(
+    session: ManagedChatSession,
+    ingress: CrossPlatformIngressMessage,
+    options: Pick<CrossPlatformIncomingChatMessage, "timeoutMs" | "onEvent" | "conversation_name" | "user_name"> = {},
+  ): Promise<ChatRunResult> {
+    this.updateSessionInfoForIngress(session, ingress, options);
+
+    const previousOnEvent = session.runner.onEvent;
+    const approvalHandlerKey = session.info.session_key;
+    const hadPreviousApprovalHandler = this.activeApprovalEventHandlers.has(approvalHandlerKey);
+    const previousApprovalHandler = this.activeApprovalEventHandlers.get(approvalHandlerKey);
+    let deliveryQueue: ChatEventDeliveryQueue | null = null;
+    if (options.onEvent) {
+      deliveryQueue = new ChatEventDeliveryQueue(options.onEvent, this.deps.onEvent);
+      session.runner.onEvent = deliveryQueue.dispatch;
+      this.activeApprovalEventHandlers.set(approvalHandlerKey, options.onEvent);
+    }
+    try {
+      return await session.runner.interruptAndRedirect(
+        ingress.text,
+        session.info.cwd,
+        options.timeoutMs,
+        { userInput: ingress.userInput },
+      );
+    } finally {
+      await deliveryQueue?.drain();
+      const activeStillRunning = session.runner.hasActiveTurn();
+      if (activeStillRunning && deliveryQueue && options.onEvent) {
+        session.runner.onEvent = deliveryQueue.dispatch;
+        this.activeApprovalEventHandlers.set(approvalHandlerKey, options.onEvent);
+      } else if (activeStillRunning) {
+        session.runner.onEvent = previousOnEvent;
+        if (hadPreviousApprovalHandler && previousApprovalHandler) {
+          this.activeApprovalEventHandlers.set(approvalHandlerKey, previousApprovalHandler);
+        } else {
+          this.activeApprovalEventHandlers.delete(approvalHandlerKey);
+        }
+      } else {
+        session.runner.onEvent = undefined;
+        this.activeApprovalEventHandlers.delete(approvalHandlerKey);
+      }
     }
   }
 }

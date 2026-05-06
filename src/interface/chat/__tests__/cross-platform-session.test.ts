@@ -11,7 +11,8 @@ import { createMockLLMClient, createSingleMockLLMClient } from "../../../../test
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { StateManager as RealStateManager } from "../../../base/state/state-manager.js";
 import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
-import type { ToolCallContext } from "../../../tools/types.js";
+import type { ApprovalRequest, ToolCallContext } from "../../../tools/types.js";
+import type { ChatEvent } from "../chat-events.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -62,6 +63,10 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = innerResolve;
   });
   return { promise, resolve };
+}
+
+function interruptDecision(kind: "diff" | "review" | "summary" | "background" | "redirect" | "unknown", confidence = 0.93): string {
+  return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
 }
 
 function runSpecFreeformDecision(): string {
@@ -462,6 +467,188 @@ describe("CrossPlatformChatSessionManager", () => {
     finalDelivery.resolve();
     await expect(run).resolves.toBe("Task completed successfully.");
     expect(finalDelivered).toBe(true);
+  });
+
+  it("steers active gateway input without starting a second agent-loop turn or reusing a stale reply target", async () => {
+    let resolveActive: ((value: AgentResult) => void) | undefined;
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation((input: { abortSignal?: AbortSignal }) => {
+        return new Promise<AgentResult>((resolve) => {
+          resolveActive = resolve;
+          input.abortSignal?.addEventListener("abort", () => {
+            resolve({
+              success: false,
+              output: "cancelled",
+              error: "cancelled",
+              exit_code: null,
+              elapsed_ms: 10,
+              stopped_reason: "error",
+            });
+          }, { once: true });
+        });
+      }),
+    };
+    const events: ChatEvent[] = [];
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+    }));
+
+    const active = manager.execute("Implement a feature", {
+      identity_key: "shared-user",
+      platform: "slack",
+      conversation_id: "stale-thread",
+      user_id: "U123",
+      message_id: "stale-message",
+      cwd: "/repo",
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    await vi.waitFor(() => expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce());
+
+    const steered = await manager.execute("このターンを止めて要約して", {
+      identity_key: "shared-user",
+      platform: "slack",
+      conversation_id: "current-thread",
+      user_id: "U123",
+      message_id: "current-message",
+      cwd: "/stale-cwd",
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+
+    expect(steered.success).toBe(true);
+    expect(steered.output).toContain("Interrupted the active turn");
+    expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+    const steer = events.find((event): event is Extract<ChatEvent, { type: "turn_steer" }> =>
+      event.type === "turn_steer"
+    );
+    expect(steer).toBeDefined();
+    expect(steer?.operation).toMatchObject({
+      kind: "TurnSteer",
+      activeTurn: {
+        cwd: "/repo",
+      },
+      userInput: {
+        schema_version: "user-input-v1",
+        rawText: "このターンを止めて要約して",
+        items: [{
+          kind: "text",
+          text: "このターンを止めて要約して",
+        }],
+      },
+    });
+    const info = manager.getSessionInfo({ identity_key: "shared-user" });
+    expect(info?.last_message_id).toBe("current-message");
+    expect(info?.active_reply_target).toMatchObject({
+      platform: "slack",
+      conversation_id: "current-thread",
+      identity_key: "shared-user",
+      user_id: "U123",
+    });
+
+    resolveActive?.(CANNED_RESULT);
+    await active;
+  });
+
+  it("uses the current steer handler for approvals while the active turn keeps running", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      let capturedApprovalFn: ((request: ApprovalRequest) => Promise<boolean>) | undefined;
+      let resolveActive: ((value: AgentResult) => void) | undefined;
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockImplementation((input: {
+          approvalFn?: (request: ApprovalRequest) => Promise<boolean>;
+        }) => {
+          capturedApprovalFn = input.approvalFn;
+          return new Promise<AgentResult>((resolve) => {
+            resolveActive = resolve;
+          });
+        }),
+      };
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-steer-current",
+      });
+      const staleEvents: ChatEvent[] = [];
+      const currentEvents: ChatEvent[] = [];
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager: makeMockStateManager(),
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        llmClient: createMockLLMClient([interruptDecision("background")]),
+        approvalBroker,
+      }));
+
+      const active = manager.execute("Implement a feature", {
+        identity_key: "shared-user",
+        platform: "slack",
+        conversation_id: "stale-thread",
+        user_id: "U123",
+        message_id: "stale-message",
+        cwd: "/repo",
+        onEvent: (event) => {
+          staleEvents.push(event);
+        },
+      });
+      await vi.waitFor(() => expect(capturedApprovalFn).toBeDefined());
+
+      const redirected = await manager.execute("continúa esto en segundo plano", {
+        identity_key: "shared-user",
+        platform: "slack",
+        conversation_id: "current-thread",
+        user_id: "U123",
+        message_id: "current-message",
+        cwd: "/repo",
+        onEvent: (event) => {
+          currentEvents.push(event);
+        },
+      });
+
+      expect(redirected.success).toBe(true);
+      expect(redirected.output).toContain("background is not available yet");
+      const approval = capturedApprovalFn!({
+        toolName: "edit",
+        input: {},
+        reason: "Needs current approval.",
+        permissionLevel: "write_local",
+        isDestructive: false,
+        reversibility: "reversible",
+      });
+
+      await vi.waitFor(() => {
+        expect(currentEvents.some((event) =>
+          event.type === "activity"
+          && event.message.includes("Approval ID: approval-steer-current")
+        )).toBe(true);
+      });
+      expect(staleEvents.some((event) =>
+        event.type === "activity"
+        && event.message.includes("Approval ID: approval-steer-current")
+      )).toBe(false);
+
+      await expect(manager.processIncomingMessage({
+        text: "",
+        platform: "slack",
+        identity_key: "shared-user",
+        conversation_id: "current-thread",
+        sender_id: "U123",
+        message_id: "current-message",
+        cwd: "/repo",
+        approvalResponse: {
+          approval_id: "approval-steer-current",
+          approved: true,
+        },
+      })).resolves.toBe("Approval response recorded.");
+      await expect(approval).resolves.toBe(true);
+
+      resolveActive?.(CANNED_RESULT);
+      await active;
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
   });
 
   it("isolates async event delivery failures and still returns the chat result", async () => {
