@@ -55,7 +55,7 @@ async function startTUIStandaloneMode(): Promise<void> {
       process.exit(1);
     }
 
-    const { stateManager, llmClient, trustManager, coreLoop, actionHandler, intentRecognizer, setRequestApproval, chatRunner } = deps;
+    const { stateManager, llmClient, trustManager, coreLoop, actionHandler, intentRecognizer, setRequestApproval, approvalFn, chatRunner, toolExecutor } = deps;
 
     process.on("SIGTERM", () => { coreLoop.stop(); process.exit(0); });
 
@@ -83,6 +83,8 @@ async function startTUIStandaloneMode(): Promise<void> {
       llmClient,
       chatRunner,
       onApprovalReady: setRequestApproval,
+      shellApprovalFn: approvalFn,
+      toolExecutor,
       noFlicker,
       controlStream: terminalStream,
       ...breadcrumb,
@@ -162,7 +164,7 @@ async function startTUIDaemonMode(): Promise<void> {
 
     const stateManager = new StateManager(baseDir);
     await stateManager.init();
-    const { chatRunner, llmClient, setRequestApproval } = await buildDaemonModeChatSurface(
+    const { chatRunner, llmClient, setRequestApproval, approvalFn, toolExecutor } = await buildDaemonModeChatSurface(
       baseDir,
       stateManager,
       daemonClient,
@@ -197,6 +199,8 @@ async function startTUIDaemonMode(): Promise<void> {
       noFlicker,
       chatRunner,
       onApprovalReady: setRequestApproval,
+      shellApprovalFn: approvalFn,
+      toolExecutor,
       controlStream: terminalStream,
     });
 

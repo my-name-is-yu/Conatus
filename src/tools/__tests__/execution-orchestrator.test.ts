@@ -80,6 +80,61 @@ describe("decideHostToolExecution", () => {
     expect(decision.executionReason).toBe("policy_blocked");
   });
 
+  it("allows safe read-only shell protocol requests through typed command metadata", () => {
+    const decision = decideHostToolExecution({
+      tool: makeTool({ name: "shell", permissionLevel: "read_metrics", isReadOnly: false }),
+      input: { command: "git status --short" },
+      context: makeContext(),
+    });
+
+    expect(decision.status).toBe("allowed");
+  });
+
+  it("requires approval for shell protocol local writes", () => {
+    const decision = decideHostToolExecution({
+      tool: makeTool({ name: "shell", permissionLevel: "read_metrics", isReadOnly: false }),
+      input: { command: "echo ok > output.txt" },
+      context: makeContext({ executionPolicy: makePolicy({ approvalPolicy: "on_request" }) }),
+    });
+
+    expect(decision.status).toBe("needs_permission");
+    expect(decision.requiredApprovalPolicy).toBe("on_request");
+  });
+
+  it("requires a sandbox change for shell protocol network commands when network is disabled", () => {
+    const decision = decideHostToolExecution({
+      tool: makeTool({ name: "shell", permissionLevel: "read_metrics", isReadOnly: false }),
+      input: { command: "git fetch origin" },
+      context: makeContext({ executionPolicy: makePolicy({ networkAccess: false }) }),
+    });
+
+    expect(decision.status).toBe("needs_sandbox");
+    expect(decision.executionReason).toBe("sandbox_required");
+    expect(decision.requiredSandboxMode).toBe("danger_full_access");
+  });
+
+  it("denies destructive shell protocol commands before approval", () => {
+    const decision = decideHostToolExecution({
+      tool: makeTool({ name: "shell", permissionLevel: "read_metrics", isReadOnly: false }),
+      input: { command: "git reset --hard HEAD" },
+      context: makeContext(),
+    });
+
+    expect(decision.status).toBe("denied");
+    expect(decision.executionReason).toBe("policy_blocked");
+  });
+
+  it("denies shell writes to protected paths before approval", () => {
+    const decision = decideHostToolExecution({
+      tool: makeTool({ name: "shell", permissionLevel: "read_metrics", isReadOnly: false }),
+      input: { command: "touch .env" },
+      context: makeContext({ executionPolicy: makePolicy({ protectedPaths: ["/repo/.env"] }) }),
+    });
+
+    expect(decision.status).toBe("denied");
+    expect(decision.executionReason).toBe("policy_blocked");
+  });
+
   it("requires permission for local writes when approval is on-request", () => {
     const decision = decideHostToolExecution({
       tool: makeTool({ permissionLevel: "write_local", isReadOnly: false }),

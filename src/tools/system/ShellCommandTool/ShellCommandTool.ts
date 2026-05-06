@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 import { ShellTool } from "../ShellTool/ShellTool.js";
+import { containsShellExecutable } from "../ShellTool/command-policy.js";
 
 export const ShellCommandInputSchema = z.object({
   command: z.string().min(1),
@@ -27,7 +28,7 @@ export class ShellCommandTool implements ITool<ShellCommandInput> {
   }
 
   async call(input: ShellCommandInput, context: ToolCallContext): Promise<ToolResult> {
-    if (input.command.includes("apply_patch")) {
+    if (containsShellExecutable(input.command, "apply_patch")) {
       return {
         success: false,
         data: null,

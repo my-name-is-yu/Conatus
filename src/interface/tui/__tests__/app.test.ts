@@ -12,6 +12,13 @@ import { createMockLLMClient, createSingleMockLLMClient } from "../../../../test
 import type { TelegramSetupStatus } from "../../chat/gateway-setup-status.js";
 import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
 import type { ToolCallContext } from "../../../tools/types.js";
+import { ToolExecutor } from "../../../tools/executor.js";
+import { ToolRegistry } from "../../../tools/registry.js";
+import { ToolPermissionManager } from "../../../tools/permission.js";
+import { ConcurrencyController } from "../../../tools/concurrency.js";
+import { ShellTool } from "../../../tools/system/ShellTool/ShellTool.js";
+import type { ExecutionPolicy } from "../../../orchestrator/execution/agent-loop/execution-policy.js";
+import * as execMod from "../../../base/utils/execFileNoThrow.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
@@ -137,6 +144,29 @@ function createChatRunnerMock() {
     executeIngressMessage: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
     getConversationId: vi.fn(() => "tui-conversation-test"),
     onEvent: undefined,
+  };
+}
+
+function createShellToolExecutor(): ToolExecutor {
+  const registry = new ToolRegistry();
+  registry.register(new ShellTool());
+  return new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+  });
+}
+
+function createShellExecutionPolicy(workspaceRoot = "/tmp/pulseed-tui-shell-test", overrides: Partial<ExecutionPolicy> = {}): ExecutionPolicy {
+  return {
+    executionProfile: "consumer",
+    sandboxMode: "workspace_write",
+    approvalPolicy: "on_request",
+    networkAccess: true,
+    workspaceRoot,
+    protectedPaths: [],
+    trustProjectInstructions: true,
+    ...overrides,
   };
 }
 
@@ -345,6 +375,135 @@ describe("formatDaemonConnectionState", () => {
 
   it("omits the badge when no daemon state is available", () => {
     expect(formatDaemonConnectionState(undefined)).toBeUndefined();
+  });
+});
+
+describe("TUI shell execution", () => {
+  beforeEach(() => {
+    testState.lastChatProps = null;
+    testState.lastChatMessages = [];
+    testState.runtimeSessionSnapshots = [];
+    testState.runtimeSessionSnapshotCalls = 0;
+    testState.summarizedRunIds = [];
+    testState.runtimeEvidenceSummaries = {};
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("routes safe read-only bang commands through the typed tool executor", async () => {
+    const stateManager = createStateManagerMock();
+    const execSpy = vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+      stdout: "/tmp\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const shellApprovalFn = vi.fn(async () => false);
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/tmp",
+      gitBranch: "main",
+      providerName: "claude",
+      toolExecutor: createShellToolExecutor(),
+      shellApprovalFn,
+      shellExecutionPolicy: createShellExecutionPolicy("/tmp"),
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("!pwd");
+    await flush();
+
+    expect(execSpy).toHaveBeenCalledOnce();
+    expect(shellApprovalFn).not.toHaveBeenCalled();
+    expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("$ pwd");
+
+    screen.unmount();
+  });
+
+  it("keeps bang shell writes approval-denied and not executed", async () => {
+    const stateManager = createStateManagerMock();
+    const execSpy = vi.spyOn(execMod, "execFileNoThrow").mockResolvedValue({
+      stdout: "should-not-run",
+      stderr: "",
+      exitCode: 0,
+    });
+    const shellApprovalFn = vi.fn(async () => false);
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/tmp",
+      gitBranch: "main",
+      providerName: "claude",
+      toolExecutor: createShellToolExecutor(),
+      shellApprovalFn,
+      shellExecutionPolicy: createShellExecutionPolicy("/tmp"),
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("!echo ok > denied.txt");
+    await flush();
+
+    expect(shellApprovalFn).toHaveBeenCalledOnce();
+    expect(execSpy).not.toHaveBeenCalled();
+    expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("User denied approval");
+
+    screen.unmount();
+  });
+
+  it("blocks quoted command substitution in bang shell commands before execution", async () => {
+    const stateManager = createStateManagerMock();
+    const execSpy = vi.spyOn(execMod, "execFileNoThrow").mockResolvedValue({
+      stdout: "should-not-run",
+      stderr: "",
+      exitCode: 0,
+    });
+    const shellApprovalFn = vi.fn(async () => true);
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/tmp",
+      gitBranch: "main",
+      providerName: "claude",
+      toolExecutor: createShellToolExecutor(),
+      shellApprovalFn,
+      shellExecutionPolicy: createShellExecutionPolicy("/tmp"),
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("!echo \"$(touch denied.txt)\"");
+    await flush();
+
+    expect(execSpy).not.toHaveBeenCalled();
+    expect(shellApprovalFn).not.toHaveBeenCalled();
+    expect(testState.lastChatMessages.map((message) => message.text).join("\n")).toContain("unsupported command substitution syntax");
+
+    screen.unmount();
   });
 });
 
