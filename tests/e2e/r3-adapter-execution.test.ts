@@ -195,6 +195,18 @@ class TrackingMockAdapter implements IAdapter {
   }
 }
 
+function makeAdapterRegistry(adapter: IAdapter): AdapterRegistry {
+  const adapterRegistry = new AdapterRegistry();
+  adapterRegistry.register(adapter);
+  return adapterRegistry;
+}
+
+function expectTaskAndMechanicalAdapterCalls(adapter: TrackingMockAdapter): void {
+  expect(adapter.executeCalls).toHaveLength(2);
+  expect(adapter.executeCalls[0]!.prompt).toContain("README");
+  expect(adapter.executeCalls[1]!.prompt).toBe("grep -c 'example' README.md");
+}
+
 // ─── Setup ───
 
 let tmpDir: string;
@@ -230,6 +242,7 @@ describe("R3: runTaskCycle generates task, executes via adapter, and verifies", 
     const stallDetector = new StallDetector(stateManager);
 
     const adapter = new TrackingMockAdapter(true);
+    const adapterRegistry = makeAdapterRegistry(adapter);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -238,7 +251,7 @@ describe("R3: runTaskCycle generates task, executes via adapter, and verifies", 
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
     );
 
     const gapVector = makeGapVector(goal.id);
@@ -257,9 +270,8 @@ describe("R3: runTaskCycle generates task, executes via adapter, and verifies", 
     expect(result.task.primary_dimension).toBe("quality");
     expect(result.task.work_description).toContain("README");
 
-    // adapter.execute() was called with work_description content
-    expect(adapter.executeCalls).toHaveLength(1);
-    expect(adapter.executeCalls[0]!.prompt).toContain("README");
+    // adapter.execute() ran both task execution and L1 mechanical verification.
+    expectTaskAndMechanicalAdapterCalls(adapter);
 
     // Verification returned pass
     expect(result.verificationResult).toBeDefined();
@@ -294,6 +306,7 @@ describe("R3: runTaskCycle handles adapter execution failure", () => {
 
     // Adapter that returns failure
     const adapter = new TrackingMockAdapter(false);
+    const adapterRegistry = makeAdapterRegistry(adapter);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -302,7 +315,7 @@ describe("R3: runTaskCycle handles adapter execution failure", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
     );
 
     const gapVector = makeGapVector(goal.id);
@@ -315,8 +328,8 @@ describe("R3: runTaskCycle handles adapter execution failure", () => {
       adapter
     );
 
-    // adapter.execute() was still called
-    expect(adapter.executeCalls).toHaveLength(1);
+    // adapter.execute() still ran task execution and attempted L1 mechanical verification.
+    expectTaskAndMechanicalAdapterCalls(adapter);
 
     // Verification returned fail
     expect(result.verificationResult.verdict).toBe("fail");
@@ -380,6 +393,7 @@ describe("R3: runTaskCycle passes existingTasks for dedup", () => {
     const strategyManager = new StrategyManager(stateManager, mockLLM as Parameters<typeof StrategyManager>[1]);
     const stallDetector = new StallDetector(stateManager);
     const adapter = new TrackingMockAdapter(true);
+    const adapterRegistry = makeAdapterRegistry(adapter);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -388,7 +402,7 @@ describe("R3: runTaskCycle passes existingTasks for dedup", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
     );
 
     const existingTasks = [
@@ -439,6 +453,7 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
     const strategyManager = new StrategyManager(stateManager, mockLLM);
     const stallDetector = new StallDetector(stateManager);
     const adapter = new TrackingMockAdapter(true);
+    const adapterRegistry = makeAdapterRegistry(adapter);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -447,7 +462,7 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
     );
 
     const gapVector = makeGapVector(goal.id);
@@ -489,6 +504,7 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
     const strategyManager = new StrategyManager(stateManager, mockLLM);
     const stallDetector = new StallDetector(stateManager);
     const adapter = new TrackingMockAdapter(true);
+    const adapterRegistry = makeAdapterRegistry(adapter);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -497,11 +513,8 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
     );
-
-    const adapterRegistry = new AdapterRegistry();
-    adapterRegistry.register(adapter);
 
     // Use mocks for the non-TaskLifecycle CoreLoop deps
     const goalId = goal.id;
@@ -597,8 +610,8 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
     expect(loopResult.totalIterations).toBeGreaterThanOrEqual(1);
     expect(["max_iterations", "completed"]).toContain(loopResult.finalStatus);
 
-    // adapter.execute() was called through the real TaskLifecycle
-    expect(adapter.executeCalls).toHaveLength(1);
+    // adapter.execute() was called through the real TaskLifecycle for execution and verification.
+    expectTaskAndMechanicalAdapterCalls(adapter);
 
     // Goal dimension was updated after the pass verdict
     const updatedGoal = await stateManager.loadGoal(goalId);

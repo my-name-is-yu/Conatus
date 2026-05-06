@@ -5,7 +5,7 @@ import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../../platform/drive/stall-detector.js";
-import { TaskLifecycle } from "../task/task-lifecycle.js";
+import { AdapterRegistry, TaskLifecycle } from "../task/task-lifecycle.js";
 import type { Task } from "../../../base/types/task.js";
 import type {
   ILLMClient,
@@ -80,6 +80,24 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
+function makePassingAdapterRegistry(): AdapterRegistry {
+  const registry = new AdapterRegistry();
+  registry.register({
+    adapterType: "openai_codex_cli",
+    async execute() {
+      return {
+        success: true,
+        output: "mechanical verification passed",
+        error: null,
+        exit_code: 0,
+        elapsed_ms: 1,
+        stopped_reason: "completed",
+      };
+    },
+  });
+  return registry;
+}
+
 describe("TaskLifecycle — failure handling", () => {
   let tmpDir: string;
   let stateManager: StateManager;
@@ -109,7 +127,7 @@ describe("TaskLifecycle — failure handling", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { healthCheckEnabled: false }
+      { healthCheckEnabled: false, adapterRegistry: makePassingAdapterRegistry() }
     );
   }
 
