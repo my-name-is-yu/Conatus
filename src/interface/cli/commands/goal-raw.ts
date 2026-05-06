@@ -1,5 +1,6 @@
 // ─── goal-raw.ts: cmdGoalAddRaw — add a goal without LLM negotiation ───
 
+import { z } from "zod";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { getCliLogger } from "../cli-logger.js";
 import {
@@ -10,9 +11,33 @@ import {
   autoRegisterShellDataSources,
 } from "./goal-utils.js";
 
+const ISO_DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T.+/;
+const DeadlineDateTimeSchema = z.string().datetime();
+
+function normalizeDeadlineOption(deadline: string | undefined): string | null {
+  if (!deadline) return null;
+  if (ISO_DATE_ONLY_RE.test(deadline)) {
+    const normalized = `${deadline}T00:00:00.000Z`;
+    const parsed = new Date(normalized);
+    if (parsed.toISOString().slice(0, 10) !== deadline) {
+      throw new Error(`invalid --deadline value "${deadline}". Expected an ISO date or datetime.`);
+    }
+    return normalized;
+  }
+  if (!ISO_DATETIME_RE.test(deadline)) {
+    throw new Error(`invalid --deadline value "${deadline}". Expected an ISO date or datetime.`);
+  }
+  const parsed = DeadlineDateTimeSchema.safeParse(deadline);
+  if (!parsed.success) {
+    throw new Error(`invalid --deadline value "${deadline}". Expected an ISO date or datetime.`);
+  }
+  return new Date(parsed.data).toISOString();
+}
+
 export async function cmdGoalAddRaw(
   stateManager: StateManager,
-  opts: { title?: string; description?: string; rawDimensions: string[]; parent_id?: string; constraints?: string[] }
+  opts: { title?: string; description?: string; rawDimensions: string[]; parent_id?: string; constraints?: string[]; deadline?: string }
 ): Promise<number> {
   const title = opts.title || opts.description;
   if (!title) {
@@ -38,6 +63,13 @@ export async function cmdGoalAddRaw(
 
   const now = new Date().toISOString();
   const goalId = `goal_${Date.now()}`;
+  let deadline: string | null;
+  try {
+    deadline = normalizeDeadlineOption(opts.deadline);
+  } catch (err) {
+    getCliLogger().error(err instanceof Error ? `Error: ${err.message}` : String(err));
+    return 1;
+  }
 
   const dimensions = dimSpecs.map((spec) => {
     const threshold = buildThreshold(spec)!;
@@ -76,10 +108,10 @@ export async function cmdGoalAddRaw(
     dimension_mapping: null,
     constraints: opts.constraints ?? [],
     children_ids: [],
-    target_date: null,
+    target_date: deadline,
     origin: "manual" as const,
     pace_snapshot: null,
-    deadline: null,
+    deadline,
     confidence_flag: null,
     user_override: false,
     feasibility_note: null,
