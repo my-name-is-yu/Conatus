@@ -47,6 +47,7 @@ import {
   formatPercent,
   formatRelativeTime,
   formatRelativeTimestamp,
+  formatTaskFailureReasonCounts,
   formatTaskOutcomeLine,
   formatTaskSuccessRateLine,
   formatUptime,
@@ -730,6 +731,10 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     lines.push(
       `  Abandoned rate:  ${taskKpis.abandoned}/${taskKpis.terminal_tasks} (${formatPercent(taskKpis.abandoned_rate)})`
     );
+    const failureReasons = formatTaskFailureReasonCounts(taskKpis.failure_stopped_reasons);
+    if (failureReasons) {
+      lines.push(`  Failure reasons:${" ".repeat(1)}${failureReasons}`);
+    }
     if (taskKpis.p95_created_to_acked_ms !== null) {
       lines.push(`  Ack latency:     p95 ${formatDurationMs(taskKpis.p95_created_to_acked_ms)}`);
     }

@@ -41,6 +41,13 @@ interface RuntimeTaskOutcomeDetails {
     abandoned: number;
     retried: number;
   };
+  failure_reasons: {
+    timeout: number;
+    cancelled: number;
+    error: number;
+    unknown: number;
+    other: number;
+  };
   healthy_at_0_95: boolean | null;
 }
 
@@ -109,6 +116,7 @@ export class RuntimeOwnershipCoordinator {
         abandoned: summary.abandoned,
         retried: summary.retried,
       },
+      failure_reasons: summary.failure_stopped_reasons,
       healthy_at_0_95: summary.success_rate === null ? null : summary.success_rate >= 0.95,
     };
   }

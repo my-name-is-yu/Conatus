@@ -8,6 +8,10 @@ import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../../platform/drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
 import type { Task } from "../../../base/types/task.js";
+import type { AgentLoopStopReason } from "../agent-loop/agent-loop-budget.js";
+import type { AgentLoopResult } from "../agent-loop/agent-loop-result.js";
+import type { TaskAgentLoopOutput } from "../agent-loop/task-agent-loop-result.js";
+import type { TaskAgentLoopRunner } from "../agent-loop/task-agent-loop-runner.js";
 import type {
   ILLMClient,
   LLMMessage,
@@ -108,6 +112,48 @@ function createMockAdapter(
   };
 }
 
+function makeAgentLoopResult(
+  stopReason: AgentLoopStopReason,
+  overrides: Partial<AgentLoopResult<TaskAgentLoopOutput>> = {}
+): AgentLoopResult<TaskAgentLoopOutput> {
+  return {
+    success: stopReason === "completed",
+    output: stopReason === "completed"
+      ? {
+          status: "done",
+          finalAnswer: "done",
+          summary: "done",
+          filesChanged: [],
+          testsRun: [],
+          completionEvidence: [],
+          verificationHints: [],
+          blockers: [],
+        }
+      : null,
+    finalText: stopReason,
+    stopReason,
+    elapsedMs: 100,
+    modelTurns: 1,
+    toolCalls: 0,
+    compactions: 0,
+    filesChanged: false,
+    changedFiles: [],
+    commandResults: [],
+    traceId: "trace-1",
+    sessionId: "session-1",
+    turnId: "turn-1",
+    ...overrides,
+  };
+}
+
+function makeAgentLoopRunner(
+  result: AgentLoopResult<TaskAgentLoopOutput>
+): TaskAgentLoopRunner {
+  return {
+    runTask: vi.fn().mockResolvedValue(result),
+  } as unknown as TaskAgentLoopRunner;
+}
+
 // ─── Test Suite ───
 
 describe("TaskLifecycle", async () => {
@@ -140,6 +186,7 @@ describe("TaskLifecycle", async () => {
       approvalFn?: (task: Task) => Promise<boolean>;
       logger?: import("../../../runtime/logger.js").Logger;
       adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry;
+      agentLoopRunner?: TaskAgentLoopRunner;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
     }
   ): TaskLifecycle {
@@ -535,6 +582,52 @@ describe("TaskLifecycle", async () => {
       // Git diff check is skipped for failed tasks
       expect(result.filesChanged).toBeUndefined();
       expect(mockExecFileSync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("executeTaskWithAgentLoop", () => {
+    it.each([
+      {
+        stopReason: "timeout" as const,
+        expectedTaskStatus: "timed_out",
+        expectedTimestampField: "timeout_at",
+      },
+      {
+        stopReason: "cancelled" as const,
+        expectedTaskStatus: "cancelled",
+        expectedTimestampField: "stopped_at",
+      },
+    ])("records native $stopReason stop reason in task ledger", async ({
+      stopReason,
+      expectedTaskStatus,
+      expectedTimestampField,
+    }) => {
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner: makeAgentLoopRunner(makeAgentLoopResult(stopReason)),
+        execFileSyncFn: () => "",
+      });
+      const task = makeTask();
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+      const failedEvent = ledger.events.at(-1)!;
+
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe(stopReason);
+      expect(persisted.status).toBe(expectedTaskStatus);
+      expect(persisted[expectedTimestampField]).toEqual(expect.any(String));
+      expect(ledger.events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(failedEvent.stopped_reason).toBe(stopReason);
+      expect(ledger.summary.task_status).toBe(expectedTaskStatus);
+      expect(ledger.summary.latest_event_type).toBe("failed");
+      expect(ledger.summary.stopped_reason).toBe(stopReason);
     });
   });
 });

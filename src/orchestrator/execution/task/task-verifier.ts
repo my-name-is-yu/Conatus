@@ -29,6 +29,7 @@ export type {
   ExecutorReport,
   VerdictResult,
   FailureResult,
+  VerdictHandlingContext,
   CompletionJudgerConfig,
   VerifierDeps,
 } from "./task-verifier-types.js";
@@ -40,7 +41,7 @@ export {
   checkDimensionDirection,
 } from "./task-verifier-rules.js";
 
-import type { VerifierDeps, VerdictResult, FailureResult } from "./task-verifier-types.js";
+import type { VerifierDeps, VerdictResult, FailureResult, VerdictHandlingContext } from "./task-verifier-types.js";
 import {
   runMechanicalVerification,
   clampDimensionUpdate,
@@ -477,7 +478,8 @@ export async function verifyTask(
 export async function handleVerdict(
   deps: VerifierDeps,
   task: Task,
-  verificationResult: VerificationResult
+  verificationResult: VerificationResult,
+  context: VerdictHandlingContext = {}
 ): Promise<VerdictResult> {
   // P0: Progress-verdict contradiction check (§4.1)
   if (verificationResult.verdict === "pass" && verificationResult.dimension_updates?.length > 0) {
@@ -661,13 +663,14 @@ export async function handleVerdict(
           action: "keep",
           verificationResult,
           reason: "partial progress kept for follow-up work",
+          stoppedReason: context.stoppedReason ?? undefined,
         });
         return { action: "keep", task: partialTask };
       }
-      return handleFailure(deps, task, verificationResult);
+      return handleFailure(deps, task, verificationResult, context);
     }
     case "fail": {
-      return handleFailure(deps, task, verificationResult);
+      return handleFailure(deps, task, verificationResult, context);
     }
   }
 }
@@ -681,7 +684,8 @@ export async function handleVerdict(
 export async function handleFailure(
   deps: VerifierDeps,
   task: Task,
-  verificationResult: VerificationResult
+  verificationResult: VerificationResult,
+  context: VerdictHandlingContext = {}
 ): Promise<FailureResult> {
   const updatedTask = {
     ...task,
@@ -702,6 +706,7 @@ export async function handleFailure(
     type: "failed",
     attempt: updatedTask.consecutive_failure_count,
     verificationResult,
+    stoppedReason: context.stoppedReason ?? undefined,
   });
 
   if (updatedTask.consecutive_failure_count >= 3) {
@@ -718,6 +723,7 @@ export async function handleFailure(
       action: "escalate",
       verificationResult,
       reason: "consecutive failure threshold reached",
+      stoppedReason: context.stoppedReason ?? undefined,
     });
     return { action: "escalate", task: updatedTask };
   }
@@ -733,6 +739,7 @@ export async function handleFailure(
       action: "keep",
       verificationResult,
       reason: "failure kept for retry because direction remained correct",
+      stoppedReason: context.stoppedReason ?? undefined,
     });
     return { action: "keep", task: updatedTask };
   }
@@ -763,6 +770,7 @@ export async function handleFailure(
         action: "discard",
         verificationResult,
         reason: `task discarded after successful ${revertSuccess.method ?? "revert"} for ${revertSuccess.concretePaths.length} concrete paths`,
+        stoppedReason: context.stoppedReason ?? undefined,
       });
       return { action: "discard", task: updatedTask };
     }
@@ -778,6 +786,7 @@ export async function handleFailure(
       reason: revertSuccess.concretePaths.length === 0
         ? "revert skipped because no concrete changed paths were captured; task output requires operator review"
         : `revert failed after wrong-direction result: ${revertSuccess.reason}`,
+      stoppedReason: context.stoppedReason ?? undefined,
     });
     return { action: "escalate", task: updatedTask };
   }
@@ -790,6 +799,7 @@ export async function handleFailure(
     action: "escalate",
     verificationResult,
     reason: "task cannot be safely retried or reverted",
+    stoppedReason: context.stoppedReason ?? undefined,
   });
   return { action: "escalate", task: updatedTask };
 }

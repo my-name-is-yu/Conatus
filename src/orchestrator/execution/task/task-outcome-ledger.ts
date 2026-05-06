@@ -39,6 +39,7 @@ export interface TaskOutcomeSummary {
   task_status: Task["status"];
   verification_verdict?: VerificationResult["verdict"];
   action?: string;
+  stopped_reason: string | null;
   created_at: string | null;
   acked_at: string | null;
   started_at: string | null;
@@ -72,6 +73,13 @@ export interface TaskOutcomeAggregateSummary {
   failed: number;
   abandoned: number;
   retried: number;
+  failure_stopped_reasons: {
+    timeout: number;
+    cancelled: number;
+    error: number;
+    unknown: number;
+    other: number;
+  };
   total_tokens_used: number;
   success_rate: number | null;
   retry_rate: number | null;
@@ -161,11 +169,25 @@ function findLastEvent(
   return null;
 }
 
+function summarizeStoppedReason(task: Task, events: TaskOutcomeEvent[], lastEvent: TaskOutcomeEvent | null): string | null {
+  if (lastEvent?.stopped_reason !== null && lastEvent?.stopped_reason !== undefined) {
+    return lastEvent.stopped_reason;
+  }
+  if (task.status === "timed_out") {
+    return "timeout";
+  }
+  if (task.status === "cancelled") {
+    return "cancelled";
+  }
+  return null;
+}
+
 function buildSummary(task: Task, events: TaskOutcomeEvent[]): TaskOutcomeSummary {
   const ackedAt = findLastEvent(events, (event) => event.type === "acked")?.acked_at ?? null;
   const lastEvent = events.at(-1) ?? null;
   const lastFailure = findLastEvent(events, (event) => event.type === "failed");
   const lastAbandoned = findLastEvent(events, (event) => event.type === "abandoned");
+  const latestStoppedReason = summarizeStoppedReason(task, events, lastEvent);
   const verificationAt =
     lastEvent?.verification_at ??
     findLastEvent(events, (event) => event.verification_at !== null)?.verification_at ??
@@ -181,6 +203,7 @@ function buildSummary(task: Task, events: TaskOutcomeEvent[]): TaskOutcomeSummar
     task_status: task.status,
     verification_verdict: task.verification_verdict,
     action: lastEvent?.action,
+    stopped_reason: latestStoppedReason,
     created_at: task.created_at ?? null,
     acked_at: ackedAt,
     started_at: task.started_at ?? null,
@@ -350,6 +373,13 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
         failed: 0,
         abandoned: 0,
         retried: 0,
+        failure_stopped_reasons: {
+          timeout: 0,
+          cancelled: 0,
+          error: 0,
+          unknown: 0,
+          other: 0,
+        },
         total_tokens_used: 0,
         success_rate: null,
         retry_rate: null,
@@ -381,6 +411,33 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
   const failed = records.filter((record) => record.summary.latest_event_type === "failed").length;
   const abandoned = records.filter((record) => record.summary.latest_event_type === "abandoned").length;
   const retried = records.filter((record) => record.events.some((event) => event.type === "retried")).length;
+  const failureStoppedReasons = records
+    .filter((record) => record.summary.latest_event_type === "failed" || record.summary.latest_event_type === "abandoned")
+    .reduce<TaskOutcomeAggregateSummary["failure_stopped_reasons"]>((counts, record) => {
+      const latestEvent = record.events.at(-1) ?? null;
+      const stoppedReason =
+        record.summary.stopped_reason ??
+        latestEvent?.stopped_reason ??
+        null;
+      if (stoppedReason === "timeout" || record.summary.task_status === "timed_out") {
+        counts.timeout += 1;
+      } else if (stoppedReason === "cancelled" || record.summary.task_status === "cancelled") {
+        counts.cancelled += 1;
+      } else if (stoppedReason === "error") {
+        counts.error += 1;
+      } else if (stoppedReason === null) {
+        counts.unknown += 1;
+      } else {
+        counts.other += 1;
+      }
+      return counts;
+    }, {
+      timeout: 0,
+      cancelled: 0,
+      error: 0,
+      unknown: 0,
+      other: 0,
+    });
   const totalTokensUsed = records.reduce((sum, record) => sum + (record.summary.tokens_used ?? 0), 0);
   const inflightTasks = records.filter((record) => {
     const latestEvent = record.summary.latest_event_type;
@@ -396,6 +453,7 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
     failed,
     abandoned,
     retried,
+    failure_stopped_reasons: failureStoppedReasons,
     total_tokens_used: totalTokensUsed,
     success_rate: terminalTasks > 0 ? succeeded / terminalTasks : null,
     retry_rate: records.length > 0 ? retried / records.length : null,

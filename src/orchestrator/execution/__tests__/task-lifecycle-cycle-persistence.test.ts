@@ -9,6 +9,9 @@ import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../../platform/drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
 import type { Task } from "../../../base/types/task.js";
+import type { AgentLoopResult } from "../agent-loop/agent-loop-result.js";
+import type { TaskAgentLoopOutput } from "../agent-loop/task-agent-loop-result.js";
+import type { TaskAgentLoopRunner } from "../agent-loop/task-agent-loop-runner.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveContext } from "../../../base/types/drive.js";
 import type {
@@ -19,6 +22,7 @@ import type {
 } from "../../../base/llm/llm-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { summarizeTaskOutcomeLedgers } from "../task/task-outcome-ledger.js";
 import { z } from "zod";
 
 function createSpyLLMClient(responses: string[]): ILLMClient {
@@ -120,6 +124,28 @@ function makeVerificationResult(
     timestamp: new Date().toISOString(),
     ...overrides,
   };
+}
+
+function makeNativeTimeoutRunner(): TaskAgentLoopRunner {
+  const result: AgentLoopResult<TaskAgentLoopOutput> = {
+    success: false,
+    output: null,
+    finalText: "timeout",
+    stopReason: "timeout",
+    elapsedMs: 100,
+    modelTurns: 1,
+    toolCalls: 0,
+    compactions: 0,
+    filesChanged: false,
+    changedFiles: [],
+    commandResults: [],
+    traceId: "trace-1",
+    sessionId: "session-1",
+    turnId: "turn-1",
+  };
+  return {
+    runTask: async () => result,
+  } as unknown as TaskAgentLoopRunner;
 }
 
 function makeGapVector(goalId: string, dimensionName: string): GapVector {
@@ -414,6 +440,57 @@ describe("TaskLifecycle — persistence", () => {
     expect(summary.verification_verdict).toBe("fail");
     expect(summary.latest_event_type).toBe("abandoned");
     expect(summary.action).toBe("escalate");
+  });
+
+  it("runTaskCycle preserves native timeout stop reason through final ledger outcome", async () => {
+    const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_FAIL]);
+    const lifecycle = createLifecycle(llm, {
+      approvalFn: async () => true,
+      agentLoopRunner: makeNativeTimeoutRunner(),
+    });
+    const adapter: import("../task/task-lifecycle.js").IAdapter = {
+      adapterType: "mock",
+      async execute() {
+        throw new Error("native path should not call adapter.execute");
+      },
+    };
+
+    const result = await lifecycle.runTaskCycle(
+      "goal-1",
+      makeGapVector("goal-1", "dim"),
+      makeDriveContext("dim"),
+      adapter
+    );
+
+    const ledger = await stateManager.readRaw(`tasks/goal-1/ledger/${result.task.id}.json`) as {
+      events: Array<{ type: string; stopped_reason: string | null }>;
+      summary: { latest_event_type: string | null; task_status: string; stopped_reason: string | null; action?: string };
+    };
+
+    expect(result.action).toBe("escalate");
+    expect(result.task.status).toBe("timed_out");
+    expect(ledger.events.map((event) => [event.type, event.stopped_reason])).toEqual([
+      ["acked", null],
+      ["started", null],
+      ["failed", "timeout"],
+      ["failed", "timeout"],
+      ["abandoned", "timeout"],
+    ]);
+    expect(ledger.summary).toMatchObject({
+      latest_event_type: "abandoned",
+      task_status: "timed_out",
+      stopped_reason: "timeout",
+      action: "escalate",
+    });
+
+    const aggregate = await summarizeTaskOutcomeLedgers(tmpDir);
+    expect(aggregate.failure_stopped_reasons).toEqual({
+      timeout: 1,
+      cancelled: 0,
+      error: 0,
+      unknown: 0,
+      other: 0,
+    });
   });
 
   it("handleFailure records failed and retried events for retryable failures", async () => {

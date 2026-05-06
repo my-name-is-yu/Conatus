@@ -82,6 +82,23 @@ function formatPercent(value: number | null): string {
   return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
 }
 
+function formatFailureReasonCounts(failureReasons: {
+  timeout: number;
+  cancelled: number;
+  error: number;
+  unknown: number;
+  other: number;
+}): string | null {
+  const total =
+    failureReasons.timeout +
+    failureReasons.cancelled +
+    failureReasons.error +
+    failureReasons.unknown +
+    failureReasons.other;
+  if (total === 0) return null;
+  return `failures timeout=${failureReasons.timeout}, cancelled=${failureReasons.cancelled}, error=${failureReasons.error}, unknown=${failureReasons.unknown}, other=${failureReasons.other}`;
+}
+
 function formatLivePingDetail(latencyMs: number, error?: string): string {
   const latency = formatDurationMs(latencyMs);
   return error ? `live ping failed (${latency}; ${error})` : `live ping ok (${latency})`;
@@ -471,9 +488,14 @@ export async function checkDaemon(baseDir?: string): Promise<CheckResult> {
     ? compactRuntimeHealthKpi(runtimeKpi)?.status ?? "degraded"
     : "degraded";
   const taskKpis = await summarizeTaskOutcomeLedgers(dir);
+  const failureReasonSummary = formatFailureReasonCounts(taskKpis.failure_stopped_reasons);
   const taskSummary =
     taskKpis.total_tasks > 0
       ? `task success=${taskKpis.succeeded}/${taskKpis.terminal_tasks} (${formatPercent(taskKpis.success_rate)}), in-flight=${taskKpis.inflight_tasks}/${taskKpis.total_tasks}, retry=${taskKpis.retried}/${taskKpis.total_tasks} (${formatPercent(taskKpis.retry_rate)})${
+          failureReasonSummary !== null
+            ? `, ${failureReasonSummary}`
+            : ""
+        }${
           taskKpis.p95_created_to_completed_ms !== null
             ? `, total p95=${formatDurationMs(taskKpis.p95_created_to_completed_ms)}`
             : ""
