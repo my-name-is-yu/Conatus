@@ -21,7 +21,7 @@ import { HelpOverlay } from "./help-overlay.js";
 import { SettingsOverlay } from "./settings-overlay.js";
 import { ReportView } from "./report-view.js";
 import { SEEDY_PIXEL } from "./seedy-art.js";
-import { formatShellOutput } from "./bash-mode.js";
+import { createShellApprovalTask, formatShellOutput } from "./bash-mode.js";
 import {
   resolveFreeformInputRoute,
   resolveTuiInputAction,
@@ -39,7 +39,6 @@ import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Task } from "../../base/types/task.js";
 import type { TuiChatSurface } from "./chat-surface.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
-import { ShellTool } from "../../tools/system/ShellTool/ShellTool.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 import { parseExactSlashCommandToken } from "../../base/protocol/exact-protocol.js";
 import { applyChatEventToMessages } from "../chat/chat-event-state.js";
@@ -57,6 +56,9 @@ import {
 } from "../../runtime/run-spec/index.js";
 import { answerRuntimeEvidenceQuestion } from "../../runtime/evidence-answer.js";
 import { createTextUserInput } from "../chat/user-input.js";
+import type { ToolExecutor } from "../../tools/executor.js";
+import type { ApprovalRequest as ToolApprovalRequest } from "../../tools/types.js";
+import { defaultExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
@@ -221,6 +223,9 @@ interface AppProps {
   llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
   chatRunner?: TuiChatSurface;
   onApprovalReady?: (requestFn: (req: ApprovalRequest) => void) => void;
+  shellApprovalFn?: (task: Task) => Promise<boolean>;
+  toolExecutor?: Pick<ToolExecutor, "execute">;
+  shellExecutionPolicy?: ExecutionPolicy;
   // Shared
   stateManager: StateManager;
   cwd?: string;
@@ -275,6 +280,9 @@ export function App({
   llmClient,
   chatRunner,
   onApprovalReady,
+  shellApprovalFn,
+  toolExecutor,
+  shellExecutionPolicy,
   cwd,
   gitBranch,
   providerName,
@@ -612,15 +620,28 @@ export function App({
         }
 
         if (action.kind === "shell") {
-          const shellInput = { command: action.command, cwd: process.cwd(), timeoutMs: 120_000 };
-          const shellTool = new ShellTool();
-          const result = await shellTool.call(shellInput, {
-            cwd: process.cwd(),
+          const effectiveCwd = cwd ?? process.cwd();
+          if (!toolExecutor) {
+            setMessages((prev) => [...prev, {
+              id: randomUUID(),
+              role: "pulseed" as const,
+              text: "Shell execution unavailable: typed tool executor is not configured.",
+              timestamp: new Date(),
+              messageType: "error" as const,
+            }].slice(-MAX_MESSAGES));
+            return;
+          }
+          const shellInput = { command: action.command, cwd: effectiveCwd, timeoutMs: 120_000 };
+          const result = await toolExecutor.execute("shell", shellInput, {
+            cwd: effectiveCwd,
             goalId: "shell-mode",
             trustBalance: 0,
-            preApproved: true,
-            approvalFn: async () => true,
-            trusted: true,
+            preApproved: false,
+            approvalFn: (request: ToolApprovalRequest) => {
+              if (!shellApprovalFn) return Promise.resolve(false);
+              return shellApprovalFn(createShellApprovalTask(action.command, effectiveCwd, request.reason));
+            },
+            executionPolicy: shellExecutionPolicy ?? defaultExecutionPolicy(effectiveCwd),
           });
           const shellOutput = result.data as { stdout?: string; stderr?: string; exitCode?: number } | null;
           const text = shellOutput

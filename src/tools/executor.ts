@@ -16,6 +16,7 @@ import {
   decideHostToolExecution,
   permissionResultFromHostDecision,
 } from "./execution-orchestrator.js";
+import { assessShellCommand } from "./system/ShellTool/command-policy.js";
 
 /**
  * 5-gate execution pipeline for tool invocations.
@@ -131,7 +132,7 @@ export class ToolExecutor {
     }
 
     // --- Gate 4: Input Sanitization ---
-    const sanitizeError = this.sanitizeInput(tool, input);
+    const sanitizeError = this.sanitizeInput(tool, input, context);
     if (sanitizeError) {
       return this.failResult(
         `Input sanitization failed: ${sanitizeError}`,
@@ -257,17 +258,13 @@ export class ToolExecutor {
     );
   }
 
-  private sanitizeInput(tool: ITool, input: unknown): string | null {
+  private sanitizeInput(tool: ITool, input: unknown, context: ToolCallContext): string | null {
     if (tool.metadata.name === "shell" && typeof input === "object" && input !== null) {
       const obj = input as Record<string, unknown>;
       const cmd = obj["command"];
       if (typeof cmd === "string") {
-        const dangerous = ["; rm ", "; curl ", "| bash", "eval ", "$(", "\`", "&&", "||", "> /", ">> ", "\n"];
-        for (const pattern of dangerous) {
-          if (cmd.includes(pattern)) {
-            return `Potentially dangerous shell command detected: "${pattern}"`;
-          }
-        }
+        const assessment = assessShellCommand(cmd, context.executionPolicy, context.trusted === true, context.cwd);
+        if (assessment.status === "denied") return assessment.reason ?? "Shell command denied by policy";
       }
     }
 

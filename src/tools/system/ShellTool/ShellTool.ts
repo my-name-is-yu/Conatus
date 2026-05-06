@@ -4,7 +4,7 @@ import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { expandTildePath } from "../../fs/FileValidationTool/protected-path-policy.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
-import { assessShellCommand } from "./command-policy.js";
+import { assessShellCommand, isReadOnlyShellCommand } from "./command-policy.js";
 import { resolveWorkspaceCwd } from "../../workspace-scope.js";
 
 export const ShellInputSchema = z.object({
@@ -91,12 +91,6 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
   }
 
   isConcurrencySafe(input: ShellInput): boolean {
-    const cmd = input.command.trim();
-    const readOnlyPatterns = [
-      /^(cat|head|tail|wc|ls|pwd|echo|date)/,
-      /^git\s+(status|log|diff|show|branch)/,
-      /^rg\s/, /^find\s/,
-    ];
-    return readOnlyPatterns.some((re) => re.test(cmd));
+    return isReadOnlyShellCommand(input.command);
   }
 }

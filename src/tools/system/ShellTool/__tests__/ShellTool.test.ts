@@ -68,9 +68,9 @@ describe("ShellTool", () => {
       expect(result.status).toBe("denied");
     });
 
-    it("denies compound command with mkdir", async () => {
+    it("requires approval for compound commands with local writes", async () => {
       const result = await tool.checkPermissions({ command: "ls ; mkdir newdir", timeoutMs: 120_000 });
-      expect(result.status).toBe("denied");
+      expect(result.status).toBe("needs_approval");
     });
 
     it("needs_approval for unknown command", async () => {
@@ -78,9 +78,9 @@ describe("ShellTool", () => {
       expect(result.status).toBe("needs_approval");
     });
 
-    it("denies redirect operator", async () => {
+    it("requires approval for output redirection", async () => {
       const result = await tool.checkPermissions({ command: "echo hello > file.txt", timeoutMs: 120_000 });
-      expect(result.status).toBe("denied");
+      expect(result.status).toBe("needs_approval");
     });
 
     describe("trusted mode", () => {
@@ -93,43 +93,43 @@ describe("ShellTool", () => {
         trusted: true,
       };
 
-      it("allows normally-denied commands when trusted", async () => {
+      it("does not bypass approval for local writes when trusted", async () => {
         const result = await tool.checkPermissions(
           { command: "npm run build", timeoutMs: 120_000 },
           trustedCtx,
         );
-        expect(result.status).toBe("allowed");
+        expect(result.status).toBe("needs_approval");
       });
 
-      it("allows git push when trusted", async () => {
+      it("does not bypass destructive denial when trusted", async () => {
         const result = await tool.checkPermissions(
           { command: "git push origin main", timeoutMs: 120_000 },
           trustedCtx,
         );
-        expect(result.status).toBe("allowed");
+        expect(result.status).toBe("denied");
       });
 
-      it("still denies redirect operators even when trusted", async () => {
+      it("still requires approval for redirect operators when trusted", async () => {
         const result = await tool.checkPermissions(
           { command: "echo hello > file.txt", timeoutMs: 120_000 },
           trustedCtx,
         );
-        expect(result.status).toBe("denied");
+        expect(result.status).toBe("needs_approval");
       });
 
-      it("still denies pipe injection even when trusted", async () => {
+      it("still routes pipe writes to approval even when trusted", async () => {
         const result = await tool.checkPermissions(
           { command: "cat foo | tee bar", timeoutMs: 120_000 },
           trustedCtx,
         );
-        expect(result.status).toBe("denied");
+        expect(result.status).toBe("needs_approval");
       });
 
-      it("still denied without trusted flag", async () => {
+      it("still requires approval without trusted flag", async () => {
         const result = await tool.checkPermissions(
           { command: "npm run build", timeoutMs: 120_000 },
         );
-        expect(result.status).toBe("denied");
+        expect(result.status).toBe("needs_approval");
       });
     });
   });
@@ -155,8 +155,8 @@ describe("ShellTool", () => {
       expect(tool.isConcurrencySafe({ command: "ps aux", timeoutMs: 120_000 })).toBe(false);
     });
 
-    it("returns false for npm ls (not in readOnly patterns)", () => {
-      expect(tool.isConcurrencySafe({ command: "npm ls", timeoutMs: 120_000 })).toBe(false);
+    it("returns true for typed read-only npm metadata", () => {
+      expect(tool.isConcurrencySafe({ command: "npm ls", timeoutMs: 120_000 })).toBe(true);
     });
   });
 

@@ -625,7 +625,7 @@ describe("ToolExecutor", () => {
     });
   });
 
-  describe("Expanded shell injection patterns", () => {
+  describe("Shell sanitizer typed policy fallback", () => {
     function createShellExecutor() {
       const shellTool = createMockTool({
         name: "shell",
@@ -654,10 +654,17 @@ describe("ToolExecutor", () => {
       return { executor };
     }
 
-    it.each(["&&", "||", "> /", ">> "])("blocks pattern %s in shell command", async (pattern) => {
+    it.each([
+      "ls && rm dangerous",
+      "ls || sudo reboot",
+      "echo $(pwd)",
+      "echo `pwd`",
+      "echo \"$(pwd)\"",
+      "echo \"`pwd`\"",
+    ])("blocks denied shell command %s", async (command) => {
       const { executor } = createShellExecutor();
       const ctx = createMockContext({ trustBalance: 100 });
-      const result = await executor.execute("shell", { value: "x", command: `ls ${pattern} dangerous` }, ctx);
+      const result = await executor.execute("shell", { value: "x", command }, ctx);
       expect(result.success).toBe(false);
       expect(result.error).toContain("sanitization failed");
     });

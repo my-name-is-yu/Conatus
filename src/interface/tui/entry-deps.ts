@@ -10,6 +10,7 @@ import type { Task } from "../../base/types/task.js";
 import { createApprovalQueue } from "./entry-approval.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
+import type { ToolExecutor } from "../../tools/executor.js";
 import { ApprovalBroker } from "../../runtime/approval-broker.js";
 import { ApprovalStore, createRuntimeStorePaths } from "../../runtime/store/index.js";
 
@@ -386,6 +387,7 @@ export async function buildStandaloneTuiDeps() {
     goalNegotiator,
     reportingEngine,
     setRequestApproval: approvalQueue.setRequestApproval,
+    approvalFn,
     chatRunner,
     actionHandler,
     intentRecognizer,
@@ -402,6 +404,8 @@ export async function buildDaemonModeChatSurface(
   chatRunner: TuiChatSurface | undefined;
   llmClient: ILLMClient | undefined;
   setRequestApproval: (fn: (req: ApprovalRequest) => void) => void;
+  approvalFn: (task: Task) => Promise<boolean>;
+  toolExecutor: ToolExecutor;
 }> {
   const { TrustManager } = await import("../../platform/traits/trust-manager.js");
   const { ScheduleEngine } = await import("../../runtime/schedule/engine.js");
@@ -542,5 +546,7 @@ export async function buildDaemonModeChatSurface(
     chatRunner,
     llmClient,
     setRequestApproval: approvalQueue.setRequestApproval,
+    approvalFn: approvalQueue.enqueueApproval,
+    toolExecutor,
   };
 }

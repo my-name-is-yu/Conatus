@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Task } from "../../orchestrator/execution/types/task.js";
+import { isReadOnlyShellCommand } from "../../tools/system/ShellTool/command-policy.js";
 
 export function isBashModeInput(input: string): boolean {
   return input.trimStart().startsWith("!");
@@ -12,15 +13,7 @@ export function extractBashCommand(input: string): string | null {
 }
 
 export function isSafeBashCommand(command: string): boolean {
-  const SAFE_PATTERNS = [
-    /^(cat|head|tail|wc|ls|pwd|echo|date|hostname|which|type|file)/,
-    /^git\s+(status|log|diff|show|branch|rev-parse|rev-list|describe|tag\s+-l)/,
-    /^npm\s+(ls|list|view|info|outdated|audit)/,
-    /^npx\s+vitest\s+(run|list|--reporter)/,
-    /^npx\s+tsc\s+--noEmit/,
-    /^rg\s/, /^find\s/, /^du\s/, /^df\s/, /^tree\s/,
-  ];
-  return SAFE_PATTERNS.some((pattern) => pattern.test(command.trim()));
+  return isReadOnlyShellCommand(command);
 }
 
 export function createShellApprovalTask(command: string, cwd: string, reason?: string): Task {
