@@ -123,6 +123,9 @@ export async function cmdRun(
   try {
     result = await runLoopWithSignals(coreLoop, goalId);
   } catch (err) {
+    if (runPolicy.mode === "resident") {
+      await reconcileResidentShutdownTasks(stateManager, logger, "resident_cli_error");
+    }
     logger.error(formatOperationError(`run core loop for goal "${goalId}"`, err));
     logger.error(`Hint: Check ~/.pulseed/logs/ for details or re-run with DEBUG=1 for stack traces.`);
     if (verbose || process.env.DEBUG) {
@@ -131,6 +134,10 @@ export async function cmdRun(
     if (activeCoreLoopRef) activeCoreLoopRef.value = null;
     rl?.close();
     return 1;
+  }
+
+  if (runPolicy.mode === "resident") {
+    await reconcileResidentShutdownTasks(stateManager, logger, "resident_cli_shutdown");
   }
 
   if (activeCoreLoopRef) activeCoreLoopRef.value = null;
@@ -173,6 +180,28 @@ export async function cmdRun(
       return 1;
     default:
       return 0;
+  }
+}
+
+async function reconcileResidentShutdownTasks(
+  stateManager: StateManager,
+  logger: ReturnType<typeof buildLoopLogger>,
+  recoverySource: "resident_cli_shutdown" | "resident_cli_error",
+): Promise<void> {
+  try {
+    await reconcileInterruptedExecutions({
+      baseDir: stateManager.getBaseDir(),
+      stateManager,
+      logger,
+      interruptedOutputMessage: "[STOPPED] Task execution was interrupted by resident CLI shutdown; no live worker remains attached.",
+      failedEventReason: "task execution interrupted during resident CLI shutdown; no live worker remains attached",
+      retryEventReason: "resident CLI shutdown marked task terminal",
+      recoverySource,
+      terminalStatus: "cancelled",
+      stoppedReason: "cancelled",
+    });
+  } catch (err) {
+    logger.warn(formatOperationError("reconcile interrupted resident shutdown tasks", err));
   }
 }
 

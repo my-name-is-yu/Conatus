@@ -1182,23 +1182,23 @@ describe("DaemonRunner durable runtime", () => {
     const reconciledTask = await stateManager.readRaw(
       `tasks/${runningTask.goal_id}/${runningTask.id}.json`
     ) as Record<string, unknown>;
-    expect(reconciledTask.status).toBe("error");
+    expect(reconciledTask.status).toBe("cancelled");
     expect(typeof reconciledTask.completed_at).toBe("string");
     expect(String(reconciledTask.execution_output)).toContain("[RECOVERED]");
 
     const history = await stateManager.readRaw(`tasks/${runningTask.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
     expect(history.at(-1)).toMatchObject({
       task_id: "task-recover",
-      status: "error",
+      status: "cancelled",
     });
 
     const ledger = await stateManager.readRaw(
       `tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`
-    ) as { events: Array<{ type: string; reason?: string; action?: string }> };
-    expect(ledger.events.map((event) => event.type)).toEqual(["failed", "retried"]);
-    expect(ledger.events[1]).toMatchObject({
-      action: "keep",
-      reason: "daemon restarted; task preserved for retry",
+    ) as { events: Array<{ type: string; reason?: string; stopped_reason?: string }> };
+    expect(ledger.events.map((event) => event.type)).toEqual(["failed"]);
+    expect(ledger.events[0]).toMatchObject({
+      reason: "task execution interrupted by daemon recovery; no live worker remains attached",
+      stopped_reason: "cancelled",
     });
   });
 

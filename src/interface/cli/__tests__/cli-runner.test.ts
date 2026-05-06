@@ -733,7 +733,7 @@ describe("run subcommand", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const mockRun = vi.fn().mockImplementation(async () => {
       const taskAtLoopStart = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Task;
-      expect(taskAtLoopStart.status).toBe("error");
+      expect(taskAtLoopStart.status).toBe("cancelled");
       expect(taskAtLoopStart.execution_output).toContain("[RECOVERED]");
       return makeLoopResult({ goalId: "g-resident-recover" });
     });
@@ -753,21 +753,61 @@ describe("run subcommand", async () => {
     const history = await stateManager.readRaw(`tasks/${runningTask.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
     expect(history.at(-1)).toMatchObject({
       task_id: "task-resident-recover",
-      status: "error",
+      status: "cancelled",
       recovery_source: "resident_cli_startup",
       recovery_reason: "task execution interrupted before resident CLI startup",
       retry_intent: "resident CLI startup preserved task for retry",
     });
     const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as {
-      events: Array<{ type: string; action?: string; reason?: string }>;
+      events: Array<{ type: string; action?: string; reason?: string; stopped_reason?: string }>;
     };
-    expect(ledger.events.map((event) => event.type)).toEqual(["failed", "retried"]);
-    expect(ledger.events[0]?.reason).toBe("task execution interrupted before resident CLI startup");
-    expect(ledger.events[1]).toMatchObject({
-      action: "keep",
-      reason: "resident CLI startup preserved task for retry",
+    expect(ledger.events.map((event) => event.type)).toEqual(["failed"]);
+    expect(ledger.events[0]).toMatchObject({
+      reason: "task execution interrupted before resident CLI startup",
+      stopped_reason: "cancelled",
     });
     consoleSpy.mockRestore();
+  });
+
+  it("reconciles running task records after resident CoreLoop.run exits", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "g-resident-shutdown-recover" }));
+    const runningTask = makeTask({
+      id: "task-resident-shutdown",
+      goal_id: "g-resident-shutdown-recover",
+      status: "running",
+      started_at: new Date(Date.now() - 5_000).toISOString(),
+    });
+    const mockRun = vi.fn().mockImplementation(async () => {
+      await stateManager.writeRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`, runningTask);
+      return makeLoopResult({ goalId: "g-resident-shutdown-recover" });
+    });
+    vi.mocked(CoreLoop).mockImplementation(function() { return {
+      run: mockRun,
+      stop: vi.fn(),
+      setTimeHorizonEngine: vi.fn(),
+    } as unknown as CoreLoop; });
+
+    const code = await runCLI("run", "--goal", "g-resident-shutdown-recover", "--resident", "--yes");
+
+    expect(code).toBe(0);
+    const task = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Record<string, unknown>;
+    expect(task.status).toBe("cancelled");
+    expect(String(task.execution_output)).toContain("[STOPPED]");
+    const history = await stateManager.readRaw(`tasks/${runningTask.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
+    expect(history.at(-1)).toMatchObject({
+      task_id: "task-resident-shutdown",
+      status: "cancelled",
+      recovery_source: "resident_cli_shutdown",
+      recovery_reason: "task execution interrupted during resident CLI shutdown; no live worker remains attached",
+    });
+    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as {
+      events: Array<{ type: string; reason?: string; stopped_reason?: string }>;
+    };
+    expect(ledger.events.map((event) => event.type)).toEqual(["failed"]);
+    expect(ledger.events[0]).toMatchObject({
+      reason: "task execution interrupted during resident CLI shutdown; no live worker remains attached",
+      stopped_reason: "cancelled",
+    });
   });
 });
 

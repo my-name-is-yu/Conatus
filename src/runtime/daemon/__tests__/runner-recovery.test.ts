@@ -100,25 +100,103 @@ describe("runner-recovery", () => {
 
     expect(recoveredGoalIds).toEqual(["goal-recover"]);
     const task = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Record<string, unknown>;
-    expect(task.status).toBe("error");
+    expect(task.status).toBe("cancelled");
     expect(String(task.execution_output)).toContain("[RECOVERED]");
 
     const history = await stateManager.readRaw(`tasks/${runningTask.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
     expect(history.at(-1)).toMatchObject({
       task_id: "task-recover",
-      status: "error",
+      status: "cancelled",
       primary_dimension: "dim",
       consecutive_failure_count: 1,
       recovery_source: "daemon_startup",
-      recovery_reason: "task execution interrupted by daemon recovery",
-      retry_intent: "daemon restarted; task preserved for retry",
+      recovery_reason: "task execution interrupted by daemon recovery; no live worker remains attached",
+      retry_intent: "task was marked terminal during daemon recovery",
     });
 
-    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as { events: Array<{ type: string; action?: string }> };
-    expect(ledger.events.map((event) => event.type)).toEqual(["failed", "retried"]);
-    expect(ledger.events[1]).toMatchObject({ action: "keep" });
+    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as { events: Array<{ type: string; reason?: string; stopped_reason?: string }> };
+    expect(ledger.events.map((event) => event.type)).toEqual(["failed"]);
+    expect(ledger.events[0]).toMatchObject({
+      reason: "task execution interrupted by daemon recovery; no live worker remains attached",
+      stopped_reason: "cancelled",
+    });
 
     const pipeline = await stateManager.readRaw("pipelines/task-pipeline.json") as Record<string, unknown>;
     expect(pipeline.status).toBe("interrupted");
+  });
+
+  it("marks expired running tasks as timed out during startup recovery", async () => {
+    tmpDir = makeTempDir();
+    const stateManager = new StateManager(tmpDir);
+    await stateManager.init();
+    const runningTask = makeTask({
+      id: "task-timeout",
+      goal_id: "goal-timeout",
+      status: "running",
+      started_at: new Date(Date.now() - 10_000).toISOString(),
+      timeout_at: new Date(Date.now() - 1_000).toISOString(),
+    });
+    await stateManager.writeRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`, runningTask);
+
+    await reconcileInterruptedExecutions({
+      baseDir: tmpDir,
+      stateManager,
+      logger: { warn: vi.fn() },
+    });
+
+    const task = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Record<string, unknown>;
+    expect(task.status).toBe("timed_out");
+    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as {
+      events: Array<{ type: string; stopped_reason?: string }>;
+    };
+    expect(ledger.events[0]).toMatchObject({
+      type: "failed",
+      stopped_reason: "timeout",
+    });
+  });
+
+  it("keeps live-owned running tasks while recovering unrelated stale running tasks", async () => {
+    tmpDir = makeTempDir();
+    const stateManager = new StateManager(tmpDir);
+    await stateManager.init();
+    const liveOwnedTask = makeTask({
+      id: "task-live",
+      goal_id: "goal-live",
+      status: "running",
+      started_at: new Date(Date.now() - 10_000).toISOString(),
+    });
+    const staleTask = makeTask({
+      id: "task-stale",
+      goal_id: "goal-stale",
+      status: "running",
+      started_at: new Date(Date.now() - 10_000).toISOString(),
+    });
+    await stateManager.writeRaw(`tasks/${liveOwnedTask.goal_id}/${liveOwnedTask.id}.json`, liveOwnedTask);
+    await stateManager.writeRaw(`tasks/${staleTask.goal_id}/${staleTask.id}.json`, staleTask);
+
+    const recoveredGoalIds = await reconcileInterruptedExecutions({
+      baseDir: tmpDir,
+      stateManager,
+      logger: { warn: vi.fn() },
+      liveOwnerGoalIds: ["goal-live"],
+      recoverySource: "daemon_shutdown",
+      terminalStatus: "cancelled",
+      stoppedReason: "cancelled",
+    });
+
+    expect(recoveredGoalIds).toEqual(["goal-stale"]);
+    const liveTask = await stateManager.readRaw(`tasks/${liveOwnedTask.goal_id}/${liveOwnedTask.id}.json`) as Record<string, unknown>;
+    expect(liveTask.status).toBe("running");
+    const recoveredTask = await stateManager.readRaw(`tasks/${staleTask.goal_id}/${staleTask.id}.json`) as Record<string, unknown>;
+    expect(recoveredTask.status).toBe("cancelled");
+    const liveLedger = await stateManager.readRaw(`tasks/${liveOwnedTask.goal_id}/ledger/${liveOwnedTask.id}.json`);
+    expect(liveLedger).toBeNull();
+    const staleLedger = await stateManager.readRaw(`tasks/${staleTask.goal_id}/ledger/${staleTask.id}.json`) as {
+      events: Array<{ type: string; stopped_reason?: string }>;
+    };
+    expect(staleLedger.events.map((event) => event.type)).toEqual(["failed"]);
+    expect(staleLedger.events[0]).toMatchObject({
+      stopped_reason: "cancelled",
+    });
   });
 });

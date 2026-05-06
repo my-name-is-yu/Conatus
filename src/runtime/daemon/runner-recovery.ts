@@ -7,30 +7,47 @@ import { durationToMs } from "../../orchestrator/execution/task/task-executor.js
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Logger } from "../logger.js";
 
-export async function reconcileInterruptedExecutions(params: {
+type InterruptedTaskTerminalStatus = Extract<Task["status"], "cancelled" | "timed_out" | "error">;
+
+export interface ReconcileInterruptedExecutionsParams {
   baseDir: string;
   stateManager: StateManager;
   logger: Pick<Logger, "warn">;
+  liveOwnerGoalIds?: Iterable<string>;
   interruptedOutputMessage?: string;
   failedEventReason?: string;
   retryEventReason?: string;
   recoverySource?: string;
-}): Promise<string[]> {
+  terminalStatus?: InterruptedTaskTerminalStatus;
+  stoppedReason?: string;
+}
+
+export async function reconcileInterruptedExecutions(params: ReconcileInterruptedExecutionsParams): Promise<string[]> {
   const recoveredGoalIds = new Set<string>();
+  const skippedLiveOwnerGoalIds = new Set<string>();
+  const liveOwnerGoalIds = new Set(params.liveOwnerGoalIds ?? []);
   const now = new Date().toISOString();
   const interruptedOutputMessage =
     params.interruptedOutputMessage ??
-    "[RECOVERED] Task execution was interrupted by daemon crash or restart before completion.";
-  const failedEventReason = params.failedEventReason ?? "task execution interrupted by daemon recovery";
-  const retryEventReason = params.retryEventReason ?? "daemon restarted; task preserved for retry";
+    "[RECOVERED] Task execution was interrupted by daemon recovery; no live worker remains attached.";
+  const failedEventReason = params.failedEventReason ?? "task execution interrupted by daemon recovery; no live worker remains attached";
+  const retryEventReason = params.retryEventReason ?? "task was marked terminal during daemon recovery";
   const recoverySource = params.recoverySource ?? "daemon_startup";
 
   for (const task of await findRunningTasks(params.baseDir, params.stateManager)) {
+    if (liveOwnerGoalIds.has(task.goal_id)) {
+      skippedLiveOwnerGoalIds.add(task.goal_id);
+      continue;
+    }
+
+    const terminalStatus = params.terminalStatus ?? inferInterruptedTaskStatus(task, now);
+    const stoppedReason = params.stoppedReason ?? stoppedReasonForStatus(terminalStatus);
     const recoveredTask: Task = TaskSchema.parse({
       ...task,
-      status: "error",
+      status: terminalStatus,
       completed_at: task.completed_at ?? now,
       heartbeat_at: now,
+      ...(terminalStatus === "timed_out" ? { timeout_at: task.timeout_at ?? now } : {}),
       execution_output: [
         task.execution_output,
         interruptedOutputMessage,
@@ -50,13 +67,7 @@ export async function reconcileInterruptedExecutions(params: {
       type: "failed",
       attempt: Math.max(task.consecutive_failure_count + 1, 1),
       reason: failedEventReason,
-    });
-    await appendTaskOutcomeEvent(params.stateManager, {
-      task: recoveredTask,
-      type: "retried",
-      attempt: Math.max(task.consecutive_failure_count + 1, 1),
-      action: "keep",
-      reason: retryEventReason,
+      stoppedReason,
     });
     recoveredGoalIds.add(task.goal_id);
   }
@@ -69,8 +80,31 @@ export async function reconcileInterruptedExecutions(params: {
       count: recoveredGoalIds.size,
     });
   }
+  if (skippedLiveOwnerGoalIds.size > 0) {
+    params.logger.warn("Skipped interrupted task recovery for goals with live owners", {
+      goals: [...skippedLiveOwnerGoalIds],
+      count: skippedLiveOwnerGoalIds.size,
+    });
+  }
 
   return [...recoveredGoalIds];
+}
+
+function stoppedReasonForStatus(status: InterruptedTaskTerminalStatus): string {
+  if (status === "timed_out") return "timeout";
+  if (status === "cancelled") return "cancelled";
+  return "error";
+}
+
+function inferInterruptedTaskStatus(task: Task, now: string): InterruptedTaskTerminalStatus {
+  if (task.timeout_at) {
+    const timeoutMs = Date.parse(task.timeout_at);
+    const nowMs = Date.parse(now);
+    if (Number.isFinite(timeoutMs) && Number.isFinite(nowMs) && timeoutMs <= nowMs) {
+      return "timed_out";
+    }
+  }
+  return "cancelled";
 }
 
 export async function findRunningTasks(baseDir: string, stateManager: StateManager): Promise<Task[]> {

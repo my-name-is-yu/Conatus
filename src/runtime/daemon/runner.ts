@@ -43,7 +43,10 @@ import type { ProcessSignalTarget, ProcessShutdownCoordinator } from "./runner-l
 import {
   runCommandWithHealth as runCommandWithHealthFn,
 } from "./runner-errors.js";
-import { reconcileInterruptedExecutions as reconcileInterruptedExecutionsFn } from "./runner-recovery.js";
+import {
+  reconcileInterruptedExecutions as reconcileInterruptedExecutionsFn,
+  type ReconcileInterruptedExecutionsParams,
+} from "./runner-recovery.js";
 import type { ShutdownMarker } from "./index.js";
 import {
   cleanupDaemonRun,
@@ -457,11 +460,14 @@ export class DaemonRunner {
     return restoreInterruptedGoals(this.baseDir, goalIds, this.logger);
   }
 
-  private async reconcileInterruptedExecutions(): Promise<string[]> {
+  private async reconcileInterruptedExecutions(
+    options: Partial<Omit<ReconcileInterruptedExecutionsParams, "baseDir" | "stateManager" | "logger">> = {},
+  ): Promise<string[]> {
     return reconcileInterruptedExecutionsFn({
       baseDir: this.baseDir,
       stateManager: this.stateManager,
       logger: this.logger,
+      ...options,
     });
   }
 
