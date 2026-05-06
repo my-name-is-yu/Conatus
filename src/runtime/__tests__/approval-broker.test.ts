@@ -93,6 +93,39 @@ describe("ApprovalBroker", () => {
     );
   });
 
+  it("expires pending conversational approval records instead of resolving late replies", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const broker = new ApprovalBroker({
+      store,
+      createId: () => "approval-expired",
+      defaultTimeoutMs: 5,
+      deliverConversationalApproval: async () => ({ delivered: true }),
+    });
+    const origin = {
+      channel: "slack",
+      conversation_id: "thread-1",
+      user_id: "user-1",
+      session_id: "session-1",
+      turn_id: "turn-1",
+    };
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "task-expired",
+      description: "Restart daemon",
+      action: "restart",
+    }, {
+      origin,
+    });
+
+    await expect(request).resolves.toBe(false);
+    await expect(store.loadPending("approval-expired")).resolves.toBeNull();
+    await expect(store.loadResolved("approval-expired")).resolves.toMatchObject({
+      state: "expired",
+    });
+    await expect(broker.resolveConversationalApproval("approval-expired", true, origin)).resolves.toBe(false);
+  });
+
   it("resolves requests when approval arrives while pending save is in flight", async () => {
     tmpDir = makeTempDir();
 

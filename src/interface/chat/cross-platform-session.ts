@@ -49,7 +49,11 @@ import { ApprovalStore, createRuntimeStorePaths } from "../../runtime/store/inde
 import { classifyConversationalApprovalDecision } from "../../runtime/conversational-approval-decision.js";
 import { registerGlobalCrossPlatformChatSessionManager } from "./cross-platform-session-global.js";
 import type { RuntimeControlActor } from "../../runtime/store/runtime-operation-schemas.js";
-import type { ApprovalOrigin } from "../../runtime/store/runtime-schemas.js";
+import type { ApprovalOrigin, ApprovalRecord } from "../../runtime/store/runtime-schemas.js";
+import {
+  createPendingPermissionTask,
+  isPermissionApprovalStale,
+} from "../../runtime/permission-dialogue.js";
 import {
   buildCompanionRuntimeContract,
   evaluateCompanionOutputPolicy,
@@ -62,6 +66,7 @@ import type {
   ConversationOutputMode,
 } from "../../runtime/types/companion.js";
 import { normalizeUserInput, type UserInput } from "./user-input.js";
+import type { ApprovalRequest } from "../../tools/types.js";
 
 export interface CrossPlatformChatSessionOptions {
   /**
@@ -495,6 +500,13 @@ export class CrossPlatformChatSessionManager {
     if (!origin) {
       return "Approval response could not be recorded because the conversation origin is incomplete.";
     }
+    const pendingApproval = await broker.loadPendingApproval(response.approval_id);
+    if (pendingApproval) {
+      const staleReply = await this.rejectStalePermissionApprovalIfNeeded(pendingApproval, ingress, origin);
+      if (staleReply) {
+        return staleReply;
+      }
+    }
     const resolved = await broker.resolveConversationalApproval(
       response.approval_id,
       response.approved,
@@ -524,6 +536,10 @@ export class CrossPlatformChatSessionManager {
       return "Multiple active approvals match this conversation. Please use the specific approval response.";
     }
     const approval = lookup.approval;
+    const staleReply = await this.rejectStalePermissionApprovalIfNeeded(approval, ingress, origin);
+    if (staleReply) {
+      return staleReply;
+    }
 
     const decision = await classifyConversationalApprovalDecision(ingress.text, {
       approval,
@@ -551,6 +567,30 @@ export class CrossPlatformChatSessionManager {
       return null;
     }
     return decision.clarification ?? "Approval reply was ambiguous. The approval remains pending.";
+  }
+
+  private async rejectStalePermissionApprovalIfNeeded(
+    approval: ApprovalRecord,
+    ingress: CrossPlatformIngressMessage,
+    origin: ApprovalOrigin,
+  ): Promise<string | null> {
+    if (!isPermissionApprovalStale(approval, this.currentApprovalStateEpoch(ingress))) {
+      return null;
+    }
+    const broker = this.deps.approvalBroker;
+    const resolved = await broker?.resolveConversationalApproval(
+      approval.approval_id,
+      false,
+      approval.origin ?? origin,
+    );
+    return resolved
+      ? "The approval target changed after the prompt, so PulSeed did not execute it. Please ask again if you still want that action."
+      : "The approval target changed after the prompt, and the stale approval could not be resolved.";
+  }
+
+  private currentApprovalStateEpoch(ingress: CrossPlatformIngressMessage): string | null {
+    const session = this.sessions.get(buildSessionKeyFromParts(ingress));
+    return session?.info.last_message_id ?? null;
   }
 
   private describeLastRouteForApproval(ingress: CrossPlatformIngressMessage): string {
@@ -729,9 +769,11 @@ export class CrossPlatformChatSessionManager {
       metadata: {},
     };
     const approvalFn = this.createApprovalFn(info);
+    const approvalRequestFn = this.createApprovalRequestFn(info);
     const runner = new ChatRunner({
       ...this.deps,
       approvalFn: approvalFn ?? this.deps.approvalFn,
+      approvalRequestFn: approvalRequestFn ?? this.deps.approvalRequestFn,
       runtimeControlApprovalFn: approvalFn ?? this.deps.runtimeControlApprovalFn,
     });
     runner.startSession(cwd);
@@ -759,11 +801,15 @@ export class CrossPlatformChatSessionManager {
       const goalId = typeof info.metadata.goal_id === "string" && info.metadata.goal_id.trim()
         ? info.metadata.goal_id.trim()
         : "chat";
-      return broker.requestConversationalApproval(goalId, {
+      const stateEpoch = currentStateEpochFromSessionInfo(info);
+      return broker.requestConversationalApproval(goalId, createPendingPermissionTask({
         id: info.last_message_id ?? info.session_key,
         description,
         action: "chat_approval",
-      }, {
+        target: { session_id: info.session_key },
+        stateEpoch,
+        stateVersion: info.last_used_at,
+      }), {
         origin,
         deliverConversationalApproval: async ({ prompt }) => {
           const handler = this.activeApprovalEventHandlers.get(info.session_key);
@@ -779,6 +825,66 @@ export class CrossPlatformChatSessionManager {
               kind: "checkpoint",
               message: prompt,
               sourceId: `approval:${info.last_message_id ?? info.session_key}`,
+              runId: info.session_key,
+              turnId: info.last_message_id ?? info.session_key,
+              createdAt: new Date().toISOString(),
+            });
+            return { delivered: true };
+          } catch (err) {
+            return {
+              delivered: false,
+              reason: err instanceof Error ? err.message : "originating_conversation_unreachable",
+            };
+          }
+        },
+      });
+    };
+  }
+
+  private createApprovalRequestFn(info: CrossPlatformChatSessionInfo): ((request: ApprovalRequest) => Promise<boolean>) | null {
+    const broker = this.deps.approvalBroker;
+    if (!broker) {
+      return null;
+    }
+    return async (request: ApprovalRequest) => {
+      const origin = createApprovalOriginFromSessionInfo(info);
+      if (!origin) {
+        return false;
+      }
+      const goalId = typeof info.metadata.goal_id === "string" && info.metadata.goal_id.trim()
+        ? info.metadata.goal_id.trim()
+        : "chat";
+      const stateEpoch = currentStateEpochFromSessionInfo(info);
+      return broker.requestConversationalApproval(goalId, createPendingPermissionTask({
+        id: request.callId ?? info.last_message_id ?? info.session_key,
+        description: request.reason,
+        action: request.toolName,
+        target: {
+          session_id: info.session_key,
+          tool_id: request.toolName,
+          ...(request.callId ? { tool_call_id: request.callId } : {}),
+        },
+        stateEpoch,
+        stateVersion: info.last_used_at,
+        permissionLevel: request.permissionLevel,
+        isDestructive: request.isDestructive,
+        reversibility: request.reversibility,
+      }), {
+        origin,
+        deliverConversationalApproval: async ({ prompt }) => {
+          const handler = this.activeApprovalEventHandlers.get(info.session_key);
+          if (!handler) {
+            return {
+              delivered: false,
+              reason: "originating_conversation_unreachable",
+            };
+          }
+          try {
+            await handler({
+              type: "activity",
+              kind: "checkpoint",
+              message: prompt,
+              sourceId: `approval:${request.callId ?? info.last_message_id ?? info.session_key}`,
               runId: info.session_key,
               turnId: info.last_message_id ?? info.session_key,
               createdAt: new Date().toISOString(),
@@ -993,6 +1099,10 @@ function formatCompanionPolicyDecision(decision: ReturnType<typeof evaluateCompa
     return "Companion output was deferred by the current quieting policy.";
   }
   return "Companion output is allowed.";
+}
+
+function currentStateEpochFromSessionInfo(info: CrossPlatformChatSessionInfo): string {
+  return info.last_message_id ?? info.session_key;
 }
 
 export function createApprovalOriginFromSessionInfo(
