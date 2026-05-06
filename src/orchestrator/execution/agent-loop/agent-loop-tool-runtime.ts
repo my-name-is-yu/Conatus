@@ -3,6 +3,9 @@ import type { AgentLoopToolCall } from "./agent-loop-model.js";
 import type { AgentLoopToolOutput } from "./agent-loop-tool-output.js";
 import type { AgentLoopToolRouter } from "./agent-loop-tool-router.js";
 import type { AgentLoopTurnContext } from "./agent-loop-turn-context.js";
+import { ResponseItemToolRouter } from "./response-item-tool-router.js";
+import { functionToolCallResponseItem } from "./response-item.js";
+import type { ToolObservationResponseItem } from "./response-item.js";
 
 export interface AgentLoopToolRuntime {
   executeBatch(
@@ -12,103 +15,101 @@ export interface AgentLoopToolRuntime {
 }
 
 export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
+  private readonly responseItemToolRouter: ResponseItemToolRouter;
+
   constructor(
     private readonly executor: ToolExecutor,
     private readonly router: AgentLoopToolRouter,
-  ) {}
+  ) {
+    this.responseItemToolRouter = new ResponseItemToolRouter({
+      executor: this.executor,
+      toolRouter: this.router,
+    });
+  }
 
   async executeBatch(
     calls: AgentLoopToolCall[],
     turn: AgentLoopTurnContext<unknown>
   ): Promise<AgentLoopToolOutput[]> {
-    const safe: Array<{ call: AgentLoopToolCall; index: number }> = [];
-    const unsafe: Array<{ call: AgentLoopToolCall; index: number }> = [];
-
-    for (let index = 0; index < calls.length; index++) {
-      const call = calls[index];
-      if (!this.router.isToolAllowed(call.name, turn)) {
-        unsafe.push({ call, index });
-      } else if (this.router.supportsParallel(call.name, call.input)) {
-        safe.push({ call, index });
-      } else {
-        unsafe.push({ call, index });
-      }
-    }
-
-    const outputs = new Array<AgentLoopToolOutput>(calls.length);
-    const safeOutputs = await Promise.all(safe.map(({ call }) => this.executeOne(call, turn)));
-    for (let i = 0; i < safe.length; i++) outputs[safe[i].index] = safeOutputs[i];
-    for (const { call, index } of unsafe) outputs[index] = await this.executeOne(call, turn);
+    const observations = await this.responseItemToolRouter.executeBatch(
+      calls.map((call) => functionToolCallResponseItem(call)),
+      turn,
+    );
+    const outputs = observations.map((observation) =>
+      this.outputFromObservation(observation, turn)
+    );
     for (const output of outputs) {
       this.activateToolSearchResults(turn, output);
     }
     return outputs;
   }
 
-  private async executeOne(
-    call: AgentLoopToolCall,
+  private outputFromObservation(
+    observation: ToolObservationResponseItem,
     turn: AgentLoopTurnContext<unknown>,
-  ): Promise<AgentLoopToolOutput> {
-    if (!this.router.isToolAllowed(call.name, turn)) {
-      return this.failure(call, `Tool "${call.name}" is not allowed in this turn.`, 0);
+  ): AgentLoopToolOutput {
+    if (observation.type === "unknown_tool") {
+      return {
+        callId: observation.callId,
+        toolName: observation.toolName,
+        success: false,
+        content: `UNKNOWN TOOL: ${observation.message}`,
+        durationMs: observation.durationMs,
+        disposition: "respond_to_model",
+        execution: observation.execution,
+      };
     }
 
-    try {
-      const start = Date.now();
-      const result = await this.executor.execute(call.name, call.input, {
-        ...turn.toolCallContext,
-        callId: call.id,
-        sessionId: turn.session.sessionId,
-        abortSignal: turn.abortSignal,
-      });
-      const disposition = this.resolveDisposition(result.error, turn.abortSignal?.aborted === true);
-      const execution = result.execution ?? (disposition === "approval_denied"
-        ? { status: "not_executed" as const, reason: "approval_denied" as const, message: result.error ?? result.summary }
-        : { status: "executed" as const });
-      const command = this.extractCommand(call.name, call.input);
-      const resolvedCwd = this.extractCwd(call.input) ?? turn.cwd;
-      const activityCategory = this.router.resolveTool(call.name)?.metadata.activityCategory;
+    if (observation.type === "tool_error") {
+      const result = observation.result;
+      const execution = observation.execution ?? result?.execution ?? {
+        status: "not_executed" as const,
+        reason: "tool_error" as const,
+        message: observation.error.message,
+      };
+      const command = this.extractCommand(observation.toolName, observation.arguments);
+      const resolvedCwd = this.extractCwd(observation.arguments) ?? turn.cwd;
+      const activityCategory = this.router.resolveTool(observation.toolName)?.metadata.activityCategory;
       return {
-        callId: call.id,
-        toolName: call.name,
-        success: result.success,
-        content: this.formatContent(result, execution),
-        durationMs: result.durationMs || Date.now() - start,
-        disposition,
+        callId: observation.callId,
+        toolName: observation.toolName,
+        success: false,
+        content: result
+          ? this.formatContent(result, execution)
+          : this.formatToolErrorContent(observation, execution),
+        durationMs: observation.durationMs,
+        disposition: this.resolveDisposition(result?.error ?? observation.error.message, turn.abortSignal?.aborted === true),
         execution,
-        ...(result.contextModifier ? { contextModifier: result.contextModifier } : {}),
-        rawResult: result,
+        ...(result ? { rawResult: result } : {}),
         ...(command ? { command, cwd: resolvedCwd } : {}),
         ...(activityCategory ? { activityCategory } : {}),
-        ...(result.artifacts ? { artifacts: result.artifacts } : {}),
-        ...(result.truncated ? { truncated: result.truncated } : {}),
+        ...(result?.artifacts ? { artifacts: result.artifacts } : {}),
+        ...(result?.truncated ? { truncated: result.truncated } : {}),
       };
-    } catch (err) {
-      return this.failure(
-        call,
-        err instanceof Error ? err.message : String(err),
-        0,
-        turn.abortSignal?.aborted ? "cancelled" : "fatal",
-      );
     }
-  }
 
-  private failure(
-    call: AgentLoopToolCall,
-    message: string,
-    durationMs: number,
-    disposition: AgentLoopToolOutput["disposition"] = "respond_to_model",
-  ): AgentLoopToolOutput {
+    const result = observation.result;
+    const disposition = this.resolveDisposition(result.error, turn.abortSignal?.aborted === true);
+    const execution = result.execution ?? (disposition === "approval_denied"
+      ? { status: "not_executed" as const, reason: "approval_denied" as const, message: result.error ?? result.summary }
+      : { status: "executed" as const });
+    const command = this.extractCommand(observation.toolName, observation.arguments);
+    const resolvedCwd = this.extractCwd(observation.arguments) ?? turn.cwd;
+    const activityCategory = this.router.resolveTool(observation.toolName)?.metadata.activityCategory;
     return {
-      callId: call.id,
-      toolName: call.name,
-      success: false,
-      content: message,
-      durationMs,
+      callId: observation.callId,
+      toolName: observation.toolName,
+      success: result.success,
+      content: this.formatContent(result, execution),
+      durationMs: observation.durationMs,
       disposition,
-      ...(this.router.resolveTool(call.name)?.metadata.activityCategory
-        ? { activityCategory: this.router.resolveTool(call.name)?.metadata.activityCategory }
-        : {}),
+      execution,
+      ...(result.contextModifier ? { contextModifier: result.contextModifier } : {}),
+      rawResult: result,
+      ...(command ? { command, cwd: resolvedCwd } : {}),
+      ...(activityCategory ? { activityCategory } : {}),
+      ...(result.artifacts ? { artifacts: result.artifacts } : {}),
+      ...(result.truncated ? { truncated: result.truncated } : {}),
     };
   }
 
@@ -127,6 +128,17 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
     return result.success
       ? `${result.summary}\n${this.stringify(result.data)}${result.contextModifier ? `\n${result.contextModifier}` : ""}`
       : result.error ?? result.summary;
+  }
+
+  private formatToolErrorContent(
+    observation: Extract<ToolObservationResponseItem, { type: "tool_error" }>,
+    execution: NonNullable<AgentLoopToolOutput["execution"]>,
+  ): string {
+    if (execution.status === "not_executed") {
+      const reason = execution.reason ? ` (${execution.reason})` : "";
+      return `TOOL NOT EXECUTED${reason}: ${observation.error.message}`;
+    }
+    return observation.error.message;
   }
 
   private resolveDisposition(

@@ -21,6 +21,12 @@ import type {
   AgentLoopModelTurnProtocol,
   AgentLoopToolCall,
 } from "./agent-loop-model.js";
+import type { ResponseItem } from "./response-item.js";
+import {
+  assistantTextResponseItem,
+  functionToolCallResponseItem,
+  reasoningProgressResponseItem,
+} from "./response-item.js";
 
 export interface OpenAIResponsesAgentLoopModelClientOptions {
   apiKey: string;
@@ -69,6 +75,7 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
 
     const assistant: AgentLoopAssistantOutput[] = [];
     const toolCalls: AgentLoopToolCall[] = [];
+    const responseItems: ResponseItem[] = [];
 
     for (const item of response.output ?? []) {
       if (item.type === "message") {
@@ -78,40 +85,57 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
           .filter((part) => part.length > 0)
           .join("\n");
         if (text.trim()) {
-          assistant.push({
+          const assistantItem = {
             content: text,
             phase: message.phase ?? "final_answer",
-          });
+          } satisfies AgentLoopAssistantOutput;
+          assistant.push(assistantItem);
+          responseItems.push(assistantTextResponseItem(assistantItem.content, assistantItem.phase));
+        }
+        continue;
+      }
+
+      if (item.type === "reasoning") {
+        const reasoningText = this.extractReasoningProgress(item);
+        if (reasoningText) {
+          responseItems.push(reasoningProgressResponseItem(reasoningText));
         }
         continue;
       }
 
       if (item.type === "function_call" && item.name && item.call_id) {
         const toolCall = item as ResponseFunctionToolCall;
-        toolCalls.push({
+        const call = {
           id: toolCall.call_id,
           name: toolCall.name,
           input: this.parseJson(toolCall.arguments),
-        });
+        };
+        toolCalls.push(call);
+        responseItems.push(functionToolCallResponseItem(call));
       }
     }
 
     if (assistant.length === 0 && response.output_text?.trim()) {
-      assistant.push({
+      const assistantItem = {
         content: response.output_text,
         phase: toolCalls.length > 0 ? "commentary" : "final_answer",
-      });
+      } satisfies AgentLoopAssistantOutput;
+      assistant.push(assistantItem);
+      responseItems.push(assistantTextResponseItem(assistantItem.content, assistantItem.phase));
     }
     if (assistant.length === 0 && toolCalls.length > 0) {
-      assistant.push({
+      const assistantItem = {
         content: `Calling ${toolCalls.map((call) => call.name).join(", ")}`,
         phase: "commentary",
-      });
+      } satisfies AgentLoopAssistantOutput;
+      assistant.push(assistantItem);
+      responseItems.unshift(assistantTextResponseItem(assistantItem.content, assistantItem.phase));
     }
 
     return {
       assistant,
       toolCalls,
+      responseItems,
       stopReason: response.status ?? "unknown",
       responseCompleted: response.status === "completed",
       providerResponseId: response.id,
@@ -186,5 +210,26 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
     } catch {
       return "{}";
     }
+  }
+
+  private extractReasoningProgress(item: unknown): string {
+    if (!item || typeof item !== "object") return "";
+    const record = item as Record<string, unknown>;
+    const summary = record["summary"];
+    if (typeof summary === "string") return summary.trim();
+    if (Array.isArray(summary)) {
+      return summary
+        .map((part) => {
+          if (typeof part === "string") return part;
+          if (part && typeof part === "object" && typeof (part as Record<string, unknown>)["text"] === "string") {
+            return (part as Record<string, string>)["text"];
+          }
+          return "";
+        })
+        .filter((part) => part.length > 0)
+        .join("\n")
+        .trim();
+    }
+    return "";
   }
 }

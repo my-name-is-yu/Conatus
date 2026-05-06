@@ -18,6 +18,10 @@ import type {
   AgentLoopModelTurnProtocol,
   AgentLoopToolCall,
 } from "./agent-loop-model.js";
+import {
+  assistantTextResponseItem,
+  functionToolCallResponseItem,
+} from "./response-item.js";
 
 export interface AnthropicMessagesAgentLoopModelClientOptions {
   apiKey: string;
@@ -79,6 +83,10 @@ export class AnthropicMessagesAgentLoopModelClient implements AgentLoopModelClie
     return {
       assistant,
       toolCalls,
+      responseItems: [
+        ...assistant.map((item) => assistantTextResponseItem(item.content, item.phase)),
+        ...toolCalls.map((call) => functionToolCallResponseItem(call)),
+      ],
       stopReason: response.stop_reason ?? "unknown",
       responseCompleted: response.stop_reason !== null,
       providerResponseId: response.id,

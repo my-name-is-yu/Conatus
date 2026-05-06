@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "../../../base/llm/llm-client.js";
+import type { ResponseItem } from "./response-item.js";
 
 export interface AgentLoopModelRef {
   providerId: string;
@@ -76,6 +77,8 @@ export interface AgentLoopModelResponse {
 export interface AgentLoopModelTurnProtocol {
   assistant: AgentLoopAssistantOutput[];
   toolCalls: AgentLoopToolCall[];
+  /** Canonical provider output items, preserving text/reasoning/tool-call boundaries. */
+  responseItems?: ResponseItem[];
   stopReason: string;
   responseCompleted: boolean;
   providerResponseId?: string;
