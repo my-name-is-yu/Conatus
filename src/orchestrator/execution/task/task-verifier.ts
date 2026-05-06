@@ -73,6 +73,11 @@ function formatSelfReportEvidence(executorReport: import("./task-verifier-types.
   return segments.join("\n");
 }
 
+function statusAfterIncompleteVerification(task: Task): Task["status"] {
+  if (task.status === "timed_out" || task.status === "cancelled") return task.status;
+  return "error";
+}
+
 function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -640,6 +645,7 @@ export async function handleVerdict(
         }
         const partialTask = {
           ...task,
+          status: statusAfterIncompleteVerification(task),
           verification_verdict: verificationResult.verdict,
           verification_evidence: verificationResult.evidence?.map((e) => e.description ?? String(e)) ?? [],
         };
@@ -679,6 +685,7 @@ export async function handleFailure(
 ): Promise<FailureResult> {
   const updatedTask = {
     ...task,
+    status: statusAfterIncompleteVerification(task),
     consecutive_failure_count: task.consecutive_failure_count + 1,
     verification_verdict: verificationResult.verdict,
     verification_evidence: verificationResult.evidence?.map((e) => e.description ?? String(e)) ?? [],

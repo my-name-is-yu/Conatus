@@ -63,6 +63,8 @@ const VALID_TASK_RESPONSE = `\`\`\`json
 \`\`\``;
 
 const LLM_REVIEW_PASS = '{"verdict": "pass", "reasoning": "All criteria satisfied", "criteria_met": 1, "criteria_total": 1}';
+const LLM_REVIEW_FAIL = '{"verdict": "fail", "reasoning": "Criteria not met", "criteria_met": 0, "criteria_total": 1}';
+const REVERT_SUCCESS = '```json\n{"success": true, "reason": "Changes have been reverted successfully"}\n```';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -98,6 +100,23 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     timeout_at: null,
     heartbeat_at: null,
     created_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function makeVerificationResult(
+  overrides: Partial<import("../../../base/types/task.js").VerificationResult> = {}
+): import("../../../base/types/task.js").VerificationResult {
+  return {
+    task_id: "task-1",
+    verdict: "fail",
+    confidence: 0.9,
+    evidence: [
+      { layer: "independent_review", description: "Verification failed", confidence: 0.8 },
+      { layer: "self_report", description: "Task reported success", confidence: 0.3 },
+    ],
+    dimension_updates: [],
+    timestamp: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -342,6 +361,47 @@ describe("TaskLifecycle — persistence", () => {
     expect((summary.latencies as Record<string, unknown>).created_to_acked_ms).not.toBeNull();
   });
 
+  it("runTaskCycle does not leave execution-success verification failures as completed", async () => {
+    const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_FAIL, REVERT_SUCCESS]);
+    const lifecycle = createLifecycle(llm, { approvalFn: async () => true });
+    const adapter: import("../task/task-lifecycle.js").IAdapter = {
+      adapterType: "mock",
+      async execute() {
+        return {
+          success: true,
+          output: "implemented",
+          error: null,
+          exit_code: 0,
+          elapsed_ms: 25,
+          stopped_reason: "completed" as const,
+        };
+      },
+    };
+
+    const result = await lifecycle.runTaskCycle(
+      "goal-1",
+      makeGapVector("goal-1", "dim"),
+      makeDriveContext("dim"),
+      adapter
+    );
+
+    const storedTask = await stateManager.readRaw(`tasks/goal-1/${result.task.id}.json`) as Record<string, unknown>;
+    const history = await stateManager.readRaw("tasks/goal-1/task-history.json") as Array<Record<string, unknown>>;
+    const ledger = await stateManager.readRaw(`tasks/goal-1/ledger/${result.task.id}.json`) as Record<string, unknown>;
+    const summary = ledger.summary as Record<string, unknown>;
+
+    expect(result.action).toBe("discard");
+    expect(result.verificationResult.verdict).toBe("fail");
+    expect(storedTask.status).toBe("error");
+    expect(storedTask.verification_verdict).toBe("fail");
+    expect(history[0]!.status).toBe("error");
+    expect(history[0]!.verification_verdict).toBe("fail");
+    expect(summary.task_status).toBe("error");
+    expect(summary.verification_verdict).toBe("fail");
+    expect(summary.latest_event_type).toBe("abandoned");
+    expect(summary.action).toBe("discard");
+  });
+
   it("handleFailure records failed and retried events for retryable failures", async () => {
     const llm = createMockLLMClient([]);
     const lifecycle = createLifecycle(llm);
@@ -398,13 +458,72 @@ describe("TaskLifecycle — persistence", () => {
     const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as Record<string, unknown>;
     const events = ledger.events as Array<Record<string, unknown>>;
     const summary = ledger.summary as Record<string, unknown>;
+    const history = await stateManager.readRaw(`tasks/${task.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
 
     expect(result.action).toBe("keep");
+    expect(storedTask.status).toBe("error");
     expect(storedTask.verification_verdict).toBe("partial");
+    expect(history[0]!.status).toBe("error");
     expect(events.map((event) => event.type)).toEqual(["retried"]);
     expect(events[0]!.action).toBe("keep");
     expect(summary.latest_event_type).toBe("retried");
     expect(summary.action).toBe("keep");
+    expect(summary.task_status).toBe("error");
+    expect(summary.verification_verdict).toBe("partial");
+  });
+
+  it("handleFailure records discard outcomes without preserving completed status", async () => {
+    const llm = createMockLLMClient([REVERT_SUCCESS]);
+    const lifecycle = createLifecycle(llm);
+    const task = makeTask({
+      status: "completed",
+      started_at: new Date(Date.now() - 1000).toISOString(),
+      completed_at: new Date().toISOString(),
+      reversibility: "reversible",
+    });
+    const vr = makeVerificationResult({ task_id: task.id });
+
+    await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+    const result = await lifecycle.handleFailure(task, vr);
+
+    const storedTask = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+    const history = await stateManager.readRaw(`tasks/${task.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
+    const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as Record<string, unknown>;
+    const summary = ledger.summary as Record<string, unknown>;
+
+    expect(result.action).toBe("discard");
+    expect(storedTask.status).toBe("error");
+    expect(history[0]!.status).toBe("error");
+    expect(summary.task_status).toBe("error");
+    expect(summary.latest_event_type).toBe("abandoned");
+    expect(summary.action).toBe("discard");
+  });
+
+  it("handleFailure records escalate outcomes without preserving completed status", async () => {
+    const llm = createMockLLMClient([]);
+    const lifecycle = createLifecycle(llm);
+    const task = makeTask({
+      status: "completed",
+      started_at: new Date(Date.now() - 1000).toISOString(),
+      completed_at: new Date().toISOString(),
+      reversibility: "irreversible",
+    });
+    const vr = makeVerificationResult({ task_id: task.id });
+
+    await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+    const result = await lifecycle.handleFailure(task, vr);
+
+    const storedTask = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+    const history = await stateManager.readRaw(`tasks/${task.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
+    const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as Record<string, unknown>;
+    const summary = ledger.summary as Record<string, unknown>;
+
+    expect(result.action).toBe("escalate");
+    expect(storedTask.status).toBe("error");
+    expect(history[0]!.status).toBe("error");
+    expect(summary.task_status).toBe("error");
+    expect(summary.latest_event_type).toBe("abandoned");
+    expect(summary.action).toBe("escalate");
   });
 
   it("runTaskCycle records abandoned events when pre-execution checks reject the task", async () => {
