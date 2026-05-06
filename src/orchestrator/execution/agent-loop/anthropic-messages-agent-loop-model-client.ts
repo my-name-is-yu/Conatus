@@ -56,13 +56,16 @@ export class AnthropicMessagesAgentLoopModelClient implements AgentLoopModelClie
   }
 
   async createTurnProtocol(input: AgentLoopModelRequest): Promise<AgentLoopModelTurnProtocol> {
-    const response = await this.client.messages.create({
+    const responseParams = {
       model: input.model.modelId,
       max_tokens: input.maxOutputTokens ?? this.defaultMaxTokens,
       ...(this.buildSystemPrompt(input) ? { system: this.buildSystemPrompt(input)! } : {}),
       messages: this.toAnthropicMessages(input.messages),
       ...(input.tools.length > 0 ? { tools: input.tools.map((tool) => this.toAnthropicTool(tool)) } : {}),
-    });
+    };
+    const response = await (input.abortSignal
+      ? this.client.messages.create(responseParams, { signal: input.abortSignal })
+      : this.client.messages.create(responseParams));
 
     const assistant = this.extractAssistantOutputs(response);
     const toolCalls = this.extractToolCalls(response);

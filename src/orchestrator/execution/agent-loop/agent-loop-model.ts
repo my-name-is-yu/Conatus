@@ -55,6 +55,7 @@ export interface AgentLoopModelRequest {
   system?: string;
   maxOutputTokens?: number;
   reasoningEffort?: AgentLoopReasoningEffort;
+  abortSignal?: AbortSignal;
 }
 
 export interface AgentLoopAssistantOutput {

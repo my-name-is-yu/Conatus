@@ -106,13 +106,14 @@ export interface RunCoreIterationInput {
   goalId: string;
   loopIndex: number;
   isFirstIteration?: boolean;
+  abortSignal?: AbortSignal;
 }
 
 export class CoreIterationKernel {
   constructor(private readonly deps: CoreIterationKernelDeps) {}
 
   async run(input: RunCoreIterationInput): Promise<LoopIterationResult> {
-    const { goalId, loopIndex, isFirstIteration } = input;
+    const { goalId, loopIndex, isFirstIteration, abortSignal } = input;
     const startTime = Date.now();
     let config = this.deps.getConfig();
     const pendingDirective = this.deps.getPendingDirective(goalId);
@@ -777,6 +778,7 @@ export class CoreIterationKernel {
       loopCallbacks,
       evidenceLedger,
       mergedTaskGenerationHints,
+      abortSignal,
     );
     if (!taskCycleOk) return result;
 

@@ -139,6 +139,7 @@ export interface TaskCycleRunOptions {
   knowledgeContextPrefix?: string;
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface TaskLifecycleDeps extends TaskLifecycleCoreDeps {
@@ -520,6 +521,7 @@ export class TaskLifecycle {
     task: Task,
     workspaceContext?: string,
     knowledgeContext?: string,
+    abortSignal?: AbortSignal,
   ): Promise<AgentResult> {
     if (!this.agentLoopRunner) {
       throw new Error("TaskLifecycle: agentLoopRunner is required for native agentloop execution.");
@@ -544,6 +546,7 @@ export class TaskLifecycle {
         workspaceContext,
         knowledgeContext,
         cwd: taskCwd,
+        ...(abortSignal ? { abortSignal } : {}),
       });
       result = taskAgentLoopResultToAgentResult(agentLoopResult);
       if (agentLoopResult.workspace?.executionCwd) {
@@ -572,6 +575,7 @@ export class TaskLifecycle {
     const nextStatus =
       result.success ? "completed" as const :
       result.stopped_reason === "timeout" ? "timed_out" as const :
+      result.stopped_reason === "cancelled" ? "cancelled" as const :
       "error" as const;
     await this.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, {
       ...runningTask,
@@ -579,6 +583,7 @@ export class TaskLifecycle {
       execution_output: result.output,
       ...(nextStatus === "completed" ? { completed_at: completedAt } : {}),
       ...(nextStatus === "timed_out" ? { timeout_at: completedAt } : {}),
+      ...(nextStatus === "cancelled" ? { stopped_at: completedAt } : {}),
     });
 
     await appendTaskOutcomeEvent(this.stateManager, {
@@ -659,8 +664,8 @@ export class TaskLifecycle {
       },
       hasNativeAgentLoop: Boolean(this.agentLoopRunner),
       executeTask: (task, runAdapter, runWorkspaceContext) => this.executeTask(task, runAdapter, runWorkspaceContext),
-      executeTaskWithAgentLoop: (task, runWorkspaceContext, runKnowledgeContext) =>
-        this.executeTaskWithAgentLoop(task, runWorkspaceContext, runKnowledgeContext),
+      executeTaskWithAgentLoop: (task, runWorkspaceContext, runKnowledgeContext, abortSignal) =>
+        this.executeTaskWithAgentLoop(task, runWorkspaceContext, runKnowledgeContext, abortSignal),
       handleVerdict: (task, verificationResult) => this.handleVerdict(task, verificationResult),
     });
   }

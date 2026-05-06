@@ -157,6 +157,7 @@ export interface TaskGenerationHints {
   budgetContext?: Record<string, unknown>;
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface StallActionHints {
@@ -180,6 +181,7 @@ export async function runTaskCycleWithContext(
   callbacks: LoopCallbacks,
   evidenceLedger?: CoreLoopEvidenceLedger,
   taskGenerationHints?: TaskGenerationHints,
+  abortSignal?: AbortSignal,
 ): Promise<boolean> {
   const { handleCapabilityAcquisition, incrementTransferCounter, tryGenerateReport } = callbacks;
   try {
@@ -440,7 +442,7 @@ export async function runTaskCycleWithContext(
       knowledgeContext,
       existingTasks,
       workspaceContext,
-      taskGenerationHints,
+      { ...taskGenerationHints, ...(abortSignal ? { abortSignal } : {}) },
     );
     ctx.logger?.info("CoreLoop: task cycle result", { action: taskResult.action, taskId: taskResult.task.id });
     result.taskResult = taskResult;

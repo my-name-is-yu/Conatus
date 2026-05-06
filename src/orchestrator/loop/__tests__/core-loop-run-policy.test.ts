@@ -75,6 +75,21 @@ describe("CoreLoop run policies", () => {
     expect(result.totalIterations).toBe(3);
   });
 
+  it("does not convert provider AbortError into stopped without an operator abort signal", async () => {
+    const loop = new CoreLoop(makeDeps(), {
+      maxIterations: 1,
+      delayBetweenLoopsMs: 0,
+      dryRun: true,
+      autoDecompose: false,
+      maxConsecutiveErrors: 1,
+    });
+    vi.spyOn(loop, "runOneIteration").mockRejectedValue(new DOMException("provider aborted", "AbortError"));
+
+    const result = await loop.run("goal-provider-abort");
+
+    expect(result.finalStatus).toBe("error");
+  });
+
   it("treats a maxIterations null run override as resident even on a bounded loop", async () => {
     const loop = new CoreLoop(makeDeps(), {
       maxIterations: 100,

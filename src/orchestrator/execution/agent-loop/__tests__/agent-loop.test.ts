@@ -801,6 +801,92 @@ describe("agentloop phase 1", () => {
     expect(stopped).toHaveProperty("reasonDetail");
     expect((stopped as { reasonDetail?: string }).reasonDetail).toContain("LLM timeout while waiting");
   });
+
+  it("records operator-aborted model work as cancelled instead of timeout", async () => {
+    const modelInfo = makeModelInfo();
+    const abortController = new AbortController();
+    const modelClient: AgentLoopModelClient = {
+      async getModelInfo(): Promise<AgentLoopModelInfo> {
+        return modelInfo;
+      },
+      async createTurn(): Promise<AgentLoopModelResponse> {
+        abortController.abort(new Error("operator stop requested"));
+        throw new DOMException("operator stop requested", "AbortError");
+      },
+    };
+    const { router, runtime } = makeToolRuntime();
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+    const session = createAgentLoopSession();
+
+    const result = await runner.run({
+      session,
+      turnId: "turn-abort",
+      goalId: "goal-1",
+      cwd: process.cwd(),
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "do it" }],
+      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+      budget: withDefaultBudget({ maxModelTurns: 4 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+      abortSignal: abortController.signal,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.stopReason).toBe("cancelled");
+    expect(result.finalText).toContain("operator stop");
+    const stopped = (await session.traceStore.list(session.traceId)).at(-1);
+    expect(stopped).toMatchObject({
+      type: "stopped",
+      reason: "cancelled",
+    });
+  });
+
+  it("does not classify provider AbortError as operator cancellation when the turn was not aborted", async () => {
+    const modelInfo = makeModelInfo();
+    const abortController = new AbortController();
+    const modelClient: AgentLoopModelClient = {
+      async getModelInfo(): Promise<AgentLoopModelInfo> {
+        return modelInfo;
+      },
+      async createTurn(): Promise<AgentLoopModelResponse> {
+        throw new DOMException("provider aborted the request", "AbortError");
+      },
+    };
+    const { router, runtime } = makeToolRuntime();
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    const result = await runner.run({
+      session: createAgentLoopSession(),
+      turnId: "turn-provider-abort",
+      goalId: "goal-1",
+      cwd: process.cwd(),
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "do it" }],
+      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+      budget: withDefaultBudget({ maxModelTurns: 4 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+      abortSignal: abortController.signal,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.stopReason).toBe("timeout");
+  });
 });
 
 describe("agentloop phase 2", () => {

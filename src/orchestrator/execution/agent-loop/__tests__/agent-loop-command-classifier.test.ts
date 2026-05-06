@@ -79,4 +79,27 @@ describe("taskAgentLoopResultToAgentResult command evidence filtering", () => {
 
     expect(agentResult.agentLoop?.completionEvidence).toEqual(["verified command: test -f src/app.ts"]);
   });
+
+  it("preserves cancelled native agent-loop results as cancelled task execution", () => {
+    const agentResult = taskAgentLoopResultToAgentResult({
+      success: false,
+      output: null,
+      finalText: "Agent loop stopped: operator stop aborted active model work.",
+      stopReason: "cancelled",
+      elapsedMs: 10,
+      modelTurns: 0,
+      toolCalls: 0,
+      compactions: 0,
+      filesChanged: false,
+      changedFiles: [],
+      commandResults: [],
+      traceId: "trace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    });
+
+    expect(agentResult.success).toBe(false);
+    expect(agentResult.stopped_reason).toBe("cancelled");
+    expect(agentResult.error).toContain("operator stop");
+  });
 });

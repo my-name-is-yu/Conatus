@@ -20,6 +20,12 @@ export interface WorkerResult {
   error?: string;
 }
 
+export interface GoalWorkerExecuteOptions {
+  backgroundRun?: GoalRunActivationContext["backgroundRun"];
+  waitResume?: GoalRunActivationContext["waitResume"];
+  abortSignal?: AbortSignal;
+}
+
 function toWorkerStatus(finalStatus: LoopResult['finalStatus']): WorkerResult['status'] {
   return finalStatus;
 }
@@ -43,7 +49,7 @@ export class GoalWorker {
     this.id = randomUUID();
   }
 
-  async execute(goalId: string, activation?: GoalRunActivationContext): Promise<WorkerResult> {
+  async execute(goalId: string, activation?: GoalWorkerExecuteOptions): Promise<WorkerResult> {
     this.status = 'running';
     this.currentGoalId = goalId;
     this.startedAt = Date.now();
@@ -63,7 +69,8 @@ export class GoalWorker {
         lastResult = await this.coreLoop.run(goalId, {
           maxIterations,
           ...(this.config.runPolicy ? { runPolicy: this.config.runPolicy } : {}),
-          ...(activation ? { activation } : {}),
+          ...(activation ? { activation: toGoalRunActivationContext(activation) } : {}),
+          ...(activation?.abortSignal ? { abortSignal: activation.abortSignal } : {}),
         });
         cumulativeIterations += lastResult.totalIterations;
         this.currentIterations = cumulativeIterations;
@@ -87,6 +94,16 @@ export class GoalWorker {
         error: lastResult.errorMessage,
       };
     } catch (err) {
+      if (activation?.abortSignal?.aborted) {
+        this.status = 'idle';
+        return {
+          goalId,
+          status: 'stopped',
+          totalIterations: this.currentIterations,
+          durationMs: Date.now() - this.startedAt,
+          error: 'operator stop aborted active execution',
+        };
+      }
       this.status = 'crashed';
       return {
         goalId,
@@ -127,4 +144,11 @@ export class GoalWorker {
   isIdle(): boolean {
     return this.status === 'idle';
   }
+}
+
+function toGoalRunActivationContext(options: GoalWorkerExecuteOptions): GoalRunActivationContext {
+  return {
+    ...(options.backgroundRun ? { backgroundRun: options.backgroundRun } : {}),
+    ...(options.waitResume ? { waitResume: options.waitResume } : {}),
+  };
 }

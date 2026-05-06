@@ -26,6 +26,7 @@ export interface SupervisorConfig {
   claimLeaseMs: number;
   leaseRenewIntervalMs: number;
   runPolicy: LoopRunPolicyMode;
+  activeStopGraceMs: number;
 }
 
 export interface SupervisorDeps {
@@ -88,6 +89,7 @@ const DEFAULT_CONFIG: SupervisorConfig = {
   claimLeaseMs: 30_000,
   leaseRenewIntervalMs: 10_000,
   runPolicy: 'resident',
+  activeStopGraceMs: 5_000,
 };
 
 function workerStatusToBackgroundRunStatus(
@@ -115,7 +117,12 @@ export class LoopSupervisor {
   private readonly deps: SupervisorDeps;
   private polling: boolean = false;
   private currentPoll: Promise<void> | null = null;
-  private runningExecutions: Promise<void>[] = [];
+  private runningExecutions: Array<{
+    promise: Promise<void>;
+    controller: AbortController;
+    goalId: string;
+    workerId: string;
+  }> = [];
   private pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 
   constructor(deps: SupervisorDeps, config?: Partial<SupervisorConfig>) {
@@ -168,8 +175,35 @@ export class LoopSupervisor {
     }
     for (const timer of this.pendingTimers) clearTimeout(timer);
     this.pendingTimers.clear();
-    await this.currentPoll;
-    await Promise.allSettled(this.runningExecutions);
+    const pollCompleted = await waitForExecutions(
+      this.currentPoll ? [this.currentPoll] : [],
+      this.config.activeStopGraceMs
+    );
+    if (!pollCompleted) {
+      this.deps.logger?.warn('Supervisor shutdown returned before active poll settled', {
+        timeoutMs: this.config.activeStopGraceMs,
+      });
+    }
+    const activeExecutions = [...this.runningExecutions];
+    if (activeExecutions.length > 0) {
+      this.deps.logger?.warn('Aborting active goal executions during supervisor shutdown', {
+        activeCount: activeExecutions.length,
+        goalIds: activeExecutions.map((execution) => execution.goalId),
+      });
+      for (const execution of activeExecutions) {
+        execution.controller.abort(new Error('operator stop requested'));
+      }
+    }
+    const completed = await waitForExecutions(
+      activeExecutions.map((execution) => execution.promise),
+      this.config.activeStopGraceMs
+    );
+    if (!completed) {
+      this.deps.logger?.warn('Supervisor shutdown returned before active executions settled', {
+        activeCount: this.runningExecutions.length,
+        timeoutMs: this.config.activeStopGraceMs,
+      });
+    }
     this.persistState();
   }
 
@@ -319,12 +353,25 @@ export class LoopSupervisor {
           continue;
         }
 
+        if (!this.running) {
+          await this.failClaim(dispatch, 'supervisor stopping', true);
+          await this.releaseExecutionLease(dispatch);
+          break;
+        }
+
         this.activeGoals.set(goalId, worker);
-        const execution = this.executeWorker(worker, dispatch);
+        const controller = new AbortController();
+        const execution = this.executeWorker(worker, dispatch, controller.signal);
         this.persistState();
-        this.runningExecutions.push(execution);
+        const trackedExecution = {
+          promise: execution,
+          controller,
+          goalId,
+          workerId: worker.id,
+        };
+        this.runningExecutions.push(trackedExecution);
         execution.finally(() => {
-          const idx = this.runningExecutions.indexOf(execution);
+          const idx = this.runningExecutions.indexOf(trackedExecution);
           if (idx !== -1) this.runningExecutions.splice(idx, 1);
         });
       }
@@ -440,7 +487,7 @@ export class LoopSupervisor {
     };
   }
 
-  private async executeWorker(worker: GoalWorker, activation: GoalActivation): Promise<void> {
+  private async executeWorker(worker: GoalWorker, activation: GoalActivation, abortSignal?: AbortSignal): Promise<void> {
     const { goalId } = activation;
     let ownershipLost = false;
     this.installWriteFence(activation);
@@ -454,6 +501,7 @@ export class LoopSupervisor {
       const result: WorkerResult = await worker.execute(goalId, {
         ...(activation.backgroundRun ? { backgroundRun: activation.backgroundRun } : {}),
         ...(activation.waitResume ? { waitResume: activation.waitResume } : {}),
+        ...(abortSignal ? { abortSignal } : {}),
       });
 
       if (result.status === 'error') {
@@ -786,5 +834,20 @@ export class LoopSupervisor {
     } catch {
       // Corrupt or missing state — start fresh
     }
+  }
+}
+
+async function waitForExecutions(promises: Promise<void>[], timeoutMs: number): Promise<boolean> {
+  if (promises.length === 0) return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+      timer.unref?.();
+    });
+    const settled = Promise.allSettled(promises).then(() => true);
+    return await Promise.race([settled, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

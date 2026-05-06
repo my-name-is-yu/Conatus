@@ -38,6 +38,7 @@ export function taskAgentLoopResultToAgentResult(
     elapsed_ms: result.elapsedMs,
     stopped_reason:
       result.stopReason === "timeout" ? "timeout" :
+      result.stopReason === "cancelled" ? "cancelled" :
       done ? "completed" : "error",
     filesChanged: result.changedFiles.length > 0 || (result.output ? result.output.filesChanged.length > 0 : result.filesChanged),
     filesChangedPaths: [...new Set([...(result.output?.filesChanged ?? []), ...result.changedFiles])],

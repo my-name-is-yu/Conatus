@@ -36,6 +36,7 @@ export interface TaskCycleRunOptionsShape {
   knowledgeContextPrefix?: string;
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface TaskLifecycleTaskCycleContext {
@@ -95,7 +96,8 @@ export interface TaskLifecycleTaskCycleContext {
   executeTaskWithAgentLoop: (
     task: Task,
     workspaceContext?: string,
-    knowledgeContext?: string
+    knowledgeContext?: string,
+    abortSignal?: AbortSignal,
   ) => Promise<AgentResult>;
   handleVerdict: (task: Task, verificationResult: VerificationResult) => Promise<VerdictResult>;
 }
@@ -271,7 +273,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   void hookManager?.emit("PreExecute", { goal_id: goalId, data: { task_id: task.id } });
   const executionResult = await runPhase("execute-task", () =>
     context.hasNativeAgentLoop
-      ? context.executeTaskWithAgentLoop(task, workspaceContext, enrichedKnowledgeContext)
+      ? context.executeTaskWithAgentLoop(task, workspaceContext, enrichedKnowledgeContext, options?.abortSignal)
       : context.executeTask(task, adapter, workspaceContext)
   );
   const nativeExecutionTokens = executionResult.agentLoop?.usage?.totalTokens;
