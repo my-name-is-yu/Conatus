@@ -2,11 +2,7 @@ import type { IAdapter, AgentTask } from "../../orchestrator/execution/adapter-l
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, ToolCallResult } from "../../base/llm/llm-client.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import type { ApprovalRequest, ToolCallContext } from "../../tools/types.js";
-import { toToolDefinitionsFiltered } from "../../tools/tool-definition-adapter.js";
-import {
-  buildPromptedToolProtocolSystemPrompt,
-  extractPromptedToolCalls,
-} from "../../orchestrator/execution/agent-loop/prompted-tool-protocol.js";
+import { extractPromptedToolCalls } from "../../orchestrator/execution/agent-loop/prompted-tool-protocol.js";
 import { verifyChatAction } from "./chat-verifier.js";
 import {
   collectGitDiffArtifact,
@@ -25,6 +21,7 @@ import {
   renderSystemPromptWithTurnContext,
   type ChatTurnContext,
 } from "./turn-context.js";
+import { buildChatModelRequest } from "./model-request-builder.js";
 import {
   createDiscordAdapterPlanDialogue,
   createTelegramConfirmWriteDialogue,
@@ -184,18 +181,19 @@ export async function executeAssistRoute(
     );
   }
   host.eventBridge.emitCheckpoint("Read-only assist selected", "The message will be answered without coding-agent execution.", params.eventContext, "route");
-  const messages: LLMMessage[] = [
-    ...params.turnContext.modelVisible.conversation.priorTurns.map((m): LLMMessage => ({ role: m.role, content: m.content })),
-    { role: "user", content: params.turnContext.modelVisible.input.text },
-  ];
-  const response = await sendLLMMessage(host, host.deps.llmClient, messages, {
-    system: renderSystemPromptWithTurnContext([
+  const modelRequest = buildChatModelRequest({
+    purpose: "ordinary_chat",
+    turnContext: params.turnContext,
+    systemPrompt: [
       params.turnContext.modelVisible.instructions.systemPrompt || buildStaticSystemPrompt(host.getProviderConfigBaseDir()),
       "Answer read-only. Provide concise operational guidance. Do not ask to edit files or run commands unless the user explicitly asks for execution.",
       sameLanguageResponseInstruction(host.getTurnLanguageHint()),
-    ].join(" "), params.turnContext.modelVisible),
-    max_tokens: 1000,
+    ].join(" "),
+    maxTokens: 1000,
     temperature: 0,
+  });
+  const response = await sendLLMMessage(host, host.deps.llmClient, modelRequest.messages, {
+    ...modelRequest.options,
   }, params.assistantBuffer, params.eventContext);
   const usage = usageFromLLMResponse(response);
   if (hasUsage(usage)) params.history.recordUsage("assist", usage);
@@ -585,23 +583,33 @@ async function executeWithTools(
   start?: number,
 ): Promise<{ output: string; usage: ChatUsageCounter }> {
   const llmClient = host.deps.llmClient!;
-  const messages: LLMMessage[] = [{ role: "user", content: turnContext.modelVisible.prompts.prompt }];
+  const supportsNativeToolCalling = llmClient.supportsToolCalling?.() !== false;
+  const initialModelRequest = buildChatModelRequest({
+    purpose: "tool_call",
+    turnContext,
+    systemPrompt,
+    availableTools: host.deps.registry?.listAll() ?? [],
+    activatedTools: host.activatedTools,
+    supportsNativeToolCalling,
+  });
+  const messages: LLMMessage[] = [...initialModelRequest.messages];
   const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start, turnContext);
   const usage = zeroUsageCounter();
 
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
-    const tools = host.deps.registry
-      ? toToolDefinitionsFiltered(host.deps.registry.listAll(), { activatedTools: host.activatedTools })
-      : [];
-    const supportsNativeToolCalling = llmClient.supportsToolCalling?.() !== false;
+    const modelRequest = buildChatModelRequest({
+      purpose: "tool_call",
+      turnContext,
+      systemPrompt,
+      availableTools: host.deps.registry?.listAll() ?? [],
+      activatedTools: host.activatedTools,
+      supportsNativeToolCalling,
+      messages,
+    });
     let response: LLMResponse;
     try {
       host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
-      response = await sendLLMMessage(host, llmClient, messages, {
-        ...(supportsNativeToolCalling
-          ? { tools, ...(systemPrompt ? { system: systemPrompt } : {}) }
-          : { system: buildPromptedToolProtocolSystemPrompt({ systemPrompt, tools }) }),
-      }, assistantBuffer, eventContext);
+      response = await sendLLMMessage(host, llmClient, modelRequest.messages, modelRequest.options, assistantBuffer, eventContext);
     } catch (err) {
       console.error("[chat-runner] executeWithTools error:", err);
       const hint = err instanceof Error ? `: ${err.message}` : "";
@@ -615,7 +623,7 @@ async function executeWithTools(
         ? []
         : extractPromptedToolCalls({
             content: response.content,
-            tools,
+            tools: modelRequest.toolDefinitions,
             createId: () => `prompted-${loop}-${crypto.randomUUID()}`,
           }).map((call): ToolCallResult => ({
             id: call.id,

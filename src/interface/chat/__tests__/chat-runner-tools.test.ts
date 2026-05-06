@@ -3,7 +3,7 @@ import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
-import type { ILLMClient, LLMResponse } from "../../../base/llm/llm-client.js";
+import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { ToolRegistry } from "../../../tools/registry.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
 import type { ITool, ToolResult, ToolCallContext } from "../../../tools/types.js";
@@ -394,5 +394,105 @@ describe("ChatRunner — tool status callbacks", () => {
       expect(onToolStart).not.toHaveBeenCalled();
       expect(onToolEnd).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("ChatRunner — Codex-like model request builder path", () => {
+  it("presents the same typed tool schema for paraphrased English and Japanese freeform requests", async () => {
+    const capturedToolRequests: Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> = [];
+    const tool = {
+      metadata: {
+        name: "workspace_status",
+        aliases: [],
+        permissionLevel: "read_only",
+        isReadOnly: true,
+        isDestructive: false,
+        shouldDefer: false,
+        alwaysLoad: false,
+        maxConcurrency: 0,
+        maxOutputChars: 4000,
+        tags: [],
+      },
+      inputSchema: z.object({
+        scope: z.enum(["workspace"]),
+      }),
+      description: () => "Read workspace status through the typed tool boundary.",
+      call: vi.fn().mockResolvedValue({
+        success: true,
+        data: { clean: true },
+        summary: "workspace clean",
+        durationMs: 1,
+      }),
+      checkPermissions: vi.fn().mockResolvedValue({ status: "allowed" }),
+      isConcurrencySafe: () => true,
+    } as unknown as ITool;
+    let callIndex = 0;
+    const llmClient = {
+      supportsToolCalling: () => true,
+      sendMessage: vi.fn().mockImplementation(async (messages: LLMMessage[], options?: LLMRequestOptions) => {
+        callIndex += 1;
+        const stage = ((callIndex - 1) % 3) + 1;
+        if (stage === 1) {
+          return {
+            content: JSON.stringify({
+              kind: "execute",
+              confidence: 0.94,
+              rationale: "tool-backed workspace status request",
+            }),
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "end_turn",
+            tool_calls: [],
+          } satisfies LLMResponse;
+        }
+        if (stage === 2) {
+          capturedToolRequests.push({ messages, options });
+          return {
+            content: "",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "tool_calls",
+            tool_calls: [{
+              id: `tc-${callIndex}`,
+              type: "function",
+              function: {
+                name: "workspace_status",
+                arguments: JSON.stringify({ scope: "workspace" }),
+              },
+            }],
+          } satisfies LLMResponse;
+        }
+        return {
+          content: "workspace clean",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
+          tool_calls: [],
+        } satisfies LLMResponse;
+      }),
+      parseJSON: vi.fn((content: string, schema: z.ZodSchema) => schema.parse(JSON.parse(content))),
+    } as unknown as ILLMClient;
+
+    const runner = new ChatRunner(makeDeps({
+      llmClient,
+      registry: makeMockRegistry(tool),
+    }));
+
+    await runner.execute("Could you inspect the workspace state?", "/repo");
+    await runner.execute("作業ツリーの状態を確認して", "/repo");
+
+    expect(tool.call).toHaveBeenCalledTimes(2);
+    expect(capturedToolRequests).toHaveLength(2);
+    for (const request of capturedToolRequests) {
+      expect(request.options?.tools?.map((definition) => definition.function.name)).toEqual(["workspace_status"]);
+      expect(request.options?.tools?.[0]?.function.parameters).toMatchObject({
+        type: "object",
+        properties: {
+          scope: expect.objectContaining({ enum: ["workspace"] }),
+        },
+        required: ["scope"],
+      });
+      expect(request.options?.system).toContain("## Turn Context");
+      expect(request.options?.system).not.toContain("return exactly one JSON object");
+    }
+    expect(capturedToolRequests[0].messages.at(-1)?.content).toContain("Could you inspect the workspace state?");
+    expect(capturedToolRequests[1].messages.at(-1)?.content).toContain("作業ツリーの状態を確認して");
   });
 });
