@@ -327,7 +327,25 @@ export async function startDaemonRunner(
         clearInterval(context.cronScheduleInterval);
         context.cronScheduleInterval = null;
       }
-      await context.supervisor?.shutdown();
+      if (context.supervisor) {
+        await context.supervisor.shutdown();
+        const activeWorkersAfterShutdown = flattenActiveWorkers((context.supervisor.getState() as SupervisorState).workers);
+        await context.reconcileInterruptedExecutions({
+          recoverySource: "daemon_shutdown",
+          interruptedOutputMessage:
+            "[STOPPED] Task execution was interrupted by daemon shutdown; no live worker remains attached.",
+          failedEventReason: "task execution interrupted during daemon shutdown; no live worker remains attached",
+          retryEventReason: "daemon shutdown marked task terminal",
+          terminalStatus: "cancelled",
+          stoppedReason: "cancelled",
+          liveOwnerGoalIds: activeWorkersAfterShutdown.map((worker) => worker.goal_id),
+        });
+        if (activeWorkersAfterShutdown.length > 0) {
+          context.logger.warn("Skipped shutdown task reconciliation for goals with live workers", {
+            active_workers: activeWorkersAfterShutdown,
+          });
+        }
+      }
       await context.eventDispatcher?.shutdown();
       await context.commandDispatcher?.shutdown();
       context.driveSystem.stopWatcher();

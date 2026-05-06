@@ -206,6 +206,12 @@ describe("runner startup active workers snapshot", () => {
 
     beginGracefulShutdown(context as never);
     await startupPromise;
+
+    expect(context.reconcileInterruptedExecutions).toHaveBeenCalledWith(expect.objectContaining({
+      recoverySource: "daemon_shutdown",
+      liveOwnerGoalIds: ["goal-1"],
+      terminalStatus: "cancelled",
+    }));
   });
 
   it("does not enqueue paused goals that safe-pause restore removed during startup", async () => {
@@ -331,5 +337,11 @@ describe("runner startup active workers snapshot", () => {
 
     beginGracefulShutdown(context as never);
     await startupPromise;
+
+    expect(context.reconcileInterruptedExecutions).toHaveBeenCalledWith(expect.objectContaining({
+      recoverySource: "daemon_shutdown",
+      terminalStatus: "cancelled",
+      stoppedReason: "cancelled",
+    }));
   });
 });
