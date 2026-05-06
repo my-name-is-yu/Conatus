@@ -1,4 +1,5 @@
 import { z } from "zod";
+import * as path from "node:path";
 import type { Task } from "../../../base/types/task.js";
 import type { VerificationResult } from "../../../base/types/task.js";
 import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
@@ -246,9 +247,28 @@ async function resolveRevertCwd(deps: VerifierDeps, task: Task): Promise<string 
   }) ?? null;
 }
 
-export async function attemptRevert(deps: VerifierDeps, task: Task): Promise<boolean> {
+function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function isRelativeGitPath(filePath: string): boolean {
+  const trimmed = filePath.trim();
+  if (!trimmed || trimmed.includes("\0") || path.isAbsolute(trimmed)) {
+    return false;
+  }
+  const segments = trimmed.replace(/\\/g, "/").split("/");
+  return !segments.includes("..");
+}
+
+export async function attemptRevert(
+  deps: VerifierDeps,
+  task: Task,
+  opts: { concretePaths?: string[] } = {}
+): Promise<boolean> {
+  const filesToRestore = [
+    ...new Set((opts.concretePaths ?? []).map((filePath) => filePath.trim()).filter(Boolean)),
+  ];
   try {
-    const filesToRestore = task.scope_boundary.in_scope;
     if (filesToRestore.length > 0) {
       const revertCwd = await resolveRevertCwd(deps, task);
       if (!revertCwd) {
@@ -265,15 +285,16 @@ export async function attemptRevert(deps: VerifierDeps, task: Task): Promise<boo
           trusted: true,
           approvalFn: async () => true,
         };
-        const SAFE_PATH = /^[\w./@\-]+$/;
-        const allSafe = filesToRestore.every((f) => SAFE_PATH.test(f));
+        const allSafe = filesToRestore.every(isRelativeGitPath);
         if (!allSafe) {
-          deps.logger?.warn?.("[attemptRevert] unsafe file path detected, falling back to execFileSync");
-          // Fall through to execFileSync fallback below
+          deps.logger?.warn?.(
+            "[attemptRevert] concrete changed path failed git-restore path validation; falling back to LLM revert"
+          );
+          throw new Error("git restore disabled for invalid concrete changed path");
         } else {
           const result = await deps.toolExecutor.execute(
             "shell",
-            { command: "git restore " + filesToRestore.join(" ") },
+            { command: "git restore -- " + filesToRestore.map(quoteShellArg).join(" ") },
             ctx
           );
           if (result.success) {
@@ -285,10 +306,16 @@ export async function attemptRevert(deps: VerifierDeps, task: Task): Promise<boo
       } else {
         // Fallback: raw child_process (no ToolExecutor available)
         const { execFileSync } = await import("child_process");
-        execFileSync("git", ["restore", ...filesToRestore], { cwd: revertCwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+        execFileSync("git", ["restore", "--", ...filesToRestore], {
+          cwd: revertCwd,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        });
         deps.logger?.info?.(`[attemptRevert] git restore succeeded for ${filesToRestore.length} files`);
         return true;
       }
+    } else {
+      deps.logger?.warn?.("[attemptRevert] skipping raw git restore because no concrete changed paths were captured");
     }
   } catch {
     // git not available or failed — fall back to LLM-based revert
@@ -301,7 +328,12 @@ export async function attemptRevert(deps: VerifierDeps, task: Task): Promise<boo
       task.id
     );
 
-    const revertPrompt = `Revert task "${task.work_description}". Undo all changes in: ${task.scope_boundary.in_scope.join(", ")}.
+    const revertTargetSummary =
+      filesToRestore.length > 0
+        ? `Concrete changed paths: ${filesToRestore.join(", ")}.`
+        : "No concrete changed paths were captured. Do not treat task scope descriptions as file paths.";
+
+    const revertPrompt = `Revert task "${task.work_description}". ${revertTargetSummary}
 
 Return JSON: {"success": true|false, "reason": "..."}`;
 

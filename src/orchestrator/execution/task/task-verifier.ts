@@ -731,7 +731,16 @@ export async function handleFailure(
   }
 
   if (updatedTask.reversibility === "reversible") {
-    const revertSuccess = await attemptRevert(deps, updatedTask);
+    const concreteRevertPaths = [
+      ...new Set(
+        (verificationResult.file_diffs ?? [])
+          .map((diff) => diff.path)
+          .filter((filePath) => filePath.trim().length > 0)
+      ),
+    ];
+    const revertSuccess = await attemptRevert(deps, updatedTask, {
+      concretePaths: concreteRevertPaths,
+    });
     deps.logger?.warn(`[task] revert attempted`, { taskId: task.id, success: revertSuccess });
     if (revertSuccess) {
       await appendTaskHistory(deps, task.goal_id, updatedTask);
