@@ -3,6 +3,7 @@ import { applyChatEventToMessages } from "../chat-event-state.js";
 import { ChatRunnerEventBridge } from "../chat-runner-event-bridge.js";
 import type { ChatEvent } from "../chat-events.js";
 import { classifyFailureRecovery } from "../failure-recovery.js";
+import type { AgentLoopEvent } from "../../../orchestrator/execution/agent-loop/agent-loop-events.js";
 
 describe("applyChatEventToMessages", () => {
   it("keeps activity as one updatable row per turn", () => {
@@ -663,6 +664,55 @@ describe("applyChatEventToMessages", () => {
 
     expect(messages.map((message) => message.text)).toContain("Started shell_command: {\"command\":\"pwd\"}");
     expect(messages.map((message) => message.text)).toContain("Done");
+  });
+
+  it("renders denied typed tool observations from the production bridge path", async () => {
+    const events: ChatEvent[] = [];
+    const bridge = new ChatRunnerEventBridge(() => (event) => {
+      events.push(event);
+    });
+    const sink = bridge.createAgentLoopEventSink({ runId: "run-1", turnId: "turn-1" });
+    const base = {
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    };
+
+    await sink.emit({
+      ...base,
+      type: "tool_observation",
+      eventId: "observation-denied-1",
+      observation: {
+        type: "tool_observation",
+        callId: "call-denied",
+        toolName: "apply_patch",
+        arguments: { path: "src/example.ts" },
+        state: "denied",
+        success: false,
+        execution: {
+          status: "not_executed",
+          reason: "approval_denied",
+          message: "Write access was denied.",
+        },
+        durationMs: 7,
+        output: {
+          content: "TOOL NOT EXECUTED (approval_denied): Write access was denied.",
+        },
+        activityCategory: "file_modify",
+      },
+    } as AgentLoopEvent);
+
+    const messages = events.reduce(
+      (current, event) => applyChatEventToMessages(current, event, 20),
+      [] as ReturnType<typeof applyChatEventToMessages>
+    );
+
+    expect(messages.map((message) => message.text)).toEqual([
+      "Observed apply_patch (denied): TOOL NOT EXECUTED (approval_denied): Write access was denied.",
+    ]);
+    expect(messages[0]!.text).not.toContain("\"observation\"");
   });
 
   it("removes transient activity when assistant final arrives", () => {

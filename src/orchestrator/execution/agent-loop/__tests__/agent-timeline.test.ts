@@ -127,6 +127,7 @@ describe("agent timeline activity summaries", () => {
 
     expect(item).toMatchObject({
       kind: "tool_observation",
+      visibility: "debug",
       callId: "call-1",
       toolName: "shell_command",
       observation: {
@@ -135,6 +136,43 @@ describe("agent timeline activity summaries", () => {
         execution: { status: "executed" },
         output: {
           data: { stdout: "ok\n", stderr: "", exitCode: 0 },
+        },
+      },
+    });
+  });
+
+  it("makes denied typed tool observations user visible without relying on text matching", () => {
+    const item = projectAgentLoopEventToTimeline(baseEvent({
+      type: "tool_observation",
+      eventId: "observation-denied-1",
+      observation: {
+        type: "tool_observation",
+        callId: "call-denied",
+        toolName: "apply_patch",
+        arguments: { path: "src/example.ts" },
+        state: "denied",
+        success: false,
+        execution: {
+          status: "not_executed",
+          reason: "approval_denied",
+          message: "Write access was denied.",
+        },
+        durationMs: 5,
+        output: {
+          content: "TOOL NOT EXECUTED (approval_denied): Write access was denied.",
+        },
+        activityCategory: "file_modify",
+      },
+    }));
+
+    expect(item).toMatchObject({
+      kind: "tool_observation",
+      visibility: "user",
+      state: "denied",
+      observation: {
+        execution: {
+          status: "not_executed",
+          reason: "approval_denied",
         },
       },
     });

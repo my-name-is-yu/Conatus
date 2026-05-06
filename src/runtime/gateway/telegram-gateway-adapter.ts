@@ -538,7 +538,7 @@ type GatewayChatEvent =
       type: "agent_timeline";
       item: {
         visibility?: string;
-        kind: "lifecycle" | "turn_context" | "model_request" | "assistant_message" | "tool" | "plan" | "approval" | "compaction" | "activity_summary" | "final" | "stopped";
+        kind: "lifecycle" | "turn_context" | "model_request" | "assistant_message" | "tool" | "tool_observation" | "plan" | "approval" | "compaction" | "activity_summary" | "final" | "stopped";
         status?: string;
         restoredMessages?: number;
         fromUpdatedAt?: string;
@@ -550,6 +550,7 @@ type GatewayChatEvent =
         outputPreview?: string;
         success?: boolean;
         toolName?: string;
+        state?: string;
         summary?: string;
         reason?: string;
         phase?: string;

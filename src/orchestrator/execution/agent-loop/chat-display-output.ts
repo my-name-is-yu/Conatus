@@ -14,6 +14,7 @@ export interface ChatDisplayFinalAnswer {
 
 export interface ChatDisplayOutput {
   status?: unknown;
+  text?: unknown;
   message?: unknown;
   answer?: unknown;
   evidence?: unknown;
@@ -48,11 +49,12 @@ function formatChatOutput(output?: ChatDisplayOutput | null): string | null {
   const outputBlockers = stringArray(output.blockers);
   const summary = firstDisplayText([
     finalAnswer ? displayTextFromValue(finalAnswer.summary) : null,
+    displayTextFromValue(output.text),
     displayTextFromValue(output.message),
     displayTextFromValue(output.answer),
   ]);
   const sections: string[] = [];
-  const handledKeys = new Set<string>(["status", "message", "answer", "evidence", "blockers", "finalAnswer"]);
+  const handledKeys = new Set<string>(["status", "text", "message", "answer", "evidence", "blockers", "finalAnswer"]);
 
   if (summary) {
     sections.push(summary);
@@ -125,6 +127,7 @@ function displayTextFromValue(value: unknown): string | null {
 
   return firstDisplayText([
     displayTextFromValue(parsed.message),
+    displayTextFromValue(parsed.text),
     displayTextFromValue(parsed.answer),
     isRecord(parsed.finalAnswer) ? displayTextFromValue(parsed.finalAnswer.summary) : null,
   ]);

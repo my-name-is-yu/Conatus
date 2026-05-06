@@ -300,6 +300,28 @@ describe("TelegramGatewayAdapter", () => {
         isDestructive: false,
       });
       await emit({
+        type: "tool_observation",
+        eventId: "observation-denied-1",
+        observation: {
+          type: "tool_observation",
+          callId: "call-2",
+          toolName: "shell_command",
+          arguments: { command: "npm run release" },
+          state: "denied",
+          success: false,
+          execution: {
+            status: "not_executed",
+            reason: "approval_denied",
+            message: "Operator denied release execution.",
+          },
+          durationMs: 3,
+          output: {
+            content: "TOOL NOT EXECUTED (approval_denied): Operator denied release execution.",
+          },
+          activityCategory: "command",
+        },
+      });
+      await emit({
         type: "context_compaction",
         eventId: "compaction-1",
         phase: "mid_turn",
@@ -327,6 +349,7 @@ describe("TelegramGatewayAdapter", () => {
         `Started shell_command: ${JSON.stringify({ command: "rg Timeline src/interface/chat" })}`,
         "Finished shell_command: src/interface/chat/chat-events.ts",
         "Approval requested for shell_command: run a write command",
+        "Observed shell_command (denied): TOOL NOT EXECUTED (approval_denied): Operator denied release execution.",
         "Compacted context (mid_turn, context_limit): 12 -> 4.",
         "searched 1 search, requested 1 approval",
       ]));
