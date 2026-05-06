@@ -6,9 +6,11 @@
 import { z } from "zod";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { RuntimeReplyTargetSchema, type RuntimeReplyTarget } from "../../runtime/session-registry/types.js";
-import { redactSetupSecrets, SetupSecretIntakeItemSchema } from "./setup-secret-intake.js";
+import { redactSetupSecrets, redactSetupSecretsDeep, SetupSecretIntakeItemSchema } from "./setup-secret-intake.js";
 import { SetupDialoguePublicStateSchema, type SetupDialoguePublicState } from "./setup-dialogue.js";
 import { RunSpecSchema } from "../../runtime/run-spec/index.js";
+import type { ChatEvent, ChatEventContext } from "./chat-events.js";
+import type { UserInput } from "./user-input.js";
 
 // ─── Schemas ───
 
@@ -52,6 +54,33 @@ export const ChatTurnContextSnapshotSchema = z.object({
   modelVisible: z.unknown(),
 }).passthrough();
 export type ChatTurnContextSnapshot = z.infer<typeof ChatTurnContextSnapshotSchema>;
+
+export const ChatRolloutJournalRecordKindSchema = z.enum([
+  "user_input",
+  "turn_context",
+  "model_output",
+  "tool_call",
+  "tool_result",
+  "permission_decision",
+  "display_event",
+  "completion_state",
+]);
+export type ChatRolloutJournalRecordKind = z.infer<typeof ChatRolloutJournalRecordKindSchema>;
+
+export const ChatRolloutJournalRecordSchema = z.object({
+  schema_version: z.literal("chat-rollout-journal-record-v1"),
+  id: z.string(),
+  sessionId: z.string(),
+  runId: z.string().nullable(),
+  turnId: z.string().nullable(),
+  sequence: z.number().int().nonnegative(),
+  createdAt: z.string(),
+  kind: ChatRolloutJournalRecordKindSchema,
+  source: z.enum(["chat_history", "chat_event", "agent_timeline", "approval_store"]).default("chat_history"),
+  visibility: z.enum(["model_visible", "display", "debug", "host_only"]),
+  payload: z.unknown(),
+}).passthrough();
+export type ChatRolloutJournalRecord = z.infer<typeof ChatRolloutJournalRecordSchema>;
 
 export const RunSpecConfirmationStateSchema = z.object({
   state: z.enum(["pending", "confirmed", "cancelled"]),
@@ -99,6 +128,7 @@ export const ChatSessionSchema = z.object({
   agentLoopUpdatedAt: z.string().nullable().optional(),
   agentLoop: ChatSessionAgentLoopMetadataSchema.optional(),
   turnContexts: z.array(ChatTurnContextSnapshotSchema).optional(),
+  rolloutJournal: z.array(ChatRolloutJournalRecordSchema).optional(),
   usage: ChatSessionUsageSchema.optional(),
 }).passthrough();
 export type ChatSession = z.infer<typeof ChatSessionSchema>;
@@ -121,6 +151,7 @@ export class ChatHistory {
         updatedAt: existingSession.updatedAt ?? existingSession.createdAt,
         messages: [...existingSession.messages],
         ...(existingSession.turnContexts ? { turnContexts: [...existingSession.turnContexts] } : {}),
+        ...(existingSession.rolloutJournal ? { rolloutJournal: [...existingSession.rolloutJournal] } : {}),
         ...(existingSession.usage ? { usage: cloneUsage(existingSession.usage) } : {}),
       };
     } else {
@@ -140,26 +171,59 @@ export class ChatHistory {
   }
 
   /** Append a user message and persist to disk BEFORE adapter execution. */
-  async appendUserMessage(content: string, options: { setupSecretIntake?: Array<Omit<z.infer<typeof SetupSecretIntakeItemSchema>, "value">> } = {}): Promise<void> {
+  async appendUserMessage(content: string, options: {
+    setupSecretIntake?: Array<Omit<z.infer<typeof SetupSecretIntakeItemSchema>, "value">>;
+    eventContext?: ChatEventContext;
+    userInput?: UserInput;
+  } = {}): Promise<void> {
+    const turnIndex = this.session.messages.length;
     this.session.messages.push({
       role: "user",
       content,
       timestamp: new Date().toISOString(),
-      turnIndex: this.session.messages.length,
+      turnIndex,
       ...(options.setupSecretIntake && options.setupSecretIntake.length > 0
         ? { setupSecretIntake: options.setupSecretIntake }
         : {}),
+    });
+    this.pushRolloutRecord({
+      kind: "user_input",
+      source: "chat_history",
+      visibility: "model_visible",
+      eventContext: options.eventContext,
+      payload: {
+        role: "user",
+        content,
+        turnIndex,
+        ...(options.userInput ? { userInput: toReplayableUserInput(options.userInput) } : {}),
+        ...(options.setupSecretIntake && options.setupSecretIntake.length > 0
+          ? { setupSecretIntake: options.setupSecretIntake }
+          : {}),
+      },
     });
     await this.persist();
   }
 
   /** Append an assistant message and persist it as the committed assistant turn. */
-  async appendAssistantMessage(content: string): Promise<void> {
+  async appendAssistantMessage(content: string, options: { eventContext?: ChatEventContext } = {}): Promise<void> {
+    const safeContent = redactSetupSecrets(content);
+    const turnIndex = this.session.messages.length;
     this.session.messages.push({
       role: "assistant",
-      content: redactSetupSecrets(content),
+      content: safeContent,
       timestamp: new Date().toISOString(),
-      turnIndex: this.session.messages.length,
+      turnIndex,
+    });
+    this.pushRolloutRecord({
+      kind: "model_output",
+      source: "chat_history",
+      visibility: "model_visible",
+      eventContext: options.eventContext,
+      payload: {
+        role: "assistant",
+        content: safeContent,
+        turnIndex,
+      },
     });
     await this.persist();
   }
@@ -168,6 +232,7 @@ export class ChatHistory {
   async clear(): Promise<void> {
     this.session.messages = [];
     delete this.session.compactionSummary;
+    this.replaceModelVisibleJournalFromMessages("clear");
     await this.persist();
   }
 
@@ -181,6 +246,7 @@ export class ChatHistory {
       turnIndex: index,
     }));
     this.session.compactionSummary = summary;
+    this.replaceModelVisibleJournalFromMessages("compact");
     await this.persist();
     return { before, after: this.session.messages.length };
   }
@@ -200,6 +266,7 @@ export class ChatHistory {
       ...message,
       turnIndex: index,
     }));
+    this.replaceModelVisibleJournalFromMessages("remove_last_turn");
     await this.persist();
     return removed;
   }
@@ -208,11 +275,16 @@ export class ChatHistory {
     return [...this.session.messages];
   }
 
+  getModelVisibleMessages(): ChatMessage[] {
+    return reconstructModelVisibleMessagesFromRolloutJournal(this.session.rolloutJournal) ?? this.getMessages();
+  }
+
   getSessionData(): ChatSession {
     return {
       ...this.session,
       messages: [...this.session.messages],
       ...(this.session.turnContexts ? { turnContexts: [...this.session.turnContexts] } : {}),
+      ...(this.session.rolloutJournal ? { rolloutJournal: [...this.session.rolloutJournal] } : {}),
       ...(this.session.usage ? { usage: cloneUsage(this.session.usage) } : {}),
     };
   }
@@ -274,7 +346,29 @@ export class ChatHistory {
       ...(this.session.turnContexts ?? []),
       snapshot,
     ].slice(-20);
+    this.pushRolloutRecord({
+      kind: "turn_context",
+      source: "chat_history",
+      visibility: "model_visible",
+      eventContext: extractTurnContextEventContext(snapshot),
+      payload: snapshot,
+    });
     await this.persist();
+  }
+
+  async recordChatEvent(event: ChatEvent, options: { persist?: boolean } = {}): Promise<void> {
+    const projection = rolloutProjectionFromChatEvent(event);
+    this.pushRolloutRecord({
+      kind: projection.kind,
+      source: projection.source,
+      visibility: projection.visibility,
+      eventContext: event,
+      createdAt: event.createdAt,
+      payload: projection.payload,
+    });
+    if (options.persist !== false) {
+      await this.persist();
+    }
   }
 
   setSessionLifecycle(input: {
@@ -394,6 +488,266 @@ export class ChatHistory {
       this.session
     );
   }
+
+  private pushRolloutRecord(input: {
+    kind: ChatRolloutJournalRecordKind;
+    source: ChatRolloutJournalRecord["source"];
+    visibility: ChatRolloutJournalRecord["visibility"];
+    payload: unknown;
+    eventContext?: Partial<ChatEventContext>;
+    createdAt?: string;
+  }): void {
+    const current = this.session.rolloutJournal ?? [];
+    const sequence = nextRolloutSequence(current);
+    const runId = typeof input.eventContext?.runId === "string" ? input.eventContext.runId : null;
+    const turnId = typeof input.eventContext?.turnId === "string" ? input.eventContext.turnId : null;
+    const record = ChatRolloutJournalRecordSchema.parse({
+      schema_version: "chat-rollout-journal-record-v1",
+      id: `${this.sessionId}:${sequence}`,
+      sessionId: this.sessionId,
+      runId,
+      turnId,
+      sequence,
+      createdAt: input.createdAt ?? new Date().toISOString(),
+      kind: input.kind,
+      source: input.source,
+      visibility: input.visibility,
+      payload: redactSetupSecretsDeep(input.payload),
+    });
+    this.session.rolloutJournal = [...current, record].slice(-500);
+  }
+
+  private replaceModelVisibleJournalFromMessages(reason: "clear" | "compact" | "remove_last_turn"): void {
+    const demoted = (this.session.rolloutJournal ?? []).map((record) =>
+      record.source === "chat_history"
+        && record.visibility === "model_visible"
+        && (record.kind === "user_input" || record.kind === "model_output")
+        ? {
+            ...record,
+            visibility: "debug" as const,
+            payload: {
+              ...(isRecord(record.payload) ? record.payload : {}),
+              modelVisibleUntil: reason,
+            },
+          }
+        : record
+    );
+    this.session.rolloutJournal = demoted;
+    for (const message of this.session.messages) {
+      this.pushRolloutRecord({
+        kind: message.role === "assistant" ? "model_output" : "user_input",
+        source: "chat_history",
+        visibility: "model_visible",
+        payload: {
+          role: message.role,
+          content: message.content,
+          turnIndex: message.turnIndex,
+          historyMutation: reason,
+          ...(message.setupSecretIntake && message.setupSecretIntake.length > 0
+            ? { setupSecretIntake: message.setupSecretIntake }
+            : {}),
+        },
+      });
+    }
+  }
+}
+
+export function reconstructModelVisibleMessagesFromRolloutJournal(
+  records: ChatRolloutJournalRecord[] | undefined,
+): ChatMessage[] | null {
+  const modelRecords = (records ?? [])
+    .filter((record) =>
+      record.source === "chat_history"
+      && record.visibility === "model_visible"
+      && (record.kind === "user_input" || record.kind === "model_output")
+    )
+    .sort((left, right) => left.sequence - right.sequence);
+  if (modelRecords.length === 0) return null;
+
+  return modelRecords.flatMap((record, index): ChatMessage[] => {
+    const payload = isRecord(record.payload) ? record.payload : {};
+    const role = payload["role"] === "assistant" ? "assistant" : payload["role"] === "user" ? "user" : null;
+    const content = typeof payload["content"] === "string" ? payload["content"] : null;
+    if (!role || content === null) return [];
+    const setupSecretIntake = Array.isArray(payload["setupSecretIntake"])
+      ? { setupSecretIntake: payload["setupSecretIntake"] as ChatMessage["setupSecretIntake"] }
+      : {};
+    return [{
+      role,
+      content,
+      timestamp: record.createdAt,
+      turnIndex: index,
+      ...setupSecretIntake,
+    }];
+  });
+}
+
+function nextRolloutSequence(records: ChatRolloutJournalRecord[]): number {
+  return records.reduce((max, record) => Math.max(max, record.sequence), -1) + 1;
+}
+
+function extractTurnContextEventContext(snapshot: { modelVisible: unknown }): ChatEventContext | undefined {
+  const modelVisible = isRecord(snapshot.modelVisible) ? snapshot.modelVisible : null;
+  const turn = modelVisible && isRecord(modelVisible["turn"]) ? modelVisible["turn"] : null;
+  const runId = typeof turn?.["runId"] === "string" ? turn["runId"] : undefined;
+  const turnId = typeof turn?.["turnId"] === "string" ? turn["turnId"] : undefined;
+  return runId && turnId ? { runId, turnId } : undefined;
+}
+
+function toReplayableUserInput(input: UserInput): unknown {
+  return {
+    schema_version: input.schema_version,
+    ...(input.rawText !== undefined ? { rawText: input.rawText } : {}),
+    items: input.items.map((item) => {
+      switch (item.kind) {
+        case "text":
+          return { kind: "text", text: item.text };
+        case "image":
+        case "local_image":
+          return {
+            kind: item.kind,
+            ...(item.name ? { name: item.name } : {}),
+          };
+        case "mention":
+          return {
+            kind: "mention",
+            ...(item.label ? { label: item.label } : {}),
+          };
+        case "skill":
+        case "plugin":
+        case "tool":
+          return { kind: item.kind, name: item.name };
+        case "attachment":
+          return {
+            kind: "attachment",
+            id: item.id,
+            ...(item.name ? { name: item.name } : {}),
+            ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+          };
+      }
+    }),
+  };
+}
+
+function rolloutProjectionFromChatEvent(event: ChatEvent): {
+  kind: ChatRolloutJournalRecordKind;
+  source: ChatRolloutJournalRecord["source"];
+  visibility: ChatRolloutJournalRecord["visibility"];
+  payload: unknown;
+} {
+  if (event.type === "tool_start") {
+    return {
+      kind: "tool_call",
+      source: "chat_event",
+      visibility: "debug",
+      payload: { event },
+    };
+  }
+  if (event.type === "tool_end") {
+    return {
+      kind: "tool_result",
+      source: "chat_event",
+      visibility: "debug",
+      payload: { event },
+    };
+  }
+  if (event.type === "tool_update" && event.status === "awaiting_approval") {
+    return {
+      kind: "permission_decision",
+      source: "chat_event",
+      visibility: "host_only",
+      payload: { state: "requested", event },
+    };
+  }
+  if (event.type === "agent_timeline") {
+    return rolloutProjectionFromAgentTimelineEvent(event);
+  }
+  if (event.type === "assistant_final") {
+    return {
+      kind: "model_output",
+      source: "chat_event",
+      visibility: "model_visible",
+      payload: {
+        role: "assistant",
+        content: event.text,
+        persisted: event.persisted,
+        event,
+      },
+    };
+  }
+  if (event.type === "lifecycle_end" || event.type === "lifecycle_error") {
+    return {
+      kind: "completion_state",
+      source: "chat_event",
+      visibility: "debug",
+      payload: { event },
+    };
+  }
+  return {
+    kind: "display_event",
+    source: "chat_event",
+    visibility: "display",
+    payload: { event },
+  };
+}
+
+function rolloutProjectionFromAgentTimelineEvent(event: Extract<ChatEvent, { type: "agent_timeline" }>): {
+  kind: ChatRolloutJournalRecordKind;
+  source: "agent_timeline";
+  visibility: ChatRolloutJournalRecord["visibility"];
+  payload: unknown;
+} {
+  const item = event.item;
+  if (item.kind === "model_request" || item.kind === "assistant_message") {
+    return {
+      kind: "model_output",
+      source: "agent_timeline",
+      visibility: item.visibility === "debug" ? "debug" : "model_visible",
+      payload: { item },
+    };
+  }
+  if (item.kind === "tool" && item.status === "started") {
+    return {
+      kind: "tool_call",
+      source: "agent_timeline",
+      visibility: "debug",
+      payload: { item },
+    };
+  }
+  if (item.kind === "tool" || item.kind === "tool_observation") {
+    return {
+      kind: "tool_result",
+      source: "agent_timeline",
+      visibility: item.visibility === "debug" ? "debug" : "display",
+      payload: { item },
+    };
+  }
+  if (item.kind === "approval") {
+    return {
+      kind: "permission_decision",
+      source: "agent_timeline",
+      visibility: "host_only",
+      payload: { item },
+    };
+  }
+  if (item.kind === "final" || item.kind === "stopped") {
+    return {
+      kind: "completion_state",
+      source: "agent_timeline",
+      visibility: "debug",
+      payload: { item },
+    };
+  }
+  return {
+    kind: "display_event",
+    source: "agent_timeline",
+    visibility: item.visibility === "debug" ? "debug" : "display",
+    payload: { item },
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeUsageCounter(usage: ChatUsageCounter): ChatUsageCounter {

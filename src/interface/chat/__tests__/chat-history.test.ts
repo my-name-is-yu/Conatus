@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ChatHistory } from "../chat-history.js";
+import {
+  ChatHistory,
+  reconstructModelVisibleMessagesFromRolloutJournal,
+} from "../chat-history.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 
 function makeMockStateManager(): StateManager {
@@ -146,5 +149,103 @@ describe("ChatHistory", () => {
         })],
       }),
     );
+  });
+
+  it("persists replayable rollout records and reconstructs model-visible history from them", async () => {
+    const history = new ChatHistory(stateManager, SESSION_ID, CWD);
+    const eventContext = { runId: "run-1", turnId: "turn-1" };
+    const createdAt = "2026-05-06T00:00:00.000Z";
+
+    await history.appendUserMessage("Please inspect the rollout journal.", {
+      eventContext,
+      userInput: {
+        schema_version: "user-input-v1",
+        rawText: "Please inspect the rollout journal.",
+        items: [
+          { kind: "text", text: "Please inspect the rollout journal." },
+          { kind: "local_image", path: "/Users/example/private-screenshot.png", name: "private-screenshot.png" },
+        ],
+      },
+    });
+    await history.recordTurnContext({
+      schema_version: "chat-turn-context-v1",
+      modelVisible: {
+        turn: eventContext,
+        conversation: { priorTurns: [] },
+      },
+    });
+    await history.recordChatEvent({
+      type: "tool_start",
+      toolCallId: "call-1",
+      toolName: "read_file",
+      args: { apiKey: "sk-abcdefghijklmnopqrstuvwxyz123456" },
+      runId: eventContext.runId,
+      turnId: eventContext.turnId,
+      createdAt,
+    });
+    await history.recordChatEvent({
+      type: "tool_end",
+      toolCallId: "call-1",
+      toolName: "read_file",
+      success: true,
+      summary: "read complete",
+      durationMs: 7,
+      runId: eventContext.runId,
+      turnId: eventContext.turnId,
+      createdAt,
+    });
+    await history.recordChatEvent({
+      type: "tool_update",
+      toolCallId: "call-approval",
+      toolName: "write_file",
+      status: "awaiting_approval",
+      message: "write requires approval",
+      runId: eventContext.runId,
+      turnId: eventContext.turnId,
+      createdAt,
+    });
+    await history.recordChatEvent({
+      type: "activity",
+      kind: "checkpoint",
+      message: "Context gathered",
+      runId: eventContext.runId,
+      turnId: eventContext.turnId,
+      createdAt,
+    });
+    await history.appendAssistantMessage("The rollout journal is replayable.", { eventContext });
+    await history.recordChatEvent({
+      type: "lifecycle_end",
+      status: "completed",
+      elapsedMs: 42,
+      persisted: true,
+      runId: eventContext.runId,
+      turnId: eventContext.turnId,
+      createdAt,
+    });
+
+    const session = history.getSessionData();
+    const rolloutJournal = session.rolloutJournal ?? [];
+    expect(rolloutJournal.map((record) => record.kind)).toEqual(expect.arrayContaining([
+      "user_input",
+      "turn_context",
+      "tool_call",
+      "tool_result",
+      "permission_decision",
+      "display_event",
+      "model_output",
+      "completion_state",
+    ]));
+    expect(JSON.stringify(rolloutJournal)).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456");
+    expect(JSON.stringify(rolloutJournal)).not.toContain("/Users/example/private-screenshot.png");
+
+    const reconstructed = reconstructModelVisibleMessagesFromRolloutJournal(rolloutJournal);
+    expect(reconstructed?.map((message) => [message.role, message.content])).toEqual([
+      ["user", "Please inspect the rollout journal."],
+      ["assistant", "The rollout journal is replayable."],
+    ]);
+    expect(history.getModelVisibleMessages().map((message) => message.content)).toEqual([
+      "Please inspect the rollout journal.",
+      "The rollout journal is replayable.",
+    ]);
   });
 });

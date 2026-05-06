@@ -70,6 +70,7 @@ export function loadedSessionToChatSession(session: LoadedChatSession): ChatSess
     ...(session.agentLoopUpdatedAt ? { agentLoopUpdatedAt: session.agentLoopUpdatedAt } : {}),
     ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
     ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
+    ...(session.rolloutJournal ? { rolloutJournal: [...session.rolloutJournal] } : {}),
     ...(session.usage ? { usage: session.usage } : {}),
   };
 }
