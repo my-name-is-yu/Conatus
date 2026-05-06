@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
@@ -118,6 +120,7 @@ describe("TaskLifecycle", async () => {
       logger?: import("../../../runtime/logger.js").Logger;
       adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
+      revertCwd?: string;
     }
   ): TaskLifecycle {
     strategyManager = new StrategyManager(stateManager, llmClient);
@@ -130,6 +133,19 @@ describe("TaskLifecycle", async () => {
       stallDetector,
       options
     );
+  }
+
+  function initRevertRepo(name: string): string {
+    const repoDir = path.join(tmpDir, name);
+    fs.mkdirSync(repoDir, { recursive: true });
+    execFileSync("git", ["init"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.name", "Codex Test"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.email", "codex@example.com"], { cwd: repoDir, stdio: "pipe" });
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "original\n", "utf-8");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "changed\n", "utf-8");
+    return repoDir;
   }
 
   // ─────────────────────────────────────────────
@@ -672,8 +688,9 @@ describe("TaskLifecycle", async () => {
     });
 
     it("count < 3 with wrong direction and reversible attempts revert", async () => {
-      const llm = createMockLLMClient([REVERT_SUCCESS]);
-      const lifecycle = createLifecycle(llm);
+      const repoDir = initRevertRepo("wrong-direction-revert");
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm, { revertCwd: repoDir });
       const task = makeTask({
         consecutive_failure_count: 0,
         reversibility: "reversible",
@@ -683,17 +700,20 @@ describe("TaskLifecycle", async () => {
           { layer: "independent_review", description: "Wrong direction", confidence: 0.3 },
           { layer: "self_report", description: "Bad result", confidence: 0.3 },
         ],
+        file_diffs: [{ path: "tracked.txt", patch: "diff --git a/tracked.txt b/tracked.txt" }],
       });
 
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
       const result = await lifecycle.handleFailure(task, vr);
 
       expect(result.action).toBe("discard");
+      expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("original\n");
     });
 
     it("revert succeeds returns discard", async () => {
-      const llm = createMockLLMClient([REVERT_SUCCESS]);
-      const lifecycle = createLifecycle(llm);
+      const repoDir = initRevertRepo("successful-revert");
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm, { revertCwd: repoDir });
       const task = makeTask({
         consecutive_failure_count: 0,
         reversibility: "reversible",
@@ -703,12 +723,14 @@ describe("TaskLifecycle", async () => {
           { layer: "independent_review", description: "Wrong", confidence: 0.3 },
           { layer: "self_report", description: "Failed", confidence: 0.3 },
         ],
+        file_diffs: [{ path: "tracked.txt", patch: "diff --git a/tracked.txt b/tracked.txt" }],
       });
 
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
       const result = await lifecycle.handleFailure(task, vr);
 
       expect(result.action).toBe("discard");
+      expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("original\n");
     });
 
     it("revert fails sets state_integrity uncertain and returns escalate", async () => {

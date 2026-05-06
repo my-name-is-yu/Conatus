@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
@@ -40,8 +42,6 @@ function createSpyLLMClient(responses: string[]): ILLMClient {
 const LLM_REVIEW_PASS = '{"verdict": "pass", "reasoning": "All criteria satisfied", "criteria_met": 1, "criteria_total": 1}';
 const LLM_REVIEW_FAIL = '{"verdict": "fail", "reasoning": "Criteria not met", "criteria_met": 0, "criteria_total": 1}';
 const LLM_REVIEW_PARTIAL = '{"verdict": "partial", "reasoning": "Some criteria met", "criteria_met": 1, "criteria_total": 2}';
-const REVERT_SUCCESS = '```json\n{"success": true, "reason": "Changes have been reverted successfully"}\n```';
-
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "task-1",
@@ -118,7 +118,7 @@ describe("TaskLifecycle — failure handling", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
 
-  function createLifecycle(llmClient: ILLMClient): TaskLifecycle {
+  function createLifecycle(llmClient: ILLMClient, options: { revertCwd?: string } = {}): TaskLifecycle {
     strategyManager = new StrategyManager(stateManager, llmClient);
     return new TaskLifecycle(
       stateManager,
@@ -127,8 +127,21 @@ describe("TaskLifecycle — failure handling", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { healthCheckEnabled: false, adapterRegistry: makePassingAdapterRegistry() }
+      { healthCheckEnabled: false, adapterRegistry: makePassingAdapterRegistry(), ...options }
     );
+  }
+
+  function initRevertRepo(name: string): string {
+    const repoDir = path.join(tmpDir, name);
+    fs.mkdirSync(repoDir, { recursive: true });
+    execFileSync("git", ["init"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.name", "Codex Test"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.email", "codex@example.com"], { cwd: repoDir, stdio: "pipe" });
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "original\n", "utf-8");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "changed\n", "utf-8");
+    return repoDir;
   }
 
   it("L1 mechanical criteria detected: evidence includes mechanical layer", async () => {
@@ -247,8 +260,9 @@ describe("TaskLifecycle — failure handling", () => {
   });
 
   it("fail verdict with reversible task → revert succeeds → action is discard", async () => {
-    const llm = createMockLLMClient([REVERT_SUCCESS]);
-    const lifecycle = createLifecycle(llm);
+    const repoDir = initRevertRepo("cycle-revert-success");
+    const llm = createMockLLMClient([]);
+    const lifecycle = createLifecycle(llm, { revertCwd: repoDir });
     const task = makeTask({
       id: "task-discard",
       reversibility: "reversible",
@@ -263,12 +277,14 @@ describe("TaskLifecycle — failure handling", () => {
         { layer: "independent_review", description: "Nothing worked", confidence: 0.8 },
       ],
       dimension_updates: [],
+      file_diffs: [{ path: "tracked.txt", patch: "diff --git a/tracked.txt b/tracked.txt" }],
       timestamp: new Date().toISOString(),
     };
 
     await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
     const result = await lifecycle.handleFailure(task, vr);
     expect(result.action).toBe("discard");
+    expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("original\n");
   });
 
   it("consecutive_failure_count reaches 3 → action is escalate", async () => {

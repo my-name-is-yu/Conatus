@@ -71,23 +71,26 @@ export function captureExecutionDiffArtifacts(
   }
 
   const trackedOutput = runGitRead(execFileSyncFn, cwd, ["diff", "--name-only"]);
+  const stagedOutput = runGitRead(execFileSyncFn, cwd, ["diff", "--cached", "--name-only"]);
   const untrackedOutput = runGitRead(execFileSyncFn, cwd, ["ls-files", "--others", "--exclude-standard"]);
 
-  const available = trackedOutput !== null || untrackedOutput !== null;
+  const available = trackedOutput !== null || stagedOutput !== null || untrackedOutput !== null;
   if (!available) {
     return renderFallbackDiffArtifacts(cwd, fallbackPaths, options.maxFallbackDiffBytes);
   }
 
   const trackedPaths = (trackedOutput ?? "").split("\n");
+  const stagedPaths = (stagedOutput ?? "").split("\n");
   const untrackedPaths = (untrackedOutput ?? "").split("\n");
-  const changedPaths = uniqueNonEmpty([...trackedPaths, ...untrackedPaths]);
+  const changedPaths = uniqueNonEmpty([...trackedPaths, ...stagedPaths, ...untrackedPaths])
+    .filter((filePath) => isSafeRelativePath(cwd, filePath));
   const untrackedSet = new Set(uniqueNonEmpty(untrackedPaths));
 
   const fileDiffs = changedPaths.flatMap((path) => {
     const trackedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--", path])?.trim() ?? "";
-    if (trackedPatch.length > 0) {
-      return [{ path, patch: trackedPatch }];
-    }
+    const stagedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--cached", "--", path])?.trim() ?? "";
+    const patches = [trackedPatch, stagedPatch].filter((patch) => patch.length > 0);
+    if (patches.length > 0) return [{ path, patch: patches.join("\n") }];
 
     if (!untrackedSet.has(path)) {
       return [];

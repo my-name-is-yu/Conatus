@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
@@ -64,7 +66,6 @@ const VALID_TASK_RESPONSE = `\`\`\`json
 
 const LLM_REVIEW_PASS = '{"verdict": "pass", "reasoning": "All criteria satisfied", "criteria_met": 1, "criteria_total": 1}';
 const LLM_REVIEW_FAIL = '{"verdict": "fail", "reasoning": "Criteria not met", "criteria_met": 0, "criteria_total": 1}';
-const REVERT_SUCCESS = '```json\n{"success": true, "reason": "Changes have been reverted successfully"}\n```';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -181,6 +182,19 @@ describe("TaskLifecycle — persistence", () => {
       stallDetector,
       { healthCheckEnabled: false, execFileSyncFn: () => "some-file.ts", ...options }
     );
+  }
+
+  function initRevertRepo(name: string): string {
+    const repoDir = path.join(tmpDir, name);
+    fs.mkdirSync(repoDir, { recursive: true });
+    execFileSync("git", ["init"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.name", "Codex Test"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.email", "codex@example.com"], { cwd: repoDir, stdio: "pipe" });
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "original\n", "utf-8");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "changed\n", "utf-8");
+    return repoDir;
   }
 
   it("verification result saved to correct path", async () => {
@@ -362,7 +376,7 @@ describe("TaskLifecycle — persistence", () => {
   });
 
   it("runTaskCycle does not leave execution-success verification failures as completed", async () => {
-    const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_FAIL, REVERT_SUCCESS]);
+    const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_FAIL]);
     const lifecycle = createLifecycle(llm, { approvalFn: async () => true });
     const adapter: import("../task/task-lifecycle.js").IAdapter = {
       adapterType: "mock",
@@ -390,7 +404,7 @@ describe("TaskLifecycle — persistence", () => {
     const ledger = await stateManager.readRaw(`tasks/goal-1/ledger/${result.task.id}.json`) as Record<string, unknown>;
     const summary = ledger.summary as Record<string, unknown>;
 
-    expect(result.action).toBe("discard");
+    expect(result.action).toBe("escalate");
     expect(result.verificationResult.verdict).toBe("fail");
     expect(storedTask.status).toBe("error");
     expect(storedTask.verification_verdict).toBe("fail");
@@ -399,7 +413,7 @@ describe("TaskLifecycle — persistence", () => {
     expect(summary.task_status).toBe("error");
     expect(summary.verification_verdict).toBe("fail");
     expect(summary.latest_event_type).toBe("abandoned");
-    expect(summary.action).toBe("discard");
+    expect(summary.action).toBe("escalate");
   });
 
   it("handleFailure records failed and retried events for retryable failures", async () => {
@@ -473,15 +487,19 @@ describe("TaskLifecycle — persistence", () => {
   });
 
   it("handleFailure records discard outcomes without preserving completed status", async () => {
-    const llm = createMockLLMClient([REVERT_SUCCESS]);
-    const lifecycle = createLifecycle(llm);
+    const repoDir = initRevertRepo("persistence-revert-success");
+    const llm = createMockLLMClient([]);
+    const lifecycle = createLifecycle(llm, { revertCwd: repoDir });
     const task = makeTask({
       status: "completed",
       started_at: new Date(Date.now() - 1000).toISOString(),
       completed_at: new Date().toISOString(),
       reversibility: "reversible",
     });
-    const vr = makeVerificationResult({ task_id: task.id });
+    const vr = makeVerificationResult({
+      task_id: task.id,
+      file_diffs: [{ path: "tracked.txt", patch: "diff --git a/tracked.txt b/tracked.txt" }],
+    });
 
     await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
     const result = await lifecycle.handleFailure(task, vr);
@@ -492,6 +510,7 @@ describe("TaskLifecycle — persistence", () => {
     const summary = ledger.summary as Record<string, unknown>;
 
     expect(result.action).toBe("discard");
+    expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("original\n");
     expect(storedTask.status).toBe("error");
     expect(history[0]!.status).toBe("error");
     expect(summary.task_status).toBe("error");

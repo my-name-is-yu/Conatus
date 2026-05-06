@@ -186,6 +186,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     });
     const execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === "diff" && args[1] === "--name-only") return "src/changed.ts\n.env";
+      if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
       if (args[0] === "ls-files") return "";
       if (args[0] === "diff") return "";
       return "";
@@ -221,6 +222,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     });
     const execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === "diff" && args[1] === "--name-only") return ".env";
+      if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
       if (args[0] === "ls-files") return "";
       if (args[0] === "diff") return "";
       return "";

@@ -618,6 +618,11 @@ describe("agentloop phase 1", () => {
       });
 
       expect(result.success).toBe(true);
+      expect(result.toolResults?.[0]).toMatchObject({
+        toolName: "apply_patch",
+        checkOnly: false,
+        artifacts: ["reports/hgb.json"],
+      });
       expect(result.changedFiles).toContain("reports/hgb.json");
       expect(fs.readFileSync(path.join(workspace, "reports", "hgb.json"), "utf-8")).toContain("0.95");
     } finally {

@@ -82,6 +82,45 @@ describe("captureExecutionDiffArtifacts", () => {
     }
   });
 
+  it("captures staged file diffs without counting fallback paths as git-backed changes", () => {
+    const workspace = makeGitWorkspace();
+    try {
+      fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "reports", "clean.md"), "reported by tool\n", "utf-8");
+      const execFileSyncFn = makeExecFileSync({
+        "git diff --name-only": "",
+        "git diff --cached --name-only": "reports/staged.md\n",
+        "git ls-files --others --exclude-standard": "",
+        "git diff -- reports/staged.md": "",
+        "git diff --cached -- reports/staged.md": [
+          "diff --git a/reports/staged.md b/reports/staged.md",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b/reports/staged.md",
+          "@@ -0,0 +1 @@",
+          "+staged output",
+          "",
+        ].join("\n"),
+        "git diff -- reports/clean.md": "",
+        "git diff --cached -- reports/clean.md": "",
+      });
+
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace, {
+        fallbackChangedPaths: ["reports/clean.md", "../outside.md"],
+      });
+
+      expect(result.changedPaths).toEqual(["reports/staged.md"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "reports/staged.md",
+          patch: expect.stringContaining("+staged output"),
+        }),
+      ]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("ignores per-path diff read failures after collecting changed paths", () => {
     const workspace = makeGitWorkspace();
     try {

@@ -34,6 +34,13 @@ export interface FailureResult {
   task: import("../../../base/types/task.js").Task;
 }
 
+export interface RevertAttemptResult {
+  success: boolean;
+  concretePaths: string[];
+  reason: string;
+  method?: "git_restore_tool" | "git_restore_child_process";
+}
+
 // ─── CompletionJudgerResponseSchema: Zod schema for LLM completion judgment response ───
 
 export const CompletionJudgerResponseSchema = z.object({

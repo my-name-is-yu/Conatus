@@ -21,6 +21,8 @@ export interface AgentLoopToolResultSummary {
   toolName: string;
   success: boolean;
   execution?: AgentLoopToolObservationExecution;
+  artifacts?: string[];
+  checkOnly?: boolean;
   outputSummary: string;
   durationMs: number;
 }

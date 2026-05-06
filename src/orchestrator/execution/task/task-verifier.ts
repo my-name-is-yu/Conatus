@@ -748,8 +748,13 @@ export async function handleFailure(
     const revertSuccess = await attemptRevert(deps, updatedTask, {
       concretePaths: concreteRevertPaths,
     });
-    deps.logger?.warn(`[task] revert attempted`, { taskId: task.id, success: revertSuccess });
-    if (revertSuccess) {
+    deps.logger?.warn(`[task] revert attempted`, {
+      taskId: task.id,
+      success: revertSuccess.success,
+      reason: revertSuccess.reason,
+      concretePaths: revertSuccess.concretePaths,
+    });
+    if (revertSuccess.success) {
       await appendTaskHistory(deps, task.goal_id, updatedTask);
       await appendTaskOutcomeEvent(deps.stateManager, {
         task: updatedTask,
@@ -757,7 +762,7 @@ export async function handleFailure(
         attempt: updatedTask.consecutive_failure_count,
         action: "discard",
         verificationResult,
-        reason: "task discarded after successful revert",
+        reason: `task discarded after successful ${revertSuccess.method ?? "revert"} for ${revertSuccess.concretePaths.length} concrete paths`,
       });
       return { action: "discard", task: updatedTask };
     }
@@ -770,7 +775,9 @@ export async function handleFailure(
       attempt: updatedTask.consecutive_failure_count,
       action: "escalate",
       verificationResult,
-      reason: "revert failed after wrong-direction result",
+      reason: revertSuccess.concretePaths.length === 0
+        ? "revert skipped because no concrete changed paths were captured; task output requires operator review"
+        : `revert failed after wrong-direction result: ${revertSuccess.reason}`,
     });
     return { action: "escalate", task: updatedTask };
   }

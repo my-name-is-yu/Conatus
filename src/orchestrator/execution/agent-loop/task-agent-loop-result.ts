@@ -1,4 +1,5 @@
 import { z } from "zod";
+import * as path from "node:path";
 import type { AgentResult } from "../adapter-layer.js";
 import type { AgentLoopResult } from "./agent-loop-result.js";
 
@@ -19,6 +20,29 @@ export const TaskAgentLoopOutputSchema = z.object({
 
 export type TaskAgentLoopOutput = z.infer<typeof TaskAgentLoopOutputSchema>;
 
+function isSafeRelativeArtifact(filePath: string): boolean {
+  const trimmed = filePath.trim();
+  if (!trimmed || trimmed.includes("\0") || path.isAbsolute(trimmed)) return false;
+  const segments = trimmed.replace(/\\/g, "/").split("/");
+  return !segments.includes("..");
+}
+
+function collectAgentLoopChangedPaths(
+  result: AgentLoopResult<TaskAgentLoopOutput>,
+): string[] {
+  const applyPatchArtifactPaths = (result.toolResults ?? []).flatMap((entry) => {
+    if (!entry.success || entry.toolName !== "apply_patch" || entry.checkOnly === true) return [];
+    return (entry.artifacts ?? []).map((artifact) => artifact.trim()).filter(isSafeRelativeArtifact);
+  });
+  return [
+    ...new Set([
+      ...(result.output?.filesChanged ?? []),
+      ...result.changedFiles,
+      ...applyPatchArtifactPaths,
+    ]),
+  ];
+}
+
 export function taskAgentLoopResultToAgentResult(
   result: AgentLoopResult<TaskAgentLoopOutput>,
 ): AgentResult {
@@ -26,6 +50,7 @@ export function taskAgentLoopResultToAgentResult(
   const runtimeVerificationCommands = result.commandResults.filter((command) =>
     command.evidenceEligible && command.relevantToTask !== false
   );
+  const filesChangedPaths = collectAgentLoopChangedPaths(result);
   const fallbackOutput = result.output?.finalAnswer
     ?? result.finalText
     ?? result.output?.blockers.join("; ")
@@ -40,8 +65,8 @@ export function taskAgentLoopResultToAgentResult(
       result.stopReason === "timeout" ? "timeout" :
       result.stopReason === "cancelled" ? "cancelled" :
       done ? "completed" : "error",
-    filesChanged: result.changedFiles.length > 0 || (result.output ? result.output.filesChanged.length > 0 : result.filesChanged),
-    filesChangedPaths: [...new Set([...(result.output?.filesChanged ?? []), ...result.changedFiles])],
+    filesChanged: filesChangedPaths.length > 0 || Boolean(result.filesChanged),
+    filesChangedPaths,
     agentLoop: {
       traceId: result.traceId,
       sessionId: result.sessionId,
@@ -61,7 +86,7 @@ export function taskAgentLoopResultToAgentResult(
         ...(result.output?.verificationHints ?? []),
         ...runtimeVerificationCommands.filter((command) => !command.success).map((command) => `failed command: ${command.command}`),
       ],
-      filesChangedPaths: [...new Set([...(result.output?.filesChanged ?? []), ...result.changedFiles])],
+      filesChangedPaths,
       ...(result.workspace
         ? {
             requestedCwd: result.workspace.requestedCwd,
