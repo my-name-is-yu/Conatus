@@ -69,6 +69,8 @@ export function loadedSessionToChatSession(session: LoadedChatSession): ChatSess
     ...(session.agentLoopResumable ? { agentLoopResumable: true } : {}),
     ...(session.agentLoopUpdatedAt ? { agentLoopUpdatedAt: session.agentLoopUpdatedAt } : {}),
     ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
+    ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
+    ...(session.usage ? { usage: session.usage } : {}),
   };
 }
 

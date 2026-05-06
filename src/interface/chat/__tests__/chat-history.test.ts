@@ -122,4 +122,29 @@ describe("ChatHistory", () => {
     callOrder.push("after-await");
     expect(callOrder).toEqual(["writeRaw", "after-await"]);
   });
+
+  it("recordTurnContext persists the snapshot before returning", async () => {
+    const callOrder: string[] = [];
+    const mockWriteRaw = vi.fn().mockImplementation(async () => {
+      callOrder.push("writeRaw");
+    });
+    const sm = { writeRaw: mockWriteRaw, readRaw: vi.fn() } as unknown as StateManager;
+
+    const history = new ChatHistory(sm, SESSION_ID, CWD);
+    await history.recordTurnContext({
+      schema_version: "chat-turn-context-v1",
+      modelVisible: { turn: { turnId: "turn-1" } },
+    });
+
+    callOrder.push("after-await");
+    expect(callOrder).toEqual(["writeRaw", "after-await"]);
+    expect(mockWriteRaw).toHaveBeenCalledWith(
+      `chat/sessions/${SESSION_ID}.json`,
+      expect.objectContaining({
+        turnContexts: [expect.objectContaining({
+          schema_version: "chat-turn-context-v1",
+        })],
+      }),
+    );
+  });
 });

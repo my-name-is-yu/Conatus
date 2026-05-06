@@ -7,6 +7,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import {
   buildRuntimeControlContextFromIngress,
   buildStandaloneIngressMessageFromContext,
+  loadedSessionToChatSession,
   resolveChatResumeSelector,
   type ChatRunnerRuntimeDeps,
 } from "../chat-runner-runtime.js";
@@ -37,6 +38,28 @@ afterEach(async () => {
 });
 
 describe("chat-runner runtime helpers", () => {
+  it("preserves turn context snapshots when converting loaded sessions for resume", () => {
+    const session = loadedSessionToChatSession({
+      id: "session-with-context",
+      cwd: "/repo",
+      createdAt: "2026-05-06T07:00:00.000Z",
+      updatedAt: "2026-05-06T07:01:00.000Z",
+      title: null,
+      messages: [],
+      agentLoopStatePath: null,
+      agentLoopStatus: "missing",
+      agentLoopResumable: false,
+      turnContexts: [{
+        schema_version: "chat-turn-context-v1",
+        modelVisible: { turn: { turnId: "turn-current" } },
+      }],
+    });
+
+    expect(session.turnContexts).toEqual([expect.objectContaining({
+      schema_version: "chat-turn-context-v1",
+    })]);
+  });
+
   it("buildStandaloneIngressMessageFromContext prefers the current runtime reply target over stale fallback deps", () => {
     const message = buildStandaloneIngressMessageFromContext(
       "restart now",

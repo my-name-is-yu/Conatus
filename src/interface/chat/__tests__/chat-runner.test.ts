@@ -1750,7 +1750,12 @@ describe("ChatRunner", () => {
       expect(input.resumeStatePath).toMatch(/^chat\/agentloop\//);
 
       const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock).toHaveBeenCalledTimes(1);
+      expect(writeRawMock).toHaveBeenCalledTimes(2);
+      expect(writeRawMock.mock.calls[0][1]).toMatchObject({
+        turnContexts: [expect.objectContaining({
+          schema_version: "chat-turn-context-v1",
+        })],
+      });
       expect((stateManager.readRaw as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -2632,7 +2637,10 @@ describe("ChatRunner", () => {
 
     it("persists assistant message only after streaming completes", async () => {
       const stateManager = makeMockStateManager();
-      const writes: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+      const writes: Array<{
+        messages: Array<{ role: string; content: string }>;
+        turnContexts?: unknown[];
+      }> = [];
       (stateManager.writeRaw as ReturnType<typeof vi.fn>).mockImplementation(async (_path, data) => {
         writes.push(JSON.parse(JSON.stringify(data)));
       });
@@ -2660,12 +2668,15 @@ describe("ChatRunner", () => {
       await runner.execute("Stream this", "/repo");
 
       const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock).toHaveBeenCalledTimes(2);
+      expect(writeRawMock).toHaveBeenCalledTimes(3);
       const firstWrite = writes[0]!;
       const secondWrite = writes[1]!;
+      const thirdWrite = writes[2]!;
       expect(firstWrite.messages).toHaveLength(1);
-      expect(secondWrite.messages).toHaveLength(2);
-      expect(secondWrite.messages[1]?.content).toBe("Hello world");
+      expect(secondWrite.messages).toHaveLength(1);
+      expect(secondWrite.turnContexts).toHaveLength(1);
+      expect(thirdWrite.messages).toHaveLength(2);
+      expect(thirdWrite.messages[1]?.content).toBe("Hello world");
       expect(events).toContain("assistant_delta");
       expect(events).toContain("assistant_final");
     });
@@ -2699,9 +2710,13 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Recovery");
       expect(result.output).toContain("Type: Unclassified failure");
       const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock).toHaveBeenCalledTimes(1);
-      const onlyWrite = writeRawMock.mock.calls[0][1] as { messages: Array<{ role: string; content: string }> };
-      expect(onlyWrite.messages).toHaveLength(1);
+      expect(writeRawMock).toHaveBeenCalledTimes(2);
+      const lastWrite = writeRawMock.mock.calls[1][1] as {
+        messages: Array<{ role: string; content: string }>;
+        turnContexts?: unknown[];
+      };
+      expect(lastWrite.messages).toHaveLength(1);
+      expect(lastWrite.turnContexts).toHaveLength(1);
       expect(capturedEvents).toContainEqual({ type: "lifecycle_error", partialText: "Partial answer" });
     });
 
@@ -3017,6 +3032,85 @@ describe("ChatRunner", () => {
       ]));
       expect(timelineSourceTypes.indexOf("assistant_message")).toBeLessThan(timelineSourceTypes.indexOf("tool_call_started"));
       expect(timelineSourceTypes.indexOf("tool_call_finished")).toBeLessThan(timelineSourceTypes.indexOf("final"));
+    });
+
+    it("builds agent-loop requests from current TurnContext instead of stale runtime deps", async () => {
+      const stateManager = makeMockStateManager();
+      const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "Agentloop from current context",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter,
+        chatAgentLoopRunner,
+        runtimeReplyTarget: {
+          surface: "gateway",
+          platform: "slack",
+          conversation_id: "stale-thread",
+          message_id: "stale-message",
+          identity_key: "stale-user",
+        },
+      }));
+
+      const ingress = {
+        ...makeIngress("進捗を確認して"),
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "preapproved" as const,
+        },
+        replyTarget: {
+          ...makeIngress("").replyTarget,
+          platform: "slack",
+          conversation_id: "current-thread",
+          message_id: "current-message",
+          identity_key: "current-user",
+          user_id: "U-current",
+        },
+      };
+      const result = await runner.executeIngressMessage(ingress, "/repo", 120_000, {
+        kind: "agent_loop",
+        reason: "agent_loop_available",
+        replyTargetPolicy: "turn_reply_target",
+        eventProjectionPolicy: "turn_only",
+        concurrencyPolicy: "session_serial",
+      });
+
+      expect(result.success).toBe(true);
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+      const call = (chatAgentLoopRunner.execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+        systemPrompt?: string;
+        toolCallContext?: {
+          runtimeReplyTarget?: Record<string, unknown> | null;
+          runtimeControlApprovalMode?: string;
+        };
+      };
+      expect(call.systemPrompt).toContain("## Turn Context");
+      expect(call.systemPrompt).toContain("current-thread");
+      expect(call.systemPrompt).not.toContain("stale-thread");
+      expect(call.toolCallContext?.runtimeReplyTarget).toMatchObject({
+        conversation_id: "current-thread",
+        message_id: "current-message",
+      });
+      expect(call.toolCallContext?.runtimeControlApprovalMode).toBe("preapproved");
+
+      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
+        .map(([, value]) => value)
+        .find((value) =>
+          value && typeof value === "object" && Array.isArray((value as { turnContexts?: unknown }).turnContexts)
+        ) as { turnContexts: unknown[] } | undefined;
+      expect(persistedSession?.turnContexts).toHaveLength(1);
+      const snapshotJson = JSON.stringify(persistedSession?.turnContexts[0]);
+      expect(snapshotJson).toContain("current-thread");
+      expect(snapshotJson).not.toContain("stale-thread");
+      expect(snapshotJson).not.toContain("approvalFn");
     });
 
     it("routes simple questions through chatAgentLoopRunner when configured", async () => {

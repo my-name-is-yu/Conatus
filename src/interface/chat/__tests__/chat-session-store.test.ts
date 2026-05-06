@@ -230,14 +230,23 @@ describe("ChatSessionCatalog", () => {
   it("renames a session and bumps updatedAt", async () => {
     await stateManager.writeRaw(
       "chat/sessions/rename-me.json",
-      makeSession({
-        id: "rename-me",
-        cwd: "/repo",
-        createdAt: "2025-01-01T00:00:00.000Z",
-        updatedAt: "2025-01-01T01:00:00.000Z",
-        title: "Original",
-        messages: [],
-      })
+      {
+        ...makeSession({
+          id: "rename-me",
+          cwd: "/repo",
+          createdAt: "2025-01-01T00:00:00.000Z",
+          updatedAt: "2025-01-01T01:00:00.000Z",
+          title: "Original",
+          messages: [],
+        }),
+        turnContexts: [{
+          schema_version: "chat-turn-context-v1",
+          modelVisible: {
+            turn: { turnId: "turn-1" },
+            session: { cwd: "/repo" },
+          },
+        }],
+      }
     );
 
     const renamed = await catalog.renameSession("rename-me", "Renamed Session");
@@ -246,6 +255,12 @@ describe("ChatSessionCatalog", () => {
 
     const loaded = await catalog.loadSession("rename-me");
     expect(loaded?.title).toBe("Renamed Session");
+    expect(loaded?.turnContexts).toEqual([expect.objectContaining({
+      schema_version: "chat-turn-context-v1",
+      modelVisible: expect.objectContaining({
+        turn: expect.objectContaining({ turnId: "turn-1" }),
+      }),
+    })]);
   });
 
   it("lists by cwd and returns the latest matching session", async () => {
