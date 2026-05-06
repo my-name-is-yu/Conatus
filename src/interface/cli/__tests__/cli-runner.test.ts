@@ -953,6 +953,45 @@ describe("goal add raw mode", async () => {
     expect(code).toBe(0);
   });
 
+  it("persists deadline and target_date for a raw --dim goal", async () => {
+    const deadline = "2026-06-01";
+    const normalizedDeadline = "2026-06-01T00:00:00.000Z";
+
+    const code = await runCLI(
+      "goal",
+      "add",
+      "--title",
+      "raw deadline goal",
+      "--dim",
+      "todo_count:max:0",
+      "--deadline",
+      deadline
+    );
+
+    expect(code).toBe(0);
+    const goalIds = await stateManager.listGoalIds();
+    expect(goalIds).toHaveLength(1);
+    const savedGoal = await stateManager.loadGoal(goalIds[0]!);
+    expect(savedGoal?.deadline).toBe(normalizedDeadline);
+    expect(savedGoal?.target_date).toBe(normalizedDeadline);
+  });
+
+  it("rejects invalid calendar datetimes for raw --dim goals", async () => {
+    const code = await runCLI(
+      "goal",
+      "add",
+      "--title",
+      "invalid raw deadline goal",
+      "--dim",
+      "todo_count:max:0",
+      "--deadline",
+      "2026-02-30T00:00:00Z"
+    );
+
+    expect(code).toBe(1);
+    expect(await stateManager.listGoalIds()).toEqual([]);
+  });
+
   it("outputs Goal ID and title after successful raw add", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await runCLI("goal", "add", "--title", "my raw goal", "--dim", "todo_count:max:0");

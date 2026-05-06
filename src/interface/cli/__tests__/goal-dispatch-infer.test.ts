@@ -77,6 +77,7 @@ describe("dispatchGoalCommand — auto-infer flow", () => {
   });
 
   it("calls cmdGoalAddRaw with inferred dims after user accepts", async () => {
+    const deadline = "2026-06-01T00:00:00.000Z";
     vi.mocked(goalInfer.inferDimensionsFromTitle).mockResolvedValue([
       { name: "fluency_score", type: "min", value: "80" },
     ]);
@@ -86,7 +87,7 @@ describe("dispatchGoalCommand — auto-infer flow", () => {
 
     const result = await dispatchGoalCommand(
       "add",
-      ["--title", "英語ペラペラになりたい"],
+      ["--title", "英語ペラペラになりたい", "--deadline", deadline],
       false,
       makeStateManager(),
       makeCharacterConfigManager()
@@ -98,6 +99,7 @@ describe("dispatchGoalCommand — auto-infer flow", () => {
       expect.objectContaining({
         title: "英語ペラペラになりたい",
         rawDimensions: ["fluency_score:min:80"],
+        deadline,
       })
     );
     expect(result).toBe(0);
@@ -144,9 +146,10 @@ describe("dispatchGoalCommand — auto-infer flow", () => {
   });
 
   it("skips inference when --dim is provided (existing raw mode)", async () => {
+    const deadline = "2026-06-02T00:00:00.000Z";
     const result = await dispatchGoalCommand(
       "add",
-      ["--title", "fix errors", "--dim", "error_count:min:0"],
+      ["--title", "fix errors", "--dim", "error_count:min:0", "--deadline", deadline],
       false,
       makeStateManager(),
       makeCharacterConfigManager()
@@ -157,7 +160,30 @@ describe("dispatchGoalCommand — auto-infer flow", () => {
       expect.anything(),
       expect.objectContaining({
         rawDimensions: ["error_count:min:0"],
+        deadline,
       })
+    );
+    expect(result).toBe(0);
+  });
+
+  it("passes --deadline through the non-raw refine path when inference is not accepted", async () => {
+    const deadline = "2026-06-03T00:00:00.000Z";
+    vi.mocked(goalInfer.inferDimensionsFromTitle).mockResolvedValue([]);
+
+    const result = await dispatchGoalCommand(
+      "add",
+      ["keep docs current", "--deadline", deadline],
+      false,
+      makeStateManager(),
+      makeCharacterConfigManager()
+    );
+
+    expect(goalRaw.cmdGoalAddRaw).not.toHaveBeenCalled();
+    expect(goal.cmdGoalAdd).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "keep docs current",
+      expect.objectContaining({ deadline })
     );
     expect(result).toBe(0);
   });

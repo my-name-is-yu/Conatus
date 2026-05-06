@@ -125,6 +125,7 @@ export async function dispatchGoalCommand(
               rawDimensions: rawDims,
               parent_id: addValues.parent,
               constraints: inferConstraints,
+              deadline: addValues.deadline,
             });
           }
           // If rejected, fall through to refine mode
@@ -145,7 +146,14 @@ export async function dispatchGoalCommand(
       if (addValues.workspace) {
         rawConstraints.push(`workspace_path:${addValues.workspace}`);
       }
-      return await cmdGoalAddRaw(stateManager, { title, description, rawDimensions, parent_id: addValues.parent, constraints: rawConstraints });
+      return await cmdGoalAddRaw(stateManager, {
+        title,
+        description,
+        rawDimensions,
+        parent_id: addValues.parent,
+        constraints: rawConstraints,
+        deadline: addValues.deadline,
+      });
     }
 
     // Refine/negotiate mode: requires description
