@@ -432,13 +432,17 @@ describe("attemptRevert safety", () => {
     execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
   }
 
-  function makeFailureVerificationResult(): VerificationResult {
+  function makeFailureVerificationResult(fileDiffPaths: string[] = []): VerificationResult {
     return makeVerificationResult({
       verdict: "fail",
       evidence: [
         { layer: "independent_review", description: "Wrong direction", confidence: 0.3 },
         { layer: "self_report", description: "Failed", confidence: 0.3 },
       ],
+      file_diffs: fileDiffPaths.map((filePath) => ({
+        path: filePath,
+        patch: `diff -- ${filePath}`,
+      })),
     });
   }
 
@@ -467,7 +471,7 @@ describe("attemptRevert safety", () => {
       });
 
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
-      const result = await handleFailure(deps, task, makeFailureVerificationResult());
+      const result = await handleFailure(deps, task, makeFailureVerificationResult(["tracked.txt"]));
 
       expect(result.action).toBe("escalate");
       expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("changed\n");
@@ -498,10 +502,61 @@ describe("attemptRevert safety", () => {
 
     try {
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
-      const result = await handleFailure(deps, task, makeFailureVerificationResult());
+      const result = await handleFailure(deps, task, makeFailureVerificationResult(["tracked.txt"]));
 
       expect(result.action).toBe("discard");
       expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("original\n");
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat natural-language scope descriptions as revert file paths", async () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
+    initGitRepo(repoDir);
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "changed\n", "utf-8");
+    const logger = {
+      warn: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as Logger;
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([
+        '```json\n{"success": false, "reason": "No concrete paths captured"}\n```',
+      ]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: repoDir,
+      logger,
+    };
+    const task = makeTask({
+      scope_boundary: {
+        in_scope: ["Create one new sklearn-based experiment script", "Generate one local JSON report"],
+        out_of_scope: [],
+        blast_radius: "low",
+      },
+      reversibility: "reversible",
+    });
+
+    try {
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await handleFailure(deps, task, makeFailureVerificationResult());
+
+      expect(result.action).toBe("escalate");
+      expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("changed\n");
+      expect(logger.warn).toHaveBeenCalledWith(
+        "[attemptRevert] skipping raw git restore because no concrete changed paths were captured"
+      );
+      expect(
+        (logger.warn as ReturnType<typeof vi.fn>).mock.calls.some(([message]) =>
+          String(message).includes("unsafe file path detected")
+        )
+      ).toBe(false);
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
     }
@@ -523,9 +578,19 @@ describe("attemptRevert safety", () => {
       stallDetector,
       durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
       revertCwd: daemonRepo,
+      logger: {
+        warn: vi.fn(),
+        info: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      } as unknown as Logger,
     };
     const task = makeTask({
-      scope_boundary: { in_scope: ["tracked.txt"], out_of_scope: [], blast_radius: "low" },
+      scope_boundary: {
+        in_scope: ["Create one local report", "Update task output summary"],
+        out_of_scope: [],
+        blast_radius: "low",
+      },
       reversibility: "reversible",
     });
 
@@ -536,11 +601,16 @@ describe("attemptRevert safety", () => {
       }));
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
 
-      const result = await handleFailure(deps, task, makeFailureVerificationResult());
+      const result = await handleFailure(deps, task, makeFailureVerificationResult(["tracked.txt"]));
 
       expect(result.action).toBe("discard");
       expect(fs.readFileSync(path.join(goalRepo, "tracked.txt"), "utf-8")).toBe("original\n");
       expect(fs.readFileSync(path.join(daemonRepo, "tracked.txt"), "utf-8")).toBe("daemon changed\n");
+      expect(
+        ((deps.logger?.warn as ReturnType<typeof vi.fn>)?.mock.calls ?? []).some(([message]) =>
+          String(message).includes("unsafe file path detected")
+        )
+      ).toBe(false);
     } finally {
       fs.rmSync(daemonRepo, { recursive: true, force: true });
       fs.rmSync(goalRepo, { recursive: true, force: true });
