@@ -33,6 +33,11 @@ export class ShellCommandTool implements ITool<ShellCommandInput> {
         data: null,
         summary: "Use the apply_patch tool for patch edits instead of shell_command.",
         error: "apply_patch must be called via the apply_patch tool",
+        execution: {
+          status: "not_executed",
+          reason: "policy_blocked",
+          message: "apply_patch must be called via the apply_patch tool",
+        },
         durationMs: 0,
       };
     }

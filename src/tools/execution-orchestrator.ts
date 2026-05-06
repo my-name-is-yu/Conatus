@@ -1,5 +1,6 @@
 import type { ITool, ToolCallContext, ToolResult } from "./types.js";
 import { assessShellCommand } from "./system/ShellTool/command-policy.js";
+import { resolveWorkspaceCwd } from "./workspace-scope.js";
 
 export type HostToolExecutionDecisionStatus =
   | "allowed"
@@ -33,6 +34,9 @@ export function decideHostToolExecution(
   if (!policy) {
     return { status: "allowed", reason: "No host execution policy is attached to this call." };
   }
+
+  const cwdDecision = decideWorkspaceCwd(request);
+  if (cwdDecision) return cwdDecision;
 
   const shellDecision = decideShellExecution(request);
   if (shellDecision) return shellDecision;
@@ -101,20 +105,46 @@ function decideStateFreshness(context: ToolCallContext): HostToolExecutionDecisi
   };
 }
 
+function decideWorkspaceCwd(request: HostToolExecutionRequest): HostToolExecutionDecision | null {
+  if (typeof request.input !== "object" || request.input === null) return null;
+  const cwd = (request.input as { cwd?: unknown }).cwd;
+  if (cwd !== undefined && typeof cwd !== "string") {
+    return {
+      status: "fail_closed",
+      reason: "Tool cwd must be a string when provided.",
+      executionReason: "policy_blocked",
+    };
+  }
+  const validation = resolveWorkspaceCwd(cwd, request.context);
+  if (validation.valid) return null;
+  return {
+    status: "fail_closed",
+    reason: validation.error ?? `Tool cwd escapes workspace root: ${validation.resolved}`,
+    executionReason: "policy_blocked",
+  };
+}
+
 function decideShellExecution(
   request: HostToolExecutionRequest
 ): HostToolExecutionDecision | null {
-  if (request.tool.metadata.name !== "shell" || typeof request.input !== "object" || request.input === null) {
+  if (
+    request.tool.metadata.name !== "shell"
+    && request.tool.metadata.name !== "shell_command"
+  ) {
+    return null;
+  }
+  if (typeof request.input !== "object" || request.input === null) {
     return null;
   }
   const command = (request.input as { command?: unknown }).command;
   if (typeof command !== "string") return null;
+  const cwdValidation = resolveWorkspaceCwd((request.input as { cwd?: unknown }).cwd as string | undefined, request.context);
 
   const assessment = assessShellCommand(
     command,
     request.context.executionPolicy,
     request.context.trusted === true,
-    request.context.cwd
+    cwdValidation.resolved
   );
   if (assessment.status === "allowed") {
     return { status: "allowed", reason: "Shell command is allowed by host policy." };

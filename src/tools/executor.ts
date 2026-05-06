@@ -76,7 +76,7 @@ export class ToolExecutor {
       return this.failResult(
         `Permission denied: ${semanticResult.reason}`,
         Date.now() - startTime,
-        { status: "not_executed", reason: "permission_denied", message: semanticResult.reason },
+        { status: "not_executed", reason: semanticResult.executionReason ?? "permission_denied", message: semanticResult.reason },
       );
     }
     if (semanticResult.status === "needs_approval" && tool.metadata.tags.includes("automation")) {
