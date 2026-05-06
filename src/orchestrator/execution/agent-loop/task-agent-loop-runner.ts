@@ -14,6 +14,7 @@ import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
 import { AgentLoopContextAssembler, type SoilPrefetchQuery, type SoilPrefetchResult } from "./agent-loop-context-assembler.js";
 import { buildTaskAgentLoopTurnContext } from "./task-agent-loop-context.js";
 import {
+  collectTaskAgentLoopNotExecutedBlockers,
   taskAgentLoopResultToAgentResult,
   type TaskAgentLoopOutput,
 } from "./task-agent-loop-result.js";
@@ -77,13 +78,15 @@ export class TaskAgentLoopRunner {
     let finalResult: AgentLoopResult<TaskAgentLoopOutput> | null = null;
     let runError: unknown = null;
     try {
+      const executionPolicy = this.deps.defaultToolCallContext?.executionPolicy
+        ?? this.deps.defaultExecutionPolicy;
       const assembled = await contextAssembler.assembleTask({
         task: input.task,
         workspaceContext: input.workspaceContext,
         knowledgeContext: input.knowledgeContext,
         cwd: workspace.executionCwd,
         soilPrefetch: this.deps.soilPrefetch,
-        trustProjectInstructions: this.deps.defaultToolCallContext?.executionPolicy?.trustProjectInstructions,
+        trustProjectInstructions: executionPolicy?.trustProjectInstructions,
       });
       const turn = buildTaskAgentLoopTurnContext({
         task: input.task,
@@ -100,14 +103,15 @@ export class TaskAgentLoopRunner {
         toolCallContext: this.deps.defaultToolCallContext,
         ...(this.deps.defaultProfileName ? { profileName: this.deps.defaultProfileName } : {}),
         ...(this.deps.defaultReasoningEffort ? { reasoningEffort: this.deps.defaultReasoningEffort } : {}),
-        ...(this.deps.defaultExecutionPolicy ? { executionPolicy: this.deps.defaultExecutionPolicy } : {}),
+        ...(executionPolicy ? { executionPolicy } : {}),
         ...(input.resumeState ? { resumeState: input.resumeState } : {}),
         abortSignal: input.abortSignal,
         role: input.role,
       });
       const result = await this.deps.boundedRunner.run(turn);
+      const success = result.success && collectTaskAgentLoopNotExecutedBlockers(result).length === 0;
       finalizationInput = {
-        success: result.success,
+        success,
         changedFiles: result.changedFiles,
       };
       const commandResults = result.commandResults.map((commandResult) => ({
@@ -116,6 +120,7 @@ export class TaskAgentLoopRunner {
       }));
       finalResult = {
         ...result,
+        success,
         commandResults,
       };
     } catch (error) {

@@ -426,11 +426,13 @@ export class BoundedAgentLoopRunner {
           calledTools.add(result.toolName);
         }
         toolCalls++;
+        const toolResultSequence = toolCalls;
         if (result.success) consecutiveToolErrors = 0;
         else consecutiveToolErrors++;
 
         const checkOnly = readToolResultCheckOnly(result);
         toolResultSummaries.push({
+          sequence: toolResultSequence,
           toolName: result.toolName,
           success: result.success,
           ...(result.execution ? { execution: result.execution } : {}),
@@ -493,6 +495,7 @@ export class BoundedAgentLoopRunner {
             command: result.command,
           });
           commandResults.push({
+            sequence: toolResultSequence,
             toolName: result.toolName,
             command: result.command,
             cwd: result.cwd,
@@ -605,6 +608,9 @@ export class BoundedAgentLoopRunner {
       traceId: turn.session.traceId,
       sessionId: turn.session.sessionId,
       turnId: turn.turnId,
+      ...(turn.profileName ? { profileName: turn.profileName } : {}),
+      ...(turn.reasoningEffort ? { reasoningEffort: turn.reasoningEffort } : {}),
+      ...(turn.executionPolicy ? { executionPolicy: turn.executionPolicy } : {}),
     };
   }
 

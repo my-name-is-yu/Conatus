@@ -43,22 +43,102 @@ function collectAgentLoopChangedPaths(
   ];
 }
 
+function isBlockingNotExecutedReason(reason: string | undefined): boolean {
+  return reason !== "dry_run";
+}
+
+function formatNotExecutedDetail(input: {
+  kind: "Command" | "Tool";
+  name: string;
+  reason?: string;
+  message?: string;
+  command?: string;
+  cwd?: string;
+}): string {
+  const reason = input.reason ? ` (${input.reason})` : "";
+  const command = input.command ? `: ${input.command}` : "";
+  const cwd = input.cwd ? ` in ${input.cwd}` : "";
+  const message = input.message?.trim() ? `. ${input.message.trim()}` : "";
+  return `${input.kind} ${input.name} was not executed${reason}${cwd}${command}${message}`;
+}
+
+function entrySequence(entry: { sequence?: number }, fallbackIndex: number): number {
+  return entry.sequence ?? fallbackIndex;
+}
+
+export function collectTaskAgentLoopNotExecutedBlockers(
+  result: AgentLoopResult<TaskAgentLoopOutput>,
+): string[] {
+  const toolResults = result.toolResults ?? [];
+  const lastSuccessfulSequence = Math.max(
+    -1,
+    ...result.commandResults
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.success)
+      .map(({ entry, index }) => entrySequence(entry, index)),
+    ...toolResults
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.success)
+      .map(({ entry, index }) => entrySequence(entry, index)),
+  );
+  const commandBlockers = result.commandResults
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry, index }) =>
+      entrySequence(entry, index) > lastSuccessfulSequence
+      && entry.execution?.status === "not_executed"
+      && isBlockingNotExecutedReason(entry.execution.reason)
+    )
+    .map(({ entry }) => formatNotExecutedDetail({
+      kind: "Command",
+      name: entry.toolName,
+      reason: entry.execution?.reason,
+      message: entry.execution?.message || entry.outputSummary,
+      command: entry.command,
+      cwd: entry.cwd,
+    }));
+  const commandToolNames = new Set(
+    result.commandResults
+      .filter((entry) => entry.execution?.status === "not_executed")
+      .map((entry) => entry.toolName),
+  );
+  const toolBlockers = toolResults
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry, index }) =>
+      entrySequence(entry, index) > lastSuccessfulSequence
+      && entry.execution?.status === "not_executed"
+      && isBlockingNotExecutedReason(entry.execution.reason)
+      && !commandToolNames.has(entry.toolName)
+    )
+    .map(({ entry }) => formatNotExecutedDetail({
+      kind: "Tool",
+      name: entry.toolName,
+      reason: entry.execution?.reason,
+      message: entry.execution?.message || entry.outputSummary,
+    }));
+  return [...new Set([...commandBlockers, ...toolBlockers])];
+}
+
 export function taskAgentLoopResultToAgentResult(
   result: AgentLoopResult<TaskAgentLoopOutput>,
 ): AgentResult {
-  const done = result.success && result.output?.status === "done";
+  const notExecutedBlockers = collectTaskAgentLoopNotExecutedBlockers(result);
+  const blockers = [
+    ...(result.output?.blockers ?? []),
+    ...notExecutedBlockers,
+  ];
+  const done = result.success && result.output?.status === "done" && blockers.length === 0;
   const runtimeVerificationCommands = result.commandResults.filter((command) =>
     command.evidenceEligible && command.relevantToTask !== false
   );
   const filesChangedPaths = collectAgentLoopChangedPaths(result);
-  const fallbackOutput = result.output?.finalAnswer
-    ?? result.finalText
-    ?? result.output?.blockers.join("; ")
-    ?? result.stopReason;
+  const blockerOutput = blockers.join("; ");
+  const fallbackOutput = done
+    ? result.output?.finalAnswer ?? result.finalText ?? result.stopReason
+    : blockerOutput || result.output?.finalAnswer || result.finalText || result.stopReason;
   return {
     success: done,
     output: fallbackOutput,
-    error: done ? null : result.output?.blockers.join("; ") || result.finalText || result.stopReason,
+    error: done ? null : blockerOutput || result.finalText || result.stopReason,
     exit_code: null,
     elapsed_ms: result.elapsedMs,
     stopped_reason:
@@ -85,6 +165,7 @@ export function taskAgentLoopResultToAgentResult(
       verificationHints: [
         ...(result.output?.verificationHints ?? []),
         ...runtimeVerificationCommands.filter((command) => !command.success).map((command) => `failed command: ${command.command}`),
+        ...notExecutedBlockers,
       ],
       filesChangedPaths,
       ...(result.workspace

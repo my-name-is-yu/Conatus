@@ -5,6 +5,7 @@ import type { AgentLoopStopReason } from "./agent-loop-budget.js";
 export type AgentLoopCommandResultCategory = "verification" | "observation" | "other";
 
 export interface AgentLoopCommandResult {
+  sequence?: number;
   toolName: string;
   command: string;
   cwd: string;
@@ -18,6 +19,7 @@ export interface AgentLoopCommandResult {
 }
 
 export interface AgentLoopToolResultSummary {
+  sequence?: number;
   toolName: string;
   success: boolean;
   execution?: AgentLoopToolObservationExecution;
