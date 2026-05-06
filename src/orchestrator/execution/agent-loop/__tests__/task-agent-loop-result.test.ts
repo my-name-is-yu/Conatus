@@ -78,4 +78,52 @@ describe("taskAgentLoopResultToAgentResult", () => {
     expect(result.filesChangedPaths).toEqual([]);
     expect(result.agentLoop?.filesChangedPaths).toEqual([]);
   });
+
+  it("does not mark a dirty isolated worktree as completed without handoff", () => {
+    const result = taskAgentLoopResultToAgentResult({
+      success: true,
+      output: {
+        status: "done",
+        finalAnswer: "done",
+        summary: "done",
+        filesChanged: ["README.md"],
+        testsRun: [],
+        completionEvidence: ["model claimed completion"],
+        verificationHints: [],
+        blockers: [],
+      },
+      finalText: "done",
+      stopReason: "completed",
+      elapsedMs: 1,
+      modelTurns: 1,
+      toolCalls: 0,
+      compactions: 0,
+      changedFiles: ["README.md"],
+      commandResults: [],
+      workspace: {
+        requestedCwd: "/repo",
+        executionCwd: "/worktrees/task-1",
+        isolated: true,
+        cleanupStatus: "kept",
+        cleanupReason: "worktree has changes",
+        dirty: true,
+        disposition: "handoff_required",
+      },
+      traceId: "trace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.stopped_reason).toBe("error");
+    expect(result.output).toContain("/worktrees/task-1");
+    expect(result.error).toContain("operator handoff");
+    expect(result.agentLoop).toMatchObject({
+      requestedCwd: "/repo",
+      executionCwd: "/worktrees/task-1",
+      isolatedWorkspace: true,
+      workspaceDirty: true,
+      workspaceDisposition: "handoff_required",
+    });
+  });
 });

@@ -29,12 +29,21 @@ export interface AgentLoopToolResultSummary {
   durationMs: number;
 }
 
+export type AgentLoopWorkspaceDisposition =
+  | "not_isolated"
+  | "cleaned_up"
+  | "kept_clean"
+  | "handoff_required"
+  | "discarded";
+
 export interface AgentLoopWorkspaceInfo {
   requestedCwd: string;
   executionCwd: string;
   isolated: boolean;
   cleanupStatus?: "not_requested" | "cleaned_up" | "kept";
   cleanupReason?: string;
+  dirty?: boolean;
+  disposition?: AgentLoopWorkspaceDisposition;
 }
 
 export interface AgentLoopTokenUsage {

@@ -211,6 +211,97 @@ describe("TaskAgentLoopRunner non-interactive smoke command policy", () => {
     expect(fs.existsSync(result.workspace!.executionCwd)).toBe(true);
   });
 
+  it("requires handoff instead of completion when successful work leaves a dirty isolated worktree", async () => {
+    const policyRoot = makeTempDir();
+    tmpDirs.push(policyRoot);
+    const workspace = makeGitWorkspace(policyRoot);
+    const isolatedBaseDir = path.join(policyRoot, "worktrees");
+    const modelInfo = makeModelInfo();
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      {
+        content: "",
+        toolCalls: [{
+          id: "edit-1",
+          name: "apply_patch",
+          input: {
+            patch: [
+              "*** Begin Patch",
+              "*** Update File: README.md",
+              "@@",
+              "-fixture",
+              "+fixture changed in isolated worktree",
+              "*** End Patch",
+            ].join("\n"),
+          },
+        }],
+        stopReason: "tool_use",
+      },
+      {
+        content: "",
+        toolCalls: [{
+          id: "verify-1",
+          name: "shell_command",
+          input: { command: "grep -q 'fixture changed in isolated worktree' README.md", timeoutMs: 30_000 },
+        }],
+        stopReason: "tool_use",
+      },
+      {
+        content: JSON.stringify({
+          status: "done",
+          finalAnswer: "implemented change",
+          summary: "README updated",
+          filesChanged: ["README.md"],
+          testsRun: [],
+          completionEvidence: ["README.md was updated"],
+          verificationHints: [],
+          blockers: [],
+        }),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+    ]);
+    const task = makeTask({
+      success_criteria: [{
+        description: "README contains the isolated worktree change",
+        verification_method: "grep -q 'fixture changed in isolated worktree' README.md",
+        is_blocking: true,
+      }],
+    });
+    const runner = makeRunner({
+      workspace,
+      modelInfo,
+      modelClient,
+      defaultExecutionPolicy: withExecutionPolicyOverrides(defaultExecutionPolicy(policyRoot), {
+        approvalPolicy: "never",
+      }),
+      defaultWorktreePolicy: {
+        enabled: true,
+        baseDir: isolatedBaseDir,
+        cleanupPolicy: "on_success",
+      },
+    });
+
+    const result = await runner.runTaskAsAgentResult({ task, cwd: workspace });
+
+    expect(result.success).toBe(false);
+    expect(result.stopped_reason).toBe("error");
+    expect(result.output).toContain("operator handoff");
+    expect(result.output).toContain(result.agentLoop!.executionCwd!);
+    expect(result.agentLoop).toMatchObject({
+      requestedCwd: fs.realpathSync(workspace),
+      isolatedWorkspace: true,
+      workspaceCleanupStatus: "kept",
+      workspaceCleanupReason: "worktree has changes",
+      workspaceDirty: true,
+      workspaceDisposition: "handoff_required",
+    });
+    expect(result.agentLoop!.executionCwd).not.toBe(workspace);
+    expect(fs.readFileSync(path.join(workspace, "README.md"), "utf-8")).toBe("fixture\n");
+    expect(fs.readFileSync(path.join(result.agentLoop!.executionCwd!, "README.md"), "utf-8")).toBe(
+      "fixture changed in isolated worktree\n",
+    );
+  });
+
   it("does not keep isolated workspaces when a later typed tool recovers after denial", async () => {
     const policyRoot = makeTempDir();
     tmpDirs.push(policyRoot);

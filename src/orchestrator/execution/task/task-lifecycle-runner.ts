@@ -23,6 +23,7 @@ import { reloadTaskFromDisk, verifyExecutionWithGitDiff } from "./task-execution
 import { appendTaskOutcomeEvent, setTaskOutcomeTokens } from "./task-outcome-ledger.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
+import { applyVerdictHandlingContextGuards } from "./task-verifier.js";
 
 export interface TaskGenerationResult {
   task: Task | null;
@@ -100,6 +101,24 @@ export interface TaskLifecycleTaskCycleContext {
     abortSignal?: AbortSignal,
   ) => Promise<AgentResult>;
   handleVerdict: (task: Task, verificationResult: VerificationResult, context?: VerdictHandlingContext) => Promise<VerdictResult>;
+}
+
+function buildVerdictHandlingContext(executionResult: AgentResult): VerdictHandlingContext {
+  const context: VerdictHandlingContext = {
+    stoppedReason: executionResult.success ? null : executionResult.stopped_reason,
+  };
+  if (executionResult.agentLoop) {
+    context.agentLoopWorkspace = {
+      requestedCwd: executionResult.agentLoop.requestedCwd,
+      executionCwd: executionResult.agentLoop.executionCwd,
+      isolatedWorkspace: executionResult.agentLoop.isolatedWorkspace,
+      workspaceCleanupStatus: executionResult.agentLoop.workspaceCleanupStatus,
+      workspaceCleanupReason: executionResult.agentLoop.workspaceCleanupReason,
+      workspaceDirty: executionResult.agentLoop.workspaceDirty,
+      workspaceDisposition: executionResult.agentLoop.workspaceDisposition,
+    };
+  }
+  return context;
 }
 
 export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleContext): Promise<TaskCycleResult> {
@@ -311,13 +330,25 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
     )
   );
   taskCycleTokens += verifierTokenAccumulator.tokensUsed;
-  logger?.debug(`[DEBUG-TL] Verification: verdict=${verificationResult.verdict}, evidence=${verificationResult.evidence.map((e) => e.description).join("; ").substring(0, 300)}`);
+  const verdictContext = buildVerdictHandlingContext(executionResult);
+  const effectiveVerificationResult = applyVerdictHandlingContextGuards(verificationResult, verdictContext);
+  const effectiveVerdictContext = { ...verdictContext, verificationGuardsApplied: true };
+  if (effectiveVerificationResult !== verificationResult) {
+    const rawVerification = await stateManager.readRaw(`verification/${taskForVerification.id}/verification-result.json`);
+    await stateManager.writeRaw(
+      `verification/${taskForVerification.id}/verification-result.json`,
+      rawVerification && typeof rawVerification === "object"
+        ? { ...rawVerification, ...effectiveVerificationResult }
+        : effectiveVerificationResult
+    );
+  }
+  logger?.debug(`[DEBUG-TL] Verification: verdict=${effectiveVerificationResult.verdict}, evidence=${effectiveVerificationResult.evidence.map((e) => e.description).join("; ").substring(0, 300)}`);
 
   const verdictResult = await runPhase("handle-verdict", () =>
     context.handleVerdict(
       taskForVerification,
-      verificationResult,
-      { stoppedReason: executionResult.success ? null : executionResult.stopped_reason }
+      effectiveVerificationResult,
+      effectiveVerdictContext
     )
   );
   logger?.info(`[task] verdict: ${verdictResult.action}`, { taskId: task.id });
@@ -328,7 +359,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
       targetDimension,
       task: verdictResult.task,
       action: verdictResult.action,
-      verificationResult,
+      verificationResult: effectiveVerificationResult,
       executionResult,
       adapter,
       ...context.sideEffectDeps(),
@@ -342,7 +373,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
 
   return {
     task: verdictResult.task,
-    verificationResult,
+    verificationResult: effectiveVerificationResult,
     action: verdictResult.action,
     tokensUsed: taskCycleTokens,
   };

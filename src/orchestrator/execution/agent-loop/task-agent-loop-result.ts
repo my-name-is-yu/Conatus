@@ -1,7 +1,7 @@
 import { z } from "zod";
 import * as path from "node:path";
 import type { AgentResult } from "../adapter-layer.js";
-import type { AgentLoopResult } from "./agent-loop-result.js";
+import type { AgentLoopResult, AgentLoopWorkspaceInfo } from "./agent-loop-result.js";
 
 export const TaskAgentLoopOutputSchema = z.object({
   status: z.enum(["done", "blocked", "partial", "failed"]),
@@ -60,6 +60,16 @@ function formatNotExecutedDetail(input: {
   const cwd = input.cwd ? ` in ${input.cwd}` : "";
   const message = input.message?.trim() ? `. ${input.message.trim()}` : "";
   return `${input.kind} ${input.name} was not executed${reason}${cwd}${command}${message}`;
+}
+
+export function requiresIsolatedWorkspaceHandoff(
+  workspace: Pick<AgentLoopWorkspaceInfo, "isolated" | "disposition"> | undefined,
+): boolean {
+  return workspace?.isolated === true && workspace.disposition === "handoff_required";
+}
+
+function formatIsolatedWorkspaceHandoffBlocker(workspace: AgentLoopWorkspaceInfo): string {
+  return `Isolated agent loop worktree has unintegrated changes; completion requires operator handoff: ${workspace.executionCwd}`;
 }
 
 function entrySequence(entry: { sequence?: number }, fallbackIndex: number): number {
@@ -122,9 +132,13 @@ export function taskAgentLoopResultToAgentResult(
   result: AgentLoopResult<TaskAgentLoopOutput>,
 ): AgentResult {
   const notExecutedBlockers = collectTaskAgentLoopNotExecutedBlockers(result);
+  const workspaceHandoffBlockers = requiresIsolatedWorkspaceHandoff(result.workspace)
+    ? [formatIsolatedWorkspaceHandoffBlocker(result.workspace!)]
+    : [];
   const blockers = [
     ...(result.output?.blockers ?? []),
     ...notExecutedBlockers,
+    ...workspaceHandoffBlockers,
   ];
   const done = result.success && result.output?.status === "done" && blockers.length === 0;
   const runtimeVerificationCommands = result.commandResults.filter((command) =>
@@ -166,6 +180,7 @@ export function taskAgentLoopResultToAgentResult(
         ...(result.output?.verificationHints ?? []),
         ...runtimeVerificationCommands.filter((command) => !command.success).map((command) => `failed command: ${command.command}`),
         ...notExecutedBlockers,
+        ...workspaceHandoffBlockers,
       ],
       filesChangedPaths,
       ...(result.workspace
@@ -175,6 +190,8 @@ export function taskAgentLoopResultToAgentResult(
             isolatedWorkspace: result.workspace.isolated,
             workspaceCleanupStatus: result.workspace.cleanupStatus,
             workspaceCleanupReason: result.workspace.cleanupReason,
+            workspaceDirty: result.workspace.dirty,
+            workspaceDisposition: result.workspace.disposition,
           }
         : {}),
       ...(result.executionPolicy

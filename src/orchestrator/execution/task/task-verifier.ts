@@ -79,6 +79,88 @@ function statusAfterIncompleteVerification(task: Task): Task["status"] {
   return "error";
 }
 
+function isolatedWorkspaceHandoff(
+  context: VerdictHandlingContext,
+): NonNullable<VerdictHandlingContext["agentLoopWorkspace"]> | null {
+  const workspace = context.agentLoopWorkspace;
+  if (
+    workspace?.isolatedWorkspace === true &&
+    workspace.workspaceDisposition === "handoff_required"
+  ) {
+    return workspace;
+  }
+  return null;
+}
+
+function discardedDirtyIsolatedWorkspace(
+  context: VerdictHandlingContext,
+): NonNullable<VerdictHandlingContext["agentLoopWorkspace"]> | null {
+  const workspace = context.agentLoopWorkspace;
+  if (
+    workspace?.isolatedWorkspace === true &&
+    workspace.workspaceDirty === true &&
+    workspace.workspaceDisposition === "discarded"
+  ) {
+    return workspace;
+  }
+  return null;
+}
+
+function shouldCollectDiffsFromRequestedWorkspace(executionResult: AgentResult): boolean {
+  if (executionResult.agentLoop?.isolatedWorkspace !== true) return true;
+  if (executionResult.agentLoop.workspaceDirty !== true) return true;
+  return executionResult.agentLoop.workspaceDisposition !== "handoff_required" &&
+    executionResult.agentLoop.workspaceDisposition !== "discarded";
+}
+
+function formatIsolatedWorkspaceHandoffReason(
+  workspace: NonNullable<VerdictHandlingContext["agentLoopWorkspace"]>,
+): string {
+  const executionCwd = workspace.executionCwd ?? "unknown isolated worktree";
+  const requestedCwd = workspace.requestedCwd ?? "unknown requested workspace";
+  return [
+    `dirty isolated worktree retained at ${executionCwd}`,
+    `requested workspace ${requestedCwd} was not reverted or discarded`,
+    "operator review is required before completion",
+  ].join("; ");
+}
+
+function formatDiscardedDirtyIsolatedWorkspaceReason(
+  workspace: NonNullable<VerdictHandlingContext["agentLoopWorkspace"]>,
+): string {
+  const executionCwd = workspace.executionCwd ?? "unknown isolated worktree";
+  const requestedCwd = workspace.requestedCwd ?? "unknown requested workspace";
+  return [
+    `dirty isolated worktree changes were discarded from ${executionCwd}`,
+    `requested workspace ${requestedCwd} was not reverted or discarded`,
+    "task must be retried from the requested workspace",
+  ].join("; ");
+}
+
+export function applyVerdictHandlingContextGuards(
+  verificationResult: VerificationResult,
+  context: VerdictHandlingContext,
+): VerificationResult {
+  const workspace = isolatedWorkspaceHandoff(context) ?? discardedDirtyIsolatedWorkspace(context);
+  if (!workspace) return verificationResult;
+  const reason = workspace.workspaceDisposition === "discarded"
+    ? formatDiscardedDirtyIsolatedWorkspaceReason(workspace)
+    : formatIsolatedWorkspaceHandoffReason(workspace);
+  return {
+    ...verificationResult,
+    verdict: "fail",
+    confidence: Math.max(verificationResult.confidence ?? 0, 0.95),
+    evidence: [
+      {
+        layer: "mechanical" as const,
+        description: reason,
+        confidence: 0.95,
+      },
+      ...(verificationResult.evidence ?? []),
+    ],
+  };
+}
+
 function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -91,6 +173,8 @@ async function collectVerificationDiffs(
   if (executionResult.fileDiffs && executionResult.fileDiffs.length > 0) {
     return executionResult.fileDiffs;
   }
+
+  if (!shouldCollectDiffsFromRequestedWorkspace(executionResult)) return [];
 
   if (!deps.toolExecutor) return [];
 
@@ -518,6 +602,10 @@ export async function handleVerdict(
     }
   }
 
+  if (context.verificationGuardsApplied !== true) {
+    verificationResult = applyVerdictHandlingContextGuards(verificationResult, context);
+  }
+
   // Save failure context for fail/partial verdicts (§4.7)
   if (verificationResult.verdict === "fail" || verificationResult.verdict === "partial") {
     const firstEvidence = verificationResult.evidence?.[0];
@@ -726,6 +814,38 @@ export async function handleFailure(
       stoppedReason: context.stoppedReason ?? undefined,
     });
     return { action: "escalate", task: updatedTask };
+  }
+
+  const handoffWorkspace = isolatedWorkspaceHandoff(context);
+  if (handoffWorkspace) {
+    const reason = formatIsolatedWorkspaceHandoffReason(handoffWorkspace);
+    await appendTaskHistory(deps, task.goal_id, updatedTask);
+    await appendTaskOutcomeEvent(deps.stateManager, {
+      task: updatedTask,
+      type: "abandoned",
+      attempt: updatedTask.consecutive_failure_count,
+      action: "escalate",
+      verificationResult,
+      reason,
+      stoppedReason: context.stoppedReason ?? undefined,
+    });
+    return { action: "escalate", task: updatedTask };
+  }
+
+  const discardedWorkspace = discardedDirtyIsolatedWorkspace(context);
+  if (discardedWorkspace) {
+    const reason = formatDiscardedDirtyIsolatedWorkspaceReason(discardedWorkspace);
+    await appendTaskHistory(deps, task.goal_id, updatedTask);
+    await appendTaskOutcomeEvent(deps.stateManager, {
+      task: updatedTask,
+      type: "abandoned",
+      attempt: updatedTask.consecutive_failure_count,
+      action: "discard",
+      verificationResult,
+      reason,
+      stoppedReason: context.stoppedReason ?? undefined,
+    });
+    return { action: "discard", task: updatedTask };
   }
 
   const directionCorrect = isDirectionCorrect(verificationResult);
