@@ -10,6 +10,8 @@ import type {
 import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 
 type Aggregation = "max" | "min" | "count" | "file_count";
+type CurrentProgressPolicy = "legacy" | "completed_fresh_only" | "allow_live";
+type ArtifactLifecycleState = "completed" | "running" | "failed" | "unknown";
 
 interface MetricExtraction {
   key: string;
@@ -31,6 +33,9 @@ interface MetricObservation extends MetricCandidate {
   parser: "json";
   metrics: MetricExtraction[];
   extractionConfidence: number;
+  lifecycle: ArtifactLifecycle;
+  eligibleForCurrentProgress: boolean;
+  ineligibleReason: string | null;
 }
 
 interface SelectedMetric {
@@ -58,6 +63,12 @@ interface MetricConflict {
   }>;
 }
 
+interface ArtifactLifecycle {
+  state: ArtifactLifecycleState;
+  status: string | null;
+  success: boolean | null;
+}
+
 const BUILTIN_SOURCE_ID = "ds_builtin_workspace_artifacts";
 const DEFAULT_METRIC_FILE_NAMES = ["metrics.json", "result.json"];
 const DEFAULT_ARTIFACT_ROOTS = ["artifacts", "experiments", "runs", "reports", "outputs", "results", "logs"];
@@ -76,6 +87,7 @@ const DEFAULT_EXCLUDE_PATHS = new Set(["data/raw"]);
 const DEFAULT_MAX_METRIC_FILES = 5_000;
 const DEFAULT_MAX_ARTIFACT_FILES = 100_000;
 const DEFAULT_MAX_CANDIDATES = 200;
+const DEFAULT_GOAL_SCOPED_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 const MAX_RAW_CANDIDATES = 25;
 
 export function createWorkspaceArtifactMetricDataSource(workspacePath = process.cwd()): ArtifactMetricDataSourceAdapter {
@@ -104,6 +116,8 @@ export function createGoalWorkspaceArtifactMetricDataSource(
       dimension_metrics: dimensionMetrics,
       dimension_aggregations: dimensionAggregations,
       require_metric_match: true,
+      stale_after_ms: DEFAULT_GOAL_SCOPED_STALE_AFTER_MS,
+      current_progress_policy: "completed_fresh_only",
     },
     enabled: true,
     created_at: new Date().toISOString(),
@@ -177,11 +191,11 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
 
     const keys = resolveMetricKeys(params.dimension_name, expression, this.config);
     const candidates = await discoverMetricCandidates(root, options, keys);
-    const observations = await readMetricObservations(candidates);
+    const observations = await readMetricObservations(candidates, options);
     const evidenceCandidates = buildEvidenceCandidates(observations, keys, aggregation === "min" ? "min" : "max");
 
     if (aggregation === "count") {
-      const matched = observations.filter((observation) => hasAnyMetric(observation, keys));
+      const matched = observations.filter((observation) => observation.eligibleForCurrentProgress && hasAnyMetric(observation, keys));
       return {
         value: matched.length,
         raw: {
@@ -195,6 +209,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
           evidence_candidates: evidenceCandidates,
           conflicts: detectMetricConflicts(params.dimension_name, observations, keys),
           stale_candidates: staleRaw(observations),
+          ineligible_candidates: ineligibleRaw(observations),
           strategic_correctness: "not_evaluated",
         },
         timestamp,
@@ -222,6 +237,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
         evidence_candidates: evidenceCandidates,
         conflicts: detectMetricConflicts(params.dimension_name, observations, keys),
         stale_candidates: staleRaw(observations),
+        ineligible_candidates: ineligibleRaw(observations),
         strategic_correctness: "not_evaluated",
       },
       timestamp,
@@ -252,6 +268,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
       maxArtifactFiles: this.config.connection.max_artifact_files ?? DEFAULT_MAX_ARTIFACT_FILES,
       maxCandidates: this.config.connection.max_candidates ?? DEFAULT_MAX_CANDIDATES,
       staleAfterMs: this.config.connection.stale_after_ms,
+      currentProgressPolicy: this.config.connection.current_progress_policy ?? "legacy",
     };
   }
 }
@@ -267,6 +284,7 @@ interface ScanOptions {
   maxArtifactFiles: number;
   maxCandidates: number;
   staleAfterMs?: number;
+  currentProgressPolicy: CurrentProgressPolicy;
 }
 
 async function discoverMetricCandidates(root: string, options: ScanOptions, keys: string[]): Promise<MetricCandidate[]> {
@@ -397,18 +415,23 @@ function shouldSkipDirectory(name: string, relPath: string, options: ScanOptions
   return false;
 }
 
-async function readMetricObservations(candidates: MetricCandidate[]): Promise<MetricObservation[]> {
+async function readMetricObservations(candidates: MetricCandidate[], options: ScanOptions): Promise<MetricObservation[]> {
   const observations: MetricObservation[] = [];
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(await fs.readFile(candidate.path, "utf8")) as unknown;
       const metrics = extractNumericMetrics(parsed);
       if (metrics.length > 0) {
+        const lifecycle = extractArtifactLifecycle(parsed);
+        const ineligibleReason = currentProgressIneligibleReason(candidate, lifecycle, options);
         observations.push({
           ...candidate,
           parser: "json",
           metrics,
           extractionConfidence: Math.max(...metrics.map((metric) => metric.confidence)),
+          lifecycle,
+          eligibleForCurrentProgress: ineligibleReason === null,
+          ineligibleReason,
         });
       }
     } catch {
@@ -459,6 +482,40 @@ function extractNumericMetrics(value: unknown): MetricExtraction[] {
   return metrics;
 }
 
+function extractArtifactLifecycle(value: unknown): ArtifactLifecycle {
+  if (!isRecord(value)) return { state: "unknown", status: null, success: null };
+
+  const status = typeof value["status"] === "string" ? value["status"] : null;
+  const success = booleanOrNull(value["success"]);
+  if (status === "running") return { state: "running", status, success };
+  if (status === "failed") return { state: "failed", status, success };
+  if (success === false) return { state: "failed", status, success };
+  if (status === "completed") return { state: "completed", status, success };
+  if (success === true) return { state: "completed", status, success };
+  return { state: "unknown", status, success };
+}
+
+function booleanOrNull(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function currentProgressIneligibleReason(
+  candidate: MetricCandidate,
+  lifecycle: ArtifactLifecycle,
+  options: ScanOptions,
+): string | null {
+  if (options.currentProgressPolicy === "legacy") return null;
+  if (candidate.stale) return "artifact is stale for current progress";
+  if (options.currentProgressPolicy === "allow_live") {
+    return lifecycle.state === "completed" || lifecycle.state === "running"
+      ? null
+      : `artifact lifecycle is ${lifecycle.state}`;
+  }
+  return lifecycle.state === "completed"
+    ? null
+    : `artifact lifecycle is ${lifecycle.state}`;
+}
+
 function addNumber(metrics: MetricExtraction[], key: string, keyPath: string, value: unknown, confidence: number): void {
   if (typeof value === "number" && Number.isFinite(value)) {
     metrics.push({ key, keyPath, value, confidence });
@@ -497,6 +554,7 @@ function matchingMetrics(observations: MetricObservation[], keys: string[]): Arr
   const wanted = new Set(keys);
   const matches: Array<{ observation: MetricObservation; metric: MetricExtraction }> = [];
   for (const observation of observations) {
+    if (!observation.eligibleForCurrentProgress) continue;
     for (const metric of observation.metrics) {
       if (wanted.size === 0 || wanted.has(metric.key)) {
         matches.push({ observation, metric });
@@ -589,6 +647,7 @@ function buildEvidenceCandidates(
       extraction_confidence: metric.confidence,
       candidate_score: observation.candidateScore,
       stale: observation.stale,
+      current_progress_eligible: observation.eligibleForCurrentProgress,
       reasons: observation.reasons,
       strategic_correctness: "not_evaluated",
     }));
@@ -615,6 +674,21 @@ function staleRaw(observations: MetricObservation[]): Array<Record<string, unkno
     }));
 }
 
+function ineligibleRaw(observations: MetricObservation[]): Array<Record<string, unknown>> {
+  return observations
+    .filter((observation) => !observation.eligibleForCurrentProgress)
+    .slice(0, MAX_RAW_CANDIDATES)
+    .map((observation) => ({
+      path: observation.relativePath,
+      updated_time: observation.updatedTime,
+      stale: observation.stale,
+      lifecycle_state: observation.lifecycle.state,
+      lifecycle_status: observation.lifecycle.status,
+      success: observation.lifecycle.success,
+      reason: observation.ineligibleReason,
+    }));
+}
+
 function discoveryRaw(options: ScanOptions): Record<string, unknown> {
   return {
     artifact_roots: options.artifactRoots,
@@ -624,6 +698,7 @@ function discoveryRaw(options: ScanOptions): Record<string, unknown> {
     max_candidates: options.maxCandidates,
     parser_hints: Array.from(options.parserHints),
     stale_after_ms: options.staleAfterMs ?? null,
+    current_progress_policy: options.currentProgressPolicy,
   };
 }
 

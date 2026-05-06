@@ -1061,6 +1061,7 @@ describe("observeFromDataSource", () => {
     });
     writeJsonFile(path.join(goalWorkspace, "artifacts", "probe-balanced", "metrics.json"), {
       oof_balanced_accuracy: 0.88,
+      status: "completed",
     });
     const engine = new ObservationEngine(
       stateManager,
@@ -1101,6 +1102,101 @@ describe("observeFromDataSource", () => {
         key: "oof_balanced_accuracy",
       },
     });
+  });
+
+  it("does not accept stale goal-scoped artifact metrics as mechanical progress", async () => {
+    const goalWorkspace = path.join(tmpDir, "stale-metric-workspace");
+    const staleMetricPath = path.join(goalWorkspace, "experiments", "old-run", "metrics.json");
+    writeJsonFile(staleMetricPath, {
+      metric_name: "roc_auc",
+      cv_score: 0.99,
+      status: "completed",
+    });
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    fs.utimesSync(staleMetricPath, staleTime, staleTime);
+    const llmClient = makeMockLLMClient(0.31);
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      async () => "workspace context exists",
+    );
+    const goal = makeGoal({
+      id: "goal-stale-artifact-metric",
+      constraints: [`workspace_path:${goalWorkspace}`],
+      dimensions: [
+        {
+          name: "roc_auc",
+          label: "ROC AUC",
+          current_value: 0,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engine.observe("goal-stale-artifact-metric", []);
+
+    const updated = await stateManager.loadGoal("goal-stale-artifact-metric");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.31);
+    expect(updated?.dimensions[0]?.last_observed_layer).toBe("independent_review");
+    expect(llmClient.sendMessage).toHaveBeenCalled();
+    const log = await stateManager.loadObservationLog("goal-stale-artifact-metric");
+    expect(log?.entries[0]?.layer).toBe("independent_review");
+  });
+
+  it("does not accept running goal-scoped artifact metrics as mechanical progress", async () => {
+    const goalWorkspace = path.join(tmpDir, "running-metric-workspace");
+    writeJsonFile(path.join(goalWorkspace, "experiments", "live-run", "metrics.json"), {
+      metric_name: "roc_auc",
+      cv_score: 0.98,
+      status: "running",
+    });
+    const llmClient = makeMockLLMClient(0.27);
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      async () => "workspace context exists",
+    );
+    const goal = makeGoal({
+      id: "goal-running-artifact-metric",
+      constraints: [`workspace_path:${goalWorkspace}`],
+      dimensions: [
+        {
+          name: "roc_auc",
+          label: "ROC AUC",
+          current_value: 0,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engine.observe("goal-running-artifact-metric", []);
+
+    const updated = await stateManager.loadGoal("goal-running-artifact-metric");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.27);
+    expect(updated?.dimensions[0]?.last_observed_layer).toBe("independent_review");
+    expect(llmClient.sendMessage).toHaveBeenCalled();
+    const log = await stateManager.loadObservationLog("goal-running-artifact-metric");
+    expect(log?.entries[0]?.layer).toBe("independent_review");
   });
 
   it("falls back to LLM when the goal-scoped artifact metric is absent", async () => {
