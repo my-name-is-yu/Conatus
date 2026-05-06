@@ -60,7 +60,7 @@ interface MetricConflict {
 
 const BUILTIN_SOURCE_ID = "ds_builtin_workspace_artifacts";
 const DEFAULT_METRIC_FILE_NAMES = ["metrics.json", "result.json"];
-const DEFAULT_ARTIFACT_ROOTS = ["artifacts", "runs", "reports", "outputs", "results", "logs"];
+const DEFAULT_ARTIFACT_ROOTS = ["artifacts", "experiments", "runs", "reports", "outputs", "results", "logs"];
 const DEFAULT_EXCLUDE_DIRS = new Set([
   ".cache",
   ".git",
@@ -86,6 +86,28 @@ export function createWorkspaceArtifactMetricDataSource(workspacePath = process.
     connection: { path: workspacePath },
     enabled: true,
     created_at: new Date().toISOString(),
+  });
+}
+
+export function createGoalWorkspaceArtifactMetricDataSource(
+  goalId: string,
+  workspacePath: string,
+  dimensionMetrics: Record<string, string[]>,
+  dimensionAggregations: Record<string, Aggregation> = {},
+): ArtifactMetricDataSourceAdapter {
+  return new ArtifactMetricDataSourceAdapter({
+    id: `${BUILTIN_SOURCE_ID}:goal:${goalId}`,
+    name: "builtin:goal workspace artifact metrics",
+    type: "artifact_metric",
+    connection: {
+      path: workspacePath,
+      dimension_metrics: dimensionMetrics,
+      dimension_aggregations: dimensionAggregations,
+      require_metric_match: true,
+    },
+    enabled: true,
+    created_at: new Date().toISOString(),
+    scope_goal_id: goalId,
   });
 }
 
@@ -181,6 +203,9 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
     }
 
     const match = selectMetric(observations, keys, aggregation);
+    if (this.config.connection.require_metric_match && match === null) {
+      throw new Error(`No artifact metric found for dimension "${params.dimension_name}" using keys [${keys.join(", ")}]`);
+    }
     return {
       value: match?.value ?? 0,
       raw: {

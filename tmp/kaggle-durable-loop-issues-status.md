@@ -63,3 +63,36 @@ Verification:
 Review:
 - Initial fresh review found two preflight issues; both fixed.
 - Second fresh review: no material findings.
+
+PR:
+- #1097 merged after CI passed.
+
+## #1091
+
+Status: implementation verified locally; preparing PR.
+
+Plan:
+- Synthesize a goal-scoped artifact metric datasource during `ObservationEngine.observe()` when the goal has a `workspace_path:` constraint.
+- Scope the synthetic datasource to numeric goal dimensions and map each observed dimension name to the same artifact metric key, so plain metric names like `roc_auc` can match `metric_name: "roc_auc"` with `cv_score`/`score`.
+- Include `experiments` in builtin artifact metric search roots.
+- Make goal-scoped artifact metric observation fall through to LLM only when no matching artifact metric is found or parsed.
+- Add adapter coverage for `experiments/**/metrics.json` and production-path observation coverage with daemon state dir different from the goal workspace.
+
+Implemented:
+- `ObservationEngine.observe()` now synthesizes a goal-scoped artifact metric datasource from goal `workspace_path:` when no registered datasource already serves the numeric dimension.
+- Builtin artifact metric scanning now includes `experiments`.
+- Goal-scoped artifact metric datasources require a matching metric, so missing/unparseable artifacts fall through to LLM instead of persisting a mechanical zero.
+- Plain metric dimensions such as `roc_auc` map to `metric_name: "roc_auc"` with `cv_score` / `score` extraction.
+
+Verification:
+- `npm test -- --run src/adapters/__tests__/artifact-metric-datasource.test.ts src/platform/observation/__tests__/observation-engine.test.ts`
+- `npm run typecheck`
+- `npm run lint:boundaries` (exit 0; existing warnings only)
+- `npm run test:changed`
+
+Review:
+- Fresh review found a production-path test gap: the goal-workspace observation test did not include the daemon/setup builtin datasource.
+- Fixed the test to construct `ObservationEngine` with `createWorkspaceArtifactMetricDataSource(daemonWorkspace)` and assert the goal workspace metric wins.
+- Second fresh review found a remaining workspace-scoping gap for builtin-supported artifact dimensions when the daemon datasource already claims the dimension.
+- Fixed goal datasource synthesis to always prefer the goal workspace for numeric workspace goals, while only adding explicit metric mappings for plain metric names like `roc_auc`; added a `best_oof_balanced_accuracy` regression with a wrong daemon metric.
+- Final fresh review: no high-confidence material defects.
