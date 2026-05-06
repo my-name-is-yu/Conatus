@@ -245,6 +245,105 @@ describe("ArtifactMetricDataSourceAdapter", () => {
     });
   });
 
+  it("marks pre-scope metrics uncertain instead of reporting high-confidence current progress", async () => {
+    const taskStart = new Date(Date.now() - 60_000);
+    const preScopePath = path.join(workspace, "experiments", "full-hgb-5fold-600", "metrics.json");
+    writeJson(preScopePath, {
+      metric_name: "balanced_accuracy",
+      cv_score: 0.9473134912423415,
+      status: "completed",
+    });
+    setModifiedTime(preScopePath, new Date(taskStart.getTime() - 5_000));
+    const adapter = new ArtifactMetricDataSourceAdapter({
+      id: "task-scoped-artifacts",
+      name: "Task scoped artifacts",
+      type: "artifact_metric",
+      connection: {
+        path: workspace,
+        current_progress_policy: "completed_fresh_only",
+        dimension_metrics: { best_balanced_accuracy: ["balanced_accuracy"] },
+        require_metric_match: true,
+        fresh_after_time: taskStart.toISOString(),
+        freshness_scope: "task",
+        freshness_scope_id: "task-current",
+      },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    });
+
+    const result = await adapter.query({ dimension_name: "best_balanced_accuracy", timeout_ms: 10000 });
+
+    expect(result.value).toBe(0);
+    expect(result.metadata).toMatchObject({
+      confidence: 0.35,
+    });
+    expect(result.raw).toMatchObject({
+      selected: null,
+      freshness: {
+        scope: "task",
+        scope_id: "task-current",
+        fresh_after_time: taskStart.toISOString(),
+        current_progress_status: "ineligible_artifact_metrics_only",
+      },
+      ineligible_candidates: [
+        {
+          path: "experiments/full-hgb-5fold-600/metrics.json",
+          freshness_status: "pre_scope",
+          current_run: false,
+          reason: "artifact precedes task freshness scope",
+        },
+      ],
+    });
+  });
+
+  it("marks age-stale current-scope metrics uncertain instead of throwing into fallback", async () => {
+    const taskStart = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    const stalePath = path.join(workspace, "reports", "current-task", "metrics.json");
+    writeJson(stalePath, {
+      balanced_accuracy: 0.94,
+      status: "completed",
+    });
+    setModifiedTime(stalePath, new Date(Date.now() - 48 * 60 * 60 * 1000));
+    const adapter = new ArtifactMetricDataSourceAdapter({
+      id: "age-stale-task-scoped-artifacts",
+      name: "Age stale task scoped artifacts",
+      type: "artifact_metric",
+      connection: {
+        path: workspace,
+        current_progress_policy: "completed_fresh_only",
+        dimension_metrics: { best_balanced_accuracy: ["balanced_accuracy"] },
+        require_metric_match: true,
+        stale_after_ms: 24 * 60 * 60 * 1000,
+        fresh_after_time: taskStart.toISOString(),
+        freshness_scope: "task",
+        freshness_scope_id: "task-current",
+      },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    });
+
+    const result = await adapter.query({ dimension_name: "best_balanced_accuracy", timeout_ms: 10000 });
+
+    expect(result.value).toBe(0);
+    expect(result.metadata).toMatchObject({ confidence: 0.35 });
+    expect(result.raw).toMatchObject({
+      selected: null,
+      freshness: {
+        scope: "task",
+        scope_id: "task-current",
+        current_progress_status: "ineligible_artifact_metrics_only",
+      },
+      ineligible_candidates: [
+        {
+          path: "reports/current-task/metrics.json",
+          freshness_status: "stale",
+          current_run: true,
+          reason: "artifact is stale for current progress",
+        },
+      ],
+    });
+  });
+
   it("requires completed current-progress artifacts unless live progress is explicitly allowed", async () => {
     writeJson(path.join(workspace, "artifacts", "live", "metrics.json"), {
       score: 0.7,

@@ -1104,6 +1104,168 @@ describe("observeFromDataSource", () => {
     });
   });
 
+  it("scopes required artifact metric progress to the current task freshness anchor", async () => {
+    const goalWorkspace = path.join(tmpDir, "task-scoped-metric-workspace");
+    const taskStart = new Date(Date.now() - 60_000);
+    const oldMetricPath = path.join(goalWorkspace, "experiments", "old-best", "metrics.json");
+    const freshMetricPath = path.join(goalWorkspace, "reports", "current-task", "metrics.json");
+    writeJsonFile(oldMetricPath, {
+      metric_name: "balanced_accuracy",
+      cv_score: 0.9473134912423415,
+      status: "completed",
+    });
+    writeJsonFile(freshMetricPath, {
+      balanced_accuracy: 0.71,
+      status: "completed",
+    });
+    fs.utimesSync(oldMetricPath, new Date(taskStart.getTime() - 5_000), new Date(taskStart.getTime() - 5_000));
+    fs.utimesSync(freshMetricPath, new Date(taskStart.getTime() + 5_000), new Date(taskStart.getTime() + 5_000));
+    const engine = new ObservationEngine(stateManager, []);
+    const goal = makeGoal({
+      id: "goal-task-scoped-artifact-metrics",
+      created_at: new Date(taskStart.getTime() - 120_000).toISOString(),
+      constraints: [
+        `workspace_path:${goalWorkspace}`,
+        "run_spec_profile:kaggle",
+        "artifact_contract:required",
+      ],
+      dimensions: [
+        {
+          name: "best_balanced_accuracy",
+          label: "Best balanced accuracy",
+          current_value: 0,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+    await stateManager.writeRaw("tasks/goal-task-scoped-artifact-metrics/task-current.json", makeTaskRecord({
+      id: "task-current",
+      goal_id: "goal-task-scoped-artifact-metrics",
+      primary_dimension: "best_balanced_accuracy",
+      target_dimensions: ["best_balanced_accuracy"],
+      constraints: ["run_spec_profile:kaggle"],
+      started_at: taskStart.toISOString(),
+      created_at: new Date(taskStart.getTime() - 10_000).toISOString(),
+    }));
+
+    await engine.observe("goal-task-scoped-artifact-metrics", []);
+
+    const updated = await stateManager.loadGoal("goal-task-scoped-artifact-metrics");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.71);
+    const log = await stateManager.loadObservationLog("goal-task-scoped-artifact-metrics");
+    expect(log).not.toBeNull();
+    expect(log!.entries[0]?.raw_result).toMatchObject({
+      selected: {
+        relativePath: "reports/current-task/metrics.json",
+        freshnessStatus: "fresh",
+        currentRun: true,
+      },
+      freshness: {
+        scope: "task",
+        scope_id: "task-current",
+        selected_path: "reports/current-task/metrics.json",
+        selected_freshness_status: "fresh",
+        selected_current_run: true,
+        current_progress_status: "eligible",
+      },
+      ineligible_candidates: [
+        {
+          path: "experiments/old-best/metrics.json",
+          freshness_status: "pre_scope",
+          current_run: false,
+        },
+      ],
+    });
+  });
+
+  it("lowers confidence when required task-scoped artifact metrics are age-stale", async () => {
+    const goalWorkspace = path.join(tmpDir, "task-scoped-stale-metric-workspace");
+    const taskStart = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    const staleMetricPath = path.join(goalWorkspace, "reports", "current-task", "metrics.json");
+    writeJsonFile(staleMetricPath, {
+      balanced_accuracy: 0.9473134912423415,
+      status: "completed",
+    });
+    fs.utimesSync(
+      staleMetricPath,
+      new Date(Date.now() - 48 * 60 * 60 * 1000),
+      new Date(Date.now() - 48 * 60 * 60 * 1000),
+    );
+    const engine = new ObservationEngine(stateManager, []);
+    const goal = makeGoal({
+      id: "goal-task-scoped-stale-artifact-metrics",
+      created_at: new Date(taskStart.getTime() - 120_000).toISOString(),
+      constraints: [
+        `workspace_path:${goalWorkspace}`,
+        "artifact_contract:required",
+      ],
+      dimensions: [
+        {
+          name: "best_balanced_accuracy",
+          label: "Best balanced accuracy",
+          current_value: 0.94,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.9,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          last_observed_layer: "mechanical",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+    await stateManager.writeRaw("tasks/goal-task-scoped-stale-artifact-metrics/task-current.json", makeTaskRecord({
+      id: "task-current",
+      goal_id: "goal-task-scoped-stale-artifact-metrics",
+      primary_dimension: "best_balanced_accuracy",
+      target_dimensions: ["best_balanced_accuracy"],
+      constraints: ["artifact_contract:required"],
+      started_at: taskStart.toISOString(),
+      created_at: new Date(taskStart.getTime() - 10_000).toISOString(),
+    }));
+
+    await engine.observe("goal-task-scoped-stale-artifact-metrics", []);
+
+    const updated = await stateManager.loadGoal("goal-task-scoped-stale-artifact-metrics");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.94);
+    expect(updated?.dimensions[0]?.confidence).toBe(0.35);
+    expect(updated?.dimensions[0]?.last_observed_layer).toBe("mechanical");
+    const log = await stateManager.loadObservationLog("goal-task-scoped-stale-artifact-metrics");
+    expect(log?.entries[0]).toMatchObject({
+      layer: "mechanical",
+      extracted_value: 0,
+      confidence: 0.35,
+      raw_result: {
+        selected: null,
+        freshness: {
+          scope: "task",
+          scope_id: "task-current",
+          current_progress_status: "ineligible_artifact_metrics_only",
+        },
+        ineligible_candidates: [
+          {
+            path: "reports/current-task/metrics.json",
+            freshness_status: "stale",
+            current_run: true,
+          },
+        ],
+      },
+    });
+  });
+
   it("does not accept stale goal-scoped artifact metrics as mechanical progress", async () => {
     const goalWorkspace = path.join(tmpDir, "stale-metric-workspace");
     const staleMetricPath = path.join(goalWorkspace, "experiments", "old-run", "metrics.json");
@@ -1280,4 +1442,37 @@ describe("observeFromDataSource", () => {
 function writeJsonFile(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function makeTaskRecord(overrides: Record<string, unknown>): Record<string, unknown> {
+  const now = new Date().toISOString();
+  return {
+    id: "task-1",
+    goal_id: "goal-1",
+    strategy_id: null,
+    target_dimensions: ["test_dim"],
+    primary_dimension: "test_dim",
+    work_description: "Run a fresh artifact-producing experiment",
+    rationale: "Fresh artifact evidence is required",
+    approach: "Create metrics and submission artifacts",
+    success_criteria: [],
+    scope_boundary: {
+      in_scope: ["workspace"],
+      out_of_scope: ["external submission"],
+      blast_radius: "workspace-local",
+    },
+    constraints: [],
+    plateau_until: null,
+    estimated_duration: null,
+    consecutive_failure_count: 0,
+    reversibility: "unknown",
+    task_category: "normal",
+    status: "completed",
+    started_at: now,
+    completed_at: now,
+    timeout_at: null,
+    heartbeat_at: null,
+    created_at: now,
+    ...overrides,
+  };
 }
