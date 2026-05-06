@@ -82,7 +82,7 @@ describe("ToolPermissionLevelSchema", () => {
 });
 
 describe("ToolActivityCategorySchema", () => {
-  it.each(["search", "read", "command", "file_create", "file_modify", "test", "approval"] as const)(
+  it.each(["search", "read", "planning", "command", "file_create", "file_modify", "test", "approval"] as const)(
     "parses activity category: %s",
     (category) => {
       expect(ToolActivityCategorySchema.parse(category)).toBe(category);

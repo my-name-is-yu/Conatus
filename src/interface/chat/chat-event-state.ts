@@ -1,6 +1,7 @@
 import type { ChatEvent } from "./chat-events.js";
 import { formatLifecycleFailureMessage } from "./failure-recovery.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
+import type { ToolActivityCategory } from "../../tools/types.js";
 import { renderOperationProgress } from "./operation-progress.js";
 import { redactSetupSecrets } from "./setup-secret-intake.js";
 
@@ -11,6 +12,7 @@ interface StreamToolActivity {
   toolName: string;
   state: ToolActivityState;
   detail: string;
+  activityCategory?: ToolActivityCategory;
   timestamp: Date;
 }
 
@@ -170,48 +172,28 @@ function summarizeToolArgs(args: Record<string, unknown>): string {
   return keys.slice(0, 3).map((key) => `${key}=${summarizeValue(args[key])}`).filter(Boolean).join(", ");
 }
 
-function classifyCommand(command: string): ToolActivityState {
-  const normalized = command.trim().toLowerCase();
-  if (/^(rg|grep|cat|sed|awk|ls|find|pwd|git (show|log|status|diff\b|grep))\b/.test(normalized)) {
-    return "reading";
-  }
-  if (/(npm|pnpm|yarn|bun) (run )?(test|check|typecheck|lint|verify)\b|pytest\b|vitest\b|cargo test\b|go test\b/.test(normalized)) {
-    return "verifying";
-  }
-  if (/^(apply_patch|git apply|python .*write|node .*write)\b/.test(normalized)) {
-    return "editing";
-  }
-  return "running";
-}
-
-function classifyTool(toolName: string, args: Record<string, unknown>, status?: "awaiting_approval" | "running" | "result"): ToolActivityState {
+function stateFromToolActivityCategory(
+  activityCategory: ToolActivityCategory | undefined,
+  status?: "awaiting_approval" | "running" | "result",
+): ToolActivityState {
   if (status === "awaiting_approval") return "waiting";
-  const normalized = toolName.toLowerCase().replace(/[-_]/g, "");
-  const command = typeof args["command"] === "string"
-    ? args["command"]
-    : typeof args["cmd"] === "string"
-      ? args["cmd"]
-      : null;
-  if (command) return classifyCommand(command);
-  if (normalized.includes("plan")) return "planning";
-  if (normalized.includes("write") || normalized.includes("edit") || normalized.includes("patch") || normalized.includes("delete")) {
-    return "editing";
+  switch (activityCategory) {
+    case "search":
+    case "read":
+      return "reading";
+    case "planning":
+      return "planning";
+    case "file_create":
+    case "file_modify":
+      return "editing";
+    case "test":
+      return "verifying";
+    case "approval":
+      return "waiting";
+    case "command":
+    case undefined:
+      return "running";
   }
-  if (normalized.includes("test") || normalized.includes("verify") || normalized.includes("check")) {
-    return "verifying";
-  }
-  if (
-    normalized.includes("read") ||
-    normalized.includes("list") ||
-    normalized.includes("search") ||
-    normalized.includes("grep") ||
-    normalized.includes("diff") ||
-    normalized.includes("log") ||
-    normalized.includes("status")
-  ) {
-    return "reading";
-  }
-  return "running";
 }
 
 function formatToolActivityState(state: ToolActivityState): string {
@@ -265,23 +247,24 @@ function upsertToolActivity(
   const previous = messages.find((message) => message.id === toolLogId);
   const previousActivities = previous?.toolActivities ?? [];
   const existing = previousActivities.find((activity) => activity.id === event.toolCallId);
-  const args = event.type === "tool_start" ? event.args : {};
   const fallbackDetail = event.type === "tool_start"
     ? summarizeToolArgs(event.args)
     : event.type === "tool_update"
       ? (event.status === "running" ? existing?.detail ?? event.message : event.message)
       : event.summary;
   const detail = fallbackDetail || existing?.detail || "";
+  const activityCategory = event.activityCategory ?? existing?.activityCategory;
   const state = event.type === "tool_end"
     ? event.success ? "completed" : "failed"
     : event.type === "tool_update" && event.status !== "awaiting_approval" && existing && existing.state !== "waiting"
       ? existing.state
-      : classifyTool(event.toolName, args, event.type === "tool_update" ? event.status : "running");
+      : stateFromToolActivityCategory(activityCategory, event.type === "tool_update" ? event.status : "running");
   const nextActivity: StreamToolActivity = {
     id: event.toolCallId,
     toolName: event.toolName,
     state,
     detail,
+    ...(activityCategory ? { activityCategory } : {}),
     timestamp,
   };
   const nextActivities = [

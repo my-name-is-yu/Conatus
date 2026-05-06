@@ -22,7 +22,7 @@ export class UpdatePlanTool implements ITool<UpdatePlanInput> {
     maxConcurrency: 0,
     maxOutputChars: 4000,
     tags: ["agentloop", "planning"],
-    activityCategory: "read",
+    activityCategory: "planning",
   };
 
   readonly inputSchema = UpdatePlanInputSchema;

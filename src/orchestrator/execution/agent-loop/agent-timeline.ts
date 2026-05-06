@@ -321,60 +321,7 @@ export function formatAgentTimelineActivitySummary(buckets: AgentTimelineActivit
 function classifyTimelineActivity(item: AgentTimelineItem): AgentTimelineActivityKind | null {
   if (item.kind === "approval" && item.status === "requested") return "approval";
   if (item.kind !== "tool" || item.status !== "finished") return null;
-  return classifyToolActivity(item.activityCategory, item.inputPreview);
-}
-
-function classifyToolActivity(
-  activityCategory: AgentTimelineActivityKind | undefined,
-  inputPreview?: string,
-): AgentTimelineActivityKind {
-  const input = parseToolInputPreview(inputPreview);
-  const command = stringField(input, "command") ?? stringField(input, "cmd");
-  if (command && (!activityCategory || activityCategory === "command")) {
-    return classifyCommandActivity(command);
-  }
-  if (activityCategory) return activityCategory;
-  return "command";
-}
-
-function classifyCommandActivity(command: string): AgentTimelineActivityKind {
-  const trimmed = command.trim();
-  const executable = firstCommandToken(trimmed);
-  if (["rg", "grep", "ag", "ack"].includes(executable)) return "search";
-  if (["cat", "sed", "awk", "ls", "find", "pwd", "head", "tail"].includes(executable)) return "read";
-  if (executable === "git") {
-    const subcommand = firstCommandToken(trimmed.split(/\s+/).slice(1).join(" "));
-    if (["grep"].includes(subcommand)) return "search";
-    if (["show", "log", "status", "diff", "ls-files"].includes(subcommand)) return "read";
-  }
-  if (["npm", "pnpm", "yarn", "bun"].includes(executable)) {
-    if (/\b(test|vitest|jest|typecheck|lint|check|verify)\b/.test(trimmed)) return "test";
-  }
-  if (["pytest", "vitest", "jest"].includes(executable)) return "test";
-  if (executable === "go" && /\btest\b/.test(trimmed)) return "test";
-  if (executable === "cargo" && /\btest\b/.test(trimmed)) return "test";
-  return "command";
-}
-
-function parseToolInputPreview(inputPreview?: string): Record<string, unknown> | null {
-  if (!inputPreview) return null;
-  try {
-    const parsed = JSON.parse(inputPreview);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function stringField(input: Record<string, unknown> | null, field: string): string | null {
-  const value = input?.[field];
-  return typeof value === "string" ? value : null;
-}
-
-function firstCommandToken(command: string): string {
-  return command.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+  return item.activityCategory ?? "command";
 }
 
 function isUserVisibleToolObservation(observation: AgentLoopToolObservation): boolean {
@@ -384,6 +331,7 @@ function isUserVisibleToolObservation(observation: AgentLoopToolObservation): bo
 const ACTIVITY_SUMMARY_ORDER: AgentTimelineActivityKind[] = [
   "search",
   "read",
+  "planning",
   "command",
   "file_create",
   "file_modify",
@@ -394,6 +342,7 @@ const ACTIVITY_SUMMARY_ORDER: AgentTimelineActivityKind[] = [
 const ACTIVITY_SUMMARY_LABELS: Record<AgentTimelineActivityKind, string> = {
   search: "searched",
   read: "read",
+  planning: "planned",
   command: "ran",
   file_create: "created",
   file_modify: "modified",
@@ -404,6 +353,7 @@ const ACTIVITY_SUMMARY_LABELS: Record<AgentTimelineActivityKind, string> = {
 const ACTIVITY_SUMMARY_NOUNS: Record<AgentTimelineActivityKind, { singular: string; plural: string }> = {
   search: { singular: "search", plural: "searches" },
   read: { singular: "file", plural: "files" },
+  planning: { singular: "plan", plural: "plans" },
   command: { singular: "command", plural: "commands" },
   file_create: { singular: "file", plural: "files" },
   file_modify: { singular: "file", plural: "files" },

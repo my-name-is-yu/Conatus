@@ -70,6 +70,7 @@ export type ToolPermissionLevel = z.infer<typeof ToolPermissionLevelSchema>;
 export const ToolActivityCategorySchema = z.enum([
   "search",
   "read",
+  "planning",
   "command",
   "file_create",
   "file_modify",
