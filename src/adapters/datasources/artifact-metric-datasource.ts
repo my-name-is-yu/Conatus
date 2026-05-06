@@ -12,6 +12,14 @@ import type { IDataSourceAdapter } from "../../platform/observation/data-source-
 type Aggregation = "max" | "min" | "count" | "file_count";
 type CurrentProgressPolicy = "legacy" | "completed_fresh_only" | "allow_live";
 type ArtifactLifecycleState = "completed" | "running" | "failed" | "unknown";
+type FreshnessScope = "none" | "goal" | "task" | "run";
+type FreshnessStatus = "fresh" | "stale" | "pre_scope";
+
+export interface ArtifactMetricFreshnessScope {
+  freshAfterTime: string;
+  freshnessScope: Exclude<FreshnessScope, "none">;
+  freshnessScopeId: string;
+}
 
 interface MetricExtraction {
   key: string;
@@ -24,9 +32,14 @@ interface MetricCandidate {
   path: string;
   relativePath: string;
   updatedTime: string;
+  artifactAgeMs: number;
   candidateScore: number;
   reasons: string[];
   stale: boolean;
+  freshnessStatus: FreshnessStatus;
+  currentRun: boolean | null;
+  freshnessScope: FreshnessScope;
+  freshnessScopeId: string | null;
 }
 
 interface MetricObservation extends MetricCandidate {
@@ -46,9 +59,14 @@ interface SelectedMetric {
   value: number;
   parser: "json";
   updatedTime: string;
+  artifactAgeMs: number;
   extractionConfidence: number;
   candidateScore: number;
   stale: boolean;
+  freshnessStatus: FreshnessStatus;
+  currentRun: boolean | null;
+  freshnessScope: FreshnessScope;
+  freshnessScopeId: string | null;
 }
 
 interface MetricConflict {
@@ -58,8 +76,11 @@ interface MetricConflict {
     keyPath: string;
     value: number;
     updatedTime: string;
+    artifactAgeMs: number;
     extractionConfidence: number;
     stale: boolean;
+    freshnessStatus: FreshnessStatus;
+    currentRun: boolean | null;
   }>;
 }
 
@@ -106,6 +127,7 @@ export function createGoalWorkspaceArtifactMetricDataSource(
   workspacePath: string,
   dimensionMetrics: Record<string, string[]>,
   dimensionAggregations: Record<string, Aggregation> = {},
+  freshnessScope?: ArtifactMetricFreshnessScope,
 ): ArtifactMetricDataSourceAdapter {
   return new ArtifactMetricDataSourceAdapter({
     id: `${BUILTIN_SOURCE_ID}:goal:${goalId}`,
@@ -117,6 +139,13 @@ export function createGoalWorkspaceArtifactMetricDataSource(
       dimension_aggregations: dimensionAggregations,
       require_metric_match: true,
       stale_after_ms: DEFAULT_GOAL_SCOPED_STALE_AFTER_MS,
+      ...(freshnessScope
+        ? {
+            fresh_after_time: freshnessScope.freshAfterTime,
+            freshness_scope: freshnessScope.freshnessScope,
+            freshness_scope_id: freshnessScope.freshnessScopeId,
+          }
+        : {}),
       current_progress_policy: "completed_fresh_only",
     },
     enabled: true,
@@ -183,6 +212,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
           aggregation,
           file_count: count,
           discovery: discoveryRaw(options),
+          freshness: freshnessRaw(options, null, [], "file_count"),
         },
         timestamp,
         source_id: this.sourceId,
@@ -205,6 +235,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
           matched_metric_files: matched.length,
           metric_keys: keys,
           discovery: discoveryRaw(options),
+          freshness: freshnessRaw(options, null, observations, matched.length > 0 ? "eligible" : "missing"),
           candidates: rawCandidates(candidates),
           evidence_candidates: evidenceCandidates,
           conflicts: detectMetricConflicts(params.dimension_name, observations, keys),
@@ -219,6 +250,35 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
 
     const match = selectMetric(observations, keys, aggregation);
     if (this.config.connection.require_metric_match && match === null) {
+      if (hasCurrentScopeStaleMetricMatch(observations, keys, options)) {
+        return {
+          value: 0,
+          raw: {
+            root,
+            aggregation,
+            inspected_metric_files: candidates.length,
+            metric_keys: keys,
+            selected_path: null,
+            selected_key: null,
+            selected_value: 0,
+            selected: null,
+            discovery: discoveryRaw(options),
+            freshness: freshnessRaw(options, null, observations, "ineligible_artifact_metrics_only"),
+            candidates: rawCandidates(candidates),
+            evidence_candidates: evidenceCandidates,
+            conflicts: detectMetricConflicts(params.dimension_name, observations, keys),
+            stale_candidates: staleRaw(observations),
+            ineligible_candidates: ineligibleRaw(observations),
+            strategic_correctness: "not_evaluated",
+          },
+          timestamp,
+          source_id: this.sourceId,
+          metadata: {
+            confidence: 0.35,
+            confidence_reason: "Only stale or pre-scope artifact metrics matched the current progress datasource query.",
+          },
+        };
+      }
       throw new Error(`No artifact metric found for dimension "${params.dimension_name}" using keys [${keys.join(", ")}]`);
     }
     return {
@@ -233,6 +293,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
         selected_value: match?.value ?? 0,
         selected: match,
         discovery: discoveryRaw(options),
+        freshness: freshnessRaw(options, match, observations, match ? "eligible" : "missing"),
         candidates: rawCandidates(candidates),
         evidence_candidates: evidenceCandidates,
         conflicts: detectMetricConflicts(params.dimension_name, observations, keys),
@@ -269,6 +330,11 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
       maxCandidates: this.config.connection.max_candidates ?? DEFAULT_MAX_CANDIDATES,
       staleAfterMs: this.config.connection.stale_after_ms,
       currentProgressPolicy: this.config.connection.current_progress_policy ?? "legacy",
+      freshAfterTime: this.config.connection.fresh_after_time,
+      freshAfterMs: parseIsoMs(this.config.connection.fresh_after_time),
+      freshnessScope: this.config.connection.freshness_scope ?? "none",
+      freshnessScopeId: this.config.connection.freshness_scope_id,
+      nowMs: Date.now(),
     };
   }
 }
@@ -284,7 +350,12 @@ interface ScanOptions {
   maxArtifactFiles: number;
   maxCandidates: number;
   staleAfterMs?: number;
+  freshAfterTime?: string;
+  freshAfterMs?: number;
+  freshnessScope: FreshnessScope;
+  freshnessScopeId?: string;
   currentProgressPolicy: CurrentProgressPolicy;
+  nowMs: number;
 }
 
 async function discoverMetricCandidates(root: string, options: ScanOptions, keys: string[]): Promise<MetricCandidate[]> {
@@ -350,23 +421,35 @@ async function buildMetricCandidate(root: string, filePath: string, options: Sca
     }
   }
   const mtime = stats.mtime;
-  if (Date.now() - mtime.getTime() < 24 * 60 * 60 * 1000) {
+  const artifactAgeMs = Math.max(0, options.nowMs - mtime.getTime());
+  if (artifactAgeMs < 24 * 60 * 60 * 1000) {
     score += 10;
     reasons.push("recent artifact");
   }
-  const stale = options.staleAfterMs !== undefined && Date.now() - mtime.getTime() > options.staleAfterMs;
+  const beforeFreshnessScope = options.freshAfterMs !== undefined && mtime.getTime() < options.freshAfterMs;
+  const staleByAge = options.staleAfterMs !== undefined && artifactAgeMs > options.staleAfterMs;
+  const stale = beforeFreshnessScope || staleByAge;
+  const freshnessStatus: FreshnessStatus = beforeFreshnessScope ? "pre_scope" : staleByAge ? "stale" : "fresh";
+  const currentRun = options.freshAfterMs === undefined ? null : !beforeFreshnessScope;
   if (stale) {
     score -= 30;
-    reasons.push("stale artifact");
+    reasons.push(beforeFreshnessScope
+      ? `artifact precedes ${options.freshnessScope} freshness scope`
+      : "stale artifact");
   }
 
   return {
     path: filePath,
     relativePath,
     updatedTime: mtime.toISOString(),
+    artifactAgeMs,
     candidateScore: score,
     reasons,
     stale,
+    freshnessStatus,
+    currentRun,
+    freshnessScope: options.freshnessScope,
+    freshnessScopeId: options.freshnessScopeId ?? null,
   };
 }
 
@@ -505,6 +588,9 @@ function currentProgressIneligibleReason(
   options: ScanOptions,
 ): string | null {
   if (options.currentProgressPolicy === "legacy") return null;
+  if (candidate.freshnessStatus === "pre_scope") {
+    return `artifact precedes ${candidate.freshnessScope} freshness scope`;
+  }
   if (candidate.stale) return "artifact is stale for current progress";
   if (options.currentProgressPolicy === "allow_live") {
     return lifecycle.state === "completed" || lifecycle.state === "running"
@@ -527,6 +613,15 @@ function hasAnyMetric(observation: MetricObservation, keys: string[]): boolean {
   return keys.some((key) => observation.metrics.some((metric) => metric.key === key));
 }
 
+function hasCurrentScopeStaleMetricMatch(observations: MetricObservation[], keys: string[], options: ScanOptions): boolean {
+  if (options.freshnessScope === "none") return false;
+  return observations.some((observation) => (
+    observation.stale
+    && !observation.eligibleForCurrentProgress
+    && hasAnyMetric(observation, keys)
+  ));
+}
+
 function selectMetric(
   observations: MetricObservation[],
   keys: string[],
@@ -544,9 +639,14 @@ function selectMetric(
     value: best.metric.value,
     parser: best.observation.parser,
     updatedTime: best.observation.updatedTime,
+    artifactAgeMs: best.observation.artifactAgeMs,
     extractionConfidence: best.metric.confidence,
     candidateScore: best.observation.candidateScore,
     stale: best.observation.stale,
+    freshnessStatus: best.observation.freshnessStatus,
+    currentRun: best.observation.currentRun,
+    freshnessScope: best.observation.freshnessScope,
+    freshnessScopeId: best.observation.freshnessScopeId,
   };
 }
 
@@ -623,8 +723,11 @@ function buildConflict(metricKey: string, matches: Array<{ observation: MetricOb
         keyPath: metric.keyPath,
         value: metric.value,
         updatedTime: observation.updatedTime,
+        artifactAgeMs: observation.artifactAgeMs,
         extractionConfidence: metric.confidence,
         stale: observation.stale,
+        freshnessStatus: observation.freshnessStatus,
+        currentRun: observation.currentRun,
       })),
   };
 }
@@ -644,9 +747,12 @@ function buildEvidenceCandidates(
       value: metric.value,
       parser: observation.parser,
       updated_time: observation.updatedTime,
+      artifact_age_ms: observation.artifactAgeMs,
       extraction_confidence: metric.confidence,
       candidate_score: observation.candidateScore,
       stale: observation.stale,
+      freshness_status: observation.freshnessStatus,
+      current_run: observation.currentRun,
       current_progress_eligible: observation.eligibleForCurrentProgress,
       reasons: observation.reasons,
       strategic_correctness: "not_evaluated",
@@ -657,8 +763,13 @@ function rawCandidates(candidates: MetricCandidate[]): Array<Record<string, unkn
   return candidates.slice(0, MAX_RAW_CANDIDATES).map((candidate) => ({
     path: candidate.relativePath,
     updated_time: candidate.updatedTime,
+    artifact_age_ms: candidate.artifactAgeMs,
     candidate_score: candidate.candidateScore,
     stale: candidate.stale,
+    freshness_status: candidate.freshnessStatus,
+    current_run: candidate.currentRun,
+    freshness_scope: candidate.freshnessScope,
+    freshness_scope_id: candidate.freshnessScopeId,
     reasons: candidate.reasons,
   }));
 }
@@ -670,7 +781,10 @@ function staleRaw(observations: MetricObservation[]): Array<Record<string, unkno
     .map((observation) => ({
       path: observation.relativePath,
       updated_time: observation.updatedTime,
+      artifact_age_ms: observation.artifactAgeMs,
       extraction_confidence: observation.extractionConfidence,
+      freshness_status: observation.freshnessStatus,
+      current_run: observation.currentRun,
     }));
 }
 
@@ -681,7 +795,12 @@ function ineligibleRaw(observations: MetricObservation[]): Array<Record<string, 
     .map((observation) => ({
       path: observation.relativePath,
       updated_time: observation.updatedTime,
+      artifact_age_ms: observation.artifactAgeMs,
       stale: observation.stale,
+      freshness_status: observation.freshnessStatus,
+      current_run: observation.currentRun,
+      freshness_scope: observation.freshnessScope,
+      freshness_scope_id: observation.freshnessScopeId,
       lifecycle_state: observation.lifecycle.state,
       lifecycle_status: observation.lifecycle.status,
       success: observation.lifecycle.success,
@@ -698,7 +817,29 @@ function discoveryRaw(options: ScanOptions): Record<string, unknown> {
     max_candidates: options.maxCandidates,
     parser_hints: Array.from(options.parserHints),
     stale_after_ms: options.staleAfterMs ?? null,
+    fresh_after_time: options.freshAfterTime ?? null,
+    freshness_scope: options.freshnessScope,
+    freshness_scope_id: options.freshnessScopeId ?? null,
     current_progress_policy: options.currentProgressPolicy,
+  };
+}
+
+function freshnessRaw(
+  options: ScanOptions,
+  match: SelectedMetric | null,
+  observations: MetricObservation[],
+  currentProgressStatus: string,
+): Record<string, unknown> {
+  return {
+    scope: options.freshnessScope,
+    scope_id: options.freshnessScopeId ?? null,
+    fresh_after_time: options.freshAfterTime ?? null,
+    selected_path: match?.relativePath ?? null,
+    selected_artifact_age_ms: match?.artifactAgeMs ?? null,
+    selected_freshness_status: match?.freshnessStatus ?? null,
+    selected_current_run: match?.currentRun ?? null,
+    current_progress_status: currentProgressStatus,
+    ineligible_candidate_count: observations.filter((observation) => !observation.eligibleForCurrentProgress).length,
   };
 }
 
@@ -803,4 +944,10 @@ function unique(values: string[]): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseIsoMs(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }

@@ -29,11 +29,11 @@ export function buildProgressHandler(): (event: ProgressEvent) => void {
     if (event.phase === "Observing...") {
       if (event.iteration !== lastIterationLogged) {
         lastIterationLogged = event.iteration;
-        const gapStr = event.gap !== undefined ? ` gap=${event.gap.toFixed(2)}` : "";
+        const gapStr = event.gap !== undefined ? ` gap=${formatProgressGap(event.gap)}` : "";
         process.stdout.write(`${prefix} Observing...${gapStr}\n`);
       }
     } else if (event.phase === "Generating task...") {
-      const gapStr = event.gap !== undefined ? ` gap=${event.gap.toFixed(2)}` : "";
+      const gapStr = event.gap !== undefined ? ` gap=${formatProgressGap(event.gap)}` : "";
       const confStr = event.confidence !== undefined ? ` confidence=${Math.round(event.confidence * 100)}%` : "";
       process.stdout.write(`${prefix} Generating task...${gapStr}${confStr}\n`);
     } else if (event.phase === "Skipped") {
@@ -55,6 +55,12 @@ export function buildProgressHandler(): (event: ProgressEvent) => void {
       process.stdout.write(`${prefix} Skipped (no state change detected)\n`);
     }
   };
+}
+
+export function formatProgressGap(gap: number): string {
+  if (!Number.isFinite(gap)) return String(gap);
+  if (gap > 0 && gap < 0.01) return "<0.01";
+  return gap.toFixed(2);
 }
 
 export async function runLoopWithSignals(

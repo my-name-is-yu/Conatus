@@ -39,10 +39,14 @@ import { runDataSourceObservationStage } from "./engine/observe-datasource-stage
 import { runLlmObservationStage } from "./engine/observe-llm-stage.js";
 import { runSelfReportStage } from "./engine/observe-self-report.js";
 import { createGoalWorkspaceArtifactMetricDataSource } from "../../adapters/datasources/artifact-metric-datasource.js";
+import type { ArtifactMetricFreshnessScope } from "../../adapters/datasources/artifact-metric-datasource.js";
+import { isArtifactContractRequired } from "../../orchestrator/execution/task/task-artifact-contract.js";
 
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
 import type { Dimension } from "../../orchestrator/goal/types/goal.js";
+import type { Goal } from "../../base/types/goal.js";
+import type { Task } from "../../base/types/task.js";
 import { observeWithTools } from "./observation-tools.js";
 import type { ToolObservationResult } from "./observation-tools.js";
 
@@ -265,7 +269,7 @@ export class ObservationEngine {
 
     // Workspace path for pre-checker (extracted from contextProvider key heuristic)
     const workspacePath = goal.constraints.find((c) => c.startsWith("workspace_path:"))?.slice("workspace_path:".length);
-    const goalArtifactDataSource = createGoalScopedArtifactDataSource(goalId, goal, workspacePath);
+    const goalArtifactDataSource = await createGoalScopedArtifactDataSource(goalId, goal, workspacePath, this.stateManager);
     const observationDataSources = goalArtifactDataSource
       ? [...this.dataSources, goalArtifactDataSource]
       : this.dataSources;
@@ -541,11 +545,12 @@ export class ObservationEngine {
 
 }
 
-function createGoalScopedArtifactDataSource(
+async function createGoalScopedArtifactDataSource(
   goalId: string,
-  goal: { dimensions: Dimension[] },
+  goal: Pick<Goal, "constraints" | "created_at" | "dimensions">,
   workspacePath?: string,
-): IDataSourceAdapter | null {
+  stateManager?: StateManager,
+): Promise<IDataSourceAdapter | null> {
   if (!workspacePath) return null;
 
   const dimensionMetrics: Record<string, string[]> = {};
@@ -562,7 +567,16 @@ function createGoalScopedArtifactDataSource(
   }
 
   if (supportedDimensionCount === 0) return null;
-  return createGoalWorkspaceArtifactMetricDataSource(goalId, workspacePath, dimensionMetrics, dimensionAggregations);
+  const freshnessScope = stateManager
+    ? await resolveGoalArtifactFreshnessScope(goalId, goal, stateManager)
+    : undefined;
+  return createGoalWorkspaceArtifactMetricDataSource(
+    goalId,
+    workspacePath,
+    dimensionMetrics,
+    dimensionAggregations,
+    freshnessScope,
+  );
 }
 
 function isArtifactMetricDimension(dimension: Dimension): boolean {
@@ -575,4 +589,38 @@ function needsPlainMetricMapping(dimensionName: string): boolean {
   if (dimensionName.startsWith("best_")) return false;
   if (dimensionName.endsWith("_count")) return false;
   return true;
+}
+
+async function resolveGoalArtifactFreshnessScope(
+  goalId: string,
+  goal: Pick<Goal, "constraints" | "created_at">,
+  stateManager: StateManager,
+): Promise<ArtifactMetricFreshnessScope | undefined> {
+  if (!isArtifactContractRequired({ goal })) return undefined;
+  const latestTask = selectLatestTaskReference(await stateManager.listTasks(goalId).catch(() => []));
+  if (latestTask) {
+    return {
+      freshAfterTime: latestTask.referenceTime,
+      freshnessScope: "task",
+      freshnessScopeId: latestTask.task.id,
+    };
+  }
+  return {
+    freshAfterTime: goal.created_at,
+    freshnessScope: "goal",
+    freshnessScopeId: goalId,
+  };
+}
+
+function selectLatestTaskReference(tasks: readonly Task[]): { task: Task; referenceTime: string } | null {
+  let latest: { task: Task; referenceTime: string; referenceMs: number } | null = null;
+  for (const task of tasks) {
+    const referenceTime = task.started_at ?? task.created_at;
+    const referenceMs = Date.parse(referenceTime);
+    if (!Number.isFinite(referenceMs)) continue;
+    if (latest === null || referenceMs > latest.referenceMs) {
+      latest = { task, referenceTime, referenceMs };
+    }
+  }
+  return latest ? { task: latest.task, referenceTime: latest.referenceTime } : null;
 }

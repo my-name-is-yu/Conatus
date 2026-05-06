@@ -191,6 +191,12 @@ export async function observeFromDataSource(
     );
   }
 
+  const metadataConfidence = typeof result.metadata?.confidence === "number"
+    ? Math.max(0, Math.min(1, result.metadata.confidence))
+    : null;
+  const confidenceReason = typeof result.metadata?.confidence_reason === "string"
+    ? result.metadata.confidence_reason
+    : null;
   const entry = ObservationLogEntrySchema.parse({
     observation_id: randomUUID(),
     timestamp: result.timestamp,
@@ -207,8 +213,8 @@ export async function observeFromDataSource(
     },
     raw_result: result.raw,
     extracted_value: extractedValue,
-    confidence: 0.90,
-    notes: `Data source: ${sourceId}`,
+    confidence: metadataConfidence ?? 0.90,
+    notes: confidenceReason ? `Data source: ${sourceId}; ${confidenceReason}` : `Data source: ${sourceId}`,
   });
 
   await applyFn(goalId, entry);
