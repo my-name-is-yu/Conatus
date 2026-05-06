@@ -12,6 +12,7 @@ import type { AgentLoopCommandResult, AgentLoopCompletionValidationResult } from
 import type { AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
 import type { ExecutionPolicy } from "./execution-policy.js";
+import type { AgentLoopVerificationPlan } from "./agent-loop-command-classifier.js";
 
 export interface AgentLoopToolPolicy {
   allowedTools?: readonly string[];
@@ -40,6 +41,7 @@ export interface AgentLoopTurnContext<TOutput> {
   toolPolicy: AgentLoopToolPolicy;
   toolCallContext: ToolCallContext;
   executionPolicy?: ExecutionPolicy;
+  verificationPlan?: AgentLoopVerificationPlan;
   completionValidator?: (input: {
     output: TOutput;
     changedFiles: string[];

@@ -43,6 +43,12 @@ export function buildTaskAgentLoopTurnContext(
 ): AgentLoopTurnContext<TaskAgentLoopOutput> {
   const cwd = input.cwd ?? processCwd();
   const executionPolicy = input.toolCallContext?.executionPolicy ?? input.executionPolicy;
+  const verificationPlan = {
+    requiredCommands: input.task.success_criteria
+      .filter((criterion) => criterion.is_blocking)
+      .map((criterion) => criterion.verification_method.trim())
+      .filter(Boolean),
+  };
   const baseSystemPrompt = buildAgentLoopBaseInstructions({
     mode: "task",
     extraRules: [
@@ -82,6 +88,7 @@ export function buildTaskAgentLoopTurnContext(
     outputSchema: TaskAgentLoopOutputSchema,
     budget: withDefaultBudget(input.budget),
     toolPolicy: input.toolPolicy ?? {},
+    verificationPlan,
     completionValidator: async ({ output, changedFiles, commandResults }): Promise<AgentLoopCompletionValidationResult> => {
       if (output.status !== "done") return { ok: true, reasons: [] };
 

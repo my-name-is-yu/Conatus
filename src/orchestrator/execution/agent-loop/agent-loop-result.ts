@@ -1,8 +1,10 @@
 import type { AgentLoopReasoningEffort, AgentLoopToolObservationExecution } from "./agent-loop-model.js";
 import type { ExecutionPolicy } from "./execution-policy.js";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
+import type { ToolActivityCategory } from "../../../tools/types.js";
 
 export type AgentLoopCommandResultCategory = "verification" | "observation" | "other";
+export type AgentLoopCommandEvidenceSource = "verification_plan" | "tool_activity_category";
 
 export interface AgentLoopCommandResult {
   sequence?: number;
@@ -11,8 +13,10 @@ export interface AgentLoopCommandResult {
   cwd: string;
   success: boolean;
   execution?: AgentLoopToolObservationExecution;
+  activityCategory?: ToolActivityCategory;
   category: AgentLoopCommandResultCategory;
   evidenceEligible: boolean;
+  evidenceSource?: AgentLoopCommandEvidenceSource;
   relevantToTask?: boolean;
   outputSummary: string;
   durationMs: number;

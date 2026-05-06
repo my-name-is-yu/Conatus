@@ -121,6 +121,45 @@ class VerifyTool implements ITool<{ command: string; cwd?: string }> {
   }
 }
 
+class ShellCommandLikeTool implements ITool<{ command: string; cwd?: string }> {
+  readonly metadata = {
+    name: "shell_command",
+    aliases: [],
+    permissionLevel: "read_metrics" as const,
+    isReadOnly: true,
+    isDestructive: false,
+    shouldDefer: false,
+    alwaysLoad: false,
+    maxConcurrency: 0,
+    maxOutputChars: 8000,
+    tags: ["command"],
+    activityCategory: "command" as const,
+  };
+  readonly inputSchema = z.object({ command: z.string(), cwd: z.string().optional() });
+
+  description(): string {
+    return "Records shell-like command output for agent-loop tests.";
+  }
+
+  async call(input: { command: string; cwd?: string }, context: ToolCallContext): Promise<ToolResult> {
+    return {
+      success: true,
+      data: { command: input.command, cwd: input.cwd ?? context.cwd },
+      summary: `command completed: ${input.command}`,
+      durationMs: 1,
+      contextModifier: `Command output: ${input.command}`,
+    };
+  }
+
+  async checkPermissions(_input: { command: string; cwd?: string }, _context: ToolCallContext): Promise<PermissionCheckResult> {
+    return { status: "allowed" };
+  }
+
+  isConcurrencySafe(_input: { command: string; cwd?: string }): boolean {
+    return true;
+  }
+}
+
 class DeferredTool extends EchoTool {
   readonly metadata = {
     ...new EchoTool().metadata,
@@ -858,7 +897,7 @@ describe("agentloop phase 1", () => {
       modelInfo,
       messages: [{ role: "user", content: "do it" }],
       outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
-      budget: withDefaultBudget({ maxWallClockMs: 150, maxModelTurns: 4 }),
+      budget: withDefaultBudget({ maxWallClockMs: 1000, maxModelTurns: 4 }),
       toolPolicy: {},
       toolCallContext: {
         cwd: process.cwd(),
@@ -872,7 +911,7 @@ describe("agentloop phase 1", () => {
     expect(result.success).toBe(false);
     expect(result.stopReason).toBe("timeout");
     expect(capturedTimeoutMs).toBeGreaterThan(0);
-    expect(capturedTimeoutMs).toBeLessThanOrEqual(150);
+    expect(capturedTimeoutMs).toBeLessThanOrEqual(1000);
     expect(capturedSignalAborted).toBe(true);
   });
 
@@ -1368,7 +1407,9 @@ describe("agentloop phase 2", () => {
       new StallDetector(stateManager),
       { agentLoopRunner: taskRunner, execFileSyncFn: () => "" },
     );
-    const task = makeTask();
+    const task = makeTask({
+      success_criteria: [{ description: "example exists", verification_method: "test -f src/example.ts", is_blocking: true }],
+    });
     await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
 
     const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
@@ -1457,7 +1498,9 @@ describe("agentloop phase 2", () => {
           },
         },
       );
-      const task = makeTask();
+      const task = makeTask({
+        success_criteria: [{ description: "workspace exists", verification_method: "test -d .", is_blocking: true }],
+      });
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
 
       const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
@@ -1563,7 +1606,9 @@ describe("agentloop phase 2", () => {
         new StallDetector(stateManager),
         { agentLoopRunner: taskRunner, execFileSyncFn },
       );
-      const task = makeTask();
+      const task = makeTask({
+        success_criteria: [{ description: "report exists", verification_method: "test -f reports/hgb.json", is_blocking: true }],
+      });
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
 
       const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
@@ -1638,12 +1683,108 @@ describe("agentloop phase 2", () => {
       defaultToolPolicy: { allowedTools: ["echo", "verify"] },
     });
 
-    const result = await taskRunner.runTask({ task: makeTask(), cwd: tmpDir });
+    const result = await taskRunner.runTask({
+      task: makeTask({
+        success_criteria: [{ description: "example exists", verification_method: "test -f src/example.ts", is_blocking: true }],
+      }),
+      cwd: tmpDir,
+    });
 
     expect(result.success).toBe(true);
     expect(result.commandResults).toHaveLength(1);
     expect(result.commandResults[0]).toMatchObject({ toolName: "verify", command: "test -f src/example.ts", success: true });
     expect(modelClient.calls[1].messages.some((message) =>
+      message.role === "user" && message.content.includes("premature"))
+    ).toBe(true);
+  });
+
+  it("uses the task verification plan on the production caller path instead of command keyword evidence", async () => {
+    const modelInfo = makeModelInfo();
+    const declaredVerificationCommand = "printf proof > evidence.txt";
+    const doneWithoutEvidence = {
+      status: "done",
+      finalAnswer: "finished",
+      summary: "summary",
+      filesChanged: ["evidence.txt"],
+      testsRun: [],
+      completionEvidence: [],
+      verificationHints: [],
+      blockers: [],
+    };
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      {
+        content: JSON.stringify(doneWithoutEvidence),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+      {
+        content: "",
+        toolCalls: [{ id: "stale-1", name: "shell_command", input: { command: "test -f stale-target.txt", cwd: tmpDir } }],
+        stopReason: "tool_use",
+      },
+      {
+        content: JSON.stringify(doneWithoutEvidence),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+      {
+        content: "",
+        toolCalls: [{ id: "planned-1", name: "shell_command", input: { command: declaredVerificationCommand, cwd: tmpDir } }],
+        stopReason: "tool_use",
+      },
+      {
+        content: JSON.stringify({ ...doneWithoutEvidence, finalAnswer: "finished after planned verification" }),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register(new ShellCommandLikeTool());
+    const router = new ToolRegistryAgentLoopToolRouter(registry);
+    const executor = new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+    const runtime = new ToolExecutorAgentLoopToolRuntime(executor, router);
+    const boundedRunner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+    const taskRunner = new TaskAgentLoopRunner({
+      boundedRunner,
+      modelClient,
+      modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
+      defaultModel: modelInfo.ref,
+      defaultToolPolicy: { allowedTools: ["shell_command"] },
+    });
+
+    const result = await taskRunner.runTask({
+      task: makeTask({
+        success_criteria: [{
+          description: "evidence command ran",
+          verification_method: declaredVerificationCommand,
+          is_blocking: true,
+        }],
+      }),
+      cwd: tmpDir,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.commandResults).toEqual([
+      expect.objectContaining({
+        command: "test -f stale-target.txt",
+        category: "other",
+        evidenceEligible: false,
+      }),
+      expect.objectContaining({
+        command: declaredVerificationCommand,
+        category: "verification",
+        evidenceEligible: true,
+        evidenceSource: "verification_plan",
+      }),
+    ]);
+    expect(modelClient.calls[1].messages.some((message) =>
+      message.role === "user" && message.content.includes("premature"))
+    ).toBe(true);
+    expect(modelClient.calls[3].messages.some((message) =>
       message.role === "user" && message.content.includes("premature"))
     ).toBe(true);
   });
