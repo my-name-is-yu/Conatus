@@ -6,6 +6,8 @@ import { ToolExecutor } from "../executor.js";
 import { ToolRegistry } from "../registry.js";
 import { ToolPermissionManager } from "../permission.js";
 import { ConcurrencyController } from "../concurrency.js";
+import { ShellTool } from "../system/ShellTool/ShellTool.js";
+import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type {
   ITool,
   ToolResult,
@@ -60,6 +62,19 @@ function createMockContext(overrides: Partial<ToolCallContext> = {}): ToolCallCo
     trustBalance: 50,
     preApproved: false,
     approvalFn: vi.fn().mockResolvedValue(true),
+    ...overrides,
+  };
+}
+
+function createExecutionPolicy(overrides: Partial<ExecutionPolicy> = {}): ExecutionPolicy {
+  return {
+    executionProfile: "consumer",
+    sandboxMode: "workspace_write",
+    approvalPolicy: "on_request",
+    networkAccess: true,
+    workspaceRoot: "/tmp",
+    protectedPaths: [],
+    trustProjectInstructions: true,
     ...overrides,
   };
 }
@@ -208,6 +223,62 @@ describe("ToolExecutor", () => {
         const result = await executor.execute("write-tool2", { value: "x" }, ctx);
         expect(result.success).toBe(false);
         expect(result.error).toContain("User denied approval");
+      });
+
+      it("does not execute escalation-required tools by ordinary approval", async () => {
+        const tool = createMockTool({
+          name: "execute-tool",
+          metadata: {
+            name: "execute-tool",
+            aliases: [],
+            permissionLevel: "execute",
+            isReadOnly: false,
+            isDestructive: true,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(true);
+        const ctx = createMockContext({
+          approvalFn,
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "untrusted" }),
+        });
+
+        const result = await executor.execute("execute-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "escalation_required",
+        });
+        expect(approvalFn).not.toHaveBeenCalled();
+        expect(tool.call).not.toHaveBeenCalled();
+      });
+
+      it("returns typed sandbox-required execution for shell commands before shell-local denial", async () => {
+        const shellTool = new ShellTool();
+        const { executor } = createExecutor([shellTool]);
+        const approvalFn = vi.fn().mockResolvedValue(true);
+        const ctx = createMockContext({
+          approvalFn,
+          executionPolicy: createExecutionPolicy({
+            sandboxMode: "read_only",
+            approvalPolicy: "on_request",
+          }),
+        });
+
+        const result = await executor.execute("shell", { command: "touch file.txt" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "sandbox_required",
+        });
+        expect(approvalFn).not.toHaveBeenCalled();
       });
     });
 

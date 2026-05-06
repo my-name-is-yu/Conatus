@@ -280,6 +280,9 @@ function observationReasonField(value: Record<string, unknown>, field: string): 
     || raw === "tool_error"
     || raw === "timed_out"
     || raw === "interrupted"
+    || raw === "sandbox_required"
+    || raw === "escalation_required"
+    || raw === "stale_state"
     ? raw
     : null;
 }

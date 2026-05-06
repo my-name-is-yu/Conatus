@@ -66,7 +66,10 @@ export type AgentLoopToolObservationReason =
   | "dry_run"
   | "tool_error"
   | "timed_out"
-  | "interrupted";
+  | "interrupted"
+  | "sandbox_required"
+  | "escalation_required"
+  | "stale_state";
 
 export interface AgentLoopToolObservationExecution {
   status: "executed" | "not_executed";

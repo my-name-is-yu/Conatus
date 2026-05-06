@@ -1,7 +1,21 @@
 import { z } from "zod";
 import type { ExecutionPolicy, SubagentRole } from "../orchestrator/execution/agent-loop/execution-policy.js";
+import type { HostToolExecutionDecision } from "./execution-orchestrator.js";
 
 // --- Tool Result ---
+
+export const ToolExecutionReasonSchema = z.enum([
+  "approval_denied",
+  "permission_denied",
+  "policy_blocked",
+  "dry_run",
+  "tool_error",
+  "timed_out",
+  "interrupted",
+  "sandbox_required",
+  "escalation_required",
+  "stale_state",
+]);
 
 export const ToolResultSchema = z.object({
   /** Whether the tool invocation succeeded */
@@ -18,7 +32,7 @@ export const ToolResultSchema = z.object({
    */
   execution: z.object({
     status: z.enum(["executed", "not_executed"]),
-    reason: z.enum(["approval_denied", "permission_denied", "policy_blocked", "dry_run", "tool_error", "timed_out", "interrupted"]).optional(),
+    reason: ToolExecutionReasonSchema.optional(),
     message: z.string().optional(),
   }).optional(),
   /** Duration of the tool call in milliseconds */
@@ -184,6 +198,11 @@ export interface ToolCallContext {
   trusted?: boolean;
   /** Shared execution policy for chat/agent-loop sessions. */
   executionPolicy?: ExecutionPolicy;
+  /** Host-owned typed state used to fail closed when a request was based on stale runtime/session state. */
+  hostToolState?: {
+    currentEpoch: string;
+    observedEpoch?: string;
+  };
   /** Optional subagent role for delegated runs. */
   agentRole?: SubagentRole;
   /** Abort signal for cancellation */
@@ -240,8 +259,20 @@ export interface ApprovalRequest {
 
 export const PermissionCheckResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("allowed") }),
-  z.object({ status: z.literal("denied"), reason: z.string() }),
-  z.object({ status: z.literal("needs_approval"), reason: z.string() }),
+  z.object({
+    status: z.literal("denied"),
+    reason: z.string(),
+    executionReason: ToolExecutionReasonSchema.optional(),
+    policyDecision: z.unknown().optional(),
+  }),
+  z.object({
+    status: z.literal("needs_approval"),
+    reason: z.string(),
+    executionReason: ToolExecutionReasonSchema.optional(),
+    policyDecision: z.unknown().optional(),
+  }),
 ]);
 
-export type PermissionCheckResult = z.infer<typeof PermissionCheckResultSchema>;
+export type PermissionCheckResult = z.infer<typeof PermissionCheckResultSchema> & {
+  policyDecision?: HostToolExecutionDecision;
+};
