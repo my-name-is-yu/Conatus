@@ -536,6 +536,43 @@ describe("searchCrossGoalLessons", () => {
     expect(mockVI.search).toHaveBeenCalled();
     expect(results.some((l) => l.lesson_id === lessonId)).toBe(true);
   });
+
+  it("falls back to manifest lessons when VectorIndex search fails", async () => {
+    const mockVI = makeMockVectorIndex();
+    vi.mocked(mockVI.search).mockRejectedValue(new Error("OpenAI embedding request failed: 401 Unauthorized"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const mgr = new MemoryLifecycleManager(
+      tmpDir,
+      createMockLLMClient([]),
+      undefined,
+      undefined,
+      mockVI
+    );
+    await mgr.initializeDirectories();
+    const globalPath = path.join(tmpDir, "memory", "long-term", "lessons", "global.json");
+    const lesson: LessonEntry = {
+      lesson_id: "lesson-fallback",
+      type: "strategy_outcome",
+      goal_id: "goal-a",
+      context: "fallback context",
+      lesson: "Fallback Lesson",
+      source_loops: ["loop_1"],
+      extracted_at: new Date().toISOString(),
+      relevance_tags: ["fallback"],
+      status: "active",
+    };
+    fs.writeFileSync(globalPath, JSON.stringify([lesson]));
+
+    try {
+      const results = await mgr.searchCrossGoalLessons("Fallback Lesson", 5);
+
+      expect(mockVI.search).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Vector lesson search failed"));
+      expect(results.map((entry) => entry.lesson_id)).toContain("lesson-fallback");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════

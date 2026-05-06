@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../../../base/types/task.js";
 import type { BoundedAgentLoopRunner } from "../bounded-agent-loop-runner.js";
 import type { AgentLoopModelClient, AgentLoopModelRegistry } from "../agent-loop-model.js";
 import { TaskAgentLoopRunner } from "../task-agent-loop-runner.js";
+import { AgentLoopContextAssembler } from "../agent-loop-context-assembler.js";
 
 const { finalize, prepareTaskAgentLoopWorkspace } = vi.hoisted(() => ({
   finalize: vi.fn(),
@@ -24,6 +25,10 @@ function makeTask(): Task {
 }
 
 describe("TaskAgentLoopRunner", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("finalizes the workspace when grounding assembly throws before execution", async () => {
     finalize.mockResolvedValue({
       requestedCwd: "/repo",
@@ -63,5 +68,79 @@ describe("TaskAgentLoopRunner", () => {
     await expect(runner.runTask({ task: makeTask(), cwd: "/repo" })).rejects.toThrow("grounding failed");
     expect((boundedRunner.run as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     expect(finalize).toHaveBeenCalledWith({ success: false, changedFiles: [] });
+  });
+
+  it("continues into the bounded runner when Soil vector prefetch fails auth", async () => {
+    const cwd = process.cwd();
+    finalize.mockResolvedValue({
+      requestedCwd: cwd,
+      executionCwd: cwd,
+      isolated: false,
+      cleanupStatus: "not_requested",
+    });
+    prepareTaskAgentLoopWorkspace.mockResolvedValue({
+      requestedCwd: cwd,
+      executionCwd: cwd,
+      isolated: false,
+      finalize,
+    });
+    const boundedRunner = {
+      run: vi.fn().mockResolvedValue({
+        success: true,
+        output: {
+          status: "done",
+          finalAnswer: "finished",
+          summary: "summary",
+          filesChanged: [],
+          testsRun: [],
+          completionEvidence: ["bounded runner reached"],
+          verificationHints: [],
+          blockers: [],
+        },
+        finalText: "finished",
+        stopReason: "completed",
+        elapsedMs: 1,
+        modelTurns: 1,
+        toolCalls: 0,
+        compactions: 0,
+        changedFiles: [],
+        commandResults: [],
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+      }),
+    } as unknown as BoundedAgentLoopRunner;
+    const modelInfo = {
+      ref: { providerId: "test", modelId: "model" },
+      displayName: "test/model",
+      capabilities: {},
+    };
+    const vectorIndex = {
+      search: vi.fn().mockRejectedValue(new Error("OpenAI embedding request failed: 401 Unauthorized")),
+    };
+    const runner = new TaskAgentLoopRunner({
+      boundedRunner,
+      modelClient: {
+        getModelInfo: vi.fn().mockResolvedValue(modelInfo),
+      } as unknown as AgentLoopModelClient,
+      modelRegistry: {
+        defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
+      } as unknown as AgentLoopModelRegistry,
+      contextAssembler: new AgentLoopContextAssembler(),
+      soilPrefetch: async () => {
+        await vectorIndex.search("query", 5, 0);
+        return null;
+      },
+    });
+
+    const result = await runner.runTask({ task: makeTask(), cwd });
+
+    expect(vectorIndex.search).toHaveBeenCalled();
+    expect(boundedRunner.run).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+    const turn = (boundedRunner.run as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const userMessage = turn.messages.find((message: { role: string }) => message.role === "user")?.content;
+    expect(userMessage).toContain("Soil prefetch failed; continuing without Soil context");
+    expect(userMessage).toContain("OpenAI embedding request failed: 401 Unauthorized");
   });
 });

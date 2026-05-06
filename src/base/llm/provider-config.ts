@@ -662,14 +662,14 @@ export async function loadProviderConfigFile(options: { baseDir?: string } = {})
   return fileConfig;
 }
 
-export async function resolveOpenAIApiKey(): Promise<string | undefined> {
-  const envFile = await readProviderEnvFile();
+export async function resolveOpenAIApiKey(options: { baseDir?: string } = {}): Promise<string | undefined> {
+  const envFile = await readProviderEnvFile(options.baseDir);
   const envKey = process.env["OPENAI_API_KEY"] ?? envFile["OPENAI_API_KEY"];
   if (envKey) {
     return envKey;
   }
 
-  const fileConfig = await readProviderConfigFile();
+  const fileConfig = await readProviderConfigFile(options.baseDir);
   if (fileConfig.provider === "openai" || fileConfig.adapter === "openai_api") {
     return fileConfig.api_key;
   }

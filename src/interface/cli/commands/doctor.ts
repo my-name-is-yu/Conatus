@@ -7,6 +7,7 @@ import { getPulseedDirPath, getLogsDir, getGoalsDir, getPluginsDir } from "../..
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { getCliRunnerBuildPath } from "../../../base/utils/pulseed-meta.js";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
+import { isJwtExpired, resolveOpenAIApiKey } from "../../../base/llm/provider-config.js";
 import { DaemonConfigSchema } from "../../../base/types/daemon.js";
 import { PluginManifestSchema } from "../../../base/types/plugin.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
@@ -173,6 +174,78 @@ export function checkApiKey(baseDir?: string): CheckResult {
     name: "API key",
     status: "fail",
     detail: "ANTHROPIC_API_KEY / OPENAI_API_KEY not set (checked env + provider.json)",
+  };
+}
+
+function isJwtLike(value: string): boolean {
+  return value.split(".").length >= 3;
+}
+
+async function probeOpenAIEmbeddingAuth(apiKey: string, timeoutMs = 3000): Promise<{ ok: boolean; detail: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: process.env["OPENAI_EMBEDDING_MODEL"] ?? "text-embedding-3-small",
+        input: "pulseed doctor embedding auth preflight",
+      }),
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      return { ok: true, detail: "OpenAI embeddings request succeeded" };
+    }
+    return {
+      ok: false,
+      detail: `OpenAI embeddings request failed: ${response.status} ${response.statusText}`,
+    };
+  } catch (error) {
+    const detail = error instanceof Error && error.name === "AbortError"
+      ? `OpenAI embeddings request timed out after ${timeoutMs}ms`
+      : `OpenAI embeddings request failed: ${error instanceof Error ? error.message : String(error)}`;
+    return { ok: false, detail };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function checkEmbeddingAuth(baseDir?: string): Promise<CheckResult> {
+  const openaiKey = await resolveOpenAIApiKey({ baseDir });
+
+  if (!openaiKey) {
+    return {
+      name: "Embedding auth",
+      status: "warn",
+      detail: "No OpenAI key for embeddings; Soil vector retrieval will use non-vector fallback",
+    };
+  }
+
+  if (isJwtLike(openaiKey) && isJwtExpired(openaiKey)) {
+    return {
+      name: "Embedding auth",
+      status: "warn",
+      detail: "OpenAI embedding key appears to be an expired token; refresh auth before durable vector-backed runs",
+    };
+  }
+
+  const probe = await probeOpenAIEmbeddingAuth(openaiKey);
+  if (!probe.ok) {
+    return {
+      name: "Embedding auth",
+      status: "warn",
+      detail: `${probe.detail}; Soil vector retrieval will use non-vector fallback`,
+    };
+  }
+
+  return {
+    name: "Embedding auth",
+    status: "pass",
+    detail: probe.detail,
   };
 }
 
@@ -596,6 +669,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     checkPulseedDir(baseDir),
     checkProviderConfig(baseDir),
     checkApiKey(baseDir),
+    await checkEmbeddingAuth(baseDir),
     checkStateDirectoryPermissions(baseDir),
     checkProviderConfigPermissions(baseDir),
     checkPluginPermissionWarnings(baseDir),

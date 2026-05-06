@@ -360,38 +360,43 @@ export async function searchCrossGoalLessons(
   const { LessonEntrySchema } = await import("../../../base/types/memory-lifecycle.js");
 
   if (deps.vectorIndex) {
-    // Semantic search in vector index
-    const results = await deps.vectorIndex.search(query, topK * 2, 0.0);
+    try {
+      // Semantic search in vector index
+      const results = await deps.vectorIndex.search(query, topK * 2, 0.0);
 
-    // Filter to lesson entries (metadata.is_lesson === true)
-    const lessonResults = results.filter((r) => r.metadata.is_lesson === true);
+      // Filter to lesson entries (metadata.is_lesson === true)
+      const lessonResults = results.filter((r) => r.metadata.is_lesson === true);
 
-    // Load actual lessons from global file
-    const globalPath = path.join(
-      deps.memoryDir,
-      "long-term",
-      "lessons",
-      "global.json"
-    );
-    const globalLessons =
-      (await readJsonFileAsync<LessonEntry[]>(
-        globalPath,
-        z.array(LessonEntrySchema)
-      )) ?? [];
+      // Load actual lessons from global file
+      const globalPath = path.join(
+        deps.memoryDir,
+        "long-term",
+        "lessons",
+        "global.json"
+      );
+      const globalLessons =
+        (await readJsonFileAsync<LessonEntry[]>(
+          globalPath,
+          z.array(LessonEntrySchema)
+        )) ?? [];
 
-    const lessonMap = new Map(globalLessons.map((l) => [l.lesson_id, l]));
-    const matched: LessonEntry[] = [];
-    for (const r of lessonResults) {
-      const lesson = lessonMap.get(r.id);
-      if (lesson && lesson.status === "active") {
-        matched.push(lesson);
-        if (matched.length >= topK) break;
+      const lessonMap = new Map(globalLessons.map((l) => [l.lesson_id, l]));
+      const matched: LessonEntry[] = [];
+      for (const r of lessonResults) {
+        const lesson = lessonMap.get(r.id);
+        if (lesson && lesson.status === "active") {
+          matched.push(lesson);
+          if (matched.length >= topK) break;
+        }
       }
-    }
 
-    // If we got enough results from semantic search, return them
-    if (matched.length > 0) {
-      return matched;
+      // If we got enough results from semantic search, return them
+      if (matched.length > 0) {
+        return matched;
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(`[memory] Vector lesson search failed; falling back to manifest lessons: ${detail}`);
     }
   }
 
@@ -521,4 +526,3 @@ export async function selectForWorkingMemorySemantic(
 
   return { shortTerm: shortTermEntries, lessons };
 }
-

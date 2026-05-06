@@ -23,6 +23,7 @@ import {
   checkPulseedDir,
   checkProviderConfig,
   checkApiKey,
+  checkEmbeddingAuth,
   checkStateDirectoryPermissions,
   checkProviderConfigPermissions,
   checkPluginPermissionWarnings,
@@ -142,6 +143,101 @@ describe("checkApiKey", () => {
     const result = checkApiKey(tmpDir);
     expect(result.status).toBe("pass");
     expect(result.detail).toContain("provider.json");
+  });
+});
+
+describe("checkEmbeddingAuth", () => {
+  let tmpDir: string;
+  const savedOpenaiKey = process.env["OPENAI_API_KEY"];
+
+  beforeEach(() => {
+    tmpDir = makeTempDir("pulseed-doctor-embedding-auth-");
+    delete process.env["OPENAI_API_KEY"];
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+    } as Response)));
+  });
+
+  afterEach(() => {
+    if (savedOpenaiKey !== undefined) process.env["OPENAI_API_KEY"] = savedOpenaiKey;
+    else delete process.env["OPENAI_API_KEY"];
+    vi.unstubAllGlobals();
+    cleanupTempDir(tmpDir);
+  });
+
+  function jwtWithExp(exp: number): string {
+    const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(JSON.stringify({ exp })).toString("base64url");
+    return `${header}.${payload}.signature`;
+  }
+
+  it("warns when provider OpenAI embedding token is expired", async () => {
+    fs.writeFileSync(path.join(tmpDir, "provider.json"), JSON.stringify({
+      provider: "openai",
+      adapter: "openai_codex_cli",
+      api_key: jwtWithExp(Math.floor(Date.now() / 1000) - 60),
+    }));
+
+    const result = await checkEmbeddingAuth(tmpDir);
+
+    expect(result.status).toBe("warn");
+    expect(result.detail).toContain("expired token");
+    expect(result.detail).not.toContain(".signature");
+  });
+
+  it("passes without exposing a configured OpenAI key", async () => {
+    fs.writeFileSync(path.join(tmpDir, "provider.json"), JSON.stringify({
+      provider: "openai",
+      adapter: "openai_codex_cli",
+      api_key: "sk-secret-value",
+    }));
+
+    const result = await checkEmbeddingAuth(tmpDir);
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("OpenAI embeddings request succeeded");
+    expect(result.detail).not.toContain("sk-secret-value");
+  });
+
+  it("warns when the OpenAI embedding probe rejects the key", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+    } as Response);
+    fs.writeFileSync(path.join(tmpDir, "provider.json"), JSON.stringify({
+      provider: "openai",
+      adapter: "openai_codex_cli",
+      api_key: "sk-bad-secret",
+    }));
+
+    const result = await checkEmbeddingAuth(tmpDir);
+
+    expect(result.status).toBe("warn");
+    expect(result.detail).toContain("401 Unauthorized");
+    expect(result.detail).not.toContain("sk-bad-secret");
+  });
+
+  it("uses provider .env OpenAI key before a stale provider.json key", async () => {
+    fs.writeFileSync(path.join(tmpDir, ".env"), "OPENAI_API_KEY=sk-env-secret\n");
+    fs.writeFileSync(path.join(tmpDir, "provider.json"), JSON.stringify({
+      provider: "openai",
+      adapter: "openai_codex_cli",
+      api_key: jwtWithExp(Math.floor(Date.now() / 1000) - 60),
+    }));
+
+    const result = await checkEmbeddingAuth(tmpDir);
+
+    expect(result.status).toBe("pass");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer sk-env-secret" }),
+      }),
+    );
+    expect(result.detail).not.toContain("sk-env-secret");
   });
 });
 
@@ -777,10 +873,16 @@ describe("cmdDoctor summary counts", () => {
   beforeEach(() => {
     tmpDir = makeTempDir("pulseed-doctor-cmd-");
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+    } as Response)));
   });
 
   afterEach(() => {
     consoleSpy.mockRestore();
+    vi.unstubAllGlobals();
     cleanupTempDir(tmpDir);
   });
 
