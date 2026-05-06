@@ -39,6 +39,7 @@ export const DataSourceConfigSchema = z.object({
     stale_after_ms: z.number().int().positive().optional(),
     dimension_metrics: z.record(z.string(), z.array(z.string())).optional(),
     dimension_aggregations: z.record(z.string(), z.enum(["max", "min", "count", "file_count"])).optional(),
+    require_metric_match: z.boolean().optional(),
   }),
   polling: PollingConfigSchema.optional(),
   auth: z

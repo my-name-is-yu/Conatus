@@ -9,9 +9,11 @@ import type { ObservationLayer, ObservationMethod, ObservationTrigger } from "..
 import type { KnowledgeGapSignal } from "../../../base/types/knowledge.js";
 import type { IDataSourceAdapter } from "../data-source-adapter.js";
 import type { DataSourceConfig } from "../../../base/types/data-source.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { randomUUID } from "node:crypto";
+import { createWorkspaceArtifactMetricDataSource } from "../../../adapters/datasources/artifact-metric-datasource.js";
 
 // ─── Helpers ───
 
@@ -52,6 +54,17 @@ function makeEntry(overrides: Partial<ObservationLogEntry> = {}): ObservationLog
     confidence: 0.9,
     notes: null,
     ...overrides,
+  };
+}
+
+function makeMockLLMClient(score = 0.25): ILLMClient {
+  return {
+    sendMessage: vi.fn().mockResolvedValue({
+      content: JSON.stringify({ score, reason: "llm fallback" }),
+      usage: { input_tokens: 100, output_tokens: 20 },
+      stop_reason: "end_turn",
+    }),
+    parseJSON: vi.fn().mockReturnValue({ score, reason: "llm fallback" }),
   };
 }
 
@@ -979,6 +992,157 @@ describe("observeFromDataSource", () => {
     expect(updated?.dimensions[0]?.current_value).toBe(83);
   });
 
+  it("observes goal-workspace Kaggle experiment metrics before LLM fallback", async () => {
+    const daemonWorkspace = path.join(tmpDir, "daemon-workspace");
+    const goalWorkspace = path.join(tmpDir, "kaggle-workspace");
+    fs.mkdirSync(daemonWorkspace, { recursive: true });
+    writeJsonFile(path.join(goalWorkspace, "experiments", "smoke-hgb-50k", "metrics.json"), {
+      metric_name: "roc_auc",
+      direction: "maximize",
+      cv_score: 0.9331832527157385,
+      status: "completed",
+    });
+    writeJsonFile(path.join(daemonWorkspace, "experiments", "wrong", "metrics.json"), {
+      metric_name: "roc_auc",
+      cv_score: 0.1,
+    });
+    const llmClient = makeMockLLMClient(0.2);
+    const engine = new ObservationEngine(
+      stateManager,
+      [createWorkspaceArtifactMetricDataSource(daemonWorkspace)],
+      llmClient,
+      async () => "workspace context exists",
+    );
+    const goal = makeGoal({
+      id: "goal-kaggle-roc-auc",
+      constraints: [`workspace_path:${goalWorkspace}`],
+      dimensions: [
+        {
+          name: "roc_auc",
+          label: "ROC AUC",
+          current_value: 0,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engine.observe("goal-kaggle-roc-auc", []);
+
+    const updated = await stateManager.loadGoal("goal-kaggle-roc-auc");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.9331832527157385);
+    expect(updated?.dimensions[0]?.last_observed_layer).toBe("mechanical");
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    const log = await stateManager.loadObservationLog("goal-kaggle-roc-auc");
+    expect(log).not.toBeNull();
+    expect(log!.entries[0]?.raw_result).toMatchObject({
+      root: goalWorkspace,
+      selected: {
+        relativePath: "experiments/smoke-hgb-50k/metrics.json",
+        key: "roc_auc",
+        keyPath: "cv_score",
+      },
+    });
+  });
+
+  it("observes builtin-supported artifact metrics from the goal workspace over daemon datasource", async () => {
+    const daemonWorkspace = path.join(tmpDir, "daemon-workspace");
+    const goalWorkspace = path.join(tmpDir, "builtin-metric-workspace");
+    writeJsonFile(path.join(daemonWorkspace, "artifacts", "wrong", "metrics.json"), {
+      oof_balanced_accuracy: 0.1,
+    });
+    writeJsonFile(path.join(goalWorkspace, "artifacts", "probe-balanced", "metrics.json"), {
+      oof_balanced_accuracy: 0.88,
+    });
+    const engine = new ObservationEngine(
+      stateManager,
+      [createWorkspaceArtifactMetricDataSource(daemonWorkspace)],
+    );
+    const goal = makeGoal({
+      id: "goal-builtin-artifact-metrics",
+      constraints: [`workspace_path:${goalWorkspace}`],
+      dimensions: [
+        {
+          name: "best_oof_balanced_accuracy",
+          label: "Best OOF balanced accuracy",
+          current_value: 0,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engine.observe("goal-builtin-artifact-metrics", []);
+
+    const updated = await stateManager.loadGoal("goal-builtin-artifact-metrics");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.88);
+    const log = await stateManager.loadObservationLog("goal-builtin-artifact-metrics");
+    expect(log).not.toBeNull();
+    expect(log!.entries[0]?.raw_result).toMatchObject({
+      root: goalWorkspace,
+      selected: {
+        relativePath: "artifacts/probe-balanced/metrics.json",
+        key: "oof_balanced_accuracy",
+      },
+    });
+  });
+
+  it("falls back to LLM when the goal-scoped artifact metric is absent", async () => {
+    const goalWorkspace = path.join(tmpDir, "kaggle-workspace-without-metrics");
+    fs.mkdirSync(goalWorkspace, { recursive: true });
+    const llmClient = makeMockLLMClient(0.42);
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      async () => "workspace context exists",
+    );
+    const goal = makeGoal({
+      id: "goal-kaggle-llm-fallback",
+      constraints: [`workspace_path:${goalWorkspace}`],
+      dimensions: [
+        {
+          name: "roc_auc",
+          label: "ROC AUC",
+          current_value: 0,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engine.observe("goal-kaggle-llm-fallback", []);
+
+    const updated = await stateManager.loadGoal("goal-kaggle-llm-fallback");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.42);
+    expect(updated?.dimensions[0]?.last_observed_layer).toBe("independent_review");
+    expect(llmClient.sendMessage).toHaveBeenCalled();
+  });
+
   it("handles non-numeric values from data source", async () => {
     const stringDs = makeMockDataSource({
       query: vi.fn().mockResolvedValue({
@@ -1016,3 +1180,8 @@ describe("observeFromDataSource", () => {
     expect(entry.extracted_value).toBe("healthy");
   });
 });
+
+function writeJsonFile(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}

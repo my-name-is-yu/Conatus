@@ -59,6 +59,32 @@ describe("ArtifactMetricDataSourceAdapter", () => {
     });
   });
 
+  it("discovers Kaggle experiment metrics and maps plain metric_name to cv_score", async () => {
+    writeJson(path.join(workspace, "experiments", "smoke-hgb-50k", "metrics.json"), {
+      metric_name: "roc_auc",
+      direction: "maximize",
+      cv_score: 0.9331832527157385,
+      status: "completed",
+    });
+
+    const adapter = createWorkspaceArtifactMetricDataSource(workspace);
+    const result = await adapter.query({ dimension_name: "roc_auc", timeout_ms: 10000 });
+
+    expect(result.value).toBe(0.9331832527157385);
+    expect(result.raw).toMatchObject({
+      inspected_metric_files: 1,
+      selected_key: "roc_auc",
+      selected: {
+        relativePath: "experiments/smoke-hgb-50k/metrics.json",
+        key: "roc_auc",
+        keyPath: "cv_score",
+      },
+      discovery: {
+        artifact_roots: expect.arrayContaining(["experiments"]),
+      },
+    });
+  });
+
   it("counts validated metric artifacts when no experiment log exists", async () => {
     writeJson(path.join(workspace, "artifacts", "probe-a", "metrics.json"), { score: 0.8 });
     writeJson(path.join(workspace, "artifacts", "probe-b", "metrics.json"), { metrics: { accuracy: 0.7 } });

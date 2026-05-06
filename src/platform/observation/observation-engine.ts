@@ -38,6 +38,7 @@ import { runToolObservationStage } from "./engine/observe-tool-stage.js";
 import { runDataSourceObservationStage } from "./engine/observe-datasource-stage.js";
 import { runLlmObservationStage } from "./engine/observe-llm-stage.js";
 import { runSelfReportStage } from "./engine/observe-self-report.js";
+import { createGoalWorkspaceArtifactMetricDataSource } from "../../adapters/datasources/artifact-metric-datasource.js";
 
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
@@ -264,6 +265,10 @@ export class ObservationEngine {
 
     // Workspace path for pre-checker (extracted from contextProvider key heuristic)
     const workspacePath = goal.constraints.find((c) => c.startsWith("workspace_path:"))?.slice("workspace_path:".length);
+    const goalArtifactDataSource = createGoalScopedArtifactDataSource(goalId, goal, workspacePath);
+    const observationDataSources = goalArtifactDataSource
+      ? [...this.dataSources, goalArtifactDataSource]
+      : this.dataSources;
 
     for (let idx = 0; idx < observeCount; idx++) {
       const dim = goal.dimensions[idx]!;
@@ -298,7 +303,7 @@ export class ObservationEngine {
       }
 
       const dataSourceDimensionName = dim.observation_mapping?.dimension ?? dim.name;
-      const dataSource = this.findDataSourceForDimension(dataSourceDimensionName, goalId, dim.observation_mapping?.data_source);
+      const dataSource = findDataSourceForDimensionFn(observationDataSources, dataSourceDimensionName, goalId, dim.observation_mapping?.data_source);
       if (dataSource && await runDataSourceObservationStage({
         goalId,
         goal,
@@ -311,7 +316,14 @@ export class ObservationEngine {
         llmAvailable: !!this.llmClient,
         stateManager: this.stateManager,
         fetchWorkspaceContext,
-        observeFromDataSource: (gId, dimensionName, sourceId, queryDimensionName) => this.observeFromDataSource(gId, dimensionName, sourceId, queryDimensionName),
+        observeFromDataSource: (gId, dimensionName, sourceId, queryDimensionName) => observeFromDataSourceFn(
+          gId,
+          dimensionName,
+          sourceId,
+          observationDataSources,
+          (targetGoalId, entry) => this.applyObservation(targetGoalId, entry),
+          queryDimensionName,
+        ),
         observeWithLLM: (...args) => this.observeWithLLM(...args),
         crossValidate: (gId, dimensionName, mechanicalValue, llmValue) =>
           this.crossValidate(gId, dimensionName, mechanicalValue, llmValue),
@@ -337,7 +349,7 @@ export class ObservationEngine {
         })) {
           continue;
         }
-      } else if (this.dataSources.length > 0) {
+      } else if (observationDataSources.length > 0) {
         // DataSources exist but none match this dimension and no LLM client
         this.logger?.warn(
           `[ObservationEngine] Warning: dimension "${dim.name}" has no matching DataSource and no LLM client available for observation`
@@ -527,4 +539,40 @@ export class ObservationEngine {
     return observeWithTools(this.toolExecutor, dimension, context);
   }
 
+}
+
+function createGoalScopedArtifactDataSource(
+  goalId: string,
+  goal: { dimensions: Dimension[] },
+  workspacePath?: string,
+): IDataSourceAdapter | null {
+  if (!workspacePath) return null;
+
+  const dimensionMetrics: Record<string, string[]> = {};
+  const dimensionAggregations: Record<string, "max" | "min"> = {};
+  let supportedDimensionCount = 0;
+  for (const dimension of goal.dimensions) {
+    if (!isArtifactMetricDimension(dimension)) continue;
+    const queryDimensionName = dimension.observation_mapping?.dimension ?? dimension.name;
+    supportedDimensionCount += 1;
+    if (needsPlainMetricMapping(queryDimensionName)) {
+      dimensionMetrics[queryDimensionName] = [queryDimensionName];
+      dimensionAggregations[queryDimensionName] = dimension.threshold.type === "max" ? "min" : "max";
+    }
+  }
+
+  if (supportedDimensionCount === 0) return null;
+  return createGoalWorkspaceArtifactMetricDataSource(goalId, workspacePath, dimensionMetrics, dimensionAggregations);
+}
+
+function isArtifactMetricDimension(dimension: Dimension): boolean {
+  if (typeof dimension.current_value !== "number") return false;
+  return dimension.threshold.type === "min" || dimension.threshold.type === "max" || dimension.threshold.type === "range";
+}
+
+function needsPlainMetricMapping(dimensionName: string): boolean {
+  if (dimensionName === "validated_experiment_count" || dimensionName === "durable_artifact_count") return false;
+  if (dimensionName.startsWith("best_")) return false;
+  if (dimensionName.endsWith("_count")) return false;
+  return true;
 }
