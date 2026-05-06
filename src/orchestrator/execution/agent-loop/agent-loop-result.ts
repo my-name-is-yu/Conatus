@@ -6,6 +6,26 @@ import type { ToolActivityCategory } from "../../../tools/types.js";
 export type AgentLoopCommandResultCategory = "verification" | "observation" | "other";
 export type AgentLoopCommandEvidenceSource = "verification_plan" | "tool_activity_category";
 
+export type AgentLoopFailureReason =
+  | "wall_clock_timeout"
+  | "model_request_timeout"
+  | "model_request_aborted"
+  | "provider_failure"
+  | "protocol_incomplete"
+  | "schema_validation_failed"
+  | "completion_gate_failed"
+  | "context_compaction_failed"
+  | "tool_batch_deadline_exceeded"
+  | "tool_batch_timed_out"
+  | "tool_runtime_failure"
+  | "tool_fatal"
+  | "tool_cancelled"
+  | "consecutive_tool_errors"
+  | "repeated_tool_calls"
+  | "max_model_turns"
+  | "max_tool_calls"
+  | "operator_cancelled";
+
 export interface AgentLoopCommandResult {
   sequence?: number;
   toolName: string;
@@ -61,6 +81,8 @@ export interface AgentLoopResult<TOutput> {
   output: TOutput | null;
   finalText: string;
   stopReason: AgentLoopStopReason;
+  failureReason?: AgentLoopFailureReason;
+  failureDetail?: string;
   elapsedMs: number;
   modelTurns: number;
   toolCalls: number;

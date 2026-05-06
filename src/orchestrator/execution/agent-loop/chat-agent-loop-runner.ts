@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AgentResult } from "../adapter-layer.js";
-import type { AgentLoopBudget } from "./agent-loop-budget.js";
+import type { AgentLoopBudget, AgentLoopStopReason } from "./agent-loop-budget.js";
 import type {
   AgentLoopModelClient,
   AgentLoopModelRef,
@@ -17,6 +17,7 @@ import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
 import { buildAgentLoopBaseInstructions, buildChatStructuredOutputInstructions } from "./agent-loop-prompts.js";
 import type { ApprovalRequest, ToolCallContext } from "../../../tools/types.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
+import type { AgentLoopFailureReason } from "./agent-loop-result.js";
 import { normalizeAssistantDisplayText } from "./chat-display-output.js";
 import { resolveGitRoot } from "../../../platform/observation/context-provider.js";
 
@@ -113,8 +114,6 @@ export class ChatAgentLoopRunner {
 
   async execute(input: ChatAgentLoopInput): Promise<AgentResult> {
     const started = Date.now();
-    const model = input.model ?? this.deps.defaultModel ?? await this.deps.modelRegistry.defaultModel();
-    const modelInfo = await this.deps.modelClient.getModelInfo(model);
     const cwd = resolveGitRoot(input.cwd ?? this.deps.cwd ?? process.cwd());
     const turnId = randomUUID();
     const outputMode = input.outputMode ?? { kind: "display_text" as const };
@@ -131,6 +130,8 @@ export class ChatAgentLoopRunner {
       ...(input.resumeState ? { sessionId: input.resumeState.sessionId, traceId: input.resumeState.traceId } : {}),
     });
     try {
+      const model = input.model ?? this.deps.defaultModel ?? await this.deps.modelRegistry.defaultModel();
+      const modelInfo = await this.deps.modelClient.getModelInfo(model);
       const result = await this.deps.boundedRunner.run({
         session,
         turnId,
@@ -227,6 +228,8 @@ export class ChatAgentLoopRunner {
           sessionId: result.sessionId,
           turnId: result.turnId,
           stopReason: result.stopReason,
+          ...(result.failureReason ? { failureReason: result.failureReason } : {}),
+          ...(result.failureDetail ? { failureDetail: result.failureDetail } : {}),
           modelTurns: result.modelTurns,
           toolCalls: result.toolCalls,
           usage: result.usage,
@@ -246,26 +249,26 @@ export class ChatAgentLoopRunner {
         },
       };
     } catch (err) {
-      const detail = err instanceof Error
-        ? [err.name !== "Error" ? err.name : null, err.message].filter((part): part is string => typeof part === "string" && part.length > 0).join(": ")
-        : String(err);
-      const lowered = detail.toLowerCase();
-      const isTimeout = lowered.includes("timeout") || lowered.includes("timed out") || lowered.includes("aborterror") || lowered.includes("aborted");
-      const output = isTimeout
-        ? "Agent loop stopped: model request timed out. Narrow broad repo-wide searches or increase `codex_timeout_ms` if this workload is expected."
-        : `Agent loop stopped: model request failed. ${detail ? `Detail: ${detail}. ` : ""}Retry the turn or inspect the provider connection.`;
+      const detail = errorDetail(err);
+      const failureReason = input.abortSignal?.aborted
+        ? "operator_cancelled"
+        : structuredRunFailureReason(err) ?? "provider_failure";
+      const stopReason = stopReasonForFailureReason(failureReason);
+      const output = failureOutputForReason(failureReason, detail);
       return {
         success: false,
         output,
         error: detail || output,
         exit_code: null,
         elapsed_ms: Date.now() - started,
-        stopped_reason: isTimeout ? "timeout" : "error",
+        stopped_reason: failureReason === "operator_cancelled" ? "cancelled" : stopReason === "timeout" ? "timeout" : "error",
         agentLoop: {
           traceId: session.traceId,
           sessionId: session.sessionId,
           turnId,
-          stopReason: isTimeout ? "timeout" : "fatal_error",
+          stopReason,
+          failureReason,
+          failureDetail: detail,
           modelTurns: 0,
           toolCalls: 0,
           compactions: 0,
@@ -344,4 +347,78 @@ function extractStringArray(value: unknown, key: string): string[] {
   const field = value[key];
   if (!Array.isArray(field)) return [];
   return field.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function stopReasonForFailureReason(reason: AgentLoopFailureReason): AgentLoopStopReason {
+  switch (reason) {
+    case "model_request_timeout":
+    case "wall_clock_timeout":
+    case "tool_batch_deadline_exceeded":
+    case "tool_batch_timed_out":
+      return "timeout";
+    case "operator_cancelled":
+    case "tool_cancelled":
+      return "cancelled";
+    case "protocol_incomplete":
+      return "protocol_incomplete";
+    case "schema_validation_failed":
+      return "schema_error";
+    case "completion_gate_failed":
+      return "completion_gate_failed";
+    case "consecutive_tool_errors":
+      return "consecutive_tool_errors";
+    case "repeated_tool_calls":
+      return "stalled_tool_loop";
+    case "max_model_turns":
+      return "max_model_turns";
+    case "max_tool_calls":
+      return "max_tool_calls";
+    case "model_request_aborted":
+    case "provider_failure":
+    case "context_compaction_failed":
+    case "tool_runtime_failure":
+    case "tool_fatal":
+      return "fatal_error";
+  }
+}
+
+function failureOutputForReason(reason: AgentLoopFailureReason, detail: string): string {
+  if (reason === "model_request_timeout") {
+    return "Agent loop stopped: model request timed out. Narrow broad repo-wide searches or increase `codex_timeout_ms` if this workload is expected.";
+  }
+  if (reason === "operator_cancelled") {
+    return "Agent loop stopped: operator stop aborted active model work.";
+  }
+  if (reason === "model_request_aborted") {
+    return "Agent loop stopped: model request was aborted by the provider or transport. Retry the turn or inspect the provider connection.";
+  }
+  return `Agent loop stopped: model request failed. ${detail ? `Detail: ${detail}. ` : ""}Retry the turn or inspect the provider connection.`;
+}
+
+function structuredRunFailureReason(error: unknown): AgentLoopFailureReason | null {
+  if (!error || typeof error !== "object") return null;
+  const value = error as {
+    name?: unknown;
+    code?: unknown;
+    cause?: unknown;
+    agentLoopFailureReason?: unknown;
+  };
+  if (value.agentLoopFailureReason === "model_request_timeout" || value.agentLoopFailureReason === "model_request_aborted") {
+    return value.agentLoopFailureReason;
+  }
+  if (value.name === "TimeoutError" || value.code === "ETIMEDOUT" || value.code === "UND_ERR_HEADERS_TIMEOUT" || value.code === "UND_ERR_BODY_TIMEOUT") {
+    return "model_request_timeout";
+  }
+  if (value.name === "AbortError" || value.code === "ABORT_ERR") {
+    return "model_request_aborted";
+  }
+  return structuredRunFailureReason(value.cause);
+}
+
+function errorDetail(error: unknown): string {
+  return error instanceof Error
+    ? [error.name !== "Error" ? error.name : null, error.message]
+      .filter((part): part is string => typeof part === "string" && part.length > 0)
+      .join(": ")
+    : String(error);
 }

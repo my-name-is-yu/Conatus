@@ -387,6 +387,91 @@ describe("chat agentloop final-answer contract", () => {
     expect(result.output).not.toContain("Everything was restarted successfully");
   });
 
+  it("forwards typed bounded-runner failure reasons through native chat results", async () => {
+    const modelInfo = makeModelInfo();
+    const boundedRunner = {
+      run: vi.fn().mockResolvedValue({
+        success: false,
+        output: null,
+        finalText: "provider text for display",
+        stopReason: "fatal_error",
+        failureReason: "provider_failure",
+        failureDetail: "localized provider detail",
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        modelTurns: 1,
+        toolCalls: 0,
+        usage: undefined,
+        compactions: 0,
+        changedFiles: [],
+        toolResults: [],
+        commandResults: [],
+      }),
+    } as unknown as BoundedAgentLoopRunner;
+    const modelClient = {
+      getModelInfo: vi.fn().mockResolvedValue(modelInfo),
+    } as unknown as AgentLoopModelClient;
+    const modelRegistry = {
+      defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
+    } as unknown as AgentLoopModelRegistry;
+    const runner = new ChatAgentLoopRunner({ boundedRunner, modelClient, modelRegistry });
+
+    const result = await runner.execute({ message: "test" });
+
+    expect(result.success).toBe(false);
+    expect(result.agentLoop?.failureReason).toBe("provider_failure");
+    expect(result.agentLoop?.failureDetail).toBe("localized provider detail");
+  });
+
+  it("keeps setup error text display-only unless structured timeout fields are present", async () => {
+    const modelInfo = makeModelInfo();
+    const boundedRunner = {
+      run: vi.fn(),
+    } as unknown as BoundedAgentLoopRunner;
+    const modelClient = {
+      getModelInfo: vi.fn().mockResolvedValue(modelInfo),
+    } as unknown as AgentLoopModelClient;
+    const modelRegistry = {
+      defaultModel: vi.fn().mockRejectedValue(new Error("timeout-looking provider text")),
+    } as unknown as AgentLoopModelRegistry;
+    const runner = new ChatAgentLoopRunner({ boundedRunner, modelClient, modelRegistry });
+
+    const result = await runner.execute({ message: "test" });
+
+    expect(result.success).toBe(false);
+    expect(result.stopped_reason).toBe("error");
+    expect(result.agentLoop?.stopReason).toBe("fatal_error");
+    expect(result.agentLoop?.failureReason).toBe("provider_failure");
+    expect(result.output).toContain("model request failed");
+    expect(boundedRunner.run).not.toHaveBeenCalled();
+  });
+
+  it("maps structured setup timeout fields to typed timeout failure", async () => {
+    const modelInfo = makeModelInfo();
+    const timeoutError = new Error("provider response did not arrive");
+    timeoutError.name = "TimeoutError";
+    const boundedRunner = {
+      run: vi.fn(),
+    } as unknown as BoundedAgentLoopRunner;
+    const modelClient = {
+      getModelInfo: vi.fn().mockResolvedValue(modelInfo),
+    } as unknown as AgentLoopModelClient;
+    const modelRegistry = {
+      defaultModel: vi.fn().mockRejectedValue(timeoutError),
+    } as unknown as AgentLoopModelRegistry;
+    const runner = new ChatAgentLoopRunner({ boundedRunner, modelClient, modelRegistry });
+
+    const result = await runner.execute({ message: "test" });
+
+    expect(result.success).toBe(false);
+    expect(result.stopped_reason).toBe("timeout");
+    expect(result.agentLoop?.stopReason).toBe("timeout");
+    expect(result.agentLoop?.failureReason).toBe("model_request_timeout");
+    expect(result.output).toContain("codex_timeout_ms");
+    expect(boundedRunner.run).not.toHaveBeenCalled();
+  });
+
   it("biases chat mode prompts toward display markdown by default", () => {
     const chatPrompt = buildAgentLoopBaseInstructions({ mode: "chat" });
     const taskPrompt = buildAgentLoopBaseInstructions({ mode: "task" });

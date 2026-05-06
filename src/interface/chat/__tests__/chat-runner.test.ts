@@ -3250,7 +3250,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Type: Permission failure");
     });
 
-    it("uses native runner stop reason instead of provider text for runtime interruption recovery", async () => {
+    it("uses native runner typed failure reason instead of provider text for runtime interruption recovery", async () => {
       const seenEvents: ChatEvent[] = [];
       const chatAgentLoopRunner = {
         execute: vi.fn().mockResolvedValue({
@@ -3259,12 +3259,13 @@ describe("ChatRunner", () => {
           error: null,
           exit_code: null,
           elapsed_ms: 42,
-          stopped_reason: "timeout",
+          stopped_reason: "error",
           agentLoop: {
             traceId: "trace-1",
             sessionId: "session-1",
             turnId: "turn-1",
-            stopReason: "timeout",
+            stopReason: "fatal_error",
+            failureReason: "model_request_timeout",
             modelTurns: 1,
             toolCalls: 0,
             compactions: 0,

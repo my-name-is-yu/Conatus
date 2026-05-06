@@ -8,7 +8,7 @@
 import { AdapterError } from "../../base/utils/errors.js";
 import type { VerificationFileDiff } from "../../base/types/task.js";
 import type { AgentLoopReasoningEffort } from "./agent-loop/agent-loop-model.js";
-import type { AgentLoopWorkspaceDisposition } from "./agent-loop/agent-loop-result.js";
+import type { AgentLoopFailureReason, AgentLoopWorkspaceDisposition } from "./agent-loop/agent-loop-result.js";
 
 // ─── Types ───
 
@@ -32,6 +32,8 @@ export interface AgentLoopExecutionInfo {
   sessionId: string;
   turnId: string;
   stopReason: string;
+  failureReason?: AgentLoopFailureReason;
+  failureDetail?: string;
   modelTurns: number;
   toolCalls: number;
   usage?: {

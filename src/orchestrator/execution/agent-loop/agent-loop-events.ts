@@ -1,5 +1,6 @@
 import type { ToolActivityCategory } from "../../../tools/types.js";
 import type { AgentLoopToolObservation } from "./agent-loop-model.js";
+import type { AgentLoopFailureReason } from "./agent-loop-result.js";
 
 export type AgentLoopEvent =
   | AgentLoopStartedEvent
@@ -127,6 +128,7 @@ export interface AgentLoopFinalEvent extends AgentLoopBaseEvent {
 export interface AgentLoopStoppedEvent extends AgentLoopBaseEvent {
   type: "stopped";
   reason: string;
+  failureReason?: AgentLoopFailureReason;
   reasonDetail?: string;
 }
 

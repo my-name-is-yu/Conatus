@@ -169,6 +169,8 @@ export function taskAgentLoopResultToAgentResult(
       sessionId: result.sessionId,
       turnId: result.turnId,
       stopReason: result.stopReason,
+      ...(result.failureReason ? { failureReason: result.failureReason } : {}),
+      ...(result.failureDetail ? { failureDetail: result.failureDetail } : {}),
       modelTurns: result.modelTurns,
       toolCalls: result.toolCalls,
       usage: result.usage,
