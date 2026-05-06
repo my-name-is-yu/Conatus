@@ -876,6 +876,147 @@ describe("agentloop phase 1", () => {
     expect(capturedSignalAborted).toBe(true);
   });
 
+  it("does not start mutating tools when the remaining wall-clock budget is exhausted", async () => {
+    const modelInfo = makeModelInfo();
+    let nowMs = 0;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const modelClient: AgentLoopModelClient = {
+      async getModelInfo(): Promise<AgentLoopModelInfo> {
+        return modelInfo;
+      },
+      async createTurn(): Promise<AgentLoopModelResponse> {
+        nowMs = 60;
+        return {
+          content: "",
+          toolCalls: [{
+            id: "call-1",
+            name: "apply_patch",
+            input: {
+              patch: [
+                "*** Begin Patch",
+                "*** Add File: wall-clock-budget.txt",
+                "+patched",
+                "*** End Patch",
+              ].join("\n"),
+            },
+          }],
+          stopReason: "tool_use",
+        };
+      },
+    };
+    const registry = new ToolRegistry();
+    registry.register(new ApplyPatchTool());
+    const router = new ToolRegistryAgentLoopToolRouter(registry);
+    const runtime = {
+      executeBatch: vi.fn(async (): Promise<AgentLoopToolOutput[]> => {
+        throw new Error("mutating tool runtime should not be called");
+      }),
+    };
+    const session = createAgentLoopSession();
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    try {
+      const result = await runner.run({
+        session,
+        turnId: "turn-1",
+        goalId: "goal-1",
+        taskId: "task-1",
+        cwd: process.cwd(),
+        model: modelInfo.ref,
+        modelInfo,
+        messages: [{ role: "user", content: "patch it" }],
+        outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+        budget: withDefaultBudget({ maxWallClockMs: 50, maxModelTurns: 4, maxToolCalls: 2 }),
+        toolPolicy: { allowedTools: ["apply_patch"] },
+        toolCallContext: {
+          cwd: process.cwd(),
+          goalId: "goal-1",
+          trustBalance: 0,
+          preApproved: true,
+          approvalFn: async () => false,
+        },
+      });
+
+      expect(runtime.executeBatch).not.toHaveBeenCalled();
+      expect(result.success).toBe(false);
+      expect(result.stopReason).toBe("timeout");
+      expect(result.toolCalls).toBe(0);
+      expect(result.finalText).toContain("wall-clock budget is exhausted");
+      expect(result.finalText).not.toContain("Calling apply_patch");
+      const persisted = await session.stateStore.load();
+      expect(persisted?.finalText).toContain("wall-clock budget is exhausted");
+      expect(persisted?.finalText).not.toContain("Calling apply_patch");
+      const events = await session.traceStore.list(session.traceId);
+      expect(events.some((event) => event.type === "tool_call_started")).toBe(false);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  it("does not start mutating tools when remaining wall-clock is below the minimum budget", async () => {
+    const modelInfo = makeModelInfo();
+    let nowMs = 0;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const modelClient: AgentLoopModelClient = {
+      async getModelInfo(): Promise<AgentLoopModelInfo> {
+        return modelInfo;
+      },
+      async createTurn(): Promise<AgentLoopModelResponse> {
+        nowMs = 100;
+        return {
+          content: "",
+          toolCalls: [{ id: "call-1", name: "apply_patch", input: { patch: "*** Begin Patch\n*** End Patch" } }],
+          stopReason: "tool_use",
+        };
+      },
+    };
+    const registry = new ToolRegistry();
+    registry.register(new ApplyPatchTool());
+    const router = new ToolRegistryAgentLoopToolRouter(registry);
+    const runtime = {
+      executeBatch: vi.fn(async (): Promise<AgentLoopToolOutput[]> => {
+        throw new Error("mutating tool runtime should not be called");
+      }),
+    };
+    const session = createAgentLoopSession();
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    try {
+      const result = await runner.run({
+        session,
+        turnId: "turn-1",
+        goalId: "goal-1",
+        taskId: "task-1",
+        cwd: process.cwd(),
+        model: modelInfo.ref,
+        modelInfo,
+        messages: [{ role: "user", content: "patch it" }],
+        outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+        budget: withDefaultBudget({ maxWallClockMs: 999, maxModelTurns: 4, maxToolCalls: 2 }),
+        toolPolicy: { allowedTools: ["apply_patch"] },
+        toolCallContext: {
+          cwd: process.cwd(),
+          goalId: "goal-1",
+          trustBalance: 0,
+          preApproved: true,
+          approvalFn: async () => false,
+        },
+      });
+
+      expect(runtime.executeBatch).not.toHaveBeenCalled();
+      expect(result.success).toBe(false);
+      expect(result.stopReason).toBe("timeout");
+      expect(result.toolCalls).toBe(0);
+      expect(result.finalText).toContain("below the 1000ms minimum");
+      expect(result.finalText).toContain("apply_patch");
+      expect(result.finalText).not.toContain("Calling apply_patch");
+      const events = await session.traceStore.list(session.traceId);
+      expect(events.some((event) => event.type === "tool_call_started")).toBe(false);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
   it("falls back to a text protocol when the LLM client cannot use native tools", async () => {
     const modelInfo = makeModelInfo({ capabilities: { ...defaultAgentLoopCapabilities, toolCalling: false } });
     const llmCalls: Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> = [];
