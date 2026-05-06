@@ -2,6 +2,10 @@ import { execFile } from "node:child_process";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { readFile } from "fs/promises";
+import type { CodeSearchTask, ContextBundle, RankedCandidate } from "../../code-search/contracts.js";
+import { getCodeSearchIndexes } from "../../code-search/indexes/index-store.js";
+import { SearchOrchestrator } from "../../code-search/orchestrator.js";
+import { ProgressiveReader } from "../../code-search/progressive-reader.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { ContextItem } from "./shared.js";
@@ -19,7 +23,9 @@ const DEFAULT_FILE_CONTENT_LINES = 100;
 const REDUCED_FILE_CONTENT_LINES = 50;
 const MAX_GREP_MATCHES = 5;
 const MAX_FILE_READS_PER_TERM = 3;
-const MAX_CHAT_KEYWORDS = 3;
+const MAX_CHAT_CODE_SEARCH_CANDIDATES = 5;
+const MAX_CHAT_CODE_READ_RANGES = 3;
+const MAX_CHAT_CODE_READ_TOKENS = 4000;
 const TEST_STATUS_LABEL = "[Test status]";
 const TEST_FAILURE_STATUS_LABEL = "[Test status (failures detected)]";
 const WORKSPACE_GIT_LABEL = "[Recent changes: git diff HEAD~1 --stat]";
@@ -50,6 +56,20 @@ type CodeSearchCandidate = {
 
 type CodeSearchBundle = {
   ranges?: Array<{ file: string; content: string }>;
+};
+
+type CodeSearchToolData = {
+  queryId?: string;
+  candidates?: CodeSearchCandidate[];
+  candidateIds?: string[];
+};
+
+type ChatContextQueryPlan = {
+  task: string;
+  intent: NonNullable<CodeSearchTask["intent"]>;
+  budget: NonNullable<CodeSearchTask["budget"]>;
+  maxReadRanges: number;
+  maxReadTokens: number;
 };
 
 function createCollector(goalId: string, options?: CollectorOptions): ContextCollector {
@@ -172,6 +192,112 @@ async function loadCodeSearchParts(
     `[CodeSearch: ${range.file}]`,
     sanitizeNumberedContent(range.content),
   ]);
+}
+
+function buildChatContextQueryPlan(taskDescription: string): ChatContextQueryPlan {
+  return {
+    task: taskDescription.trim() || "Collect workspace context for the current chat turn",
+    intent: "unknown",
+    budget: { maxRerankCandidates: 8, maxCandidatesPerRetriever: 20 },
+    maxReadRanges: MAX_CHAT_CODE_READ_RANGES,
+    maxReadTokens: MAX_CHAT_CODE_READ_TOKENS,
+  };
+}
+
+function formatCodeSearchBundleParts(bundle: Pick<ContextBundle, "ranges"> | CodeSearchBundle): string[] {
+  return (bundle.ranges ?? []).flatMap((range) => [
+    `[CodeSearch: ${range.file}]`,
+    sanitizeNumberedContent(range.content),
+  ]);
+}
+
+async function loadToolChatCodeSearchParts(
+  collector: ContextCollector,
+  plan: ChatContextQueryPlan
+): Promise<string[]> {
+  if (!collector.toolExecutor) {
+    return [];
+  }
+
+  const searchResult = await collector.toolExecutor.execute(
+    "code_search",
+    {
+      task: plan.task,
+      intent: plan.intent,
+      budget: plan.budget,
+      outputLimit: MAX_CHAT_CODE_SEARCH_CANDIDATES,
+    },
+    collector.ctx
+  ).catch(() => null);
+
+  const searchData =
+    searchResult?.success && searchResult.data && typeof searchResult.data === "object"
+      ? (searchResult.data as CodeSearchToolData)
+      : null;
+  const candidates = searchData?.candidates?.slice(0, MAX_CHAT_CODE_SEARCH_CANDIDATES) ?? [];
+  const candidateIds = (searchData?.candidateIds ?? candidates.map((candidate) => candidate.id))
+    .slice(0, MAX_CHAT_CODE_SEARCH_CANDIDATES);
+  const queryId = searchData?.queryId;
+  if (!queryId && candidates.length === 0) {
+    return [];
+  }
+
+  const readResult = await collector.toolExecutor.execute(
+    "code_read_context",
+    {
+      queryId,
+      candidates: queryId ? undefined : candidates,
+      candidateIds,
+      phase: "locate",
+      maxReadRanges: plan.maxReadRanges,
+      maxReadTokens: plan.maxReadTokens,
+    },
+    collector.ctx
+  ).catch(() => null);
+
+  const bundle =
+    readResult?.success && readResult.data && typeof readResult.data === "object"
+      ? (readResult.data as CodeSearchBundle)
+      : null;
+  return bundle ? formatCodeSearchBundleParts(bundle) : [];
+}
+
+async function loadDirectChatCodeSearchParts(
+  collector: ContextCollector,
+  plan: ChatContextQueryPlan
+): Promise<string[]> {
+  const session = await new SearchOrchestrator(collector.cwd).searchWithState({
+    task: plan.task,
+    intent: plan.intent,
+    cwd: collector.cwd,
+    budget: plan.budget,
+  });
+  const candidates: RankedCandidate[] = session.candidates.slice(0, MAX_CHAT_CODE_SEARCH_CANDIDATES);
+  if (candidates.length === 0) {
+    return [];
+  }
+  const indexes = await getCodeSearchIndexes(collector.cwd);
+  const bundle = await new ProgressiveReader(collector.cwd, indexes).read(candidates, {
+    queryId: session.queryId,
+    candidateIds: candidates.map((candidate) => candidate.id),
+    phase: "locate",
+    maxReadRanges: plan.maxReadRanges,
+    maxReadTokens: plan.maxReadTokens,
+  });
+  return formatCodeSearchBundleParts(bundle);
+}
+
+async function loadChatCodeSearchParts(
+  collector: ContextCollector,
+  plan: ChatContextQueryPlan
+): Promise<string[]> {
+  try {
+    return collector.toolExecutor
+      ? await loadToolChatCodeSearchParts(collector, plan)
+      : await loadDirectChatCodeSearchParts(collector, plan);
+  } catch {
+    return [];
+  }
 }
 
 async function collectRecentChangesContent(
@@ -411,10 +537,7 @@ export async function collectChatContextParts(
   options?: Pick<CollectorOptions, "toolExecutor" | "toolContext">
 ): Promise<string[]> {
   const collector = createCollector("context-provider", { cwd, ...options });
-  const keywords = taskDescription
-    .split(/\s+/)
-    .filter((word) => word.length >= 4)
-    .slice(0, MAX_CHAT_KEYWORDS);
+  const queryPlan = buildChatContextQueryPlan(taskDescription);
   const parts: string[] = [];
 
   const recentChanges = await collectRecentChangesContent(collector, cwd);
@@ -422,25 +545,9 @@ export async function collectChatContextParts(
     parts.push(`${recentChanges.label}\n${recentChanges.content}`);
   }
 
-  for (const keyword of keywords) {
-    try {
-      const files = await findMatchingFiles(collector, cwd, keyword, MAX_GREP_MATCHES);
-      for (const filePath of files.slice(0, MAX_FILE_READS_PER_TERM)) {
-        try {
-          const lines = await readFileExcerpt(collector, filePath, REDUCED_FILE_CONTENT_LINES);
-          if (lines.length === 0) {
-            continue;
-          }
-          parts.push(
-            `[File: ${toRelativePath(cwd, filePath)} (keyword: ${keyword})]\n${lines.join("\n")}`
-          );
-        } catch {
-          // skip unreadable files
-        }
-      }
-    } catch {
-      // grep no match — ignore
-    }
+  const codeSearchParts = await loadChatCodeSearchParts(collector, queryPlan);
+  if (codeSearchParts.length > 0) {
+    parts.push(`[context_query "chat" — code_search]\n${codeSearchParts.join("\n\n")}`);
   }
 
   return parts;

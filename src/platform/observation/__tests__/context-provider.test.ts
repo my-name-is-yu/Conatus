@@ -70,6 +70,24 @@ function createMockExecutor(overrides: Record<string, unknown> = {}): ToolExecut
       const defaults: Record<string, unknown> = {
         grep: { success: true, data: "src/foo.ts\nsrc/bar.ts", summary: "2 files", durationMs: 10 },
         read: { success: true, data: "1\tconst x = 1;\n2\texport default x;", summary: "2 lines", durationMs: 5 },
+        code_search: {
+          success: true,
+          data: {
+            queryId: "query-chat-1",
+            candidates: [{ id: "cand-1", file: "src/foo.ts" }],
+            candidateIds: ["cand-1"],
+          },
+          summary: "1 candidate",
+          durationMs: 5,
+        },
+        code_read_context: {
+          success: true,
+          data: {
+            ranges: [{ file: "src/foo.ts", content: "1\tconst x = 1;\n2\texport default x;" }],
+          },
+          summary: "1 range",
+          durationMs: 5,
+        },
         git_log: { success: true, data: ["abc1234 feat: add feature X", "def5678 fix: resolve bug Y"], summary: "2 commits", durationMs: 8 },
         "test-runner": { success: true, data: { passed: 10, failed: 0, skipped: 0, total: 10, success: true, rawOutput: "✓ 10 tests passed\nDone in 1.2s", duration: 1200 }, summary: "10 passed", durationMs: 1200 },
       };
@@ -613,7 +631,7 @@ describe("buildChatContext with toolExecutor", () => {
     vi.clearAllMocks();
   });
 
-  it("calls grep/read/git_log for chat context (no test-runner)", async () => {
+  it("plans chat context through code_search/code_read_context without keyword grep", async () => {
     const executor = createMockExecutor();
     const executeFn = executor.execute as ReturnType<typeof vi.fn>;
 
@@ -625,8 +643,10 @@ describe("buildChatContext with toolExecutor", () => {
     const calledTools = executeFn.mock.calls.map((c: unknown[]) => c[0]);
     expect(calledTools).toContain("git_log");
     expect(calledTools).not.toContain("test-runner");
-    expect(calledTools).toContain("grep");
-    expect(calledTools).toContain("read");
+    expect(calledTools).toContain("code_search");
+    expect(calledTools).toContain("code_read_context");
+    expect(calledTools).not.toContain("grep");
+    expect(calledTools).not.toContain("read");
   });
 
   it("includes working directory header in output", async () => {
@@ -651,10 +671,50 @@ describe("buildChatContext with toolExecutor", () => {
     expect(result).toContain("abc1234 feat: add feature X");
   });
 
+  it("passes paraphrased chat text as a structured code_search task instead of split grep terms", async () => {
+    const executor = createMockExecutor();
+    const executeFn = executor.execute as ReturnType<typeof vi.fn>;
+    const task = "The login callback keeps dropping people after it returns";
+
+    const result = await buildChatContext(task, projectRoot, {
+      toolExecutor: executor,
+    });
+
+    const codeSearchCall = executeFn.mock.calls.find((call: unknown[]) => call[0] === "code_search");
+    expect(codeSearchCall?.[1]).toMatchObject({
+      task,
+      intent: "unknown",
+      budget: { maxRerankCandidates: 8, maxCandidatesPerRetriever: 20 },
+    });
+    expect((codeSearchCall?.[1] as { queryTerms?: string[] }).queryTerms).toBeUndefined();
+    expect(executeFn.mock.calls.some((call: unknown[]) => call[0] === "grep")).toBe(false);
+    expect(result).toContain("[context_query \"chat\"");
+    expect(result).toContain("[CodeSearch: src/foo.ts]");
+  });
+
+  it("keeps ambiguous multilingual chat grounding out of keyword grep", async () => {
+    const executor = createMockExecutor();
+    const executeFn = executor.execute as ReturnType<typeof vi.fn>;
+    const task = "認証の戻り後に落ちるっぽい。auth という単語だけでgrepしないで";
+
+    await buildChatContext(task, projectRoot, {
+      toolExecutor: executor,
+    });
+
+    const codeSearchCall = executeFn.mock.calls.find((call: unknown[]) => call[0] === "code_search");
+    expect(codeSearchCall?.[1]).toMatchObject({ task, intent: "unknown" });
+    expect(executeFn.mock.calls.some((call: unknown[]) => call[0] === "grep")).toBe(false);
+    expect(executeFn.mock.calls.some((call: unknown[]) =>
+      call[0] === "grep" && (call[1] as { pattern?: string }).pattern === "auth"
+    )).toBe(false);
+  });
+
   it("skips gracefully when all tool calls fail", async () => {
     const executor = createMockExecutor({
       grep: { success: false, data: null, summary: "fail", durationMs: 0 },
       read: { success: false, data: null, summary: "fail", durationMs: 0 },
+      code_search: { success: false, data: null, summary: "fail", durationMs: 0 },
+      code_read_context: { success: false, data: null, summary: "fail", durationMs: 0 },
       git_log: { success: false, data: null, summary: "fail", durationMs: 0 },
       "test-runner": { success: false, data: null, summary: "fail", durationMs: 0 },
     });
