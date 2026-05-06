@@ -13,6 +13,11 @@ import type { AgentLoopCompactionPhase, AgentLoopCompactionReason, AgentLoopComp
 import { ExtractiveAgentLoopCompactor } from "./agent-loop-compactor.js";
 import { classifyAgentLoopCommandResult } from "./agent-loop-command-classifier.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
+import type { FunctionToolCallResponseItem } from "./response-item.js";
+import {
+  assistantTextResponseItem,
+  functionToolCallResponseItem,
+} from "./response-item.js";
 
 export interface BoundedAgentLoopRunnerDeps {
   modelClient: AgentLoopModelClient;
@@ -315,7 +320,9 @@ export class BoundedAgentLoopRunner {
 
       const { results: toolResults, timedOut: toolBatchTimedOut } = await this.executeToolBatchWithinBudget(response.toolCalls, turn, startedAt);
       for (const result of toolResults) {
-        calledTools.add(result.toolName);
+        if (result.execution?.status !== "not_executed") {
+          calledTools.add(result.toolName);
+        }
         toolCalls++;
         if (result.success) consecutiveToolErrors = 0;
         else consecutiveToolErrors++;
@@ -686,6 +693,15 @@ export class BoundedAgentLoopRunner {
         phase: response.toolCalls.length > 0 ? "commentary" : "final_answer",
       }] : [],
       toolCalls: response.toolCalls,
+      responseItems: [
+        ...(response.content || response.toolCalls.length > 0
+          ? [assistantTextResponseItem(
+              response.content || `Calling ${response.toolCalls.map((call) => call.name).join(", ")}`,
+              response.toolCalls.length > 0 ? "commentary" : "final_answer",
+            )]
+          : []),
+        ...response.toolCalls.map((call) => functionToolCallResponseItem(call)),
+      ],
       stopReason: response.stopReason,
       responseCompleted: true,
       usage: response.usage,
@@ -693,9 +709,21 @@ export class BoundedAgentLoopRunner {
   }
 
   private protocolToResponse(protocol: AgentLoopModelTurnProtocol): { content: string; toolCalls: AgentLoopModelTurnProtocol["toolCalls"] } {
+    const responseItemText = protocol.responseItems
+      ?.filter((item) => item.type === "assistant_text")
+      .map((item) => item.content)
+      .filter(Boolean)
+      .join("\n");
+    const responseItemToolCalls = protocol.responseItems
+      ?.filter((item): item is FunctionToolCallResponseItem => item.type === "function_tool_call")
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        input: item.arguments,
+      }));
     return {
-      content: protocol.assistant.map((item) => item.content).filter(Boolean).join("\n"),
-      toolCalls: protocol.toolCalls,
+      content: protocol.assistant.map((item) => item.content).filter(Boolean).join("\n") || responseItemText || "",
+      toolCalls: protocol.responseItems ? responseItemToolCalls ?? [] : protocol.toolCalls,
     };
   }
 

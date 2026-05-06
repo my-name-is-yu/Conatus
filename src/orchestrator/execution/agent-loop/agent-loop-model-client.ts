@@ -19,6 +19,10 @@ import {
   buildPromptedToolProtocolSystemPrompt,
   extractPromptedToolCalls,
 } from "./prompted-tool-protocol.js";
+import {
+  assistantTextResponseItem,
+  functionToolCallResponseItem,
+} from "./response-item.js";
 
 export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
   constructor(
@@ -69,6 +73,10 @@ export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
     return {
       assistant,
       toolCalls,
+      responseItems: [
+        ...assistant.map((item) => assistantTextResponseItem(item.content, item.phase)),
+        ...toolCalls.map((call) => functionToolCallResponseItem(call)),
+      ],
       stopReason: response.stop_reason,
       responseCompleted: true,
       usage: {
