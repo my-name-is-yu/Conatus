@@ -1,4 +1,5 @@
 import { extractBashCommand } from "./bash-mode.js";
+import { isExactSlashCommandInput } from "../../base/protocol/exact-protocol.js";
 
 export type FreeformInputRoute = "daemon_goal_chat" | "chat_runner" | "unavailable";
 
@@ -64,11 +65,11 @@ export function resolveTuiInputAction(input: string, context: TuiInputActionCont
     return { kind: "pending_run_spec_confirmation", input };
   }
 
-  if (input.startsWith("/") && context.hasStandaloneSlashHandlers) {
+  if (isExactSlashCommandInput(input) && context.hasStandaloneSlashHandlers) {
     return { kind: "standalone_slash", input, trimmedInput };
   }
 
-  if (input.startsWith("/") && context.isDaemonMode) {
+  if (isExactSlashCommandInput(input) && context.isDaemonMode) {
     return { kind: "daemon_slash", input, trimmedInput };
   }
 

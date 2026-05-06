@@ -41,6 +41,7 @@ import type { TuiChatSurface } from "./chat-surface.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import { ShellTool } from "../../tools/system/ShellTool/ShellTool.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
+import { parseExactSlashCommandToken } from "../../base/protocol/exact-protocol.js";
 import { applyChatEventToMessages } from "../chat/chat-event-state.js";
 import { setActiveCursorEscape } from "./cursor-tracker.js";
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
@@ -158,8 +159,8 @@ const CHAT_RUNNER_OWNED_COMMANDS = new Set([
 ]);
 
 export function isChatRunnerOwnedSlashCommand(input: string): boolean {
-  const command = input.trim().toLowerCase().split(/\s+/)[0] ?? "";
-  return CHAT_RUNNER_OWNED_COMMANDS.has(command);
+  const parsed = parseExactSlashCommandToken(input);
+  return parsed ? CHAT_RUNNER_OWNED_COMMANDS.has(parsed.command) : false;
 }
 
 export function deriveDaemonGoalIdFromActiveGoals(

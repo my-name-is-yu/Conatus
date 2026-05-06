@@ -73,6 +73,24 @@ describe("resolveTuiInputAction", () => {
     });
   });
 
+  it("does not route freeform paraphrases through slash command fallback", () => {
+    expect(resolveTuiInputAction("statusを見せて", baseContext({
+      isDaemonMode: true,
+      daemonGoalId: "goal-current",
+    }))).toMatchObject({
+      kind: "freeform",
+      route: "chat_runner",
+    });
+    expect(resolveTuiInputAction("please use /status if useful", baseContext({
+      hasChatRunner: false,
+      isDaemonMode: true,
+      daemonGoalId: "goal-current",
+    }))).toMatchObject({
+      kind: "freeform",
+      route: "daemon_goal_chat",
+    });
+  });
+
   it("keeps AgentLoop-capable chat surfaces on ChatRunner before daemon goal fallback", () => {
     expect(resolveTuiInputAction("Run this Kaggle competition", baseContext({
       isDaemonMode: true,

@@ -1686,6 +1686,17 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
+    it("keeps freeform command paraphrases on the model path", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      const result = await runner.execute("Can you show me the status of this repo?", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe("Task completed successfully.");
+      expect(adapter.execute).toHaveBeenCalledOnce();
+    });
+
     it("slash command comparison is case-insensitive", async () => {
       const adapter = makeMockAdapter();
       const runner = new ChatRunner(makeDeps({ adapter }));

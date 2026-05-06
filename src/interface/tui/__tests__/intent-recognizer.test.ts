@@ -129,6 +129,22 @@ describe("IntentRecognizer — exact command grammar", () => {
     const result = await recognizer.recognize("/Dashboard");
     expect(result.intent).toBe("dashboard");
   });
+
+  it("fails closed on unknown slash commands without classifier fallback", async () => {
+    const llm = makeMockLLMClient(JSON.stringify({
+      intent: "loop_start",
+      confidence: 0.96,
+      params: { goalId: "goal-from-unknown-slash" },
+    }));
+    const classifierBackedRecognizer = new IntentRecognizer(llm);
+
+    const result = await classifierBackedRecognizer.recognize("/stats please start goal-from-unknown-slash");
+
+    expect(llm.callCount).toBe(0);
+    expect(result.intent).toBe("unknown");
+    expect(result.source).toBe("command");
+    expect(result.confidence).toBe(1);
+  });
 });
 
 // ─── Natural-language classifier ───
