@@ -61,6 +61,7 @@ import type {
   ConversationInputModality,
   ConversationOutputMode,
 } from "../../runtime/types/companion.js";
+import { normalizeUserInput, type UserInput } from "./user-input.js";
 
 export interface CrossPlatformChatSessionOptions {
   /**
@@ -105,10 +106,13 @@ export interface CrossPlatformChatSessionOptions {
   metadata?: Record<string, unknown>;
   /** Optional streaming callback for ChatEvent updates. */
   onEvent?: ChatEventHandler;
+  /** Canonical typed user input. If omitted, text is preserved as one text item. */
+  userInput?: UserInput;
 }
 
 export interface CrossPlatformIncomingChatMessage {
   text: string;
+  userInput?: UserInput;
   channel?: ChatIngressChannel;
   identity_key?: string;
   platform?: string;
@@ -397,6 +401,7 @@ export class CrossPlatformChatSessionManager {
         ...(options.runtimeControl ? { runtime_control_explicit: true } : {}),
       },
       onEvent: options.onEvent,
+      userInput: options.userInput,
     });
     const approvalReply = await this.tryResolveConversationalApprovalReply(ingress);
     if (approvalReply) {
@@ -614,6 +619,7 @@ export class CrossPlatformChatSessionManager {
       ...(goalId ? { goal_id: goalId } : {}),
       ...(userId ? { user_id: userId } : {}),
       text: input.text,
+      userInput: normalizeUserInput(input.userInput, input.text),
       actor: normalizeActor(channel, {
         platform,
         conversation_id: conversationId,

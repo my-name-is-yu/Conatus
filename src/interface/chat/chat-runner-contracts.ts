@@ -25,6 +25,7 @@ import type { RunSpecConfirmationState } from "./chat-history.js";
 import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { ChatHistory } from "./chat-history.js";
 import type { EventSubscriber } from "./event-subscriber.js";
+import type { UserInput } from "./user-input.js";
 
 export type ChatRunnerTelegramSetupState = "unconfigured" | "partially_configured" | "configured";
 
@@ -104,6 +105,7 @@ export interface ChatRunnerExecutionOptions {
   selectedRoute?: SelectedChatRoute;
   runtimeControlContext?: RuntimeControlChatContext | null;
   goalId?: string;
+  userInput?: UserInput;
 }
 
 export interface PendingTendState {

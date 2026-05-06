@@ -14,6 +14,7 @@ export async function dispatchGatewayChatInput(
     const port = await portGetter();
     const result = await port.processIncomingMessage({
       text: input.text,
+      userInput: input.userInput,
       platform: input.platform,
       identity_key: input.identity_key,
       conversation_id: input.conversation_id,

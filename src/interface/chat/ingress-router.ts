@@ -4,6 +4,7 @@ import type { RuntimeControlIntent } from "../../runtime/control/index.js";
 import type { FreeformRouteIntent } from "./freeform-route-classifier.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 import type { RunSpec } from "../../runtime/run-spec/index.js";
+import { normalizeUserInput, type UserInput } from "./user-input.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -42,6 +43,7 @@ export interface ChatIngressMessage {
   user_id?: string;
   user_name?: string;
   text: string;
+  userInput: UserInput;
   actor: RuntimeControlActor;
   runtimeControl: ChatIngressRuntimeControl;
   companion?: CompanionRuntimeContract;
@@ -318,6 +320,7 @@ function inferActorSurface(channel: IngressChannel): RuntimeControlActor["surfac
 
 export interface NormalizeLegacyIngressInput {
   text: string;
+  userInput?: UserInput;
   channel?: IngressChannel;
   ingress_id?: string;
   received_at?: string;
@@ -357,6 +360,7 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
     ...(input.metadata ?? {}),
     ...(goalId ? { goal_id: goalId } : {}),
   };
+  const userInput = normalizeUserInput(input.userInput, input.text);
   const preapproved = input.runtimeControl?.approvalMode === "preapproved"
     || input.runtimeControl?.approval_mode === "preapproved"
     || metadata["runtime_control_approved"] === true;
@@ -398,6 +402,7 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
     ...(userId ? { user_id: userId } : {}),
     ...(input.user_name ? { user_name: input.user_name } : {}),
     text: input.text,
+    userInput,
     actor,
     runtimeControl: {
       allowed,
