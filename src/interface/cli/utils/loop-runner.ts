@@ -67,15 +67,17 @@ export async function runLoopWithSignals(
   coreLoop: CoreLoop,
   goalId: string
 ): Promise<LoopResult> {
+  const controller = new AbortController();
   const shutdown = () => {
     console.log("\nStopping loop...");
     coreLoop.stop();
+    controller.abort();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 
   try {
-    return await coreLoop.run(goalId);
+    return await coreLoop.run(goalId, { abortSignal: controller.signal });
   } finally {
     process.off("SIGINT", shutdown);
     process.off("SIGTERM", shutdown);

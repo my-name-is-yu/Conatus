@@ -501,7 +501,9 @@ describe("improve subcommand — loop execution", () => {
     consoleSpy.mockRestore();
 
     expect(code).toBe(0);
-    expect(mockRun).toHaveBeenCalledWith("goal-auto");
+    expect(mockRun).toHaveBeenCalledWith("goal-auto", {
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("runs CoreLoop when --yes flag is provided", async () => {
@@ -526,7 +528,9 @@ describe("improve subcommand — loop execution", () => {
     consoleSpy.mockRestore();
 
     expect(code).toBe(0);
-    expect(mockRun).toHaveBeenCalledWith("goal-yes");
+    expect(mockRun).toHaveBeenCalledWith("goal-yes", {
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("propagates --max to CoreLoop maxIterations when --yes is provided", async () => {

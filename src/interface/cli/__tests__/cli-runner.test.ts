@@ -569,7 +569,9 @@ describe("run subcommand", async () => {
 
     await runCLI("run", "--goal", "goal-abc");
 
-    expect(mockRun).toHaveBeenCalledWith("goal-abc");
+    expect(mockRun).toHaveBeenCalledWith("goal-abc", {
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("persists run --workspace as an absolute path before later workspace resolution", async () => {
@@ -786,7 +788,9 @@ describe("run subcommand", async () => {
     const code = await runCLI("run", "--goal", "g-resident-recover", "--resident", "--yes");
 
     expect(code).toBe(0);
-    expect(mockRun).toHaveBeenCalledWith("g-resident-recover");
+    expect(mockRun).toHaveBeenCalledWith("g-resident-recover", {
+      abortSignal: expect.any(AbortSignal),
+    });
     const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
     expect(output).toContain("Recovered interrupted task executions for 1 goal(s) before resident loop startup.");
 
@@ -873,7 +877,9 @@ describe("--yes flag position independence", async () => {
     const code = await runCLI("--yes", "run", "--goal", "g-yes-before");
 
     expect(code).toBe(0);
-    expect(mockRun).toHaveBeenCalledWith("g-yes-before");
+    expect(mockRun).toHaveBeenCalledWith("g-yes-before", {
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("honours --yes placed after --goal (pulseed run --goal <id> --yes)", async () => {
@@ -888,7 +894,9 @@ describe("--yes flag position independence", async () => {
     const code = await runCLI("run", "--goal", "g-yes-after", "--yes");
 
     expect(code).toBe(0);
-    expect(mockRun).toHaveBeenCalledWith("g-yes-after");
+    expect(mockRun).toHaveBeenCalledWith("g-yes-after", {
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("honours -y shorthand placed before the subcommand", async () => {
@@ -902,7 +910,9 @@ describe("--yes flag position independence", async () => {
     const code = await runCLI("-y", "run", "--goal", "g-y-before");
 
     expect(code).toBe(0);
-    expect(mockRun).toHaveBeenCalledWith("g-y-before");
+    expect(mockRun).toHaveBeenCalledWith("g-y-before", {
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("--yes before subcommand does not break exit-code when loop fails", async () => {
