@@ -3,7 +3,7 @@ import { cwd as processCwd } from "node:process";
 import type { Task } from "../../../base/types/task.js";
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
-import type { AgentLoopModelInfo, AgentLoopModelRef } from "./agent-loop-model.js";
+import type { AgentLoopModelInfo, AgentLoopModelRef, AgentLoopReasoningEffort } from "./agent-loop-model.js";
 import type { AgentLoopCompletionValidationResult } from "./agent-loop-result.js";
 import type { AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
@@ -12,7 +12,7 @@ import { withDefaultBudget } from "./agent-loop-turn-context.js";
 import { TaskAgentLoopOutputSchema, type TaskAgentLoopOutput } from "./task-agent-loop-result.js";
 import { buildAgentLoopBaseInstructions } from "./agent-loop-prompts.js";
 import { isTaskRelevantVerificationCommand } from "./task-agent-loop-verification.js";
-import type { SubagentRole } from "./execution-policy.js";
+import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 
 export interface TaskAgentLoopContextInput {
   task: Task;
@@ -30,12 +30,16 @@ export interface TaskAgentLoopContextInput {
   resumeState?: AgentLoopSessionState;
   abortSignal?: AbortSignal;
   role?: SubagentRole;
+  profileName?: string;
+  reasoningEffort?: AgentLoopReasoningEffort;
+  executionPolicy?: ExecutionPolicy;
 }
 
 export function buildTaskAgentLoopTurnContext(
   input: TaskAgentLoopContextInput,
 ): AgentLoopTurnContext<TaskAgentLoopOutput> {
   const cwd = input.cwd ?? processCwd();
+  const executionPolicy = input.toolCallContext?.executionPolicy ?? input.executionPolicy;
   const baseSystemPrompt = buildAgentLoopBaseInstructions({
     mode: "task",
     extraRules: [
@@ -59,9 +63,12 @@ export function buildTaskAgentLoopTurnContext(
     turnId: randomUUID(),
     goalId: input.task.goal_id,
     taskId: input.task.id,
+    ...(input.profileName ? { profileName: input.profileName } : {}),
     cwd,
     model: input.model,
     modelInfo: input.modelInfo,
+    ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+    ...(executionPolicy ? { executionPolicy } : {}),
     messages: [
       {
         role: "system",
@@ -108,6 +115,7 @@ export function buildTaskAgentLoopTurnContext(
       trustBalance: 0,
       preApproved: true,
       approvalFn: async () => false,
+      ...(executionPolicy ? { executionPolicy } : {}),
       agentRole: input.role,
       ...input.toolCallContext,
     },
