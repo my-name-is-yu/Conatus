@@ -171,9 +171,12 @@ import { GoalNegotiator, EthicsRejectedError } from "../../../orchestrator/goal/
 import { GoalRefiner } from "../../../orchestrator/goal/goal-refiner.js";
 import { getPulseedVersion } from "../../../base/utils/pulseed-meta.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
+import { dispatchCommand } from "../cli-command-registry.js";
+import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { DaemonClient } from "../../../runtime/daemon/client.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
 import { createRelationshipProfileChangeProposal } from "../../../platform/profile/profile-change-proposal.js";
+import { resolveTaskWorkspacePath } from "../../../orchestrator/execution/task/task-workspace.js";
 import type { LoopResult } from "../../../orchestrator/loop/durable-loop.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
@@ -567,6 +570,43 @@ describe("run subcommand", async () => {
     await runCLI("run", "--goal", "goal-abc");
 
     expect(mockRun).toHaveBeenCalledWith("goal-abc");
+  });
+
+  it("persists run --workspace as an absolute path before later workspace resolution", async () => {
+    const launchDir = fs.mkdtempSync(path.join(tmpDir, "launch-"));
+    const daemonDir = fs.mkdtempSync(path.join(tmpDir, "daemon-"));
+    const workspaceDir = path.join(launchDir, "relative-workspace");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    await stateManager.saveGoal(makeGoal({ id: "g-relative-workspace" }));
+    const characterConfigManager = new CharacterConfigManager(stateManager);
+
+    const mockRun = vi.fn().mockImplementation(async () => {
+      const savedGoal = await stateManager.loadGoal("g-relative-workspace");
+      expect(savedGoal?.constraints).toContain(`workspace_path:${workspaceDir}`);
+
+      const resolved = await resolveTaskWorkspacePath({
+        stateManager,
+        task: makeTask({ goal_id: "g-relative-workspace" }),
+        fallbackCwd: daemonDir,
+      });
+      expect(resolved).toBe(workspaceDir);
+      return makeLoopResult({ goalId: "g-relative-workspace" });
+    });
+    vi.mocked(CoreLoop).mockImplementation(
+      function() { return { run: mockRun, stop: vi.fn(), setTimeHorizonEngine: vi.fn() } as unknown as CoreLoop; }
+    );
+
+    const code = await dispatchCommand(
+      ["run", "--goal", "g-relative-workspace", "--workspace", "relative-workspace"],
+      false,
+      stateManager,
+      characterConfigManager,
+      { value: null },
+      launchDir,
+    );
+
+    expect(code).toBe(0);
+    expect(mockRun).toHaveBeenCalledWith("g-relative-workspace");
   });
 
   it("exits with code 0 when finalStatus is completed", async () => {

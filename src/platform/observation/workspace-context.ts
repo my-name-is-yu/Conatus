@@ -8,6 +8,7 @@ import { SearchOrchestrator } from "../code-search/orchestrator.js";
 import { ProgressiveReader } from "../code-search/progressive-reader.js";
 import { dimensionNameToSearchTerms } from "./context-provider.js";
 import type { DimensionObservationMapping } from "../../base/types/goal.js";
+import { extractWorkspacePathConstraint, resolveWorkspacePath } from "../../base/utils/workspace-path.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -193,9 +194,9 @@ export function createWorkspaceContextProvider(
     let effectiveWorkDir = workDir;
     if (getGoalConstraints) {
       const constraints = (await getGoalConstraints(goalId)) ?? [];
-      const workspaceConstraint = constraints.find((c) => c.startsWith("workspace_path:"));
-      if (workspaceConstraint) {
-        effectiveWorkDir = workspaceConstraint.slice("workspace_path:".length);
+      const workspacePath = extractWorkspacePathConstraint(constraints);
+      if (workspacePath) {
+        effectiveWorkDir = resolveWorkspacePath(workspacePath, workDir);
       }
     }
 

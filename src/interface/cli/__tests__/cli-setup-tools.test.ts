@@ -92,4 +92,28 @@ describe("CLI buildDeps tool wiring", () => {
     expect(result.success).toBe(true);
     expect(result.artifacts?.some((artifact) => artifact.endsWith("package.json"))).toBe(true);
   });
+
+  it("normalizes a relative workspace before wiring CLI execution dependencies", async () => {
+    const stateManager = new StateManager(tempDir);
+    const characterConfigManager = new CharacterConfigManager(stateManager);
+    const launchDir = fs.mkdtempSync(path.join(tempDir, "launch-"));
+    const workspaceDir = path.join(launchDir, "workspace");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.writeFileSync(path.join(workspaceDir, "package.json"), "{}\n", "utf-8");
+
+    const deps = await buildDeps(
+      stateManager,
+      characterConfigManager,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "workspace",
+      launchDir,
+    );
+
+    const coreLoopDeps = (deps.coreLoop as unknown as { deps: Record<string, unknown> }).deps;
+    expect((coreLoopDeps["taskLifecycle"] as { revertCwd?: unknown }).revertCwd).toBe(workspaceDir);
+    expect((coreLoopDeps["taskLifecycle"] as { healthCheckCwd?: unknown }).healthCheckCwd).toBe(workspaceDir);
+  });
 });

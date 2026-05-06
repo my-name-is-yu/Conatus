@@ -4,6 +4,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { getDatasourcesDir } from "../../../base/utils/paths.js";
 import { writeJsonFile } from "../../../base/utils/json-io.js";
+import { extractWorkspacePathConstraint, resolveWorkspacePath } from "../../../base/utils/workspace-path.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
@@ -280,9 +281,7 @@ export async function autoRegisterFileExistenceDataSources(
     const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
     await fsp.mkdir(datasourcesDir, { recursive: true });
 
-    const workspacePath = constraints
-      ?.find((c) => c.startsWith("workspace_path:"))
-      ?.slice("workspace_path:".length) ?? process.cwd();
+    const workspacePath = resolveWorkspacePath(extractWorkspacePathConstraint(constraints) ?? process.cwd());
 
     const existing = await loadExistingDatasources(datasourcesDir);
     if (fileExistenceDatasourceExists(existing, Object.keys(dimensionMapping), workspacePath, goalId)) {
@@ -350,8 +349,7 @@ export async function autoRegisterShellDataSources(
     const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
     await fsp.mkdir(datasourcesDir, { recursive: true });
 
-    const wsConstraint = constraints?.find((c) => c.startsWith("workspace_path:"));
-    const workspacePath = wsConstraint ? wsConstraint.slice("workspace_path:".length) : process.cwd();
+    const workspacePath = resolveWorkspacePath(extractWorkspacePathConstraint(constraints) ?? process.cwd());
 
     const existing = await loadExistingDatasources(datasourcesDir);
     if (shellDatasourceExists(existing, Object.keys(matchedCommands), workspacePath, goalId)) {

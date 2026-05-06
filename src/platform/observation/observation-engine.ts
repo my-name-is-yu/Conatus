@@ -41,6 +41,7 @@ import { runSelfReportStage } from "./engine/observe-self-report.js";
 import { createGoalWorkspaceArtifactMetricDataSource } from "../../adapters/datasources/artifact-metric-datasource.js";
 import type { ArtifactMetricFreshnessScope } from "../../adapters/datasources/artifact-metric-datasource.js";
 import { isArtifactContractRequired } from "../../orchestrator/execution/task/task-artifact-contract.js";
+import { extractWorkspacePathConstraint, resolveWorkspacePath } from "../../base/utils/workspace-path.js";
 
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
@@ -268,7 +269,10 @@ export class ObservationEngine {
     const fetchWorkspaceContext = createWorkspaceContextFetcher(this.contextProvider, this.logger);
 
     // Workspace path for pre-checker (extracted from contextProvider key heuristic)
-    const workspacePath = goal.constraints.find((c) => c.startsWith("workspace_path:"))?.slice("workspace_path:".length);
+    const workspacePathConstraint = extractWorkspacePathConstraint(goal.constraints);
+    const workspacePath = workspacePathConstraint
+      ? resolveWorkspacePath(workspacePathConstraint, this.options.workspaceBasePath)
+      : undefined;
     const goalArtifactDataSource = await createGoalScopedArtifactDataSource(goalId, goal, workspacePath, this.stateManager);
     const observationDataSources = goalArtifactDataSource
       ? [...this.dataSources, goalArtifactDataSource]

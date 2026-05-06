@@ -1104,6 +1104,60 @@ describe("observeFromDataSource", () => {
     });
   });
 
+  it("resolves legacy relative workspace_path artifact metrics under the configured workspace base", async () => {
+    const daemonWorkspace = path.join(tmpDir, "daemon-relative-workspace");
+    const workspaceBase = path.join(tmpDir, "workspace-base");
+    const goalWorkspace = path.join(workspaceBase, "relative-metric-workspace");
+    writeJsonFile(path.join(daemonWorkspace, "artifacts", "wrong", "metrics.json"), {
+      oof_balanced_accuracy: 0.1,
+    });
+    writeJsonFile(path.join(goalWorkspace, "artifacts", "probe-balanced", "metrics.json"), {
+      oof_balanced_accuracy: 0.91,
+      status: "completed",
+    });
+    const engine = new ObservationEngine(
+      stateManager,
+      [createWorkspaceArtifactMetricDataSource(daemonWorkspace)],
+      undefined,
+      undefined,
+      { workspaceBasePath: workspaceBase },
+    );
+    const goal = makeGoal({
+      id: "goal-relative-artifact-metrics",
+      constraints: ["workspace_path:relative-metric-workspace"],
+      dimensions: [
+        {
+          name: "best_oof_balanced_accuracy",
+          label: "Best OOF balanced accuracy",
+          current_value: 0,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engine.observe("goal-relative-artifact-metrics", []);
+
+    const updated = await stateManager.loadGoal("goal-relative-artifact-metrics");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.91);
+    const log = await stateManager.loadObservationLog("goal-relative-artifact-metrics");
+    expect(log!.entries[0]?.raw_result).toMatchObject({
+      root: goalWorkspace,
+      selected: {
+        relativePath: "artifacts/probe-balanced/metrics.json",
+        key: "oof_balanced_accuracy",
+      },
+    });
+  });
+
   it("scopes required artifact metric progress to the current task freshness anchor", async () => {
     const goalWorkspace = path.join(tmpDir, "task-scoped-metric-workspace");
     const taskStart = new Date(Date.now() - 60_000);

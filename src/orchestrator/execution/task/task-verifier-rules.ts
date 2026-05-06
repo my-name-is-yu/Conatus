@@ -58,6 +58,7 @@ export async function runMechanicalVerification(
   const verificationCwd = await resolveTaskWorkspacePath({
     stateManager: deps.stateManager,
     task,
+    fallbackCwd: deps.revertCwd,
   });
   const verificationTimeoutMs = 30_000; // 30 seconds default for L1 mechanical checks
   const commandPlans = verificationCommands.map((command) => ({
