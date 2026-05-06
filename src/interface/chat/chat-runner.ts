@@ -498,7 +498,9 @@ export class ChatRunner {
     }
 
     const messages = history.getModelVisibleMessages();
-    const compactionSummary = history.getSessionData().compactionSummary;
+    const sessionData = history.getSessionData();
+    const compactionSummary = sessionData.compactionSummary;
+    const compactionRecords = sessionData.compactionRecords ?? [];
     const priorTurns = resumeOnly ? messages.slice(-10) : messages.slice(0, -1).slice(-10);
     const historySections: string[] = [];
     if (compactionSummary) {
@@ -651,6 +653,7 @@ export class ChatRunner {
       input: safeInput,
       userInput: safeUserInput,
       compactionSummary,
+      compactionRecords,
       priorTurns,
       basePrompt,
       prompt,

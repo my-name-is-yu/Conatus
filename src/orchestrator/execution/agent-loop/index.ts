@@ -1,6 +1,7 @@
 export * from "./agent-loop-budget.js";
 export * from "./agent-loop-command-classifier.js";
 export * from "./agent-loop-compactor.js";
+export * from "./agent-loop-compaction-record.js";
 export * from "./agent-loop-context-assembler.js";
 export * from "./agent-loop-default-profile.js";
 export * from "./agent-loop-dogfood-benchmark.js";

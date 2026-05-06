@@ -43,6 +43,7 @@ export interface LoadedChatSession {
   title: string | null;
   messages: ChatSession["messages"];
   compactionSummary?: string;
+  compactionRecords?: ChatSession["compactionRecords"];
   parentSessionId?: string | null;
   spawnedBySessionId?: string | null;
   spawnedByRuntimeSessionId?: string | null;
@@ -344,6 +345,7 @@ async function readSessionRecordWithMetadata(
     ...(optionalString(parsed.data.parentNotificationSummary) !== null ? { parentNotificationSummary: optionalString(parsed.data.parentNotificationSummary) } : {}),
     ...(optionalString(parsed.data.parentNotifiedAt) !== null ? { parentNotifiedAt: optionalString(parsed.data.parentNotifiedAt) } : {}),
     ...(parsed.data.compactionSummary ? { compactionSummary: parsed.data.compactionSummary } : {}),
+    ...(parsed.data.compactionRecords ? { compactionRecords: [...parsed.data.compactionRecords] } : {}),
     agentLoopStatePath: discovery.statePath,
     agentLoopStatus: discovery.status,
     agentLoopResumable: discovery.resumable,
@@ -414,6 +416,7 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
     ...(session.parentNotificationSummary !== null && session.parentNotificationSummary !== undefined ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
     ...(session.parentNotifiedAt !== null && session.parentNotifiedAt !== undefined ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
     ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
+    ...(session.compactionRecords ? { compactionRecords: [...session.compactionRecords] } : {}),
     ...(session.title !== null ? { title: session.title } : {}),
     ...(session.agentLoopStatePath !== null ? { agentLoopStatePath: session.agentLoopStatePath } : {}),
     ...(session.agentLoopStatus === "running" || session.agentLoopStatus === "completed" || session.agentLoopStatus === "failed"
@@ -582,6 +585,7 @@ export class ChatSessionCatalog {
       ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
       ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
       ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
+      ...(session.compactionRecords ? { compactionRecords: [...session.compactionRecords] } : {}),
       ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
       ...(session.rolloutJournal ? { rolloutJournal: [...session.rolloutJournal] } : {}),
       agentLoopStatePath: session.agentLoopStatePath,
