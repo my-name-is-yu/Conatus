@@ -16,12 +16,15 @@ describe("OpenAIResponsesAgentLoopModelClient", () => {
     const create = vi.fn(async (input: unknown) => {
       expect(JSON.stringify(input)).not.toContain("\"phase\"");
       expect(JSON.stringify(input)).not.toContain("\"strict\":true");
-      const inputItems = (input as { input: Array<{ type: string; call_id?: string }> }).input;
+      const inputItems = (input as { input: Array<{ type: string; call_id?: string; output?: string }> }).input;
       expect(inputItems.some((item) => item.type === "function_call" && item.call_id === "call-1")).toBe(true);
       expect(inputItems.some((item) => item.type === "function_call_output" && item.call_id === "call-1")).toBe(true);
       expect(inputItems.findIndex((item) => item.type === "function_call")).toBeLessThan(
         inputItems.findIndex((item) => item.type === "function_call_output"),
       );
+      const output = inputItems.find((item) => item.type === "function_call_output" && item.call_id === "call-1")?.output;
+      expect(output).toContain("\"type\": \"tool_observation\"");
+      expect(output).toContain("\"state\": \"success\"");
       return {
         id: "resp-1",
         status: "completed",
@@ -46,7 +49,27 @@ describe("OpenAIResponsesAgentLoopModelClient", () => {
           phase: "commentary",
           toolCalls: [{ id: "call-1", name: "echo", input: { value: "hello" } }],
         },
-        { role: "tool", toolCallId: "call-1", toolName: "echo", content: "tool output" },
+        {
+          role: "tool",
+          toolCallId: "call-1",
+          toolName: "echo",
+          content: "tool output",
+          observation: {
+            type: "tool_observation",
+            callId: "call-1",
+            toolName: "echo",
+            arguments: { value: "hello" },
+            state: "success",
+            success: true,
+            execution: { status: "executed" },
+            durationMs: 1,
+            output: {
+              content: "tool output",
+              summary: "echoed hello",
+              data: { echoed: "hello" },
+            },
+          },
+        },
         { role: "assistant", content: "{\"ok\":true}", phase: "final_answer" },
       ],
       tools: [],

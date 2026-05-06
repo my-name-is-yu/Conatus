@@ -15,6 +15,7 @@ import type {
   AgentLoopModelTurnProtocol,
   AgentLoopToolCall,
 } from "./agent-loop-model.js";
+import { formatAgentLoopToolMessageContent } from "./agent-loop-model.js";
 import {
   buildPromptedToolProtocolSystemPrompt,
   extractPromptedToolCalls,
@@ -92,7 +93,7 @@ export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
       .map((message) => ({
         role: message.role === "assistant" ? "assistant" : "user",
         content: message.role === "tool"
-          ? `Tool result${message.toolName ? ` for ${message.toolName}` : ""}:\n${message.content}`
+          ? `Tool result${message.toolName ? ` for ${message.toolName}` : ""}:\n${formatAgentLoopToolMessageContent(message)}`
           : message.content,
       }));
   }

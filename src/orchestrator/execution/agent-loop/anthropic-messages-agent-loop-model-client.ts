@@ -18,6 +18,7 @@ import type {
   AgentLoopModelTurnProtocol,
   AgentLoopToolCall,
 } from "./agent-loop-model.js";
+import { formatAgentLoopToolMessageContent } from "./agent-loop-model.js";
 import {
   assistantTextResponseItem,
   functionToolCallResponseItem,
@@ -118,13 +119,13 @@ export class AnthropicMessagesAgentLoopModelClient implements AgentLoopModelClie
 
       if (message.role === "tool") {
         if (!message.toolCallId) {
-          this.appendText(converted, "user", `Tool result${message.toolName ? ` for ${message.toolName}` : ""}:\n${message.content}`);
+          this.appendText(converted, "user", `Tool result${message.toolName ? ` for ${message.toolName}` : ""}:\n${formatAgentLoopToolMessageContent(message)}`);
           continue;
         }
         this.appendBlocks(converted, "user", [{
           type: "tool_result",
           tool_use_id: message.toolCallId,
-          content: message.content,
+          content: formatAgentLoopToolMessageContent(message),
           is_error: false,
         }]);
         continue;

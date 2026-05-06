@@ -21,6 +21,7 @@ import type {
   AgentLoopModelTurnProtocol,
   AgentLoopToolCall,
 } from "./agent-loop-model.js";
+import { formatAgentLoopToolMessageContent } from "./agent-loop-model.js";
 import type { ResponseItem } from "./response-item.js";
 import {
   assistantTextResponseItem,
@@ -156,7 +157,7 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
         const item: ResponseInputItem.FunctionCallOutput = {
           type: "function_call_output",
           call_id: message.toolCallId,
-          output: message.content,
+          output: formatAgentLoopToolMessageContent(message),
         };
         items.push(item);
         continue;

@@ -59,6 +59,21 @@ describe("AnthropicMessagesAgentLoopModelClient", () => {
           toolCallId: "call-1",
           toolName: "echo_tool",
           content: "Echoed old",
+          observation: {
+            type: "tool_observation",
+            callId: "call-1",
+            toolName: "echo_tool",
+            arguments: { value: "old" },
+            state: "success",
+            success: true,
+            execution: { status: "executed" },
+            durationMs: 1,
+            output: {
+              content: "Echoed old",
+              summary: "echoed old",
+              data: { value: "old" },
+            },
+          },
         },
       ],
       tools: [{
@@ -96,6 +111,9 @@ describe("AnthropicMessagesAgentLoopModelClient", () => {
       type: "tool_result",
       tool_use_id: "call-1",
     }));
+    const toolResult = request.messages[2]?.content.find((item) => item.type === "tool_result");
+    expect(toolResult?.content).toContain("\"type\": \"tool_observation\"");
+    expect(toolResult?.content).toContain("\"state\": \"success\"");
 
     expect(protocol.assistant).toEqual([{
       content: "Need one more tool call",

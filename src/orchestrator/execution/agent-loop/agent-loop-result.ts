@@ -1,4 +1,4 @@
-import type { AgentLoopReasoningEffort } from "./agent-loop-model.js";
+import type { AgentLoopReasoningEffort, AgentLoopToolObservationExecution } from "./agent-loop-model.js";
 import type { ExecutionPolicy } from "./execution-policy.js";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
 
@@ -9,11 +9,7 @@ export interface AgentLoopCommandResult {
   command: string;
   cwd: string;
   success: boolean;
-  execution?: {
-    status: "executed" | "not_executed";
-    reason?: "approval_denied" | "permission_denied" | "policy_blocked" | "dry_run" | "tool_error";
-    message?: string;
-  };
+  execution?: AgentLoopToolObservationExecution;
   category: AgentLoopCommandResultCategory;
   evidenceEligible: boolean;
   relevantToTask?: boolean;
@@ -24,11 +20,7 @@ export interface AgentLoopCommandResult {
 export interface AgentLoopToolResultSummary {
   toolName: string;
   success: boolean;
-  execution?: {
-    status: "executed" | "not_executed";
-    reason?: "approval_denied" | "permission_denied" | "policy_blocked" | "dry_run" | "tool_error";
-    message?: string;
-  };
+  execution?: AgentLoopToolObservationExecution;
   outputSummary: string;
   durationMs: number;
 }

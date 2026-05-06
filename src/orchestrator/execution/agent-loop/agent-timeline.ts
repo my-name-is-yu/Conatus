@@ -7,6 +7,7 @@ export type AgentTimelineItem =
   | AgentTimelineModelRequestItem
   | AgentTimelineAssistantMessageItem
   | AgentTimelineToolItem
+  | AgentTimelineToolObservationItem
   | AgentTimelinePlanItem
   | AgentTimelineApprovalItem
   | AgentTimelineCompactionItem
@@ -72,6 +73,16 @@ export interface AgentTimelineToolItem extends AgentTimelineBaseItem {
     originalChars: number;
     overflowPath?: string;
   };
+}
+
+export interface AgentTimelineToolObservationItem extends AgentTimelineBaseItem {
+  kind: "tool_observation";
+  callId: string;
+  toolName: string;
+  state: "success" | "failure" | "denied" | "blocked" | "timed_out" | "interrupted";
+  success: boolean;
+  outputPreview: string;
+  durationMs: number;
 }
 
 export interface AgentTimelinePlanItem extends AgentTimelineBaseItem {
@@ -194,6 +205,18 @@ export function projectAgentLoopEventToTimeline(event: AgentLoopEvent): AgentTim
         durationMs: event.durationMs,
         ...(event.artifacts ? { artifacts: event.artifacts } : {}),
         ...(event.truncated ? { truncated: event.truncated } : {}),
+      };
+    case "tool_observation":
+      return {
+        ...base,
+        kind: "tool_observation",
+        visibility: "debug",
+        callId: event.observation.callId,
+        toolName: event.observation.toolName,
+        state: event.observation.state,
+        success: event.observation.success,
+        outputPreview: event.observation.output.content,
+        durationMs: event.observation.durationMs,
       };
     case "plan_update":
       return { ...base, kind: "plan", summary: event.summary };

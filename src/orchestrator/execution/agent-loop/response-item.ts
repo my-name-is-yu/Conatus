@@ -27,7 +27,7 @@ export const FunctionToolCallResponseItemSchema = z.object({
 
 export const ToolExecutionStateSchema = z.object({
   status: z.enum(["executed", "not_executed"]),
-  reason: z.enum(["approval_denied", "permission_denied", "policy_blocked", "dry_run", "tool_error"]).optional(),
+  reason: z.enum(["approval_denied", "permission_denied", "policy_blocked", "dry_run", "tool_error", "timed_out", "interrupted"]).optional(),
   message: z.string().optional(),
 });
 
