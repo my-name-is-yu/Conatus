@@ -22,6 +22,10 @@ import type { AssistantBuffer } from "./chat-runner-event-bridge.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 import { createGatewaySetupStatusProvider, type TelegramSetupStatus } from "./gateway-setup-status.js";
 import {
+  renderSystemPromptWithTurnContext,
+  type ChatTurnContext,
+} from "./turn-context.js";
+import {
   createDiscordAdapterPlanDialogue,
   createTelegramConfirmWriteDialogue,
   SETUP_WRITE_CONFIRM_COMMAND,
@@ -162,8 +166,7 @@ export async function executeClarifyRoute(
 export async function executeAssistRoute(
   host: ChatRunnerRouteHost,
   params: {
-    input: string;
-    priorTurns: Array<{ role: string; content: string }>;
+    turnContext: ChatTurnContext;
     eventContext: ChatEventContext;
     assistantBuffer: AssistantBuffer;
     history: { appendAssistantMessage(message: string): Promise<void>; recordUsage(phase: string, usage: ChatUsageCounter): void };
@@ -182,15 +185,15 @@ export async function executeAssistRoute(
   }
   host.eventBridge.emitCheckpoint("Read-only assist selected", "The message will be answered without coding-agent execution.", params.eventContext, "route");
   const messages: LLMMessage[] = [
-    ...params.priorTurns.map((m): LLMMessage => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })),
-    { role: "user", content: params.input },
+    ...params.turnContext.modelVisible.conversation.priorTurns.map((m): LLMMessage => ({ role: m.role, content: m.content })),
+    { role: "user", content: params.turnContext.modelVisible.input.text },
   ];
   const response = await sendLLMMessage(host, host.deps.llmClient, messages, {
-    system: [
-      buildStaticSystemPrompt(host.getProviderConfigBaseDir()),
+    system: renderSystemPromptWithTurnContext([
+      params.turnContext.modelVisible.instructions.systemPrompt || buildStaticSystemPrompt(host.getProviderConfigBaseDir()),
       "Answer read-only. Provide concise operational guidance. Do not ask to edit files or run commands unless the user explicitly asks for execution.",
       sameLanguageResponseInstruction(host.getTurnLanguageHint()),
-    ].join(" "),
+    ].join(" "), params.turnContext.modelVisible),
     max_tokens: 1000,
     temperature: 0,
   }, params.assistantBuffer, params.eventContext);
@@ -209,12 +212,8 @@ export async function executeAssistRoute(
 export async function executeAgentLoopRoute(
   host: ChatRunnerRouteHost,
   params: {
+    turnContext: ChatTurnContext;
     resumeOnly: boolean;
-    executionCwd: string;
-    executionGoalId?: string;
-    basePrompt: string;
-    priorTurns: Array<{ role: string; content: string }>;
-    agentLoopSystemPrompt: string;
     assistantBuffer: AssistantBuffer;
     eventContext: ChatEventContext;
     history: {
@@ -222,26 +221,21 @@ export async function executeAgentLoopRoute(
       recordUsage(phase: string, usage: ChatUsageCounter): void;
     };
     gitRoot: string;
-    runtimeControlContext: RuntimeControlChatContext | null;
     activeAbortSignal: AbortSignal;
     start: number;
   }
 ): Promise<ChatRunResult> {
   const {
     resumeOnly,
-    executionCwd,
-    executionGoalId,
-    basePrompt,
-    priorTurns,
-    agentLoopSystemPrompt,
     assistantBuffer,
     eventContext,
     history,
     gitRoot,
-    runtimeControlContext,
     activeAbortSignal,
     start,
   } = params;
+  const turnContext = params.turnContext;
+  const runtimeContext = turnContext.hostOnly.runtime.runtimeControlContext;
   try {
     const resumeState = resumeOnly ? await loadResumableAgentLoopState(host) : null;
     if (resumeOnly && !resumeState) {
@@ -268,17 +262,14 @@ export async function executeAgentLoopRoute(
       : "The agent loop can now inspect, plan, edit, or verify with visible tool activity.", eventContext, "execution");
     host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
     const result = await host.deps.chatAgentLoopRunner!.execute({
-      message: basePrompt,
-      cwd: executionCwd,
-      goalId: executionGoalId,
-      history: priorTurns.map((m) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.content,
-      })),
+      message: turnContext.modelVisible.prompts.basePrompt,
+      cwd: turnContext.hostOnly.execution.executionCwd,
+      goalId: turnContext.hostOnly.execution.goalId,
+      history: turnContext.modelVisible.conversation.priorTurns,
       eventSink: host.eventBridge.createAgentLoopEventSink(eventContext),
-      approvalFn: agentLoopApprovalFn(host, runtimeControlContext),
+      approvalFn: agentLoopApprovalFn(host, runtimeContext),
       toolCallContext: {
-        executionPolicy: await host.getSessionExecutionPolicy(),
+        executionPolicy: turnContext.hostOnly.execution.executionPolicy,
         ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
         providerConfigBaseDir: host.getProviderConfigBaseDir(),
         setupSecretIntake: host.getSetupSecretIntake(),
@@ -291,15 +282,18 @@ export async function executeAgentLoopRoute(
           set: (confirmation) => host.setPendingRunSpecConfirmation(confirmation as RunSpecConfirmationState | null),
           currentTurnStartedAt: new Date(start).toISOString(),
         },
-        runtimeReplyTarget: (runtimeControlContext?.replyTarget ?? host.deps.runtimeReplyTarget ?? null) as Record<string, unknown> | null,
-        runtimeControlActor: (runtimeControlContext?.actor ?? host.deps.runtimeControlActor ?? null) as Record<string, unknown> | null,
-        runtimeControlAllowed: runtimeControlContext?.allowed ?? true,
-        runtimeControlApprovalMode: runtimeControlContext?.approvalMode ?? "interactive",
+        runtimeReplyTarget: (runtimeContext?.replyTarget ?? turnContext.hostOnly.runtime.fallbackReplyTarget ?? null) as Record<string, unknown> | null,
+        runtimeControlActor: (runtimeContext?.actor ?? turnContext.hostOnly.runtime.fallbackActor ?? null) as Record<string, unknown> | null,
+        runtimeControlAllowed: turnContext.modelVisible.runtime.runtimeControlAllowed,
+        runtimeControlApprovalMode: turnContext.modelVisible.runtime.approvalMode,
       },
       ...(host.getNativeAgentLoopStatePath() ? { resumeStatePath: host.getNativeAgentLoopStatePath()! } : {}),
       ...(resumeState ? { resumeState } : {}),
       ...(resumeOnly ? { resumeOnly: true } : {}),
-      ...(agentLoopSystemPrompt ? { systemPrompt: agentLoopSystemPrompt } : {}),
+      systemPrompt: renderSystemPromptWithTurnContext(
+        turnContext.modelVisible.instructions.agentLoopSystemPrompt,
+        turnContext.modelVisible,
+      ),
       abortSignal: activeAbortSignal,
     });
     const elapsed_ms = Date.now() - start;
@@ -366,7 +360,7 @@ export async function executeAgentLoopRoute(
 export async function executeToolLoopRoute(
   host: ChatRunnerRouteHost,
   params: {
-    prompt: string;
+    turnContext: ChatTurnContext;
     eventContext: ChatEventContext;
     assistantBuffer: AssistantBuffer;
     systemPrompt?: string;
@@ -384,7 +378,7 @@ export async function executeToolLoopRoute(
     host.eventBridge.emitCheckpoint("Tool loop started", "The model will choose tools from the active catalog.", params.eventContext, "execution");
     const toolResult = await executeWithTools(
       host,
-      params.prompt,
+      params.turnContext,
       params.eventContext,
       params.assistantBuffer,
       params.systemPrompt,
@@ -432,8 +426,7 @@ export async function executeToolLoopRoute(
 export async function executeAdapterRoute(
   host: ChatRunnerRouteHost,
   params: {
-    prompt: string;
-    cwd: string;
+    turnContext: ChatTurnContext;
     timeoutMs: number;
     systemPrompt?: string;
     eventContext: ChatEventContext;
@@ -446,11 +439,16 @@ export async function executeAdapterRoute(
   }
 ): Promise<ChatRunResult> {
   const task: AgentTask = {
-    prompt: params.prompt,
+    prompt: params.turnContext.modelVisible.prompts.prompt,
     timeout_ms: params.timeoutMs,
     adapter_type: host.deps.adapter.adapterType,
-    cwd: params.cwd,
-    ...(params.systemPrompt ? { system_prompt: params.systemPrompt } : {}),
+    cwd: params.turnContext.hostOnly.execution.cwd,
+    ...(params.systemPrompt ? {
+      system_prompt: renderSystemPromptWithTurnContext(
+        params.turnContext.modelVisible.instructions.systemPrompt,
+        params.turnContext.modelVisible,
+      ),
+    } : {}),
   };
   const resolvedTimeoutMs = task.timeout_ms ?? DEFAULT_TIMEOUT_MS;
   host.eventBridge.emitCheckpoint("Adapter started", "The configured adapter has the current prompt and project context.", params.eventContext, "execution");
@@ -578,7 +576,7 @@ export async function executeAdapterRoute(
 
 async function executeWithTools(
   host: ChatRunnerRouteHost,
-  prompt: string,
+  turnContext: ChatTurnContext,
   eventContext: ChatEventContext,
   assistantBuffer: AssistantBuffer,
   systemPrompt?: string,
@@ -587,8 +585,8 @@ async function executeWithTools(
   start?: number,
 ): Promise<{ output: string; usage: ChatUsageCounter }> {
   const llmClient = host.deps.llmClient!;
-  const messages: LLMMessage[] = [{ role: "user", content: prompt }];
-  const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start);
+  const messages: LLMMessage[] = [{ role: "user", content: turnContext.modelVisible.prompts.prompt }];
+  const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start, turnContext);
   const usage = zeroUsageCounter();
 
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
@@ -1218,14 +1216,16 @@ async function buildToolCallContext(
   goalId = host.deps.goalId,
   runtimeControlContext?: RuntimeControlChatContext | null,
   start?: number,
+  turnContext?: ChatTurnContext,
 ): Promise<ToolCallContext> {
-  const executionPolicy = await host.getSessionExecutionPolicy();
+  const executionPolicy = turnContext?.hostOnly.execution.executionPolicy ?? await host.getSessionExecutionPolicy();
+  const runtimeContext = turnContext?.hostOnly.runtime.runtimeControlContext ?? runtimeControlContext;
   return {
-    cwd: host.getSessionCwd() ?? process.cwd(),
-    goalId: goalId ?? "",
+    cwd: turnContext?.hostOnly.execution.executionCwd ?? host.getSessionCwd() ?? process.cwd(),
+    goalId: turnContext?.hostOnly.execution.goalId ?? goalId ?? "",
     trustBalance: 0,
     preApproved: false,
-    approvalFn: agentLoopApprovalFn(host, runtimeControlContext),
+    approvalFn: agentLoopApprovalFn(host, runtimeContext),
     executionPolicy,
     ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
     providerConfigBaseDir: host.getProviderConfigBaseDir(),
@@ -1239,10 +1239,10 @@ async function buildToolCallContext(
       set: (confirmation) => host.setPendingRunSpecConfirmation(confirmation as RunSpecConfirmationState | null),
       ...(typeof start === "number" ? { currentTurnStartedAt: new Date(start).toISOString() } : {}),
     },
-    runtimeReplyTarget: (runtimeControlContext?.replyTarget ?? host.deps.runtimeReplyTarget ?? null) as Record<string, unknown> | null,
-    runtimeControlActor: (runtimeControlContext?.actor ?? host.deps.runtimeControlActor ?? null) as Record<string, unknown> | null,
-    runtimeControlAllowed: runtimeControlContext?.allowed ?? true,
-    runtimeControlApprovalMode: runtimeControlContext?.approvalMode ?? "interactive",
+    runtimeReplyTarget: (runtimeContext?.replyTarget ?? turnContext?.hostOnly.runtime.fallbackReplyTarget ?? host.deps.runtimeReplyTarget ?? null) as Record<string, unknown> | null,
+    runtimeControlActor: (runtimeContext?.actor ?? turnContext?.hostOnly.runtime.fallbackActor ?? host.deps.runtimeControlActor ?? null) as Record<string, unknown> | null,
+    runtimeControlAllowed: turnContext?.modelVisible.runtime.runtimeControlAllowed ?? runtimeContext?.allowed ?? true,
+    runtimeControlApprovalMode: turnContext?.modelVisible.runtime.approvalMode ?? runtimeContext?.approvalMode ?? "interactive",
   };
 }
 

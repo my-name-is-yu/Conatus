@@ -76,6 +76,11 @@ import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import { createTextUserInput, normalizeUserInput, replaceUserInputText, type UserInput } from "./user-input.js";
 import { createTurnStartOperation, createTurnSteerOperation } from "./turn-protocol.js";
 import {
+  buildChatTurnContext,
+  renderSystemPromptWithTurnContext,
+  toTurnContextSnapshot,
+} from "./turn-context.js";
+import {
   createRunSpecStore,
   formatRunSpecSetupProposal,
   arbitrateRunSpecPendingDialogue,
@@ -569,19 +574,8 @@ export class ChatRunner {
       return result;
     }
 
-    if (selectedRoute?.kind === "assist") {
-      const result = await executeAssistRoute(this.routeHost(), {
-        input: safeInput,
-        priorTurns,
-        eventContext,
-        assistantBuffer,
-        history,
-        start,
-      });
-      return result;
-    }
-
     const usesNativeAgentLoop = resumeOnly || selectedRoute?.kind === "agent_loop";
+    const executionPolicy = await this.getSessionExecutionPolicy();
     const groundingWorkspaceContext = !resumeOnly && usesNativeAgentLoop
       ? await buildChatContext(safeInput, executionCwd)
       : undefined;
@@ -597,7 +591,7 @@ export class ChatRunner {
             workspaceRoot: executionCwd,
             goalId: executionGoalId,
             userMessage: safeInput,
-            trustProjectInstructions: this.sessionExecutionPolicy?.trustProjectInstructions ?? true,
+            trustProjectInstructions: executionPolicy.trustProjectInstructions,
             workspaceContext: groundingWorkspaceContext,
           });
         } else {
@@ -608,7 +602,7 @@ export class ChatRunner {
             goalId: executionGoalId,
             userMessage: safeInput,
             query: safeInput,
-            trustProjectInstructions: this.sessionExecutionPolicy?.trustProjectInstructions ?? true,
+            trustProjectInstructions: executionPolicy.trustProjectInstructions,
           });
           systemPrompt = String(groundingBundle.render("prompt"));
         }
@@ -631,6 +625,34 @@ export class ChatRunner {
     const context = resumeOnly || usesNativeAgentLoop ? "" : await buildChatContext(safeInput, gitRoot);
     const basePrompt = resumeOnly ? "" : (context ? `${context}\n\n${safeInput}` : safeInput);
     const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
+    const turnContext = buildChatTurnContext({
+      eventContext,
+      startedAt: new Date(start),
+      sessionId: history.getSessionId(),
+      cwd,
+      gitRoot,
+      executionCwd,
+      nativeAgentLoopStatePath: this.nativeAgentLoopStatePath,
+      selectedRoute,
+      input: safeInput,
+      userInput: safeUserInput,
+      compactionSummary,
+      priorTurns,
+      basePrompt,
+      prompt,
+      systemPrompt,
+      agentLoopSystemPrompt,
+      runtimeControlContext,
+      ...(this.deps.runtimeReplyTarget ? { fallbackReplyTarget: this.deps.runtimeReplyTarget } : {}),
+      ...(this.deps.runtimeControlActor ? { fallbackActor: this.deps.runtimeControlActor } : {}),
+      ...(executionGoalId ? { executionGoalId } : {}),
+      executionPolicy,
+      setupDialogue: history.getSetupDialogue(),
+      runSpecConfirmation: history.getRunSpecConfirmation(),
+      setupSecretIntake,
+      activatedTools: this.activatedTools,
+    });
+    await history.recordTurnContext(toTurnContextSnapshot(turnContext));
 
     if (resumeOnly && !this.deps.chatAgentLoopRunner) {
       const elapsed_ms = Date.now() - start;
@@ -648,19 +670,25 @@ export class ChatRunner {
       return { success: false, output, elapsed_ms };
     }
 
+    if (selectedRoute?.kind === "assist") {
+      const result = await executeAssistRoute(this.routeHost(), {
+        turnContext,
+        eventContext,
+        assistantBuffer,
+        history,
+        start,
+      });
+      return result;
+    }
+
     if (resumeOnly || selectedRoute?.kind === "agent_loop") {
       return executeAgentLoopRoute(this.routeHost(), {
+        turnContext,
         resumeOnly,
-        executionCwd,
-        executionGoalId,
-        basePrompt,
-        priorTurns,
-        agentLoopSystemPrompt,
         assistantBuffer,
         eventContext,
         history,
         gitRoot,
-        runtimeControlContext,
         activeAbortSignal: activeTurn.abortController.signal,
         start,
       });
@@ -668,10 +696,10 @@ export class ChatRunner {
 
     if (selectedRoute?.kind === "tool_loop") {
       return executeToolLoopRoute(this.routeHost(), {
-        prompt,
+        turnContext,
         eventContext,
         assistantBuffer,
-        systemPrompt: systemPrompt || undefined,
+        systemPrompt: renderSystemPromptWithTurnContext(systemPrompt || undefined, turnContext.modelVisible),
         executionGoalId,
         history,
         gitRoot,
@@ -694,10 +722,9 @@ export class ChatRunner {
     }
 
     return executeAdapterRoute(this.routeHost(), {
-      prompt,
-      cwd,
+      turnContext,
       timeoutMs,
-      systemPrompt: systemPrompt || undefined,
+      systemPrompt: renderSystemPromptWithTurnContext(systemPrompt || undefined, turnContext.modelVisible),
       eventContext,
       assistantBuffer,
       gitRoot,

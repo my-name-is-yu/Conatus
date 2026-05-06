@@ -47,6 +47,12 @@ export const ChatSessionUsageSchema = z.object({
 }).passthrough();
 export type ChatSessionUsage = z.infer<typeof ChatSessionUsageSchema>;
 
+export const ChatTurnContextSnapshotSchema = z.object({
+  schema_version: z.string(),
+  modelVisible: z.unknown(),
+}).passthrough();
+export type ChatTurnContextSnapshot = z.infer<typeof ChatTurnContextSnapshotSchema>;
+
 export const RunSpecConfirmationStateSchema = z.object({
   state: z.enum(["pending", "confirmed", "cancelled"]),
   spec: RunSpecSchema,
@@ -92,6 +98,7 @@ export const ChatSessionSchema = z.object({
   agentLoopResumable: z.boolean().nullable().optional(),
   agentLoopUpdatedAt: z.string().nullable().optional(),
   agentLoop: ChatSessionAgentLoopMetadataSchema.optional(),
+  turnContexts: z.array(ChatTurnContextSnapshotSchema).optional(),
   usage: ChatSessionUsageSchema.optional(),
 }).passthrough();
 export type ChatSession = z.infer<typeof ChatSessionSchema>;
@@ -113,6 +120,7 @@ export class ChatHistory {
         cwd: existingSession.cwd,
         updatedAt: existingSession.updatedAt ?? existingSession.createdAt,
         messages: [...existingSession.messages],
+        ...(existingSession.turnContexts ? { turnContexts: [...existingSession.turnContexts] } : {}),
         ...(existingSession.usage ? { usage: cloneUsage(existingSession.usage) } : {}),
       };
     } else {
@@ -204,6 +212,7 @@ export class ChatHistory {
     return {
       ...this.session,
       messages: [...this.session.messages],
+      ...(this.session.turnContexts ? { turnContexts: [...this.session.turnContexts] } : {}),
       ...(this.session.usage ? { usage: cloneUsage(this.session.usage) } : {}),
     };
   }
@@ -258,6 +267,14 @@ export class ChatHistory {
     } else {
       delete this.session.runSpecConfirmation;
     }
+  }
+
+  async recordTurnContext(snapshot: { schema_version: string; modelVisible: unknown }): Promise<void> {
+    this.session.turnContexts = [
+      ...(this.session.turnContexts ?? []),
+      snapshot,
+    ].slice(-20);
+    await this.persist();
   }
 
   setSessionLifecycle(input: {

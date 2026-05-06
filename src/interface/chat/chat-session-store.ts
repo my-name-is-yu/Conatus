@@ -71,6 +71,7 @@ export interface LoadedChatSession {
   agentLoopResumable: boolean;
   agentLoopUpdatedAt?: string | null;
   agentLoop?: ChatSession["agentLoop"];
+  turnContexts?: ChatSession["turnContexts"];
   usage?: ChatSession["usage"];
   [key: string]: unknown;
 }
@@ -347,6 +348,7 @@ async function readSessionRecordWithMetadata(
     agentLoopResumable: discovery.resumable,
     agentLoopUpdatedAt: discovery.updatedAt,
     ...(parsed.data.agentLoop ? { agentLoop: parsed.data.agentLoop } : {}),
+    ...(parsed.data.turnContexts ? { turnContexts: [...parsed.data.turnContexts] } : {}),
     ...(parsed.data.usage ? { usage: parsed.data.usage } : {}),
   };
 
@@ -419,6 +421,7 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
       ? { agentLoopUpdatedAt: session.agentLoopUpdatedAt }
       : {}),
     ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
+    ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
     ...(session.usage ? { usage: session.usage } : {}),
   };
 }
@@ -574,10 +577,12 @@ export class ChatSessionCatalog {
       ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
       ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
       ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
+      ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
       agentLoopStatePath: session.agentLoopStatePath,
       agentLoopStatus: session.agentLoopStatus,
       agentLoopResumable: session.agentLoopResumable,
       ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
+      ...(session.usage ? { usage: session.usage } : {}),
     };
   }
 
