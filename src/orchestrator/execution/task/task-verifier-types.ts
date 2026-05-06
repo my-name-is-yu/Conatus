@@ -44,6 +44,17 @@ export interface RevertAttemptResult {
 
 export interface VerdictHandlingContext {
   stoppedReason?: AgentResult["stopped_reason"] | null;
+  verificationGuardsApplied?: boolean;
+  agentLoopWorkspace?: Pick<
+    NonNullable<AgentResult["agentLoop"]>,
+    | "requestedCwd"
+    | "executionCwd"
+    | "isolatedWorkspace"
+    | "workspaceCleanupStatus"
+    | "workspaceCleanupReason"
+    | "workspaceDirty"
+    | "workspaceDisposition"
+  >;
 }
 
 // ─── CompletionJudgerResponseSchema: Zod schema for LLM completion judgment response ───

@@ -509,6 +509,107 @@ describe("attemptRevert safety", () => {
     }
   });
 
+  it("does not revert the requested workspace when dirty isolated worktree handoff is required", async () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
+    initGitRepo(repoDir);
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "requested workspace local change\n", "utf-8");
+    const isolatedWorktree = path.join(tmpDir, "isolated-worktree");
+    fs.mkdirSync(isolatedWorktree, { recursive: true });
+
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: repoDir,
+    };
+    const task = makeTask({
+      scope_boundary: { in_scope: ["tracked.txt"], out_of_scope: [], blast_radius: "low" },
+      reversibility: "reversible",
+    });
+
+    try {
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await handleFailure(deps, task, makeFailureVerificationResult(["tracked.txt"]), {
+        stoppedReason: "error",
+        agentLoopWorkspace: {
+          requestedCwd: repoDir,
+          executionCwd: isolatedWorktree,
+          isolatedWorkspace: true,
+          workspaceCleanupStatus: "kept",
+          workspaceCleanupReason: "worktree has changes",
+          workspaceDirty: true,
+          workspaceDisposition: "handoff_required",
+        },
+      });
+
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+      };
+      const abandoned = ledger.events.at(-1)!;
+
+      expect(result.action).toBe("escalate");
+      expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("requested workspace local change\n");
+      expect(abandoned.action).toBe("escalate");
+      expect(abandoned.reason).toContain(isolatedWorktree);
+      expect(abandoned.reason).toContain("was not reverted or discarded");
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records dirty isolated worktree discard without reverting the requested workspace", async () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
+    initGitRepo(repoDir);
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "requested workspace local change\n", "utf-8");
+    const isolatedWorktree = path.join(tmpDir, "discarded-isolated-worktree");
+
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: repoDir,
+    };
+    const task = makeTask({
+      scope_boundary: { in_scope: ["tracked.txt"], out_of_scope: [], blast_radius: "low" },
+      reversibility: "reversible",
+    });
+
+    try {
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await handleFailure(deps, task, makeFailureVerificationResult(["tracked.txt"]), {
+        stoppedReason: "error",
+        agentLoopWorkspace: {
+          requestedCwd: repoDir,
+          executionCwd: isolatedWorktree,
+          isolatedWorkspace: true,
+          workspaceCleanupStatus: "cleaned_up",
+          workspaceCleanupReason: "cleanup policy set to always",
+          workspaceDirty: true,
+          workspaceDisposition: "discarded",
+        },
+      });
+
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+      };
+      const abandoned = ledger.events.at(-1)!;
+
+      expect(result.action).toBe("discard");
+      expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("requested workspace local change\n");
+      expect(abandoned.action).toBe("discard");
+      expect(abandoned.reason).toContain("dirty isolated worktree changes were discarded");
+      expect(abandoned.reason).toContain("was not reverted or discarded");
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("requires staged changes to be restored before discarding", async () => {
     const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
     initGitRepo(repoDir);

@@ -586,6 +586,50 @@ describe("TaskLifecycle", async () => {
   });
 
   describe("executeTaskWithAgentLoop", () => {
+    it("records dirty isolated worktree handoff as non-completed execution", async () => {
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner: makeAgentLoopRunner(makeAgentLoopResult("completed", {
+          filesChanged: true,
+          changedFiles: ["README.md"],
+          workspace: {
+            requestedCwd: "/repo",
+            executionCwd: "/worktrees/task-1",
+            isolated: true,
+            cleanupStatus: "kept",
+            cleanupReason: "worktree has changes",
+            dirty: true,
+            disposition: "handoff_required",
+          },
+        })),
+        execFileSyncFn: () => "",
+      });
+      const task = makeTask();
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe("error");
+      expect(result.output).toContain("/worktrees/task-1");
+      expect(result.agentLoop).toMatchObject({
+        isolatedWorkspace: true,
+        workspaceDirty: true,
+        workspaceDisposition: "handoff_required",
+      });
+      expect(persisted.status).toBe("error");
+      expect(persisted.completed_at).toBeNull();
+      expect(ledger.events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(ledger.events.at(-1)!.reason).toContain("operator handoff");
+      expect(ledger.summary.task_status).toBe("error");
+    });
+
     it.each([
       {
         stopReason: "timeout" as const,

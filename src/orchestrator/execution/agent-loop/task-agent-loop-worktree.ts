@@ -36,6 +36,8 @@ export async function prepareTaskAgentLoopWorkspace(input: {
         executionCwd: requestedCwd,
         isolated: false,
         cleanupStatus: "not_requested",
+        dirty: false,
+        disposition: "not_isolated",
       }),
     };
   }
@@ -52,6 +54,8 @@ export async function prepareTaskAgentLoopWorkspace(input: {
         isolated: false,
         cleanupStatus: "not_requested",
         cleanupReason: "cwd is not inside a git repository",
+        dirty: false,
+        disposition: "not_isolated",
       }),
     };
   }
@@ -68,6 +72,8 @@ export async function prepareTaskAgentLoopWorkspace(input: {
         isolated: false,
         cleanupStatus: "not_requested",
         cleanupReason: "git HEAD could not be resolved",
+        dirty: false,
+        disposition: "not_isolated",
       }),
     };
   }
@@ -116,6 +122,18 @@ export async function prepareTaskAgentLoopWorkspace(input: {
       const shouldKeepForDebug = policy.keepForDebug === true;
       const isDirty = changedFiles.length > 0 || await isGitWorktreeDirty(worktreePath);
 
+      if (success && isDirty) {
+        return {
+          requestedCwd,
+          executionCwd,
+          isolated: true,
+          cleanupStatus: "kept",
+          cleanupReason: "worktree has changes",
+          dirty: true,
+          disposition: "handoff_required",
+        };
+      }
+
       if (shouldKeepForDebug) {
         return {
           requestedCwd,
@@ -123,6 +141,8 @@ export async function prepareTaskAgentLoopWorkspace(input: {
           isolated: true,
           cleanupStatus: "kept",
           cleanupReason: "keepForDebug enabled",
+          dirty: isDirty,
+          disposition: isDirty ? "handoff_required" : "kept_clean",
         };
       }
 
@@ -133,6 +153,8 @@ export async function prepareTaskAgentLoopWorkspace(input: {
           isolated: true,
           cleanupStatus: "kept",
           cleanupReason: "cleanup policy set to never",
+          dirty: isDirty,
+          disposition: isDirty ? "handoff_required" : "kept_clean",
         };
       }
 
@@ -143,6 +165,8 @@ export async function prepareTaskAgentLoopWorkspace(input: {
           isolated: true,
           cleanupStatus: "kept",
           cleanupReason: !success ? "task did not succeed" : "worktree has changes",
+          dirty: isDirty,
+          disposition: isDirty ? "handoff_required" : "kept_clean",
         };
       }
 
@@ -152,6 +176,8 @@ export async function prepareTaskAgentLoopWorkspace(input: {
         executionCwd,
         isolated: true,
         cleanupStatus: "cleaned_up",
+        dirty: isDirty,
+        disposition: isDirty ? "discarded" : "cleaned_up",
       };
     },
   };

@@ -148,6 +148,46 @@ function makeNativeTimeoutRunner(): TaskAgentLoopRunner {
   } as unknown as TaskAgentLoopRunner;
 }
 
+function makeNativeDirtyHandoffRunner(): TaskAgentLoopRunner {
+  const result: AgentLoopResult<TaskAgentLoopOutput> = {
+    success: true,
+    output: {
+      status: "done",
+      finalAnswer: "done in isolated worktree",
+      summary: "done",
+      filesChanged: ["tracked.txt"],
+      testsRun: [],
+      completionEvidence: ["model reported success"],
+      verificationHints: [],
+      blockers: [],
+    },
+    finalText: "done in isolated worktree",
+    stopReason: "completed",
+    elapsedMs: 100,
+    modelTurns: 1,
+    toolCalls: 1,
+    compactions: 0,
+    filesChanged: true,
+    changedFiles: ["tracked.txt"],
+    commandResults: [],
+    workspace: {
+      requestedCwd: "/repo",
+      executionCwd: "/worktrees/task-1",
+      isolated: true,
+      cleanupStatus: "kept",
+      cleanupReason: "worktree has changes",
+      dirty: true,
+      disposition: "handoff_required",
+    },
+    traceId: "trace-1",
+    sessionId: "session-1",
+    turnId: "turn-1",
+  };
+  return {
+    runTask: async () => result,
+  } as unknown as TaskAgentLoopRunner;
+}
+
 function makeGapVector(goalId: string, dimensionName: string): GapVector {
   return {
     goal_id: goalId,
@@ -490,6 +530,56 @@ describe("TaskLifecycle — persistence", () => {
       error: 0,
       unknown: 0,
       other: 0,
+    });
+  });
+
+  it("runTaskCycle returns and persists guarded fail verdict for dirty isolated worktree handoff", async () => {
+    const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
+    const lifecycle = createLifecycle(llm, {
+      approvalFn: async () => true,
+      agentLoopRunner: makeNativeDirtyHandoffRunner(),
+      execFileSyncFn: () => "",
+    });
+    const adapter: import("../task/task-lifecycle.js").IAdapter = {
+      adapterType: "mock",
+      async execute() {
+        throw new Error("native path should not call adapter.execute");
+      },
+    };
+
+    const result = await lifecycle.runTaskCycle(
+      "goal-1",
+      makeGapVector("goal-1", "dim"),
+      makeDriveContext("dim"),
+      adapter
+    );
+
+    const ledger = await stateManager.readRaw(`tasks/goal-1/ledger/${result.task.id}.json`) as {
+      summary: Record<string, unknown>;
+      events: Array<Record<string, unknown>>;
+    };
+    const verification = await stateManager.readRaw(`verification/${result.task.id}/verification-result.json`) as Record<string, unknown>;
+
+    expect(result.action).toBe("escalate");
+    expect(result.verificationResult.verdict).toBe("fail");
+    expect(result.verificationResult.evidence[0]!.description).toContain("dirty isolated worktree retained");
+    expect(ledger.summary).toMatchObject({
+      latest_event_type: "abandoned",
+      task_status: "error",
+      verification_verdict: "fail",
+      action: "escalate",
+    });
+    expect(ledger.events.at(-1)!.reason).toContain("/worktrees/task-1");
+    expect(verification.verdict).toBe("fail");
+    expect(verification.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        layer: "mechanical",
+        description: expect.stringContaining("dirty isolated worktree retained"),
+      }),
+    ]));
+    expect(verification.agent_loop).toMatchObject({
+      isolatedWorkspace: true,
+      workspaceDisposition: "handoff_required",
     });
   });
 
