@@ -12,6 +12,10 @@ import type {
 import type { ToolRegistry } from "./registry.js";
 import type { ToolPermissionManager } from "./permission.js";
 import type { ConcurrencyController } from "./concurrency.js";
+import {
+  decideHostToolExecution,
+  permissionResultFromHostDecision,
+} from "./execution-orchestrator.js";
 
 /**
  * 5-gate execution pipeline for tool invocations.
@@ -63,6 +67,9 @@ export class ToolExecutor {
     }
     const input = parseResult.data;
 
+    const hostPreflightResult = this.checkHostPolicyPreflight(tool, input, context, startTime);
+    if (hostPreflightResult) return hostPreflightResult;
+
     // --- Gate 2: Semantic Validation (tool-specific) ---
     const semanticResult = await tool.checkPermissions(input, context);
     if (semanticResult.status === "denied") {
@@ -99,7 +106,7 @@ export class ToolExecutor {
       return this.failResult(
         `Permission denied by policy: ${permResult.reason}`,
         Date.now() - startTime,
-        { status: "not_executed", reason: "policy_blocked", message: permResult.reason },
+        { status: "not_executed", reason: permResult.executionReason ?? "policy_blocked", message: permResult.reason },
       );
     }
     if (permResult.status === "needs_approval") {
@@ -222,6 +229,33 @@ export class ToolExecutor {
   }
 
   // --- Private Helpers ---
+
+  private checkHostPolicyPreflight(
+    tool: ITool,
+    input: unknown,
+    context: ToolCallContext,
+    startTime: number,
+  ): ToolResult | null {
+    const decision = decideHostToolExecution({ tool, input, context });
+    if (decision.status === "allowed" || decision.status === "needs_permission") {
+      return null;
+    }
+
+    const policyResult = permissionResultFromHostDecision(decision);
+    if (policyResult.status !== "denied") {
+      return null;
+    }
+
+    return this.failResult(
+      `Permission denied by host policy: ${policyResult.reason}`,
+      Date.now() - startTime,
+      {
+        status: "not_executed",
+        reason: policyResult.executionReason ?? "policy_blocked",
+        message: policyResult.reason,
+      },
+    );
+  }
 
   private sanitizeInput(tool: ITool, input: unknown): string | null {
     if (tool.metadata.name === "shell" && typeof input === "object" && input !== null) {

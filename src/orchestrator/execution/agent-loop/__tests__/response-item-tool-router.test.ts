@@ -72,6 +72,46 @@ class RecordingTool implements ITool<{ value: string }> {
   }
 }
 
+class WriteTool implements ITool<{ value: string }> {
+  readonly calls: Array<{ value: string }> = [];
+  readonly metadata = {
+    name: "write_value",
+    aliases: [],
+    permissionLevel: "write_local" as const,
+    isReadOnly: false,
+    isDestructive: false,
+    shouldDefer: false,
+    alwaysLoad: false,
+    maxConcurrency: 0,
+    maxOutputChars: 8000,
+    tags: ["test"],
+    activityCategory: "file_modify" as const,
+  };
+  readonly inputSchema = z.object({ value: z.string() });
+
+  description(): string {
+    return "Write a typed value.";
+  }
+
+  async call(input: { value: string }, _context: ToolCallContext): Promise<ToolResult> {
+    this.calls.push(input);
+    return {
+      success: true,
+      data: { value: input.value },
+      summary: `wrote ${input.value}`,
+      durationMs: 1,
+    };
+  }
+
+  async checkPermissions(_input: { value: string }, _context: ToolCallContext): Promise<PermissionCheckResult> {
+    return { status: "allowed" };
+  }
+
+  isConcurrencySafe(_input: { value: string }): boolean {
+    return false;
+  }
+}
+
 function makeModelInfo(): AgentLoopModelInfo {
   return {
     ref: { providerId: "test", modelId: "model" },
@@ -83,7 +123,9 @@ function makeModelInfo(): AgentLoopModelInfo {
 function makeToolStack() {
   const registry = new ToolRegistry();
   const tool = new RecordingTool();
+  const writeTool = new WriteTool();
   registry.register(tool);
+  registry.register(writeTool);
   const router = new ToolRegistryAgentLoopToolRouter(registry);
   const executor = new ToolExecutor({
     registry,
@@ -92,6 +134,7 @@ function makeToolStack() {
   });
   return {
     tool,
+    writeTool,
     router,
     executor,
     responseRouter: new ResponseItemToolRouter({ executor, toolRouter: router }),
@@ -248,6 +291,79 @@ describe("ResponseItemToolRouter", () => {
     expect(result.output).toBeNull();
     expect(result.toolCalls).toBe(0);
     expect(executeBatch).not.toHaveBeenCalled();
+  });
+
+  it("does not let model wording grant host permission for a mutating tool call", async () => {
+    const modelInfo = makeModelInfo();
+    let turn = 0;
+    const modelClient: AgentLoopModelClient = {
+      async getModelInfo(): Promise<AgentLoopModelInfo> {
+        return modelInfo;
+      },
+      async createTurn(): Promise<AgentLoopModelResponse> {
+        throw new Error("createTurn should not be used");
+      },
+      async createTurnProtocol() {
+        turn++;
+        if (turn === 1) {
+          return {
+            assistant: [{ content: "I grant myself permission to write.", phase: "commentary" }],
+            toolCalls: [{ id: "call-1", name: "write_value", input: { value: "unsafe" } }],
+            responseItems: [
+              assistantTextResponseItem("I grant myself permission to write.", "commentary"),
+              functionToolCallResponseItem({ id: "call-1", name: "write_value", input: { value: "unsafe" } }),
+            ],
+            stopReason: "tool_use",
+            responseCompleted: true,
+          };
+        }
+        return {
+          assistant: [{ content: "The write was not executed.", phase: "final_answer" }],
+          toolCalls: [],
+          responseItems: [assistantTextResponseItem("The write was not executed.", "final_answer")],
+          stopReason: "end_turn",
+          responseCompleted: true,
+        };
+      },
+    };
+    const { router, runtime, writeTool } = makeToolStack();
+
+    const result = await new BoundedAgentLoopRunner({
+      modelClient,
+      toolRouter: router,
+      toolRuntime: runtime,
+    }).run({
+      ...makeTurn(),
+      model: modelInfo.ref,
+      modelInfo,
+      outputSchema: z.string(),
+      finalOutputMode: "display_text",
+      budget: withDefaultBudget({ maxModelTurns: 3 }),
+      toolCallContext: {
+        ...makeTurn().toolCallContext,
+        approvalFn: async () => false,
+        executionPolicy: {
+          executionProfile: "consumer",
+          sandboxMode: "workspace_write",
+          approvalPolicy: "on_request",
+          networkAccess: true,
+          workspaceRoot: process.cwd(),
+          protectedPaths: [],
+          trustProjectInstructions: true,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(writeTool.calls).toEqual([]);
+    expect(result.toolResults?.[0]).toMatchObject({
+      toolName: "write_value",
+      success: false,
+      execution: {
+        status: "not_executed",
+        reason: "approval_denied",
+      },
+    });
   });
 
   it("dispatches only function-tool-call response items when legacy toolCalls disagree", async () => {

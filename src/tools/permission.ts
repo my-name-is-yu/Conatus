@@ -4,7 +4,10 @@ import type {
   PermissionCheckResult,
   ToolPermissionLevel,
 } from "./types.js";
-import { assessShellCommand } from "./system/ShellTool/command-policy.js";
+import {
+  decideHostToolExecution,
+  permissionResultFromHostDecision,
+} from "./execution-orchestrator.js";
 
 /**
  * 3-layer permission model for tool invocations.
@@ -31,8 +34,9 @@ export class ToolPermissionManager {
     input: unknown,
     context: ToolCallContext,
   ): Promise<PermissionCheckResult> {
-    const policyResult = this.checkExecutionPolicy(tool, input, context);
-    if (policyResult) return policyResult;
+    const hostDecision = decideHostToolExecution({ tool, input, context });
+    const hostPolicyResult = permissionResultFromHostDecision(hostDecision);
+    if (hostDecision.status === "fail_closed") return hostPolicyResult;
 
     // --- Layer 1: Registry Deny-List ---
     for (const rule of this.denyList) {
@@ -40,6 +44,9 @@ export class ToolPermissionManager {
         return { status: "denied", reason: rule.reason };
       }
     }
+
+    if (hostPolicyResult.status !== "allowed") return hostPolicyResult;
+    if (context.executionPolicy) return hostPolicyResult;
 
     // Read-only tools are always allowed after deny-list check
     if (tool.metadata.isReadOnly) {
@@ -126,39 +133,6 @@ export class ToolPermissionManager {
     return true;
   }
 
-  private checkExecutionPolicy(
-    tool: ITool,
-    input: unknown,
-    context: ToolCallContext,
-  ): PermissionCheckResult | null {
-    const policy = context.executionPolicy;
-    if (!policy) return null;
-
-    if (tool.metadata.name === "shell" && typeof input === "object" && input !== null) {
-      const command = (input as { command?: unknown }).command;
-      if (typeof command === "string") {
-        const assessment = assessShellCommand(command, policy, context.trusted === true);
-        if (assessment.status === "allowed") return { status: "allowed" };
-        if (assessment.status === "needs_approval") {
-          return { status: "needs_approval", reason: assessment.reason ?? "Shell command requires approval" };
-        }
-        return { status: "denied", reason: assessment.reason ?? "Shell command denied by execution policy" };
-      }
-    }
-
-    if (policy.sandboxMode === "read_only" && !tool.metadata.isReadOnly) {
-      return { status: "denied", reason: "Read-only sandbox blocks mutating tools" };
-    }
-    if (!policy.networkAccess && (tool.metadata.permissionLevel === "write_remote" || tool.metadata.requiresNetwork === true || tool.metadata.tags.includes("network"))) {
-      return { status: "denied", reason: "Network access is disabled for this session" };
-    }
-    if (tool.metadata.permissionLevel === "write_local" || tool.metadata.permissionLevel === "execute" || tool.metadata.permissionLevel === "write_remote") {
-      if (policy.approvalPolicy !== "never") {
-        return { status: "needs_approval", reason: `Execution policy requires approval for ${tool.metadata.permissionLevel} tools` };
-      }
-    }
-    return null;
-  }
 }
 
 // --- Supporting Types ---
