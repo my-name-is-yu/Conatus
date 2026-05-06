@@ -12,6 +12,7 @@ import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loo
 import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type { ApprovalBroker } from "../../runtime/approval-broker.js";
+import type { ApprovalRequest } from "../../tools/types.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -63,6 +64,7 @@ export interface ChatRunnerDeps {
   trustManager?: { getBalance(domain: string): Promise<{ balance: number }>; setOverride?(domain: string, balance: number, reason: string): Promise<void> };
   pluginLoader?: { loadAll(): Promise<Array<{ name: string; type?: string; enabled?: boolean }>> };
   approvalFn?: (description: string) => Promise<boolean>;
+  approvalRequestFn?: (request: ApprovalRequest) => Promise<boolean>;
   goalId?: string;
   approvalConfig?: Record<string, ApprovalLevel>;
   toolExecutor?: ToolExecutor;
@@ -79,7 +81,7 @@ export interface ChatRunnerDeps {
   runtimeControlService?: Pick<RuntimeControlService, "request">;
   approvalBroker?: Pick<
     ApprovalBroker,
-    "requestConversationalApproval" | "resolveConversationalApproval" | "findPendingConversationalApproval"
+    "requestConversationalApproval" | "resolveConversationalApproval" | "findPendingConversationalApproval" | "loadPendingApproval"
   >;
   runtimeControlApprovalFn?: (description: string) => Promise<boolean>;
   runtimeReplyTarget?: RuntimeControlReplyTarget;

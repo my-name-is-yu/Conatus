@@ -1330,6 +1330,101 @@ describe("CrossPlatformChatSessionManager", () => {
     }
   });
 
+  it("persists tool permission prompts with typed target and risk metadata", async () => {
+    const tmpDir = makeTempDir();
+    const events: string[] = [];
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-tool-metadata",
+      });
+      const chatAgentLoopRunner = {
+        execute: vi.fn(async (input: {
+          approvalFn?: (request: ApprovalRequest) => Promise<boolean>;
+        }) => {
+          const approved = await input.approvalFn?.({
+            toolName: "write_file",
+            input: { path: "notes.md" },
+            reason: "Write notes.md in the workspace.",
+            permissionLevel: "write_local",
+            isDestructive: false,
+            reversibility: "reversible",
+            callId: "call-write-file",
+          });
+          return {
+            success: approved === true,
+            output: approved === true ? "write approved" : "not approved",
+            error: null,
+            exit_code: null,
+            elapsed_ms: 5,
+            stopped_reason: "completed",
+          };
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        approvalBroker,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "Write the notes file",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: (event) => {
+          if (event.type === "activity") {
+            events.push(event.message);
+          }
+        },
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-tool-metadata")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      const pending = await store.loadPending("approval-tool-metadata");
+      expect(pending).toMatchObject({
+        payload: {
+          task: {
+            kind: "permission",
+            id: "call-write-file",
+            action: "write_file",
+            operation_summary: "Write notes.md in the workspace.",
+            risk_class: "medium",
+            target: {
+              session_id: "identity:workspace:U123",
+              tool_id: "write_file",
+              tool_call_id: "call-write-file",
+            },
+            state_epoch: "1700.2",
+            permission_level: "write_local",
+            is_destructive: false,
+          },
+        },
+      });
+      expect(events.some((message) =>
+        message.includes("Tool: write_file")
+        && message.includes("Tool call: call-write-file")
+        && message.includes("Risk: medium")
+      )).toBe(true);
+
+      await approvalBroker.resolveConversationalApproval("approval-tool-metadata", true, {
+        channel: "slack",
+        conversation_id: "C123:1700.1",
+        user_id: "U123",
+        session_id: "identity:workspace:U123",
+        turn_id: "1700.2",
+      });
+      await expect(resultPromise).resolves.toBe("write approved");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("keeps approvals pending for clarification replies and rejects wrong-context replies", async () => {
     const tmpDir = makeTempDir();
     try {
@@ -1517,6 +1612,313 @@ describe("CrossPlatformChatSessionManager", () => {
         turn_id: "1700.2",
       });
       await expect(resultPromise).resolves.toContain("not approved");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("rejects natural-language approval after the pending target state epoch changes", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-stale-target",
+      });
+      const runtimeControlService = {
+        request: vi.fn(async (request: {
+          approvalFn?: (description: string) => Promise<boolean>;
+        }) => {
+          const approved = await request.approvalFn?.("Restart the resident daemon.");
+          return {
+            success: approved === true,
+            message: approved === true ? "restart queued" : "not approved",
+            operationId: "op-stale-target",
+            state: approved === true ? "acknowledged" as const : "blocked" as const,
+          };
+        }),
+      };
+      const adapter = makeMockAdapter({
+        ...CANNED_RESULT,
+        output: "The daemon restart target is the resident daemon.",
+      });
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        adapter,
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+          JSON.stringify({
+            decision: "side_question",
+            confidence: 0.93,
+            clarification: "Route the side question through normal chat.",
+          }),
+          JSON.stringify({
+            kind: "assist",
+            confidence: 0.9,
+            rationale: "side question",
+          }),
+          "The daemon restart target is the resident daemon.",
+        ]),
+        runtimeControlService,
+        approvalBroker,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "PulSeed を再起動して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: () => undefined,
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-stale-target")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await expect(manager.processIncomingMessage({
+        text: "Before deciding, which daemon will restart?",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toBe("The daemon restart target is the resident daemon.");
+
+      await expect(manager.processIncomingMessage({
+        text: "問題ありません。進めてください",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.4",
+        cwd: "/repo",
+      })).resolves.toContain("approval target changed after the prompt");
+      await expect(resultPromise).resolves.toContain("not approved");
+      await expect(store.loadResolved("approval-stale-target")).resolves.toMatchObject({
+        state: "denied",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("rejects typed approval responses after the pending target state epoch changes", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-stale-button",
+      });
+      const runtimeControlService = {
+        request: vi.fn(async (request: {
+          approvalFn?: (description: string) => Promise<boolean>;
+        }) => {
+          const approved = await request.approvalFn?.("Restart the resident daemon.");
+          return {
+            success: approved === true,
+            message: approved === true ? "restart queued" : "not approved",
+            operationId: "op-stale-button",
+            state: approved === true ? "acknowledged" as const : "blocked" as const,
+          };
+        }),
+      };
+      const adapter = makeMockAdapter({
+        ...CANNED_RESULT,
+        output: "The daemon restart target is the resident daemon.",
+      });
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        adapter,
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            intent: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+          JSON.stringify({
+            decision: "side_question",
+            confidence: 0.93,
+            clarification: "Route the side question through normal chat.",
+          }),
+          JSON.stringify({
+            kind: "assist",
+            confidence: 0.9,
+            rationale: "side question",
+          }),
+          "The daemon restart target is the resident daemon.",
+        ]),
+        runtimeControlService,
+        approvalBroker,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "PulSeed を再起動して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: () => undefined,
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-stale-button")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await expect(manager.processIncomingMessage({
+        text: "Before deciding, which daemon will restart?",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toBe("The daemon restart target is the resident daemon.");
+
+      await expect(manager.processIncomingMessage({
+        text: "",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        approvalResponse: {
+          approval_id: "approval-stale-button",
+          approved: true,
+        },
+      })).resolves.toContain("approval target changed after the prompt");
+      await expect(resultPromise).resolves.toContain("not approved");
+      await expect(store.loadResolved("approval-stale-button")).resolves.toMatchObject({
+        state: "denied",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("rejects stale typed approval responses even when another pending approval makes lookup ambiguous", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "unused",
+        deliverConversationalApproval: async () => ({ delivered: true }),
+      });
+      const manager = new CrossPlatformChatSessionManager(makeDeps({ approvalBroker }));
+      await manager.processIncomingMessage({
+        text: "ordinary state-changing turn",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      });
+      const oldRequest = approvalBroker.requestConversationalApproval("goal-1", {
+        kind: "permission",
+        id: "call-old",
+        description: "Write the old file.",
+        action: "write_file",
+        operation_summary: "Write the old file.",
+        risk_class: "medium",
+        target: {
+          session_id: "identity:workspace:U123",
+          tool_id: "write_file",
+          tool_call_id: "call-old",
+        },
+        state_epoch: "1700.2",
+        state_version: "2026-05-06T00:00:00.000Z",
+      }, {
+        approvalId: "approval-old-stale",
+        timeoutMs: 30_000,
+        origin: {
+          channel: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+          session_id: "identity:workspace:U123",
+          turn_id: "1700.2",
+        },
+      });
+      const newRequest = approvalBroker.requestConversationalApproval("goal-1", {
+        kind: "permission",
+        id: "call-new",
+        description: "Write the new file.",
+        action: "write_file",
+        operation_summary: "Write the new file.",
+        risk_class: "medium",
+        target: {
+          session_id: "identity:workspace:U123",
+          tool_id: "write_file",
+          tool_call_id: "call-new",
+        },
+        state_epoch: "1700.3",
+        state_version: "2026-05-06T00:00:01.000Z",
+      }, {
+        approvalId: "approval-new-pending",
+        timeoutMs: 30_000,
+        origin: {
+          channel: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+          session_id: "identity:workspace:U123",
+          turn_id: "1700.3",
+        },
+      });
+      const deadline = Date.now() + 1000;
+      while (
+        Date.now() < deadline
+        && (
+          (await store.loadPending("approval-old-stale")) === null
+          || (await store.loadPending("approval-new-pending")) === null
+        )
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await expect(manager.processIncomingMessage({
+        text: "",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        approvalResponse: {
+          approval_id: "approval-old-stale",
+          approved: true,
+        },
+      })).resolves.toContain("approval target changed after the prompt");
+      await expect(store.loadResolved("approval-old-stale")).resolves.toMatchObject({
+        state: "denied",
+      });
+      await expect(store.loadPending("approval-new-pending")).resolves.toMatchObject({
+        state: "pending",
+      });
+      await expect(oldRequest).resolves.toBe(false);
+      await approvalBroker.resolveConversationalApproval("approval-new-pending", false, {
+        channel: "slack",
+        conversation_id: "C123:1700.1",
+        user_id: "U123",
+        session_id: "identity:workspace:U123",
+        turn_id: "1700.3",
+      });
+      await expect(newRequest).resolves.toBe(false);
     } finally {
       cleanupTempDir(tmpDir);
     }

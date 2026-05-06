@@ -1,11 +1,27 @@
 import type { Logger } from "./logger.js";
 import { ApprovalStore } from "./store/approval-store.js";
 import type { ApprovalOrigin, ApprovalRecord } from "./store/runtime-schemas.js";
+import {
+  getPendingPermissionTask,
+  withPermissionExpiry,
+  type PendingPermissionTarget,
+  type PermissionRiskClass,
+} from "./permission-dialogue.js";
 
 export interface ApprovalTaskRequest {
   id: string;
   description: string;
   action: string;
+  kind?: "permission";
+  operation_summary?: string;
+  risk_class?: PermissionRiskClass;
+  target?: PendingPermissionTarget;
+  state_epoch?: string;
+  state_version?: string;
+  expires_at?: number;
+  permission_level?: string;
+  is_destructive?: boolean;
+  reversibility?: string;
 }
 
 export interface ApprovalRequiredEvent {
@@ -130,6 +146,8 @@ export class ApprovalBroker {
     await this.start();
 
     const createdAt = this.now();
+    const expiresAt = createdAt + timeoutMs;
+    const taskWithExpiry = withPermissionExpiry(task, expiresAt);
     const record: ApprovalRecord = {
       approval_id: approvalId,
       goal_id: goalId,
@@ -137,8 +155,8 @@ export class ApprovalBroker {
       correlation_id: approvalId,
       state: "pending",
       created_at: createdAt,
-      expires_at: createdAt + timeoutMs,
-      payload: { task },
+      expires_at: expiresAt,
+      payload: { task: taskWithExpiry },
     };
 
     return this.trackApprovalRequest(record);
@@ -154,6 +172,8 @@ export class ApprovalBroker {
     const approvalId = options.approvalId ?? this.createId();
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const createdAt = this.now();
+    const expiresAt = createdAt + timeoutMs;
+    const taskWithExpiry = withPermissionExpiry(task, expiresAt);
     const record: ApprovalRecord = {
       approval_id: approvalId,
       goal_id: goalId,
@@ -161,9 +181,9 @@ export class ApprovalBroker {
       correlation_id: approvalId,
       state: "pending",
       created_at: createdAt,
-      expires_at: createdAt + timeoutMs,
+      expires_at: expiresAt,
       origin: options.origin,
-      payload: { task },
+      payload: { task: taskWithExpiry },
     };
 
     return this.trackApprovalRequest(record, options.deliverConversationalApproval);
@@ -201,6 +221,11 @@ export class ApprovalBroker {
       responseChannel: origin.channel,
     });
     return resolved !== null;
+  }
+
+  async loadPendingApproval(approvalId: string): Promise<ApprovalRecord | null> {
+    await this.start();
+    return this.pending.get(approvalId)?.record ?? await this.store.loadPending(approvalId);
   }
 
   async findPendingConversationalApproval(origin: ApprovalOrigin): Promise<PendingConversationalApprovalLookup> {
@@ -403,14 +428,25 @@ export class ApprovalBroker {
 function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
   const payload = record.payload as { task?: ApprovalTaskRequest };
   const task = payload.task ?? { id: record.approval_id, description: "Approval required", action: "unknown" };
-  return [
+  const permission = getPendingPermissionTask(record);
+  const lines = [
     "Approval required.",
     `Action: ${task.action}`,
     `Target: ${task.id}`,
     `Details: ${task.description}`,
     `Approval ID: ${record.approval_id}`,
-    "Reply in this conversation to approve, reject, or ask for clarification.",
-  ].join("\n");
+  ];
+  if (permission) {
+    lines.push(
+      `Operation: ${permission.operation_summary}`,
+      `Risk: ${permission.risk_class}`,
+    );
+    if (permission.target.tool_id) lines.push(`Tool: ${permission.target.tool_id}`);
+    if (permission.target.tool_call_id) lines.push(`Tool call: ${permission.target.tool_call_id}`);
+    if (permission.expires_at) lines.push(`Expires: ${new Date(permission.expires_at).toISOString()}`);
+  }
+  lines.push("Reply in this conversation to approve, reject, or ask for clarification.");
+  return lines.join("\n");
 }
 
 function approvalOriginMatches(expected: ApprovalOrigin | undefined, actual: ApprovalOrigin): boolean {

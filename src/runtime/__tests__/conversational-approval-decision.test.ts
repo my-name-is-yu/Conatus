@@ -53,6 +53,20 @@ describe("classifyConversationalApprovalDecision", () => {
     expect(decision).toMatchObject({ decision: "approve", confidence: 0.93 });
   });
 
+  it("classifies paraphrased denial replies through the shared contract", async () => {
+    const decision = await classifyConversationalApprovalDecision("やっぱり実行しないでください", {
+      approval,
+      replyOrigin: approval.origin!,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "reject",
+        confidence: 0.94,
+        rationale: "Explicit rejection for the active request.",
+      })),
+    });
+
+    expect(decision).toMatchObject({ decision: "reject", confidence: 0.94 });
+  });
+
   it("keeps clarification separate from approval or rejection", async () => {
     const decision = await classifyConversationalApprovalDecision("Before deciding, what target will change?", {
       approval,
@@ -86,5 +100,19 @@ describe("classifyConversationalApprovalDecision", () => {
       confidence: 0,
       clarification: "Please explicitly approve or reject the active request.",
     });
+  });
+
+  it("keeps unrelated new intents separate from approval or rejection", async () => {
+    const decision = await classifyConversationalApprovalDecision("Actually summarize yesterday's logs first.", {
+      approval,
+      replyOrigin: approval.origin!,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "new_intent",
+        confidence: 0.91,
+        rationale: "The reply asks for a separate task.",
+      })),
+    });
+
+    expect(decision).toMatchObject({ decision: "new_intent", confidence: 0.91 });
   });
 });

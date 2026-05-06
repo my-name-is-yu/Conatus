@@ -255,6 +255,7 @@ export interface ApprovalRequest {
   permissionLevel: ToolPermissionLevel;
   isDestructive: boolean;
   reversibility: "reversible" | "irreversible" | "unknown";
+  callId?: string;
 }
 
 export const PermissionCheckResultSchema = z.discriminatedUnion("status", [

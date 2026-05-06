@@ -1262,6 +1262,9 @@ function agentLoopApprovalFn(
     if (request.toolName === "request_runtime_control" && runtimeControlContext?.approvalFn) {
       return runtimeControlContext.approvalFn(request.reason);
     }
+    if (host.deps.approvalRequestFn) {
+      return host.deps.approvalRequestFn(request);
+    }
     if (host.deps.approvalFn) {
       return host.deps.approvalFn(request.reason);
     }
