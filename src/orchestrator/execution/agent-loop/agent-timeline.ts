@@ -212,7 +212,7 @@ export function projectAgentLoopEventToTimeline(event: AgentLoopEvent): AgentTim
       return {
         ...base,
         kind: "tool_observation",
-        visibility: "debug",
+        visibility: isUserVisibleToolObservation(event.observation) ? "user" : "debug",
         callId: event.observation.callId,
         toolName: event.observation.toolName,
         state: event.observation.state,
@@ -375,6 +375,10 @@ function stringField(input: Record<string, unknown> | null, field: string): stri
 
 function firstCommandToken(command: string): string {
   return command.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+}
+
+function isUserVisibleToolObservation(observation: AgentLoopToolObservation): boolean {
+  return observation.execution?.status === "not_executed" || observation.state === "denied" || observation.state === "blocked";
 }
 
 const ACTIVITY_SUMMARY_ORDER: AgentTimelineActivityKind[] = [

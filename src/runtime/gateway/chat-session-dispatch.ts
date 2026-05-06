@@ -2,6 +2,7 @@ import {
   getRegisteredGatewayChatSessionPort,
   type GatewayChatDispatchInput,
 } from "./chat-session-port.js";
+import { normalizeAssistantDisplayText } from "../../orchestrator/execution/agent-loop/chat-display-output.js";
 
 export type { GatewayChatDispatchInput } from "./chat-session-port.js";
 
@@ -33,17 +34,10 @@ export async function dispatchGatewayChatInput(
 
 function normalizeManagerResult(result: unknown): string | null {
   if (typeof result === "string") {
-    const trimmed = result.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    return normalizeAssistantDisplayText({ finalText: result, output: null });
   }
   if (typeof result === "object" && result !== null) {
-    const record = result as Record<string, unknown>;
-    for (const key of ["text", "message"] as const) {
-      const value = record[key];
-      if (typeof value === "string" && value.trim().length > 0) {
-        return value;
-      }
-    }
+    return normalizeAssistantDisplayText({ output: result as Record<string, unknown> });
   }
   return null;
 }

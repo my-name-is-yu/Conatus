@@ -10,7 +10,7 @@ interface FailureRecoveryGuidanceLike {
 }
 
 interface AgentTimelineItemLike {
-  kind: "lifecycle" | "turn_context" | "model_request" | "assistant_message" | "tool" | "plan" | "approval" | "compaction" | "activity_summary" | "final" | "stopped";
+  kind: "lifecycle" | "turn_context" | "model_request" | "assistant_message" | "tool" | "tool_observation" | "plan" | "approval" | "compaction" | "activity_summary" | "final" | "stopped";
   status?: string;
   restoredMessages?: number;
   fromUpdatedAt?: string;
@@ -22,6 +22,7 @@ interface AgentTimelineItemLike {
   outputPreview?: string;
   success?: boolean;
   toolName?: string;
+  state?: string;
   summary?: string;
   reason?: string;
   phase?: string;
@@ -52,6 +53,8 @@ export function renderGatewayAgentTimelineItem(item: AgentTimelineItemLike): str
       const label = item.status === "started" ? "Started" : item.success ? "Finished" : "Failed";
       return detail ? `${label} ${item.toolName ?? "tool"}: ${redactSetupSecrets(detail)}` : `${label} ${item.toolName ?? "tool"}.`;
     }
+    case "tool_observation":
+      return `Observed ${item.toolName ?? "tool"} (${item.state ?? "unknown"}): ${redactSetupSecrets(item.outputPreview ?? "")}`;
     case "plan":
       return `Plan changed: ${redactSetupSecrets(item.summary ?? "")}`;
     case "approval":
