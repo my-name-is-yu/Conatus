@@ -6,6 +6,7 @@ import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
 import type { VerifierDeps } from "./task-verifier-types.js";
 import { syncTaskOutcomeSummary } from "./task-outcome-ledger.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
+import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 
 // ─── runMechanicalVerification ───
 
@@ -55,8 +56,25 @@ export async function runMechanicalVerification(
     return Number(rightIsTestCommand) - Number(leftIsTestCommand);
   });
 
+  const verificationCwd = await resolveTaskWorkspacePath({
+    stateManager: deps.stateManager,
+    task,
+  });
+  const verificationTimeoutMs = 30_000; // 30 seconds default for L1 mechanical checks
+  const commandPlans = verificationCommands.map((command) => ({
+    command,
+    directLocal: Boolean(verificationCwd && canRunAsCheapLocalVerification(command)),
+  }));
+  const needsAdapter = commandPlans.some((plan) => !plan.directLocal);
+
   // If no adapter registry is available, fall back to assumed pass (backward compat)
-  if (!deps.adapterRegistry) {
+  if (needsAdapter && !deps.adapterRegistry) {
+    const directFailure = await runDirectLocalPlansBeforeAdapterFallback(
+      commandPlans,
+      verificationCwd,
+      verificationTimeoutMs
+    );
+    if (directFailure) return directFailure;
     return {
       applicable: true,
       passed: true,
@@ -65,8 +83,14 @@ export async function runMechanicalVerification(
   }
 
   // Select the first available adapter from the registry for command execution
-  const availableAdapters = deps.adapterRegistry.listAdapters();
-  if (availableAdapters.length === 0) {
+  const availableAdapters = deps.adapterRegistry?.listAdapters() ?? [];
+  if (needsAdapter && availableAdapters.length === 0) {
+    const directFailure = await runDirectLocalPlansBeforeAdapterFallback(
+      commandPlans,
+      verificationCwd,
+      verificationTimeoutMs
+    );
+    if (directFailure) return directFailure;
     return {
       applicable: true,
       passed: true,
@@ -78,10 +102,16 @@ export async function runMechanicalVerification(
     deps.preferredAdapterType && availableAdapters.includes(deps.preferredAdapterType)
       ? deps.preferredAdapterType
       : availableAdapters[0]!;
-  let adapter: IAdapter;
+  let adapter: IAdapter | undefined;
   try {
-    adapter = deps.adapterRegistry.getAdapter(adapterType);
+    adapter = needsAdapter ? deps.adapterRegistry?.getAdapter(adapterType) : undefined;
   } catch {
+    const directFailure = await runDirectLocalPlansBeforeAdapterFallback(
+      commandPlans,
+      verificationCwd,
+      verificationTimeoutMs
+    );
+    if (directFailure) return directFailure;
     return {
       applicable: true,
       passed: true,
@@ -89,14 +119,37 @@ export async function runMechanicalVerification(
     };
   }
 
-  const verificationTimeoutMs = 30_000; // 30 seconds default for L1 mechanical checks
   const passedCommands: string[] = [];
 
-  for (const verificationCommand of verificationCommands) {
+  for (const plan of commandPlans) {
+    const verificationCommand = plan.command;
+    if (plan.directLocal && verificationCwd) {
+      const result = await runCheapLocalVerification(verificationCommand, verificationCwd, verificationTimeoutMs);
+      if (!result.passed) {
+        const detail = formatMechanicalCommandError(result.errorText);
+        return {
+          applicable: true,
+          passed: false,
+          description: `Mechanical verification failed after ${passedCommands.length}/${verificationCommands.length} command(s) (exit ${result.exitCode ?? "null"}): ${verificationCommand}${detail}`,
+        };
+      }
+      passedCommands.push(verificationCommand);
+      continue;
+    }
+
+    if (!adapter) {
+      return {
+        applicable: true,
+        passed: true,
+        description: `Mechanical verification criteria detected (${verificationCommands.length} command(s), adapter unavailable: assumed pass)`,
+      };
+    }
+
     const agentTask: AgentTask = {
       prompt: verificationCommand,
       timeout_ms: verificationTimeoutMs,
       adapter_type: adapterType,
+      ...(verificationCwd ? { cwd: verificationCwd } : {}),
     };
 
     let result: AgentResult;
@@ -136,6 +189,150 @@ export async function runMechanicalVerification(
     passed: true,
     description: `Mechanical verification passed (${passedCommands.length} command(s)): ${passedCommands.join("; ")}`,
   };
+}
+
+interface CheapLocalCommand {
+  cmd: "test" | "rg" | "grep" | "ls";
+  args: string[];
+}
+
+async function runDirectLocalPlansBeforeAdapterFallback(
+  commandPlans: Array<{ command: string; directLocal: boolean }>,
+  verificationCwd: string | undefined,
+  timeoutMs: number
+): Promise<{ applicable: true; passed: false; description: string } | null> {
+  if (!verificationCwd) return null;
+  const passedCommands: string[] = [];
+  for (const plan of commandPlans) {
+    if (!plan.directLocal) continue;
+    const result = await runCheapLocalVerification(plan.command, verificationCwd, timeoutMs);
+    if (!result.passed) {
+      const detail = formatMechanicalCommandError(result.errorText);
+      return {
+        applicable: true,
+        passed: false,
+        description: `Mechanical verification failed after ${passedCommands.length}/${commandPlans.length} command(s) (exit ${result.exitCode ?? "null"}): ${plan.command}${detail}`,
+      };
+    }
+    passedCommands.push(plan.command);
+  }
+  return null;
+}
+
+async function runCheapLocalVerification(
+  command: string,
+  cwd: string,
+  timeoutMs: number
+): Promise<{ passed: boolean; exitCode: number | null; errorText: string }> {
+  const parsed = parseCheapLocalVerification(command);
+  if (!parsed) {
+    return { passed: false, exitCode: null, errorText: "cheap local verification command was not parseable" };
+  }
+  for (const step of parsed) {
+    const result = await execFileNoThrow(step.cmd, step.args, { cwd, timeoutMs });
+    if (result.exitCode !== 0) {
+      return { passed: false, exitCode: result.exitCode, errorText: result.stderr || result.stdout };
+    }
+  }
+  return { passed: true, exitCode: 0, errorText: "" };
+}
+
+function canRunAsCheapLocalVerification(command: string): boolean {
+  return parseCheapLocalVerification(command) !== null;
+}
+
+function parseCheapLocalVerification(command: string): CheapLocalCommand[] | null {
+  const segments = command.split(/\s+&&\s+/).map((segment) => segment.trim()).filter(Boolean);
+  if (segments.length === 0) return null;
+
+  const parsed: CheapLocalCommand[] = [];
+  for (const segment of segments) {
+    if (hasDisallowedShellToken(segment)) return null;
+    const tokens = tokenizeCheapCommandSegment(segment);
+    if (!tokens || tokens.length === 0) return null;
+    const [cmd, ...args] = tokens;
+    if (!isCheapCommandName(cmd)) return null;
+    if (!areSafeCheapCommandArgs(cmd, args)) return null;
+    parsed.push({ cmd, args });
+  }
+  return parsed;
+}
+
+function tokenizeCheapCommandSegment(segment: string): string[] | null {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | null = null;
+  for (let index = 0; index < segment.length; index += 1) {
+    const char = segment[index]!;
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (quote) return null;
+  if (current.length > 0) tokens.push(current);
+  return tokens;
+}
+
+function isCheapCommandName(value: string | undefined): value is CheapLocalCommand["cmd"] {
+  return value === "test" || value === "rg" || value === "grep" || value === "ls";
+}
+
+function areSafeCheapCommandArgs(cmd: CheapLocalCommand["cmd"], args: string[]): boolean {
+  if (args.some((arg) => arg.includes("\0"))) return false;
+  if (cmd === "test") {
+    return args.length === 2 && ["-f", "-d", "-e", "-s"].includes(args[0]!) && isWorkspaceRelativeOperand(args[1]!);
+  }
+  if (cmd === "rg" || cmd === "grep") {
+    const allowedFlags = new Set(["-n", "--line-number", "-q", "--quiet", "-i", "--ignore-case", "-F", "--fixed-strings"]);
+    const positionalArgs: string[] = [];
+    for (const arg of args) {
+      if (arg.startsWith("-")) {
+        if (!allowedFlags.has(arg)) return false;
+        continue;
+      }
+      positionalArgs.push(arg);
+    }
+    const pathOperands = positionalArgs.slice(1);
+    return positionalArgs.length >= 2 && pathOperands.every(isWorkspaceRelativeOperand);
+  }
+  const allowedLsFlags = new Set(["-a", "-l", "-la", "-al"]);
+  return args.every((arg) =>
+    arg.startsWith("-") ? allowedLsFlags.has(arg) : isWorkspaceRelativeOperand(arg)
+  );
+}
+
+function isWorkspaceRelativeOperand(value: string): boolean {
+  if (!value || value.includes("\0") || path.isAbsolute(value)) return false;
+  if (/[*?[\]{}]/.test(value)) return false;
+  const segments = value.replace(/\\/g, "/").split("/");
+  return !segments.includes("..");
+}
+
+function hasDisallowedShellToken(segment: string): boolean {
+  return /(&|;|\|\|?|\$\(|`|[<>]|\n|\r)/.test(segment);
+}
+
+function formatMechanicalCommandError(output: string): string {
+  const trimmed = output.trim();
+  if (!trimmed) return "";
+  return ` — ${trimmed.slice(0, 500)}`;
 }
 
 // ─── P0 Guard 1: dimension_updates change magnitude limit (§3.2) ───

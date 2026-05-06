@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { z } from "zod";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
@@ -17,6 +18,7 @@ import type {
 import type { ToolExecutor } from "../../../tools/executor.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Spy LLM Client ───
 
@@ -383,6 +385,317 @@ describe("TaskLifecycle", async () => {
       expect(fallbackAdapterCalls).toBe(0);
       expect(codexCalls).toBe(1);
       expect(verification.verdict).toBe("pass");
+    });
+
+    it("runs cheap mechanical verification in the resolved non-git workspace", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const workspace = path.join(tmpDir, "non-git-workspace");
+      const fakeBin = path.join(tmpDir, "bin");
+      fs.mkdirSync(workspace, { recursive: true });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(workspace, "marker.txt"), "expected marker\n", "utf-8");
+      const fakeRg = path.join(fakeBin, "rg");
+      fs.writeFileSync(
+        fakeRg,
+        [
+          "#!/bin/sh",
+          "pwd > rg.cwd",
+          "if [ \"$1\" = \"-n\" ]; then shift; fi",
+          "grep -n \"$1\" \"$2\" >/dev/null",
+          "",
+        ].join("\n"),
+        "utf-8"
+      );
+      fs.chmodSync(fakeRg, 0o755);
+      const previousPath = process.env.PATH;
+      process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ""}`;
+
+      const registry = new AdapterRegistry();
+      let adapterCalls = 0;
+      registry.register({
+        adapterType: "openai_codex_cli",
+        async execute() {
+          adapterCalls += 1;
+          return {
+            success: false,
+            output: "",
+            error: "cheap command should run locally",
+            exit_code: 1,
+            elapsed_ms: 1,
+            stopped_reason: "error",
+          };
+        },
+      });
+      const lifecycle = createLifecycle(llm, { adapterRegistry: registry });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Workspace marker exists and contains expected text",
+            verification_method: "test -f marker.txt && rg -n expected marker.txt",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      try {
+        await stateManager.saveGoal(makeGoal({
+          id: task.goal_id,
+          constraints: [`workspace_path:${workspace}`],
+        }));
+
+        const verification = await lifecycle.verifyTask(
+          task,
+          makeExecutionResult(),
+          "openai_codex_cli"
+        );
+
+        expect(adapterCalls).toBe(0);
+        expect(verification.verdict).toBe("pass");
+        expect(fs.realpathSync(fs.readFileSync(path.join(workspace, "rg.cwd"), "utf-8").trim())).toBe(
+          fs.realpathSync(workspace)
+        );
+      } finally {
+        process.env.PATH = previousPath;
+      }
+    });
+
+    it("keeps shell control operators on the adapter path while preserving workspace cwd", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const workspace = path.join(tmpDir, "non-git-workspace-control");
+      fs.mkdirSync(workspace, { recursive: true });
+      fs.writeFileSync(path.join(workspace, "marker.txt"), "expected marker\n", "utf-8");
+
+      const registry = new AdapterRegistry();
+      let adapterCwd: string | undefined;
+      registry.register({
+        adapterType: "openai_codex_cli",
+        async execute(agentTask) {
+          adapterCwd = agentTask.cwd;
+          return {
+            success: true,
+            output: "adapter handled control operator command",
+            error: null,
+            exit_code: 0,
+            elapsed_ms: 1,
+            stopped_reason: "completed",
+          };
+        },
+      });
+      const lifecycle = createLifecycle(llm, { adapterRegistry: registry });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Workspace marker exists",
+            verification_method: "test -f marker.txt & touch should-not-run",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      await stateManager.saveGoal(makeGoal({
+        id: task.goal_id,
+        constraints: [`workspace_path:${workspace}`],
+      }));
+
+      const verification = await lifecycle.verifyTask(
+        task,
+        makeExecutionResult(),
+        "openai_codex_cli"
+      );
+
+      expect(verification.verdict).toBe("pass");
+      expect(adapterCwd).toBe(workspace);
+      expect(fs.existsSync(path.join(workspace, "should-not-run"))).toBe(false);
+    });
+
+    it("keeps rg execution options on the adapter path while preserving workspace cwd", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const workspace = path.join(tmpDir, "non-git-workspace-rg-pre");
+      fs.mkdirSync(workspace, { recursive: true });
+      fs.writeFileSync(path.join(workspace, "marker.txt"), "expected marker\n", "utf-8");
+      const preprocessor = path.join(workspace, "side-effect-preprocessor.sh");
+      fs.writeFileSync(
+        preprocessor,
+        [
+          "#!/bin/sh",
+          "touch rg-pre-side-effect",
+          "cat \"$1\"",
+          "",
+        ].join("\n"),
+        "utf-8"
+      );
+      fs.chmodSync(preprocessor, 0o755);
+
+      const registry = new AdapterRegistry();
+      let adapterCwd: string | undefined;
+      registry.register({
+        adapterType: "openai_codex_cli",
+        async execute(agentTask) {
+          adapterCwd = agentTask.cwd;
+          return {
+            success: true,
+            output: "adapter handled rg option command",
+            error: null,
+            exit_code: 0,
+            elapsed_ms: 1,
+            stopped_reason: "completed",
+          };
+        },
+      });
+      const lifecycle = createLifecycle(llm, { adapterRegistry: registry });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Workspace marker contains expected text",
+            verification_method: "rg --pre ./side-effect-preprocessor.sh expected marker.txt",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      await stateManager.saveGoal(makeGoal({
+        id: task.goal_id,
+        constraints: [`workspace_path:${workspace}`],
+      }));
+
+      const verification = await lifecycle.verifyTask(
+        task,
+        makeExecutionResult(),
+        "openai_codex_cli"
+      );
+
+      expect(verification.verdict).toBe("pass");
+      expect(adapterCwd).toBe(workspace);
+      expect(fs.existsSync(path.join(workspace, "rg-pre-side-effect"))).toBe(false);
+    });
+
+    it("keeps escaped path operands on the adapter path while preserving workspace cwd", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const workspace = path.join(tmpDir, "non-git-workspace-path-scope");
+      const outside = path.join(tmpDir, "outside-workspace");
+      fs.mkdirSync(workspace, { recursive: true });
+      fs.mkdirSync(outside, { recursive: true });
+      fs.writeFileSync(path.join(outside, "marker.txt"), "expected marker\n", "utf-8");
+
+      const registry = new AdapterRegistry();
+      let adapterCwd: string | undefined;
+      registry.register({
+        adapterType: "openai_codex_cli",
+        async execute(agentTask) {
+          adapterCwd = agentTask.cwd;
+          return {
+            success: true,
+            output: "adapter handled escaped path command",
+            error: null,
+            exit_code: 0,
+            elapsed_ms: 1,
+            stopped_reason: "completed",
+          };
+        },
+      });
+      const lifecycle = createLifecycle(llm, { adapterRegistry: registry });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Workspace marker contains expected text",
+            verification_method: "rg -n expected ../outside-workspace/marker.txt",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      await stateManager.saveGoal(makeGoal({
+        id: task.goal_id,
+        constraints: [`workspace_path:${workspace}`],
+      }));
+
+      const verification = await lifecycle.verifyTask(
+        task,
+        makeExecutionResult(),
+        "openai_codex_cli"
+      );
+
+      expect(verification.verdict).toBe("pass");
+      expect(adapterCwd).toBe(workspace);
+    });
+
+    it("still runs cheap local failures before assuming pass when adapter is unavailable", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const workspace = path.join(tmpDir, "non-git-workspace-no-adapter");
+      fs.mkdirSync(workspace, { recursive: true });
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Full test suite passes",
+            verification_method: "npm test",
+            is_blocking: true,
+          },
+          {
+            description: "Workspace marker exists",
+            verification_method: "test -f missing-marker.txt",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      await stateManager.saveGoal(makeGoal({
+        id: task.goal_id,
+        constraints: [`workspace_path:${workspace}`],
+      }));
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult());
+
+      expect(verification.verdict).toBe("fail");
+      expect(verification.evidence[0]?.description).toContain("missing-marker.txt");
+    });
+
+    it("keeps glob path operands on the adapter path while preserving workspace cwd", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const workspace = path.join(tmpDir, "non-git-workspace-glob");
+      fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "reports", "result.md"), "done\n", "utf-8");
+
+      const registry = new AdapterRegistry();
+      let adapterCwd: string | undefined;
+      registry.register({
+        adapterType: "openai_codex_cli",
+        async execute(agentTask) {
+          adapterCwd = agentTask.cwd;
+          return {
+            success: true,
+            output: "adapter handled glob command",
+            error: null,
+            exit_code: 0,
+            elapsed_ms: 1,
+            stopped_reason: "completed",
+          };
+        },
+      });
+      const lifecycle = createLifecycle(llm, { adapterRegistry: registry });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Report exists",
+            verification_method: "ls reports/*.md",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      await stateManager.saveGoal(makeGoal({
+        id: task.goal_id,
+        constraints: [`workspace_path:${workspace}`],
+      }));
+
+      const verification = await lifecycle.verifyTask(
+        task,
+        makeExecutionResult(),
+        "openai_codex_cli"
+      );
+
+      expect(verification.verdict).toBe("pass");
+      expect(adapterCwd).toBe(workspace);
     });
 
     it("runs all mechanical blocking criteria instead of passing on the first match", async () => {
