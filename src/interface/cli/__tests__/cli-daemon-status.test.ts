@@ -314,6 +314,97 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Ack latency:     p95 1.0s");
   });
 
+  it("reconciles stale runtime health with stopped live PID state", async () => {
+    const now = Date.now();
+    const stalePid = 999999991;
+    fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "runtime", "health", "daemon.json"),
+      JSON.stringify({
+        status: "ok",
+        leader: true,
+        checked_at: now - 60_000,
+        kpi: {
+          process_alive: { status: "ok", checked_at: now - 60_000, last_ok_at: now - 60_000 },
+          command_acceptance: { status: "ok", checked_at: now - 60_000, last_ok_at: now - 60_000 },
+          task_execution: { status: "ok", checked_at: now - 60_000, last_ok_at: now - 60_000 },
+        },
+        long_running: {
+          summary: "alive_but_waiting",
+          checked_at: now - 60_000,
+          signals: {
+            process: { status: "alive", checked_at: now - 60_000, observed_at: now - 60_000, pid: stalePid },
+            child_activity: { status: "idle", checked_at: now - 60_000, observed_at: now - 60_000 },
+            log_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
+            artifact_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
+            metric_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
+            metric_progress: { status: "plateau", checked_at: now - 60_000, observed_at: now - 60_000 },
+            blocker: { status: "none", checked_at: now - 60_000, observed_at: now - 60_000 },
+            resumable: true,
+          },
+        },
+        details: { pid: stalePid },
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "runtime", "health", "components.json"),
+      JSON.stringify({
+        checked_at: now - 60_000,
+        components: {
+          gateway: "ok",
+          queue: "ok",
+          leases: "ok",
+          approval: "ok",
+          outbox: "ok",
+          supervisor: "ok",
+        },
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({
+        pid: stalePid,
+        started_at: new Date(now - 120_000).toISOString(),
+        last_loop_at: new Date(now - 90_000).toISOString(),
+        loop_count: 4,
+        active_goals: ["goal-stale"],
+        status: "running",
+        crash_count: 0,
+        last_error: null,
+      })
+    );
+    const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+      info: {
+        pid: stalePid,
+        runtime_pid: stalePid,
+        owner_pid: stalePid,
+        started_at: new Date(now - 120_000).toISOString(),
+        runtime_started_at: new Date(now - 120_000).toISOString(),
+        owner_started_at: new Date(now - 120_000).toISOString(),
+      },
+      running: false,
+      runtimePid: stalePid,
+      ownerPid: stalePid,
+      alivePids: [],
+      stalePids: [stalePid],
+      verifiedPids: [],
+      unverifiedLegacyPids: [],
+    });
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain(`stopped (PID: ${stalePid})`);
+    expect(output).toContain("Snapshot note:  live PID inspection reports runtime stopped");
+    expect(output).toContain("Process alive:   failed");
+    expect(output).toContain("KPI snapshot:    process=down accept=up execute=up (failed)");
+    expect(output).toContain("Summary:        dead but resumable");
+    expect(output).toContain(`Process:        dead pid=${stalePid}`);
+    expect(output).not.toContain("Process alive:   ok");
+    expect(output).not.toContain(`Process:        alive pid=${stalePid}`);
+  });
+
   it("shows in-flight worker progress from supervisor state when loops are still zero", async () => {
     const now = Date.now();
     fs.mkdirSync(path.join(tmpDir, "runtime"), { recursive: true });

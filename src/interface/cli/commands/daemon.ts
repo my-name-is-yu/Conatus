@@ -23,6 +23,7 @@ import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
 import { ProactiveInterventionStore, RuntimeHealthStore } from "../../../runtime/store/index.js";
+import type { RuntimeHealthSnapshot } from "../../../runtime/store/index.js";
 import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
@@ -57,6 +58,59 @@ import {
 } from "./daemon-shared.js";
 
 const WATCHDOG_CHILD_ENV = "PULSEED_WATCHDOG_CHILD";
+const STALE_RUNTIME_HEALTH_REASON = "live PID inspection reports runtime stopped; stored health snapshot is historical";
+
+function reconcileRuntimeHealthForDisplay(
+  snapshot: RuntimeHealthSnapshot | null,
+  opts: { runtimeAlive: boolean; runtimePid: number | null }
+): RuntimeHealthSnapshot | null {
+  if (!snapshot || opts.runtimeAlive) {
+    return snapshot;
+  }
+
+  const checkedAt = Date.now();
+  const staleRuntimePid = opts.runtimePid ?? snapshot.long_running?.signals.process.pid;
+  const kpi: RuntimeHealthSnapshot["kpi"] = snapshot.kpi
+    ? {
+      ...snapshot.kpi,
+      process_alive: {
+        ...snapshot.kpi.process_alive,
+        status: "failed",
+        checked_at: checkedAt,
+        last_failed_at: checkedAt,
+        reason: STALE_RUNTIME_HEALTH_REASON,
+      },
+      degraded_at: snapshot.kpi.degraded_at ?? checkedAt,
+    }
+    : undefined;
+
+  const longRunning: RuntimeHealthSnapshot["long_running"] = snapshot.long_running
+    ? {
+      ...snapshot.long_running,
+      summary: snapshot.long_running.signals.resumable ? "dead_but_resumable" : "dead_needs_intervention",
+      checked_at: checkedAt,
+      signals: {
+        ...snapshot.long_running.signals,
+        process: {
+          ...snapshot.long_running.signals.process,
+          status: "dead",
+          pid: staleRuntimePid,
+          checked_at: checkedAt,
+          observed_at: checkedAt,
+          reason: STALE_RUNTIME_HEALTH_REASON,
+        },
+      },
+    }
+    : undefined;
+
+  return {
+    ...snapshot,
+    status: "failed",
+    checked_at: checkedAt,
+    kpi,
+    long_running: longRunning,
+  };
+}
 
 export async function cmdStart(
   stateManager: StateManager,
@@ -474,7 +528,14 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   // Load daemon config for config section display
   const cfg = await loadDaemonConfig(baseDir);
   const runtimeRoot = resolveDaemonRuntimeRoot(baseDir, cfg.runtime_root);
-  const runtimeHealth = await new RuntimeHealthStore(runtimeRoot).loadSnapshot();
+  const storedRuntimeHealth = await new RuntimeHealthStore(runtimeRoot).loadSnapshot();
+  const runtimeHealth = reconcileRuntimeHealthForDisplay(storedRuntimeHealth, {
+    runtimeAlive: resolvedRuntimeAlive,
+    runtimePid: resolvedRuntimePid,
+  });
+  const runtimeHealthReconciled =
+    storedRuntimeHealth !== runtimeHealth
+    && (storedRuntimeHealth?.kpi !== undefined || storedRuntimeHealth?.long_running !== undefined);
   const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot).summarize();
   const supervisorState = await readSupervisorState(runtimeRoot);
   const taskKpis = await summarizeTaskOutcomeLedgers(baseDir);
@@ -620,6 +681,9 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   if (runtimeHealth?.kpi) {
     lines.push("");
     lines.push("Runtime health:");
+    if (runtimeHealthReconciled) {
+      lines.push(`  Snapshot note:  ${STALE_RUNTIME_HEALTH_REASON}.`);
+    }
     lines.push(`  ${formatCapabilityLabel("Process alive:", runtimeHealth.kpi, "process_alive")}`);
     lines.push(`  ${formatCapabilityLabel("Accept command:", runtimeHealth.kpi, "command_acceptance")}`);
     lines.push(`  ${formatCapabilityLabel("Execute task:", runtimeHealth.kpi, "task_execution")}`);
@@ -647,6 +711,9 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   if (runtimeHealth?.long_running) {
     lines.push("");
     lines.push("Long-run health:");
+    if (runtimeHealthReconciled) {
+      lines.push(`  Snapshot note:  ${STALE_RUNTIME_HEALTH_REASON}.`);
+    }
     lines.push(...formatLongRunHealthLines(runtimeHealth.long_running));
   }
 
