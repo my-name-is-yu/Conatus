@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 
 import { StateManager } from "../../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
+import { formatWorkspacePathConstraint, resolveWorkspacePath } from "../../../base/utils/workspace-path.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 import {
@@ -83,6 +84,9 @@ export async function dispatchGoalCommand(
     const description = positionals[0];
     const yes = globalYes || (addValues.yes ?? false);
     const rawDimensions = addValues.dim ?? [];
+    const workspacePathConstraint = addValues.workspace
+      ? formatWorkspacePathConstraint(resolveWorkspacePath(addValues.workspace))
+      : undefined;
 
     // Auto-infer mode: title provided, no --dim, no --negotiate, no --no-refine
     const inferTitle = addValues.title || description;
@@ -116,8 +120,8 @@ export async function dispatchGoalCommand(
           if (accepted) {
             const rawDims = inferred.map((d) => `${d.name}:${d.type}:${d.value}`);
             const inferConstraints = addValues.constraint ?? [];
-            if (addValues.workspace) {
-              inferConstraints.push(`workspace_path:${addValues.workspace}`);
+            if (workspacePathConstraint) {
+              inferConstraints.push(workspacePathConstraint);
             }
             return await cmdGoalAddRaw(stateManager, {
               title: inferTitle,
@@ -143,8 +147,8 @@ export async function dispatchGoalCommand(
         return 1;
       }
       const rawConstraints = addValues.constraint ?? [];
-      if (addValues.workspace) {
-        rawConstraints.push(`workspace_path:${addValues.workspace}`);
+      if (workspacePathConstraint) {
+        rawConstraints.push(workspacePathConstraint);
       }
       return await cmdGoalAddRaw(stateManager, {
         title,
@@ -165,8 +169,8 @@ export async function dispatchGoalCommand(
     const deadline = addValues.deadline;
     const constraints = addValues.constraint ?? [];
     // Add workspace_path constraint when --workspace is provided
-    if (addValues.workspace) {
-      constraints.push(`workspace_path:${addValues.workspace}`);
+    if (workspacePathConstraint) {
+      constraints.push(workspacePathConstraint);
     }
     const noRefine = addValues["no-refine"] ?? false;
     return await cmdGoalAdd(stateManager, characterConfigManager, description, {

@@ -5,6 +5,7 @@
 import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
+import { resolveWorkspacePath } from "../../base/utils/workspace-path.js";
 
 import { StateManager } from "../../base/state/state-manager.js";
 import { createWorkspaceContextProvider } from "../../platform/observation/workspace-context.js";
@@ -75,8 +76,9 @@ export async function buildDeps(
   logger?: Logger,
   onProgress?: (event: ProgressEvent) => void,
   workspacePath?: string,
+  workspaceBaseCwd = process.cwd(),
 ) {
-  const resolvedWorkspacePath = workspacePath ?? process.cwd();
+  const resolvedWorkspacePath = resolveWorkspacePath(workspacePath ?? workspaceBaseCwd, workspaceBaseCwd);
   const characterConfig = await characterConfigManager.load();
   const llmClient = await buildLLMClient();
   const trustManager = new TrustManager(stateManager);
@@ -173,7 +175,7 @@ export async function buildDeps(
     dataSources,
     llmClient,
     contextProvider,
-    {},
+    { workspaceBasePath: resolvedWorkspacePath },
     logger,
     observationPreChecker,
     hookManager,

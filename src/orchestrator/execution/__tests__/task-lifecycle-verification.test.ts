@@ -155,6 +155,7 @@ describe("TaskLifecycle", async () => {
       adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry | null;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
       toolExecutor?: ToolExecutor;
+      revertCwd?: string;
     }
   ): TaskLifecycle {
     strategyManager = new StrategyManager(stateManager, llmClient);
@@ -734,6 +735,58 @@ describe("TaskLifecycle", async () => {
         );
 
         expect(adapterCalls).toBe(0);
+        expect(verification.verdict).toBe("pass");
+        expect(fs.realpathSync(fs.readFileSync(path.join(workspace, "rg.cwd"), "utf-8").trim())).toBe(
+          fs.realpathSync(workspace)
+        );
+      } finally {
+        process.env.PATH = previousPath;
+      }
+    });
+
+    it("runs cheap mechanical verification for a legacy relative workspace_path under revertCwd", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const workspaceBase = path.join(tmpDir, "workspace-base");
+      const workspace = path.join(workspaceBase, "relative-workspace");
+      const fakeBin = path.join(tmpDir, "bin-relative");
+      fs.mkdirSync(workspace, { recursive: true });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(workspace, "marker.txt"), "expected marker\n", "utf-8");
+      const fakeRg = path.join(fakeBin, "rg");
+      fs.writeFileSync(
+        fakeRg,
+        [
+          "#!/bin/sh",
+          "pwd > rg.cwd",
+          "if [ \"$1\" = \"-n\" ]; then shift; fi",
+          "grep -n \"$1\" \"$2\" >/dev/null",
+          "",
+        ].join("\n"),
+        "utf-8"
+      );
+      fs.chmodSync(fakeRg, 0o755);
+      const previousPath = process.env.PATH;
+      process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ""}`;
+
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null, revertCwd: workspaceBase });
+      const task = makeTask({
+        success_criteria: [
+          {
+            description: "Workspace marker exists and contains expected text",
+            verification_method: "test -f marker.txt && rg -n expected marker.txt",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      try {
+        await stateManager.saveGoal(makeGoal({
+          id: task.goal_id,
+          constraints: ["workspace_path:relative-workspace"],
+        }));
+
+        const verification = await lifecycle.verifyTask(task, makeExecutionResult(), "openai_codex_cli");
+
         expect(verification.verdict).toBe("pass");
         expect(fs.realpathSync(fs.readFileSync(path.join(workspace, "rg.cwd"), "utf-8").trim())).toBe(
           fs.realpathSync(workspace)

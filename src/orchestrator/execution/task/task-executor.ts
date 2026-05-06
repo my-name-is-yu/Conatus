@@ -19,6 +19,7 @@ export interface TaskExecutorDeps {
   sessionManager: SessionManager;
   logger?: Logger;
   execFileSyncFn: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
+  fallbackCwd?: string;
 }
 
 // ─── durationToMs ───
@@ -48,9 +49,9 @@ export async function executeTask(
   workspaceContext?: string,
   activeStrategy?: Strategy
 ): Promise<AgentResult> {
-  const { stateManager, sessionManager, logger, execFileSyncFn } = deps;
+  const { stateManager, sessionManager, logger, execFileSyncFn, fallbackCwd } = deps;
 
-  const workspaceCwd = await resolveTaskWorkspacePath({ stateManager, task });
+  const workspaceCwd = await resolveTaskWorkspacePath({ stateManager, task, fallbackCwd });
 
   // Create execution session
   const session = await sessionManager.createSession(

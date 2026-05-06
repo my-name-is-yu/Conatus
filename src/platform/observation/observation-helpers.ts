@@ -19,6 +19,8 @@ export interface ObservationEngineOptions {
   vectorIndex?: VectorIndex;
   /** Optional ToolExecutor for git diff via tool system (preferred over raw execFile). */
   toolExecutor?: import("../../tools/executor.js").ToolExecutor;
+  /** Optional base cwd used to resolve legacy relative workspace_path constraints. */
+  workspaceBasePath?: string;
 }
 
 // ─── Cross-Validation Result ───

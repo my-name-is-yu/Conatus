@@ -89,6 +89,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
       guardrailRunner?: GuardrailRunner;
       toolExecutor?: ToolExecutor;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
+      revertCwd?: string;
     }
   ): TaskLifecycle {
     strategyManager = new StrategyManager(stateManager, llmClient);
@@ -102,6 +103,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
       {
         healthCheckEnabled: false,
         execFileSyncFn: options?.execFileSyncFn ?? (() => "some-file.ts"),
+        revertCwd: options?.revertCwd,
         ...options,
       }
     );
@@ -210,6 +212,55 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain(".env");
     expect(result.filesChangedPaths).toEqual(["src/changed.ts", ".env"]);
+    expect(execFileSyncFn.mock.calls.every((call) => call[2].cwd === taskWorkspace)).toBe(true);
+  });
+
+  it("resolves existing relative workspace_path against the configured execution workspace", async () => {
+    const executionWorkspace = `${tmpDir}/execution-workspace`;
+    const taskWorkspace = `${executionWorkspace}/relative-task-workspace`;
+    fs.mkdirSync(`${taskWorkspace}/.git`, { recursive: true });
+    await stateManager.writeRaw("goals/goal-1/goal.json", {
+      id: "goal-1",
+      title: "Test goal",
+      dimensions: [],
+      constraints: ["workspace_path:relative-task-workspace"],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const execute = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        success: true,
+        output: "tool path done",
+        error: null,
+        exit_code: 0,
+        elapsed_ms: 7,
+        stopped_reason: "completed",
+      },
+      summary: "ok",
+      durationMs: 1,
+    });
+    const execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "diff" && args[1] === "--name-only") return "src/changed.ts";
+      if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
+      if (args[0] === "ls-files") return "";
+      if (args[0] === "diff") return "";
+      return "";
+    });
+    const lifecycle = createLifecycle(createMockLLMClient([]), {
+      toolExecutor: { execute } as unknown as ToolExecutor,
+      execFileSyncFn,
+      revertCwd: executionWorkspace,
+    });
+
+    const result = await lifecycle.executeTask(makeTask(), createMockAdapter("direct adapter should not run"));
+
+    expect(execute).toHaveBeenCalledWith(
+      "run-adapter",
+      expect.objectContaining({ cwd: taskWorkspace }),
+      expect.objectContaining({ cwd: taskWorkspace }),
+    );
+    expect(result.output).toContain("tool path done");
     expect(execFileSyncFn.mock.calls.every((call) => call[2].cwd === taskWorkspace)).toBe(true);
   });
 

@@ -201,7 +201,7 @@ async function collectVerificationDiffs(
   const cwd =
     executionResult.agentLoop?.requestedCwd ??
     executionResult.agentLoop?.executionCwd ??
-    await resolveTaskWorkspacePath({ stateManager: deps.stateManager, task }) ??
+    await resolveTaskWorkspacePath({ stateManager: deps.stateManager, task, fallbackCwd: deps.revertCwd }) ??
     process.cwd();
 
   const changedPaths = [
@@ -322,7 +322,7 @@ export async function verifyTask(
     task,
     executionResult.agentLoop?.executionCwd
       ?? executionResult.agentLoop?.requestedCwd
-      ?? await resolveTaskWorkspacePath({ stateManager: deps.stateManager, task }),
+      ?? await resolveTaskWorkspacePath({ stateManager: deps.stateManager, task, fallbackCwd: deps.revertCwd }),
     { goal: goalForArtifactContract }
   );
 

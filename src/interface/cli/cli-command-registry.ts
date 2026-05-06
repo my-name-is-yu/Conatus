@@ -51,6 +51,11 @@ import { cmdPlaybook } from "./commands/playbook.js";
 import { cmdUsage } from "./commands/usage.js";
 import { printUsage, formatOperationError } from "./utils.js";
 import { ensureProviderConfig } from "./ensure-api-key.js";
+import {
+  extractWorkspacePathConstraint,
+  resolveWorkspacePath,
+  upsertWorkspacePathConstraint,
+} from "../../base/utils/workspace-path.js";
 
 const logger = getCliLogger();
 
@@ -77,6 +82,7 @@ export async function dispatchCommand(
   stateManager: StateManager,
   characterConfigManager: CharacterConfigManager,
   activeCoreLoopRef: { value: CoreLoop | null },
+  commandCwd = process.cwd(),
 ): Promise<number> {
   if (argv.length === 0) {
     await ensureProviderConfig({ requireInteractiveSetup: true });
@@ -121,33 +127,29 @@ export async function dispatchCommand(
     }
     const goalId = goalIds[0];
 
-    // Add workspace_path constraint to goal if --workspace is provided
-    let resolvedWorkspace = values.workspace;
+    let resolvedWorkspace = values.workspace ? resolveWorkspacePath(values.workspace, commandCwd) : undefined;
     if (resolvedWorkspace) {
       const goal = await stateManager.loadGoal(goalId);
       if (goal) {
-        const wpPrefix = "workspace_path:";
-        const existingIdx = goal.constraints.findIndex((c) => c.startsWith(wpPrefix));
-        if (existingIdx >= 0) {
-          goal.constraints[existingIdx] = `${wpPrefix}${resolvedWorkspace}`;
-        } else {
-          goal.constraints.push(`${wpPrefix}${resolvedWorkspace}`);
-        }
+        upsertWorkspacePathConstraint(goal.constraints, resolvedWorkspace);
         await stateManager.saveGoal(goal);
       }
     } else {
       // No --workspace flag: auto-detect from cwd or use existing constraint
       const goal = await stateManager.loadGoal(goalId);
       if (goal) {
-        const wpPrefix = "workspace_path:";
-        const existing = goal.constraints.find((c) => c.startsWith(wpPrefix));
+        const existing = extractWorkspacePathConstraint(goal.constraints);
         if (existing) {
-          resolvedWorkspace = existing.slice(wpPrefix.length);
+          resolvedWorkspace = resolveWorkspacePath(existing, commandCwd);
+          if (resolvedWorkspace !== existing) {
+            upsertWorkspacePathConstraint(goal.constraints, resolvedWorkspace);
+            await stateManager.saveGoal(goal);
+          }
         } else {
           // Auto-add workspace_path from cwd so observation can read real files
-          goal.constraints.push(`${wpPrefix}${process.cwd()}`);
+          resolvedWorkspace = resolveWorkspacePath(commandCwd);
+          upsertWorkspacePathConstraint(goal.constraints, resolvedWorkspace);
           await stateManager.saveGoal(goal);
-          resolvedWorkspace = process.cwd();
         }
       }
     }

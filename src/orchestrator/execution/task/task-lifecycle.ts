@@ -541,6 +541,7 @@ export class TaskLifecycle {
       const taskCwd = await resolveTaskWorkspacePath({
         stateManager: this.stateManager,
         task: runningTask,
+        fallbackCwd: this.revertCwd,
       });
       const artifactGoal = await this.stateManager.loadGoal(runningTask.goal_id).catch(() => null);
       const agentLoopResult = await this.agentLoopRunner.runTask({
@@ -750,6 +751,7 @@ export class TaskLifecycle {
       sessionManager: this.sessionManager,
       logger: this.logger,
       execFileSyncFn: this.execFileSyncFn,
+      fallbackCwd: this.revertCwd,
     };
   }
 

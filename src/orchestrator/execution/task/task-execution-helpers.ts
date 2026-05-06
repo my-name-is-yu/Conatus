@@ -22,6 +22,7 @@ interface ExecuteTaskWithGuardsParams {
   sessionManager: SessionManager;
   logger?: Logger;
   execFileSyncFn: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
+  fallbackCwd?: string;
 }
 
 export async function executeTaskWithGuards(
@@ -38,6 +39,7 @@ export async function executeTaskWithGuards(
     sessionManager,
     logger,
     execFileSyncFn,
+    fallbackCwd,
   } = params;
 
   if (guardrailRunner) {
@@ -61,7 +63,7 @@ export async function executeTaskWithGuards(
 
   if (toolExecutor) {
     try {
-      const workspaceCwd = await resolveTaskWorkspacePath({ stateManager, task });
+      const workspaceCwd = await resolveTaskWorkspacePath({ stateManager, task, fallbackCwd });
       let trustBalance = 0;
       try {
         await stateManager.loadGoal(task.goal_id);
@@ -121,6 +123,7 @@ export async function executeTaskWithGuards(
       sessionManager,
       logger,
       execFileSyncFn,
+      fallbackCwd,
     },
     task,
     adapter,
