@@ -522,6 +522,52 @@ describe("buildRuntimeEvidenceAnswer", () => {
     expect(result.message).not.toContain("0.12");
   });
 
+  it("does not treat model-extracted freeform labels as exact missing run ids", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-evidence-fuzzy-target-"));
+    const stateManager = { getBaseDir: () => tmp };
+    const ledger = new RuntimeEvidenceLedger(path.join(tmp, "runtime"));
+    const runLedger = new BackgroundRunLedger(path.join(tmp, "runtime"));
+    await ledger.append({
+      kind: "metric",
+      scope: { run_id: "run-active" },
+      occurred_at: "2026-05-02T00:20:00.000Z",
+      metrics: [{ label: "score", value: 0.88, direction: "maximize", observed_at: "2026-05-02T00:20:00.000Z" }],
+      summary: "active run evidence",
+    });
+    await runLedger.create({
+      id: "run-active",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Kaggle DurableLoop run",
+      workspace: "/repo",
+      created_at: "2026-05-02T00:00:00.000Z",
+      started_at: "2026-05-02T00:00:00.000Z",
+      updated_at: "2026-05-02T00:25:00.000Z",
+    });
+
+    const result = await answerRuntimeEvidenceQuestion({
+      text: "kaggle task durableloop readiness check",
+      stateManager,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "runtime_evidence_question",
+        topics: ["progress", "metric", "blocker"],
+        confidence: 0.9,
+        targetRunId: "durableloop",
+      })),
+      now: NOW,
+    });
+
+    expect(result.kind).toBe("answered");
+    expect(result.targetRunId).toBe("run-active");
+    expect(result.messageType).toBe("warning");
+    expect(result.message).toContain("Runtime evidence answer for run run-active");
+    expect(result.message).toContain("score");
+    expect(result.message).toContain("0.88");
+    expect(result.message).toContain("Requested target \"durableloop\" did not match");
+    expect(result.message).not.toContain("requested run was not found");
+  });
+
   it("redacts evaluator gap summaries in blocker output", () => {
     const result = buildRuntimeEvidenceAnswer({
       text: "What is blocked?",

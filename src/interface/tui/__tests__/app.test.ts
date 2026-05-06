@@ -755,6 +755,80 @@ describe("standalone slash command routing", () => {
     screen.unmount();
   });
 
+  it("does not let fuzzy runtime labels block TUI evidence answers as missing exact runs", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const llmClient = createSingleMockLLMClient(JSON.stringify({
+      decision: "runtime_evidence_question",
+      topics: ["progress", "metric", "blocker"],
+      confidence: 0.93,
+      targetRunId: "durableloop",
+    }));
+    testState.runtimeSessionSnapshots = [{
+      schema_version: "runtime-session-registry-v1",
+      generated_at: "2026-05-02T00:00:00.000Z",
+      sessions: [],
+      background_runs: [{
+        schema_version: "background-run-v1",
+        id: "run-evidence",
+        kind: "coreloop_run",
+        parent_session_id: null,
+        child_session_id: null,
+        process_session_id: null,
+        status: "running",
+        notify_policy: "done_only",
+        reply_target_source: "none",
+        pinned_reply_target: null,
+        title: "Kaggle DurableLoop run",
+        workspace: "/repo",
+        created_at: "2026-05-02T00:00:00.000Z",
+        started_at: "2026-05-02T00:00:00.000Z",
+        updated_at: "2026-05-02T00:00:00.000Z",
+        completed_at: null,
+        summary: "Kaggle run is executing",
+        error: null,
+        artifacts: [],
+        source_refs: [],
+      }],
+      warnings: [],
+    }];
+    testState.runtimeEvidenceSummaries = {
+      "run-evidence": createEvidenceSummary(),
+    };
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      llmClient,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "/work/kaggle",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("kaggleタスクdurableloopの方で回す準備できてる？このまま回し始めても大丈夫？");
+    await flush();
+
+    const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
+    expect(chatRunner.execute).not.toHaveBeenCalled();
+    expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    expect(testState.summarizedRunIds).toEqual(["run-evidence"]);
+    expect(visibleText).toContain("Runtime evidence answer for run run-evidence");
+    expect(visibleText).toContain("balanced_accuracy");
+    expect(visibleText).toContain("Requested target \"durableloop\" did not match");
+    expect(visibleText).not.toContain("requested run was not found");
+
+    screen.unmount();
+  });
+
   it("routes non-evidence multilingual chat through ChatRunner when classifier says not evidence", async () => {
     const stateManager = createStateManagerMock();
     const chatRunner = createChatRunnerMock();

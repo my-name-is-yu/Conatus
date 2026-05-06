@@ -77,6 +77,7 @@ Runtime evidence questions ask about a current or recent background run using Ru
 - report: what should be included in a report/postmortem/writeup
 
 Return not_runtime_evidence_question for ordinary chat, requests to start/stop/pause/control a run, instructions to do new work, explanatory questions not asking for persisted runtime evidence, or ambiguous/low-confidence text.
+Set targetRunId only when the user copied an exact runtime catalog run id. Do not put natural-language labels, titles, task names, component names, tool names, "current", "latest", or "previous" in targetRunId.
 
 Respond only as JSON: { "decision": "runtime_evidence_question" | "not_runtime_evidence_question", "topics": ["progress"], "confidence": 0.0-1.0, "targetRunId": "optional exact run id if explicitly named", "rationale": "short" }`;
 }
@@ -137,18 +138,23 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
     healthStore.loadSnapshot().catch(() => null),
   ]);
   const candidates = selectCandidateRuns(snapshot);
-  const targetRun = query.targetRunId
-    ? candidates.find((run) => run.id === query.targetRunId)
+  const queryTargetRunId = query.targetRunId?.trim();
+  const targetRun = queryTargetRunId
+    ? candidates.find((run) => run.id === queryTargetRunId)
     : undefined;
-  if (query.targetRunId && !targetRun) {
+  if (
+    queryTargetRunId
+    && !targetRun
+    && isExactMissingRunIdReference(input.text, queryTargetRunId)
+  ) {
     return {
       kind: "answered",
       message: [
-        `Runtime evidence answer for run ${query.targetRunId}.`,
+        `Runtime evidence answer for run ${queryTargetRunId}.`,
         "Evidence missing: the requested run was not found in the Runtime Session Catalog.",
       ].join("\n"),
       messageType: "warning",
-      targetRunId: query.targetRunId,
+      targetRunId: queryTargetRunId,
       topics: query.topics,
       confidence: query.confidence,
     };
@@ -158,8 +164,8 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
     const summary = await ledger.summarizeRun(run.id).catch(() => null);
     return { run, summary };
   }));
-  const selected = selectUnderstoodRun(summaries, query.targetRunId);
-  return buildRuntimeEvidenceAnswer({
+  const selected = selectUnderstoodRun(summaries, queryTargetRunId);
+  const result = buildRuntimeEvidenceAnswer({
     text: input.text,
     topics: query.topics,
     snapshot,
@@ -168,6 +174,7 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
     summary: selected.summary,
     now: input.now,
   }, query.confidence);
+  return appendIgnoredTargetRunCaveat(result, queryTargetRunId && !targetRun ? queryTargetRunId : undefined);
 }
 
 export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInput, confidence?: number): RuntimeEvidenceAnswerResult {
@@ -250,6 +257,28 @@ function selectUnderstoodRun(
     if (matched) return matched;
   }
   return summaries[0] ?? { run: null, summary: null };
+}
+
+function isExactMissingRunIdReference(text: string, targetRunId: string): boolean {
+  const target = targetRunId.trim();
+  if (!target || !text.includes(target)) return false;
+  return /^run(?::|-)[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(target);
+}
+
+function appendIgnoredTargetRunCaveat(
+  result: RuntimeEvidenceAnswerResult,
+  ignoredTargetRunId: string | undefined,
+): RuntimeEvidenceAnswerResult {
+  if (!ignoredTargetRunId || result.kind !== "answered" || !result.message) return result;
+  const caveat = `Requested target "${sanitizeOneLine(ignoredTargetRunId)}" did not match an exact Runtime Session Catalog run id; selected the active or most recent run instead.`;
+  const message = result.message.includes("Evidence caveats:\n")
+    ? `${result.message}\n- ${caveat}.`
+    : `${result.message}\nEvidence caveats:\n- ${caveat}.`;
+  return {
+    ...result,
+    message,
+    messageType: "warning",
+  };
 }
 
 function selectCandidateRuns(snapshot: RuntimeSessionRegistrySnapshot | null): BackgroundRun[] {
@@ -430,4 +459,8 @@ function sanitize(value: string): string {
     .replace(/xox[baprs]-[A-Za-z0-9-]{12,}/g, "xox-[REDACTED]")
     .replace(/([?&](?:token|key|secret|password)=)[^&\s]+/gi, "$1[REDACTED]")
     .replace(/(^|\s)(?:token|secret|password|api_key)=\S+/gi, "$1[REDACTED]");
+}
+
+function sanitizeOneLine(value: string): string {
+  return sanitize(value).replace(/\s+/g, " ").trim();
 }
