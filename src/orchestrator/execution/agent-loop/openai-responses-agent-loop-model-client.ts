@@ -56,13 +56,16 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
   }
 
   async createTurnProtocol(input: AgentLoopModelRequest): Promise<AgentLoopModelTurnProtocol> {
-    const response = await this.client.responses.create({
+    const responseParams = {
       model: input.model.modelId,
       input: this.toInputItems(input.messages),
       tools: input.tools.map((tool) => this.toFunctionTool(tool)),
       max_output_tokens: input.maxOutputTokens,
       ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
-    }) as Response;
+    };
+    const response = await (input.abortSignal
+      ? this.client.responses.create(responseParams, { signal: input.abortSignal })
+      : this.client.responses.create(responseParams)) as Response;
 
     const assistant: AgentLoopAssistantOutput[] = [];
     const toolCalls: AgentLoopToolCall[] = [];

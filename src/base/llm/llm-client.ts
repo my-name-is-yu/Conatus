@@ -43,6 +43,8 @@ export interface LLMRequestOptions {
   model_tier?: ModelTier;
   /** Tool definitions for function calling (tool use). */
   tools?: ToolDefinition[];
+  /** Optional cancellation signal for runtime/operator stop. */
+  abortSignal?: AbortSignal;
 }
 
 export interface LLMStreamHandlers {
@@ -188,7 +190,7 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
               content: m.content,
             })),
           },
-          { timeout: DEFAULT_LLM_TIMEOUT_MS }
+          { timeout: DEFAULT_LLM_TIMEOUT_MS, ...(options?.abortSignal ? { signal: options.abortSignal } : {}) }
         );
 
         // Extract text content from response
@@ -307,7 +309,7 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
           content: m.content,
         })),
       },
-      { timeout: DEFAULT_LLM_TIMEOUT_MS }
+      { timeout: DEFAULT_LLM_TIMEOUT_MS, ...(options?.abortSignal ? { signal: options.abortSignal } : {}) }
     );
 
     stream.on("text", (delta: string) => {

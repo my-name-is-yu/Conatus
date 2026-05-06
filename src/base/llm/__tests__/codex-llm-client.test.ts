@@ -431,6 +431,39 @@ describe("CodexLLMClient", () => {
   // ─── Timeout ───
 
   describe("sendMessage: timeout", () => {
+    it("kills the spawned codex process when aborted by operator stop", async () => {
+      vi.useFakeTimers();
+
+      const controller = new AbortController();
+      const client = new CodexLLMClient({ timeoutMs: 1000, idleTimeoutMs: 1000 });
+      const child = makeFakeChild();
+      mockSpawn.mockImplementation(() => child);
+      child.kill.mockImplementation(() => {
+        setTimeout(() => child.emit("close", null), 5);
+        return true;
+      });
+
+      const promise = client
+        .sendMessage([{ role: "user", content: "hi" }], { abortSignal: controller.signal })
+        .catch((e) => e);
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(5);
+      await vi.runAllTimersAsync();
+      const err = await promise;
+
+      vi.useRealTimers();
+
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(mockSpawn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({ detached: process.platform !== "win32" })
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("aborted by operator stop");
+    });
+
     it("rejects with total timeout error when timeoutMs elapses", async () => {
       vi.useFakeTimers();
 

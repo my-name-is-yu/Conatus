@@ -131,7 +131,10 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     while (normalAttempts < MAX_RETRY_ATTEMPTS) {
       try {
         try {
-          const response = await this.client.chat.completions.create(createParams, { timeout: DEFAULT_LLM_TIMEOUT_MS });
+          const response = await this.client.chat.completions.create(
+            createParams,
+            { timeout: DEFAULT_LLM_TIMEOUT_MS, ...(options?.abortSignal ? { signal: options.abortSignal } : {}) }
+          );
 
           const choice = response.choices[0];
           const content = choice?.message.content ?? "";
@@ -151,7 +154,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
           // Some models (notably Codex-style) are not compatible with the
           // chat completions endpoint. In that case, fall back to Responses API.
           if (!shouldFallbackToResponses(err)) throw err;
-          return this.sendViaResponsesApi(model, messages, { max_tokens, temperature, system, reasoningEffort: this.reasoningEffort });
+          return this.sendViaResponsesApi(model, messages, { max_tokens, temperature, system, reasoningEffort: this.reasoningEffort, abortSignal: options?.abortSignal });
         }
       } catch (err) {
         lastError = err;
@@ -219,7 +222,10 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     };
 
     try {
-      const stream = this.client.chat.completions.stream(createParams, { timeout: DEFAULT_LLM_TIMEOUT_MS });
+      const stream = this.client.chat.completions.stream(
+        createParams,
+        { timeout: DEFAULT_LLM_TIMEOUT_MS, ...(options?.abortSignal ? { signal: options.abortSignal } : {}) }
+      );
       stream.on("content", (delta: string) => {
         handlers.onTextDelta?.(delta);
       });
@@ -242,14 +248,14 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
       };
     } catch (err) {
       if (!shouldFallbackToResponses(err)) throw err;
-      return this.sendViaResponsesApi(model, messages, { max_tokens, temperature, system, reasoningEffort: this.reasoningEffort });
+      return this.sendViaResponsesApi(model, messages, { max_tokens, temperature, system, reasoningEffort: this.reasoningEffort, abortSignal: options?.abortSignal });
     }
   }
 
   private async sendViaResponsesApi(
     model: string,
     messages: LLMMessage[],
-    options: { max_tokens: number; temperature: number; system?: string; reasoningEffort?: OpenAIReasoningEffort }
+    options: { max_tokens: number; temperature: number; system?: string; reasoningEffort?: OpenAIReasoningEffort; abortSignal?: AbortSignal }
   ): Promise<LLMResponse> {
     const input = [
       options.system ? `SYSTEM:\n${options.system}` : null,
@@ -261,7 +267,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     // Use Responses API (SDK supports this as of openai v4+).
     // The TypeScript types for the Responses API are not yet in the openai
     // package typings, so we cast through unknown to access this endpoint.
-    const responsesApi = (this.client as unknown as { responses: { create: (params: Record<string, unknown>) => Promise<unknown> } }).responses;
+    const responsesApi = (this.client as unknown as { responses: { create: (params: Record<string, unknown>, requestOptions?: Record<string, unknown>) => Promise<unknown> } }).responses;
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
@@ -269,17 +275,22 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
         DEFAULT_LLM_TIMEOUT_MS
       );
     });
-    const resp = await Promise.race([
-      responsesApi.create({
-        model,
-        input,
-        max_output_tokens: options.max_tokens,
-        ...(isReasoningModel(model) ? {} : { temperature: options.temperature }),
-        ...(shouldSendReasoningEffort(model, options.reasoningEffort) ? { reasoning: { effort: options.reasoningEffort } } : {}),
-      }),
-      timeout,
-    ]) as Record<string, unknown>;
-    clearTimeout(timer!);
+    const responseParams = {
+      model,
+      input,
+      max_output_tokens: options.max_tokens,
+      ...(isReasoningModel(model) ? {} : { temperature: options.temperature }),
+      ...(shouldSendReasoningEffort(model, options.reasoningEffort) ? { reasoning: { effort: options.reasoningEffort } } : {}),
+    };
+    const responsePromise = options.abortSignal
+      ? responsesApi.create(responseParams, { signal: options.abortSignal })
+      : responsesApi.create(responseParams);
+    let resp: Record<string, unknown>;
+    try {
+      resp = await Promise.race([responsePromise, timeout]) as Record<string, unknown>;
+    } finally {
+      clearTimeout(timer!);
+    }
 
     const content =
       typeof resp["output_text"] === "string"

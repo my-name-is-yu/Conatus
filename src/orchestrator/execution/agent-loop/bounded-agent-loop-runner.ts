@@ -104,6 +104,9 @@ export class BoundedAgentLoopRunner {
       try {
         protocol = await this.createTurnProtocol(turn, messages, tools);
       } catch (err) {
+        if (turn.abortSignal?.aborted) {
+          return this.stop(turn, "cancelled", startedAt, modelTurns, toolCalls, "Agent loop stopped: operator stop aborted active model work.", null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, err instanceof Error ? err.message : String(err));
+        }
         const failure = this.classifyRunFailure(err);
         return this.stop(
           turn,
@@ -667,6 +670,7 @@ export class BoundedAgentLoopRunner {
         model: turn.model,
         messages,
         tools,
+        abortSignal: turn.abortSignal,
       });
     }
 
@@ -674,6 +678,7 @@ export class BoundedAgentLoopRunner {
       model: turn.model,
       messages,
       tools,
+      abortSignal: turn.abortSignal,
     });
     return {
       assistant: response.content || response.toolCalls.length > 0 ? [{

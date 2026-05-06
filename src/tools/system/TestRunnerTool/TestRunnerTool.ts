@@ -137,7 +137,7 @@ export class TestRunnerTool implements ITool<TestRunnerInput, TestRunnerOutput> 
     const { cmd, args } = buildTestCommand(input.command, input.pattern);
 
     try {
-      const result = await execFileNoThrow(cmd, args, { cwd, timeoutMs: input.timeout });
+      const result = await execFileNoThrow(cmd, args, { cwd, timeoutMs: input.timeout, signal: context.abortSignal, killProcessGroup: true });
       const combined = [result.stdout, result.stderr].filter(Boolean).join("\n");
       const rawOutput = combined.length > MAX_RAW_OUTPUT ? combined.slice(0, MAX_RAW_OUTPUT) + "\n...[truncated]" : combined;
 

@@ -150,6 +150,23 @@ describe("TestRunnerTool", () => {
       expect(data.success).toBe(true);
     });
 
+    it("runs test commands in a process group for operator abort cleanup", async () => {
+      const controller = new AbortController();
+      const spy = vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: VITEST_PASS,
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await tool.call({ command: "npx vitest run", timeout: 60000 }, { ...makeContext(), abortSignal: controller.signal });
+
+      expect(spy).toHaveBeenCalledWith(
+        "npx",
+        expect.arrayContaining(["vitest", "run"]),
+        expect.objectContaining({ signal: controller.signal, killProcessGroup: true })
+      );
+    });
+
     it("parses failing vitest output", async () => {
       vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
         stdout: VITEST_FAIL, stderr: "", exitCode: 1,

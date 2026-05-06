@@ -73,7 +73,12 @@ export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
 
     while (normalAttempts < MAX_RETRY_ATTEMPTS) {
       try {
+        if (options?.abortSignal?.aborted) {
+          throw new LLMError("OllamaLLMClient: request aborted by operator stop");
+        }
         const controller = new AbortController();
+        const abortFromParent = () => controller.abort();
+        options?.abortSignal?.addEventListener("abort", abortFromParent, { once: true });
         const timeoutId = setTimeout(() => controller.abort(), DEFAULT_LLM_TIMEOUT_MS);
         let response: Response;
         try {
@@ -87,6 +92,11 @@ export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
           });
         } finally {
           clearTimeout(timeoutId);
+          options?.abortSignal?.removeEventListener("abort", abortFromParent);
+        }
+
+        if (options?.abortSignal?.aborted) {
+          throw new LLMError("OllamaLLMClient: request aborted by operator stop");
         }
 
         if (!response.ok) {
@@ -121,6 +131,9 @@ export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
         };
       } catch (err) {
         lastError = err;
+        if (options?.abortSignal?.aborted) {
+          throw new LLMError("OllamaLLMClient: request aborted by operator stop");
+        }
         // Rate limit: retry with extended backoff (does not count against normalAttempts)
         if (isRateLimitError(err) && rateLimitAttempts < RATE_LIMIT_RETRY_DELAYS_MS.length) {
           await sleep(getRateLimitRetryDelay(err, rateLimitAttempts));

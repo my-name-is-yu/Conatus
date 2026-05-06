@@ -252,6 +252,130 @@ describe("LoopSupervisor", () => {
     }
   });
 
+  it("shutdown() aborts active executions and returns without natural task completion", async () => {
+    let naturalCompletion = false;
+    let capturedSignal: AbortSignal | undefined;
+    const { supervisor, mockCoreLoop, runtimeRoot } = makeSupervisor(
+      (async (_goalId: string, options?: { abortSignal?: AbortSignal }) => {
+        capturedSignal = options?.abortSignal;
+        await new Promise<void>((resolve) => {
+          options?.abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return makeLoopResult({ goalId: "g-stop", finalStatus: "stopped" });
+      }) as unknown as (...args: any[]) => Promise<LoopResult>,
+      {},
+      { concurrency: 1, pollIntervalMs: 10, activeStopGraceMs: 25 }
+    );
+    try {
+      await supervisor.start(["g-stop"]);
+      await waitFor(() => capturedSignal !== undefined);
+
+      const startedAt = Date.now();
+      await supervisor.shutdown();
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(elapsedMs).toBeLessThan(500);
+      expect(naturalCompletion).toBe(false);
+      expect(mockCoreLoop.run).toHaveBeenCalledWith(
+        "g-stop",
+        expect.objectContaining({ abortSignal: capturedSignal })
+      );
+    } finally {
+      naturalCompletion = true;
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("shutdown() has a bounded wait even when active execution ignores abort", async () => {
+    let started = false;
+    let capturedSignal: AbortSignal | undefined;
+    const { supervisor, runtimeRoot } = makeSupervisor(
+      (async (_goalId: string, options?: { abortSignal?: AbortSignal }) => {
+        capturedSignal = options?.abortSignal;
+        started = true;
+        await new Promise<void>(() => undefined);
+        return makeLoopResult({ goalId: "g-hung" });
+      }) as unknown as (...args: any[]) => Promise<LoopResult>,
+      {},
+      { concurrency: 1, pollIntervalMs: 10, activeStopGraceMs: 30 }
+    );
+    try {
+      await supervisor.start(["g-hung"]);
+      await waitFor(() => started);
+
+      const startedAt = Date.now();
+      await supervisor.shutdown();
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(elapsedMs).toBeLessThan(500);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("shutdown() does not start a new execution after an in-flight poll observes stop", async () => {
+    let leaseStarted = false;
+    let releaseLease: (() => void) | undefined;
+    const { supervisor, mockCoreLoop, runtimeRoot } = makeSupervisor(
+      (async () => makeLoopResult({ goalId: "g-race" })) as unknown as (...args: any[]) => Promise<LoopResult>,
+      {},
+      { concurrency: 1, pollIntervalMs: 10, activeStopGraceMs: 25 }
+    );
+    (supervisor as unknown as { acquireExecutionLease: (...args: unknown[]) => Promise<boolean> }).acquireExecutionLease =
+      vi.fn(async () => {
+        leaseStarted = true;
+        await new Promise<void>((resolve) => {
+          releaseLease = resolve;
+        });
+        return true;
+      });
+
+    try {
+      await supervisor.start(["g-race"]);
+      await waitFor(() => leaseStarted);
+
+      const shutdownPromise = supervisor.shutdown();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      releaseLease?.();
+      await shutdownPromise;
+
+      expect(mockCoreLoop.run).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("shutdown() bounds an in-flight poll before returning", async () => {
+    let leaseStarted = false;
+    const { supervisor, mockCoreLoop, runtimeRoot } = makeSupervisor(
+      (async () => makeLoopResult({ goalId: "g-stuck-poll" })) as unknown as (...args: any[]) => Promise<LoopResult>,
+      {},
+      { concurrency: 1, pollIntervalMs: 10, activeStopGraceMs: 30 }
+    );
+    (supervisor as unknown as { acquireExecutionLease: (...args: unknown[]) => Promise<boolean> }).acquireExecutionLease =
+      vi.fn(async () => {
+        leaseStarted = true;
+        await new Promise<void>(() => undefined);
+        return true;
+      });
+
+    try {
+      await supervisor.start(["g-stuck-poll"]);
+      await waitFor(() => leaseStarted);
+
+      const startedAt = Date.now();
+      await supervisor.shutdown();
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(elapsedMs).toBeLessThan(500);
+      expect(mockCoreLoop.run).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   // ─── 6. State persistence ───
 
   it("writes supervisor-state.json after execution", async () => {

@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { ShellTool } from "../ShellTool.js";
 import type { ToolCallContext } from "../../../types.js";
+import * as execMod from "../../../../base/utils/execFileNoThrow.js";
 
 const makeContext = (cwd = "/tmp"): ToolCallContext => ({
   cwd,
@@ -14,6 +15,10 @@ const makeContext = (cwd = "/tmp"): ToolCallContext => ({
 
 describe("ShellTool", () => {
   const tool = new ShellTool();
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   describe("metadata", () => {
     it("has correct name", () => {
@@ -174,6 +179,23 @@ describe("ShellTool", () => {
       const result = await tool.call({ command: "ls /nonexistent_dir_xyz_abc", timeoutMs: 5_000 }, makeContext());
       expect(result.success).toBe(false);
       expect((result.data as { exitCode: number }).exitCode).not.toBe(0);
+    });
+
+    it("runs shell commands in a process group for operator abort cleanup", async () => {
+      const controller = new AbortController();
+      const spy = vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: "ok",
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await tool.call({ command: "echo ok", timeoutMs: 5_000 }, { ...makeContext(), abortSignal: controller.signal });
+
+      expect(spy).toHaveBeenCalledWith(
+        expect.any(String),
+        ["-c", "echo ok"],
+        expect.objectContaining({ signal: controller.signal, killProcessGroup: true })
+      );
     });
 
     it("includes contextModifier on success", async () => {

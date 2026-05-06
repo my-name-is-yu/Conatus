@@ -140,7 +140,13 @@ export class CoreLoop {
    */
   async run(
     goalId: string,
-    options?: { maxIterations?: number | null; runPolicy?: LoopConfig["runPolicy"]; onProgress?: CoreLoopDeps["onProgress"]; activation?: GoalRunActivationContext }
+    options?: {
+      maxIterations?: number | null;
+      runPolicy?: LoopConfig["runPolicy"];
+      onProgress?: CoreLoopDeps["onProgress"];
+      activation?: GoalRunActivationContext;
+      abortSignal?: AbortSignal;
+    }
   ): Promise<LoopResult> {
     const depsWithMutableProgress = this.deps as CoreLoopDeps;
     const previousOnProgress = depsWithMutableProgress.onProgress;
@@ -158,6 +164,16 @@ export class CoreLoop {
       this.config.runPolicy = runPolicy;
     }
     this.currentActivationContext = options?.activation;
+    const abortSignal = options?.abortSignal;
+    const abortFromParent = (): void => {
+      this.logger?.warn("CoreLoop: abort requested by operator stop", { goalId });
+      this.stop();
+    };
+    if (abortSignal?.aborted) {
+      abortFromParent();
+    } else {
+      abortSignal?.addEventListener("abort", abortFromParent, { once: true });
+    }
 
     try {
     const startedAt = new Date().toISOString();
@@ -243,6 +259,10 @@ export class CoreLoop {
       hasIterationCap ? loopIndex < startLoopIndex + effectiveMaxIterations : true;
       loopIndex++
     ) {
+      if (abortSignal?.aborted) {
+        finalStatus = "stopped";
+        break;
+      }
       if (this.stopped) {
         finalStatus = "stopped";
         break;
@@ -266,9 +286,13 @@ export class CoreLoop {
       let iterationResult: LoopIterationResult;
       try {
         iterationResult = this.config.treeMode && this.deps.treeLoopOrchestrator
-          ? await this.runTreeIteration(goalId, loopIndex, nodeConsumedMap, runtimeBudgetId)
-          : await this.runOneIteration(goalId, loopIndex, loopIndex === startLoopIndex, runtimeBudgetId);
+          ? await this.runTreeIteration(goalId, loopIndex, nodeConsumedMap, runtimeBudgetId, abortSignal)
+          : await this.runOneIteration(goalId, loopIndex, loopIndex === startLoopIndex, runtimeBudgetId, abortSignal);
       } catch (err) {
+        if (abortSignal?.aborted) {
+          finalStatus = "stopped";
+          break;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         this.logger?.error(`[CoreLoop] unexpected error in iteration ${loopIndex}: ${msg}`);
         decisionCounters = {
@@ -422,6 +446,7 @@ export class CoreLoop {
       tokensUsed: totalTokens,
     };
     } finally {
+      abortSignal?.removeEventListener("abort", abortFromParent);
       this.currentActivationContext = undefined;
       depsWithMutableProgress.onProgress = previousOnProgress;
       this.config.maxIterations = previousMaxIterations;
@@ -436,7 +461,8 @@ export class CoreLoop {
     goalId: string,
     loopIndex: number,
     isFirstIteration?: boolean,
-    runtimeBudgetId?: string | null
+    runtimeBudgetId?: string | null,
+    abortSignal?: AbortSignal
   ): Promise<LoopIterationResult> {
     const result = await new CoreIterationKernel({
       deps: this.deps,
@@ -456,7 +482,7 @@ export class CoreLoop {
       getPendingDirective: (id) => this.pendingIterationDirectives.get(id),
       getActivationContext: () => this.currentActivationContext,
       getRuntimeBudgetContext: () => this.loadRuntimeBudgetTaskContext(runtimeBudgetId),
-    }).run({ goalId, loopIndex, isFirstIteration });
+    }).run({ goalId, loopIndex, isFirstIteration, abortSignal });
     if (result.nextIterationDirective) {
       this.pendingIterationDirectives.set(goalId, result.nextIterationDirective);
     } else {
@@ -473,10 +499,11 @@ export class CoreLoop {
     rootId: string,
     loopIndex: number,
     nodeConsumedMap: Map<string, number>,
-    runtimeBudgetId?: string | null
+    runtimeBudgetId?: string | null,
+    abortSignal?: AbortSignal
   ): Promise<LoopIterationResult> {
     return runTreeIterationImpl(rootId, loopIndex, this.deps, this.config, this.logger,
-      (id, idx) => this.runOneIteration(id, idx, undefined, runtimeBudgetId), nodeConsumedMap, {
+      (id, idx) => this.runOneIteration(id, idx, undefined, runtimeBudgetId, abortSignal), nodeConsumedMap, {
         getPendingDirective: (id) => this.pendingIterationDirectives.get(id),
       });
   }

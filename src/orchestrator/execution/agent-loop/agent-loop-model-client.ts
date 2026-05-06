@@ -50,6 +50,7 @@ export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
         ? { system: input.system }
         : { system: buildPromptedToolProtocolSystemPrompt({ systemPrompt: input.system, tools: input.tools }) }),
       max_tokens: input.maxOutputTokens,
+      abortSignal: input.abortSignal,
       ...(supportsNativeToolCalling ? { tools: input.tools } : {}),
     });
 

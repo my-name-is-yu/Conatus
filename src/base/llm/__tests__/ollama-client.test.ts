@@ -199,6 +199,26 @@ describe("OllamaLLMClient", () => {
       const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
       expect(body.stream).toBe(false);
     });
+
+    it("passes operator stop aborts into the active fetch request", async () => {
+      const client = new OllamaLLMClient({ baseUrl: "http://localhost:11434" });
+      const controller = new AbortController();
+      let capturedSignal: AbortSignal | undefined;
+      fetchSpy.mockImplementationOnce((_url: string, init: RequestInit) => {
+        capturedSignal = init.signal as AbortSignal;
+        return new Promise<Response>((_resolve, reject) => {
+          capturedSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+        });
+      });
+
+      const promise = client.sendMessage([{ role: "user", content: "hi" }], { abortSignal: controller.signal });
+
+      await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+      controller.abort(new Error("operator stop requested"));
+
+      expect(capturedSignal?.aborted).toBe(true);
+      await expect(promise).rejects.toThrow("OllamaLLMClient: request aborted by operator stop");
+    });
   });
 
   // ─── Retry logic ───

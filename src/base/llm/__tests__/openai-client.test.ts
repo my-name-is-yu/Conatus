@@ -408,6 +408,31 @@ describe("OpenAILLMClient", () => {
         reasoning: { effort: "high" },
       }));
     });
+
+    it("clears the Responses API fallback timeout when an abort rejects the request", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test", model: "codex-mini-latest" });
+      const controller = new AbortController();
+      mockStream.mockImplementationOnce(() => {
+        throw new Error("This is not a chat model and not supported in the v1/chat/completions endpoint");
+      });
+      mockResponsesCreate.mockImplementationOnce(async () => {
+        controller.abort(new Error("operator stop requested"));
+        throw new DOMException("operator stop requested", "AbortError");
+      });
+
+      vi.useFakeTimers();
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+      await expect(
+        client.sendMessageStream(
+          [{ role: "user", content: "hello" }],
+          { abortSignal: controller.signal },
+          { onTextDelta: vi.fn() }
+        )
+      ).rejects.toThrow("operator stop requested");
+      vi.useRealTimers();
+
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+    });
   });
 
   // ─── parseJSON ───

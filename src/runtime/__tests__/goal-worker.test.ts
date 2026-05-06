@@ -128,6 +128,32 @@ describe("GoalWorker", () => {
       expect(result.totalIterations).toBe(0);
     });
 
+    it("does not convert provider AbortError into stopped unless operator abort is signaled", async () => {
+      const worker = new GoalWorker(makeMockCoreLoop(new DOMException("provider aborted", "AbortError")) as any);
+
+      const result = await worker.execute("g1");
+
+      expect(result.status).toBe("error");
+      expect(result.error).toContain("provider aborted");
+    });
+
+    it("maps thrown errors to stopped when operator abort is signaled", async () => {
+      const controller = new AbortController();
+      const coreLoop = {
+        run: vi.fn().mockImplementation(async () => {
+          controller.abort(new Error("operator stop requested"));
+          throw new DOMException("operator stop requested", "AbortError");
+        }),
+        stop: vi.fn(),
+      };
+      const worker = new GoalWorker(coreLoop as any);
+
+      const result = await worker.execute("g1", { abortSignal: controller.signal });
+
+      expect(result.status).toBe("stopped");
+      expect(result.error).toContain("operator stop");
+    });
+
     it("does not convert a successful loop into worker error when onRunComplete throws", async () => {
       const loopResult = makeLoopResult({ goalId: "g1", totalIterations: 2, finalStatus: "completed" });
       const worker = new GoalWorker(
