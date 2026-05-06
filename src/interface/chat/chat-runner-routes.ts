@@ -327,6 +327,7 @@ export async function executeAgentLoopRoute(
         {
           stoppedReason: result.stopped_reason,
           agentLoopStopReason: result.agentLoop?.stopReason,
+          code: result.agentLoop?.failureReason,
         },
         host.deps.llmClient
       );

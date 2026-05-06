@@ -14,7 +14,7 @@ import type {
   AgentLoopToolObservationExecution,
   AgentLoopToolObservationState,
 } from "./agent-loop-model.js";
-import type { AgentLoopCommandResult, AgentLoopResult, AgentLoopToolResultSummary } from "./agent-loop-result.js";
+import type { AgentLoopCommandResult, AgentLoopFailureReason, AgentLoopResult, AgentLoopToolResultSummary } from "./agent-loop-result.js";
 import type { AgentLoopToolOutput } from "./agent-loop-tool-output.js";
 import type { AgentLoopToolRuntime } from "./agent-loop-tool-runtime.js";
 import type { AgentLoopToolRouter } from "./agent-loop-tool-router.js";
@@ -121,6 +121,7 @@ export class BoundedAgentLoopRunner {
       repeatedToolLoopCount?: number,
       completionValidationAttempts?: number,
       reasonDetail?: string,
+      failureReason?: AgentLoopFailureReason,
     ): Promise<AgentLoopResult<TOutput>> => this.stop(
       turn,
       reason,
@@ -140,6 +141,7 @@ export class BoundedAgentLoopRunner {
       repeatedToolLoopCount,
       completionValidationAttempts,
       reasonDetail,
+      failureReason,
       compactionRecords,
     );
 
@@ -224,6 +226,7 @@ export class BoundedAgentLoopRunner {
           repeatedToolLoopCount,
           completionValidationAttempts,
           failure.detail,
+          failure.failureReason,
         );
       }
       if (!protocol.responseCompleted) {
@@ -384,7 +387,7 @@ export class BoundedAgentLoopRunner {
 
       const toolBatchBudgetRefusal = this.toolBatchBudgetRefusalReason(response.toolCalls, turn, startedAt);
       if (toolBatchBudgetRefusal) {
-        return stop("timeout", startedAt, modelTurns, toolCalls, toolBatchBudgetRefusal, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, toolBatchBudgetRefusal);
+        return stop("timeout", startedAt, modelTurns, toolCalls, toolBatchBudgetRefusal, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, toolBatchBudgetRefusal, "tool_batch_deadline_exceeded");
       }
 
       messages.push({
@@ -404,7 +407,7 @@ export class BoundedAgentLoopRunner {
       }
 
       if (repeatedToolLoopCount > turn.budget.maxRepeatedToolCalls) {
-        return stop("stalled_tool_loop", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("stalled_tool_loop", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "repeated_tool_calls");
       }
       if (turn.abortSignal?.aborted) {
         return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
@@ -422,10 +425,18 @@ export class BoundedAgentLoopRunner {
         });
       }
 
-      const { results: toolResults, timedOut: toolBatchTimedOut } = await this.executeToolBatchWithinBudget(response.toolCalls, turn, startedAt);
+      let toolBatch: { results: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>; timedOut: boolean };
+      try {
+        toolBatch = await this.executeToolBatchWithinBudget(response.toolCalls, turn, startedAt);
+      } catch (err) {
+        const detail = this.errorDetail(err);
+        const message = `Agent loop stopped: tool runtime failed. ${detail ? `Detail: ${detail}. ` : ""}Inspect the tool execution trace.`;
+        return stop("fatal_error", startedAt, modelTurns, toolCalls, message, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, detail, "tool_runtime_failure");
+      }
+      const { results: toolResults, timedOut: toolBatchTimedOut } = toolBatch;
       if (toolBatchTimedOut && toolResults.length === 0) {
         const timeoutReason = this.formatToolBatchWallClockExhaustedReason(response.toolCalls, turn.budget.maxWallClockMs);
-        return stop("timeout", startedAt, modelTurns, toolCalls, timeoutReason, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, timeoutReason);
+        return stop("timeout", startedAt, modelTurns, toolCalls, timeoutReason, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, timeoutReason, "tool_batch_timed_out");
       }
       for (const result of toolResults) {
         const sourceCall = response.toolCalls.find((call) => call.id === result.callId);
@@ -521,13 +532,13 @@ export class BoundedAgentLoopRunner {
         }
 
         if (result.disposition === "fatal" || result.fatal) {
-          return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "tool_fatal");
         }
         if (result.disposition === "cancelled") {
-          return stop(toolBatchTimedOut ? "timeout" : "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop(toolBatchTimedOut ? "timeout" : "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, toolBatchTimedOut ? "tool_batch_timed_out" : "tool_cancelled");
         }
         if (consecutiveToolErrors >= turn.budget.maxConsecutiveToolErrors) {
-          return stop("consecutive_tool_errors", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("consecutive_tool_errors", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "consecutive_tool_errors");
         }
       }
 
@@ -578,8 +589,10 @@ export class BoundedAgentLoopRunner {
     repeatedToolLoopCount?: number,
     completionValidationAttempts?: number,
     reasonDetail?: string,
+    failureReason?: AgentLoopFailureReason,
     compactionRecords: readonly AgentLoopCompactionRecord[] = [],
   ): Promise<AgentLoopResult<TOutput>> {
+    const resolvedFailureReason = success ? undefined : failureReason ?? this.defaultFailureReason(reason);
     await this.saveState(
       turn,
       messages ?? turn.messages,
@@ -595,12 +608,14 @@ export class BoundedAgentLoopRunner {
       success ? "completed" : "failed",
       reason,
       reasonDetail,
+      resolvedFailureReason,
     );
 
     await this.record(turn, {
       type: "stopped",
       ...this.baseEvent(turn),
       reason,
+      ...(resolvedFailureReason ? { failureReason: resolvedFailureReason } : {}),
       ...(reasonDetail ? { reasonDetail } : {}),
     });
 
@@ -609,6 +624,8 @@ export class BoundedAgentLoopRunner {
       output,
       finalText,
       stopReason: reason,
+      ...(resolvedFailureReason ? { failureReason: resolvedFailureReason } : {}),
+      ...(reasonDetail ? { failureDetail: reasonDetail } : {}),
       elapsedMs: Date.now() - startedAt,
       modelTurns,
       toolCalls,
@@ -667,31 +684,91 @@ export class BoundedAgentLoopRunner {
     }
   }
 
-  private classifyRunFailure(error: unknown): { reason: AgentLoopStopReason; detail: string; message: string } {
-    const detail = error instanceof Error
-      ? [error.name !== "Error" ? error.name : null, error.message]
-        .filter((part): part is string => typeof part === "string" && part.length > 0)
-        .join(": ")
-      : String(error);
-    const lowered = detail.toLowerCase();
-    if (
-      lowered.includes("timeout")
-      || lowered.includes("timed out")
-      || lowered.includes("aborterror")
-      || lowered.includes("aborted")
-    ) {
+  private defaultFailureReason(reason: AgentLoopStopReason): AgentLoopFailureReason {
+    switch (reason) {
+      case "timeout":
+        return "wall_clock_timeout";
+      case "max_model_turns":
+        return "max_model_turns";
+      case "max_tool_calls":
+        return "max_tool_calls";
+      case "consecutive_tool_errors":
+        return "consecutive_tool_errors";
+      case "stalled_tool_loop":
+        return "repeated_tool_calls";
+      case "schema_error":
+        return "schema_validation_failed";
+      case "cancelled":
+        return "operator_cancelled";
+      case "protocol_incomplete":
+        return "protocol_incomplete";
+      case "completion_gate_failed":
+        return "completion_gate_failed";
+      case "fatal_error":
+      default:
+        return "provider_failure";
+    }
+  }
+
+  private classifyRunFailure(error: unknown): {
+    reason: AgentLoopStopReason;
+    failureReason: AgentLoopFailureReason;
+    detail: string;
+    message: string;
+  } {
+    const detail = this.errorDetail(error);
+    const structured = this.structuredRunFailureReason(error);
+    if (structured === "model_request_timeout") {
       return {
         reason: "timeout",
+        failureReason: "model_request_timeout",
         detail,
         message: "Agent loop stopped: model request timed out. Narrow broad repo-wide searches or increase `codex_timeout_ms` if this workload is expected.",
+      };
+    }
+    if (structured === "model_request_aborted") {
+      return {
+        reason: "fatal_error",
+        failureReason: "model_request_aborted",
+        detail,
+        message: "Agent loop stopped: model request was aborted by the provider or transport. Retry the turn or inspect the provider connection.",
       };
     }
 
     return {
       reason: "fatal_error",
+      failureReason: "provider_failure",
       detail,
       message: `Agent loop stopped: model request failed. ${detail ? `Detail: ${detail}. ` : ""}Retry the turn or inspect the provider connection.`,
     };
+  }
+
+  private structuredRunFailureReason(error: unknown): AgentLoopFailureReason | null {
+    if (!error || typeof error !== "object") return null;
+    const value = error as {
+      name?: unknown;
+      code?: unknown;
+      cause?: unknown;
+      agentLoopFailureReason?: unknown;
+    };
+    if (value.agentLoopFailureReason === "model_request_timeout" || value.agentLoopFailureReason === "model_request_aborted") {
+      return value.agentLoopFailureReason;
+    }
+    if (value.name === "TimeoutError" || value.code === "ETIMEDOUT" || value.code === "UND_ERR_HEADERS_TIMEOUT" || value.code === "UND_ERR_BODY_TIMEOUT") {
+      return "model_request_timeout";
+    }
+    if (value.name === "AbortError" || value.code === "ABORT_ERR") {
+      return "model_request_aborted";
+    }
+    return this.structuredRunFailureReason(value.cause);
+  }
+
+  private errorDetail(error: unknown): string {
+    return error instanceof Error
+      ? [error.name !== "Error" ? error.name : null, error.message]
+        .filter((part): part is string => typeof part === "string" && part.length > 0)
+        .join(": ")
+      : String(error);
   }
 
   private async compactIfNeeded<TOutput>(
@@ -992,6 +1069,7 @@ export class BoundedAgentLoopRunner {
     status: AgentLoopSessionState["status"],
     stopReason?: AgentLoopStopReason,
     stopDetail?: string,
+    failureReason?: AgentLoopFailureReason,
   ): Promise<void> {
     const state: AgentLoopSessionState = {
       sessionId: turn.session.sessionId,
@@ -1013,6 +1091,7 @@ export class BoundedAgentLoopRunner {
       finalText,
       status,
       ...(stopReason ? { stopReason } : {}),
+      ...(failureReason ? { failureReason } : {}),
       ...(stopDetail ? { stopDetail } : {}),
       updatedAt: new Date().toISOString(),
     };

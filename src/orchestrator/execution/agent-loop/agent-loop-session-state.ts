@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
+import type { AgentLoopFailureReason } from "./agent-loop-result.js";
 import type {
   AgentLoopMessage,
   AgentLoopMessagePhase,
@@ -42,6 +43,7 @@ export interface AgentLoopSessionState {
   finalText: string;
   status: "running" | "completed" | "failed";
   stopReason?: AgentLoopStopReason;
+  failureReason?: AgentLoopFailureReason;
   stopDetail?: string;
   updatedAt: string;
 }
@@ -132,6 +134,7 @@ export function normalizeAgentLoopSessionState(value: unknown): AgentLoopSession
     finalText: typeof value["finalText"] === "string" ? value["finalText"] : "",
     status: statusField(value, "status"),
     ...(typeof value["stopReason"] === "string" ? { stopReason: value["stopReason"] as AgentLoopStopReason } : {}),
+    ...(typeof value["failureReason"] === "string" ? { failureReason: value["failureReason"] as AgentLoopFailureReason } : {}),
     ...(typeof value["stopDetail"] === "string" ? { stopDetail: value["stopDetail"] } : {}),
     updatedAt: typeof value["updatedAt"] === "string" ? value["updatedAt"] : new Date(0).toISOString(),
   };

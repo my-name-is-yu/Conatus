@@ -48,8 +48,18 @@ describe("failure recovery guidance", () => {
     }).kind).toBe("runtime_interruption");
 
     expect(classifyFailureRecovery({
+      error: "localized provider text",
+      code: "model_request_timeout",
+    }).kind).toBe("runtime_interruption");
+
+    expect(classifyFailureRecovery({
       error: "modelo no disponible temporalmente",
       signals: [{ kind: "adapter", adapterType: "codex", stoppedReason: "error" }],
+    }).kind).toBe("adapter");
+
+    expect(classifyFailureRecovery({
+      error: "timeout-looking provider text",
+      code: "provider_failure",
     }).kind).toBe("adapter");
   });
 

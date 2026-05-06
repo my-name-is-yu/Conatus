@@ -173,6 +173,12 @@ function makeToolRuntime() {
   };
 }
 
+function namedError(name: string, message: string): Error {
+  const error = new Error(message);
+  error.name = name;
+  return error;
+}
+
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "task-1",
@@ -858,7 +864,7 @@ describe("agentloop phase 1", () => {
       modelInfo,
       messages: [{ role: "user", content: "do it" }],
       outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
-      budget: withDefaultBudget({ maxWallClockMs: 150, maxModelTurns: 4 }),
+      budget: withDefaultBudget({ maxWallClockMs: 1000, maxModelTurns: 4 }),
       toolPolicy: {},
       toolCallContext: {
         cwd: process.cwd(),
@@ -871,8 +877,9 @@ describe("agentloop phase 1", () => {
 
     expect(result.success).toBe(false);
     expect(result.stopReason).toBe("timeout");
+    expect(result.failureReason).toBe("tool_batch_timed_out");
     expect(capturedTimeoutMs).toBeGreaterThan(0);
-    expect(capturedTimeoutMs).toBeLessThanOrEqual(150);
+    expect(capturedTimeoutMs).toBeLessThanOrEqual(1000);
     expect(capturedSignalAborted).toBe(true);
   });
 
@@ -940,6 +947,7 @@ describe("agentloop phase 1", () => {
       expect(runtime.executeBatch).not.toHaveBeenCalled();
       expect(result.success).toBe(false);
       expect(result.stopReason).toBe("timeout");
+      expect(result.failureReason).toBe("tool_batch_deadline_exceeded");
       expect(result.toolCalls).toBe(0);
       expect(result.finalText).toContain("wall-clock budget is exhausted");
       expect(result.finalText).not.toContain("Calling apply_patch");
@@ -1006,6 +1014,7 @@ describe("agentloop phase 1", () => {
       expect(runtime.executeBatch).not.toHaveBeenCalled();
       expect(result.success).toBe(false);
       expect(result.stopReason).toBe("timeout");
+      expect(result.failureReason).toBe("tool_batch_deadline_exceeded");
       expect(result.toolCalls).toBe(0);
       expect(result.finalText).toContain("below the 1000ms minimum");
       expect(result.finalText).toContain("apply_patch");
@@ -1156,16 +1165,105 @@ describe("agentloop phase 1", () => {
 
     expect(result.success).toBe(false);
     expect(result.stopReason).toBe("stalled_tool_loop");
+    expect(result.failureReason).toBe("repeated_tool_calls");
   });
 
-  it("records a stopped trace with timeout details when the model call throws", async () => {
+  it("records typed failure reason when the tool runtime throws", async () => {
+    const modelInfo = makeModelInfo();
+    const modelClient = new ScriptedModelClient(modelInfo, [{
+      content: "",
+      toolCalls: [{ id: "call-1", name: "echo", input: { value: "hello" } }],
+      stopReason: "tool_use",
+    }]);
+    const { router } = makeToolRuntime();
+    const runtime = {
+      executeBatch: vi.fn(async (): Promise<AgentLoopToolOutput[]> => {
+        throw new Error("tool runtime broke");
+      }),
+    };
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    const result = await runner.run({
+      session: createAgentLoopSession(),
+      turnId: "turn-tool-runtime",
+      goalId: "goal-1",
+      taskId: "task-1",
+      cwd: process.cwd(),
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "run tool" }],
+      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+      budget: withDefaultBudget({ maxModelTurns: 4 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.stopReason).toBe("fatal_error");
+    expect(result.failureReason).toBe("tool_runtime_failure");
+    expect(result.failureDetail).toContain("tool runtime broke");
+  });
+
+  it("records typed failure reason for repeated tool errors", async () => {
+    const modelInfo = makeModelInfo();
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      { content: "", toolCalls: [{ id: "call-1", name: "echo", input: { value: "one" } }], stopReason: "tool_use" },
+      { content: "", toolCalls: [{ id: "call-2", name: "echo", input: { value: "two" } }], stopReason: "tool_use" },
+    ]);
+    const { router } = makeToolRuntime();
+    const runtime = {
+      executeBatch: vi.fn(async (calls: AgentLoopToolCall[]): Promise<AgentLoopToolOutput[]> =>
+        calls.map((call) => ({
+          callId: call.id,
+          toolName: call.name,
+          success: false,
+          content: "tool failed",
+          durationMs: 1,
+        }))
+      ),
+    };
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    const result = await runner.run({
+      session: createAgentLoopSession(),
+      turnId: "turn-tool-errors",
+      goalId: "goal-1",
+      taskId: "task-1",
+      cwd: process.cwd(),
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "run tools" }],
+      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+      budget: withDefaultBudget({ maxModelTurns: 4, maxConsecutiveToolErrors: 2 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.stopReason).toBe("consecutive_tool_errors");
+    expect(result.failureReason).toBe("consecutive_tool_errors");
+  });
+
+  it("records a stopped trace with typed timeout details when the model call throws a structured timeout", async () => {
     const modelInfo = makeModelInfo();
     const modelClient: AgentLoopModelClient = {
       async getModelInfo(): Promise<AgentLoopModelInfo> {
         return modelInfo;
       },
       async createTurn(): Promise<AgentLoopModelResponse> {
-        throw new Error("LLM timeout while waiting for the provider response");
+        throw namedError("TimeoutError", "provider response did not arrive");
       },
     };
     const { router, runtime } = makeToolRuntime();
@@ -1194,15 +1292,60 @@ describe("agentloop phase 1", () => {
 
     expect(result.success).toBe(false);
     expect(result.stopReason).toBe("timeout");
+    expect(result.failureReason).toBe("model_request_timeout");
+    expect(result.failureDetail).toContain("provider response did not arrive");
     expect(result.finalText).toContain("timed out");
     const events = await session.traceStore.list(session.traceId);
     const stopped = events.at(-1);
     expect(stopped).toMatchObject({
       type: "stopped",
       reason: "timeout",
+      failureReason: "model_request_timeout",
     });
     expect(stopped).toHaveProperty("reasonDetail");
-    expect((stopped as { reasonDetail?: string }).reasonDetail).toContain("LLM timeout while waiting");
+    expect((stopped as { reasonDetail?: string }).reasonDetail).toContain("provider response did not arrive");
+    const persisted = await session.stateStore.load();
+    expect(persisted?.failureReason).toBe("model_request_timeout");
+  });
+
+  it("keeps provider error text display-only when no structured timeout signal exists", async () => {
+    const modelInfo = makeModelInfo();
+    const modelClient: AgentLoopModelClient = {
+      async getModelInfo(): Promise<AgentLoopModelInfo> {
+        return modelInfo;
+      },
+      async createTurn(): Promise<AgentLoopModelResponse> {
+        throw new Error("LLM timeout-looking localized text without structured code");
+      },
+    };
+    const { router, runtime } = makeToolRuntime();
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    const result = await runner.run({
+      session: createAgentLoopSession(),
+      turnId: "turn-provider-text",
+      goalId: "goal-1",
+      cwd: process.cwd(),
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "do it" }],
+      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+      budget: withDefaultBudget({ maxModelTurns: 4 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.stopReason).toBe("fatal_error");
+    expect(result.failureReason).toBe("provider_failure");
+    expect(result.failureDetail).toContain("timeout-looking localized text");
+    expect(result.finalText).toContain("model request failed");
   });
 
   it("records operator-aborted model work as cancelled instead of timeout", async () => {
@@ -1244,6 +1387,7 @@ describe("agentloop phase 1", () => {
 
     expect(result.success).toBe(false);
     expect(result.stopReason).toBe("cancelled");
+    expect(result.failureReason).toBe("operator_cancelled");
     expect(result.finalText).toContain("operator stop");
     const stopped = (await session.traceStore.list(session.traceId)).at(-1);
     expect(stopped).toMatchObject({
@@ -1288,7 +1432,8 @@ describe("agentloop phase 1", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.stopReason).toBe("timeout");
+    expect(result.stopReason).toBe("fatal_error");
+    expect(result.failureReason).toBe("model_request_aborted");
   });
 });
 

@@ -184,6 +184,9 @@ const PERMISSION_CODES = new Set([
 const TOOL_INPUT_CODES = new Set([
   "invalid_tool_input",
   "schema_validation_failed",
+  "tool_runtime_failure",
+  "tool_fatal",
+  "consecutive_tool_errors",
   "missing_required_argument",
   "invalid_argument",
   "parse_error",
@@ -206,9 +209,20 @@ const RESUME_CODES = new Set([
 const ADAPTER_CODES = new Set([
   "adapter_error",
   "model_error",
+  "provider_failure",
   "provider_error",
   "rate_limited",
   "llm_error",
+]);
+
+const RUNTIME_INTERRUPTION_CODES = new Set([
+  "wall_clock_timeout",
+  "model_request_timeout",
+  "model_request_aborted",
+  "tool_batch_deadline_exceeded",
+  "tool_batch_timed_out",
+  "tool_cancelled",
+  "operator_cancelled",
 ]);
 
 const RUNTIME_INTERRUPTION_REASONS = new Set([
@@ -287,6 +301,7 @@ function classifyFromStructuredEvidence(evidence: FailureRecoveryEvidence): Fail
   if (
     signals.some((signal) => signal.kind === "tool" && signal.disposition === "cancelled")
     || hasReason(evidence, RUNTIME_INTERRUPTION_REASONS)
+    || hasAny(codes, RUNTIME_INTERRUPTION_CODES)
   ) {
     return "runtime_interruption";
   }
