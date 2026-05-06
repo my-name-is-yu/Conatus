@@ -37,6 +37,7 @@ import {
   type AgentLoopModelInfo,
   type AgentLoopModelRequest,
   type AgentLoopModelResponse,
+  type AgentLoopToolCall,
   type AgentLoopToolOutput,
   type AgentLoopTurnContext,
 } from "../index.js";
@@ -488,8 +489,44 @@ describe("agentloop phase 1", () => {
     expect(result.success).toBe(true);
     expect(result.output?.finalAnswer).toBe("finished");
     expect(result.toolCalls).toBe(1);
-    expect(modelClient.calls[1].messages.some((message) => message.role === "tool")).toBe(true);
+    const followUpToolMessage = modelClient.calls[1].messages.find((message) => message.role === "tool");
+    expect(followUpToolMessage).toMatchObject({
+      toolCallId: "call-1",
+      toolName: "echo",
+      observation: {
+        type: "tool_observation",
+        callId: "call-1",
+        toolName: "echo",
+        state: "success",
+        execution: { status: "executed" },
+        output: {
+          summary: "echoed hello",
+          data: { echoed: "hello" },
+        },
+      },
+    });
+    const persisted = await session.stateStore.load();
+    expect(persisted?.messages.find((message) => message.role === "tool")).toMatchObject({
+      observation: {
+        type: "tool_observation",
+        callId: "call-1",
+        state: "success",
+      },
+    });
     const events = await session.traceStore.list(session.traceId);
+    expect(events.find((event) => event.type === "tool_observation")).toMatchObject({
+      observation: {
+        type: "tool_observation",
+        callId: "call-1",
+        state: "success",
+      },
+    });
+    expect(events.findIndex((event) => event.type === "tool_call_started")).toBeLessThan(
+      events.findIndex((event) => event.type === "tool_call_finished"),
+    );
+    expect(events.findIndex((event) => event.type === "tool_call_finished")).toBeLessThan(
+      events.findIndex((event) => event.type === "tool_observation"),
+    );
     expect(events.some((event) => event.type === "final")).toBe(true);
     expect(events.find((event) => event.type === "tool_call_started")).toMatchObject({
       toolName: "echo",
@@ -503,6 +540,141 @@ describe("agentloop phase 1", () => {
     expect(assistantMessages).toHaveLength(2);
     expect(assistantMessages[0]).toMatchObject({ phase: "commentary" });
     expect(assistantMessages[1]).toMatchObject({ phase: "final_candidate" });
+  });
+
+  it("persists typed tool observations for success, failure, denied, blocked, timed out, and interrupted results", async () => {
+    const modelInfo = makeModelInfo();
+    const toolCalls = [
+      { id: "success-1", name: "success_case", input: { value: "ok" } },
+      { id: "failure-1", name: "failure_case", input: { value: "fail" } },
+      { id: "denied-1", name: "denied_case", input: { value: "deny" } },
+      { id: "blocked-1", name: "blocked_case", input: { value: "block" } },
+      { id: "timed-1", name: "timed_case", input: { value: "slow" } },
+      { id: "interrupted-1", name: "interrupted_case", input: { value: "stop" } },
+    ];
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      {
+        content: "",
+        toolCalls,
+        stopReason: "tool_use",
+      },
+      { content: finalJson(), toolCalls: [], stopReason: "end_turn" },
+    ]);
+    const { router } = makeToolRuntime();
+    const runtime = {
+      executeBatch: vi.fn(async (calls: AgentLoopToolCall[]): Promise<AgentLoopToolOutput[]> => calls.map((call) => {
+        if (call.name === "success_case") {
+          return {
+            callId: call.id,
+            toolName: call.name,
+            success: true,
+            content: "success output",
+            durationMs: 1,
+            rawResult: {
+              success: true,
+              data: { ok: true },
+              summary: "success summary",
+              durationMs: 1,
+            },
+          };
+        }
+        if (call.name === "failure_case") {
+          return {
+            callId: call.id,
+            toolName: call.name,
+            success: false,
+            content: "failure output",
+            durationMs: 2,
+            rawResult: {
+              success: false,
+              data: null,
+              summary: "failure summary",
+              error: "failed",
+              durationMs: 2,
+            },
+          };
+        }
+        if (call.name === "denied_case") {
+          return {
+            callId: call.id,
+            toolName: call.name,
+            success: false,
+            content: "permission denied",
+            durationMs: 3,
+            execution: { status: "not_executed", reason: "permission_denied", message: "operator policy denied" },
+          };
+        }
+        if (call.name === "blocked_case") {
+          return {
+            callId: call.id,
+            toolName: call.name,
+            success: false,
+            content: "policy blocked",
+            durationMs: 4,
+            execution: { status: "not_executed", reason: "policy_blocked", message: "sandbox blocked" },
+          };
+        }
+        if (call.name === "timed_case") {
+          return {
+            callId: call.id,
+            toolName: call.name,
+            success: false,
+            content: "timed out",
+            durationMs: 5,
+            execution: { status: "executed", reason: "timed_out", message: "deadline exceeded" },
+          };
+        }
+        return {
+          callId: call.id,
+          toolName: call.name,
+          success: false,
+          content: "interrupted",
+          durationMs: 6,
+          execution: { status: "executed", reason: "interrupted", message: "operator interrupted" },
+        };
+      })),
+    };
+    const session = createAgentLoopSession();
+
+    const result = await new BoundedAgentLoopRunner({
+      modelClient,
+      toolRouter: router,
+      toolRuntime: runtime,
+    }).run({
+      session,
+      turnId: "turn-1",
+      goalId: "goal-1",
+      taskId: "task-1",
+      cwd: process.cwd(),
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "run all cases" }],
+      outputSchema: z.object({ status: z.literal("done") }).passthrough(),
+      budget: withDefaultBudget({ maxModelTurns: 3, maxConsecutiveToolErrors: 10 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(modelClient.calls).toHaveLength(2);
+    const observedStates = modelClient.calls[1].messages
+      .filter((message) => message.role === "tool")
+      .map((message) => message.observation?.state);
+    expect(observedStates).toEqual(["success", "failure", "denied", "blocked", "timed_out", "interrupted"]);
+
+    const persisted = await session.stateStore.load();
+    expect(persisted?.messages
+      .filter((message) => message.role === "tool")
+      .map((message) => message.observation?.state)).toEqual(observedStates);
+    expect((await session.traceStore.list(session.traceId))
+      .filter((event) => event.type === "tool_observation")
+      .map((event) => event.observation.state)).toEqual(observedStates);
   });
 
   it("stops after an abort that arrives with the model response before running tools", async () => {
@@ -675,7 +847,9 @@ describe("agentloop phase 1", () => {
     expect(llmCalls[0]?.options?.system).toContain("You do not have native function/tool calling");
     expect(llmCalls[0]?.options?.system).toContain("Available tools:");
     expect(llmCalls[0]?.options?.system).toContain("avoid repo-wide glob or grep sweeps");
-    expect(llmCalls[1]?.messages.some((message) => message.role === "user" && message.content.startsWith("Tool result"))).toBe(true);
+    const fallbackToolResult = llmCalls[1]?.messages.find((message) => message.role === "user" && message.content.startsWith("Tool result"));
+    expect(fallbackToolResult?.content).toContain("\"type\": \"tool_observation\"");
+    expect(fallbackToolResult?.content).toContain("\"state\": \"success\"");
   });
 
   it("stops after the schema repair budget is exhausted", async () => {

@@ -248,7 +248,7 @@ export class ToolExecutor {
       fn(),
       new Promise<ToolResult>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`Tool call timed out after ${timeoutMs}ms`)),
+          () => reject(new ToolExecutionTimeoutError(timeoutMs)),
           timeoutMs,
         ),
       ),
@@ -288,12 +288,14 @@ export class ToolExecutor {
       } catch (err) {
         if (!isSafe || !isTransient(err) || attempt >= BACKOFFS.length) {
           const errMsg = err instanceof Error ? err.message : String(err);
+          const execution = this.executionForFailure(err, context);
           context.logger?.warn("tool.call.failure", { tool: toolName, callId: context.callId, error: errMsg });
           return {
             success: false,
             data: null,
             summary: `Tool ${toolName} failed: ${errMsg}`,
             error: errMsg,
+            ...(execution ? { execution } : {}),
             durationMs: 0,
           };
         }
@@ -321,6 +323,24 @@ export class ToolExecutor {
       ...(execution ? { execution } : {}),
       durationMs,
     };
+  }
+
+  private executionForFailure(error: unknown, context: ToolCallContext): ToolResult["execution"] | undefined {
+    const message = error instanceof Error ? error.message : String(error);
+    if (context.abortSignal?.aborted) {
+      return { status: "executed", reason: "interrupted", message };
+    }
+    if (error instanceof ToolExecutionTimeoutError) {
+      return { status: "executed", reason: "timed_out", message };
+    }
+    return undefined;
+  }
+}
+
+export class ToolExecutionTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Tool call timed out after ${timeoutMs}ms`);
+    this.name = "ToolExecutionTimeoutError";
   }
 }
 

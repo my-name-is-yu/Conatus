@@ -1,4 +1,5 @@
 import type { ToolActivityCategory } from "../../../tools/types.js";
+import type { AgentLoopToolObservation } from "./agent-loop-model.js";
 
 export type AgentLoopEvent =
   | AgentLoopStartedEvent
@@ -8,6 +9,7 @@ export type AgentLoopEvent =
   | AgentLoopAssistantMessageEvent
   | AgentLoopApprovalRequestEvent
   | AgentLoopToolCallStartedEvent
+  | AgentLoopToolObservationEvent
   | AgentLoopToolCallFinishedEvent
   | AgentLoopPlanUpdateEvent
   | AgentLoopApprovalEvent
@@ -71,6 +73,11 @@ export interface AgentLoopToolCallStartedEvent extends AgentLoopBaseEvent {
   toolName: string;
   inputPreview: string;
   activityCategory?: ToolActivityCategory;
+}
+
+export interface AgentLoopToolObservationEvent extends AgentLoopBaseEvent {
+  type: "tool_observation";
+  observation: AgentLoopToolObservation;
 }
 
 export interface AgentLoopToolCallFinishedEvent extends AgentLoopBaseEvent {

@@ -1,7 +1,16 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
-import type { AgentLoopMessage, AgentLoopMessagePhase, AgentLoopMessageRole, AgentLoopToolCall } from "./agent-loop-model.js";
+import type {
+  AgentLoopMessage,
+  AgentLoopMessagePhase,
+  AgentLoopMessageRole,
+  AgentLoopToolCall,
+  AgentLoopToolObservation,
+  AgentLoopToolObservationExecution,
+  AgentLoopToolObservationReason,
+  AgentLoopToolObservationState,
+} from "./agent-loop-model.js";
 
 export interface AgentLoopSessionState {
   sessionId: string;
@@ -124,6 +133,7 @@ function normalizeMessage(value: unknown): AgentLoopMessage | null {
   const role = roleField(value, "role");
   if (!role || typeof value["content"] !== "string") return null;
   const phase = phaseField(value, "phase");
+  const observation = normalizeToolObservation(value["observation"]);
 
   return {
     role,
@@ -132,6 +142,7 @@ function normalizeMessage(value: unknown): AgentLoopMessage | null {
     ...(typeof value["toolCallId"] === "string" ? { toolCallId: value["toolCallId"] } : {}),
     ...(typeof value["toolName"] === "string" ? { toolName: value["toolName"] } : {}),
     ...(Array.isArray(value["toolCalls"]) ? { toolCalls: value["toolCalls"].map(normalizeToolCall).filter((call): call is AgentLoopToolCall => call !== null) } : {}),
+    ...(observation ? { observation } : {}),
   };
 }
 
@@ -141,6 +152,62 @@ function normalizeToolCall(value: unknown): AgentLoopToolCall | null {
   const name = stringField(value, "name");
   if (!id || !name) return null;
   return { id, name, input: value["input"] };
+}
+
+function normalizeToolObservation(value: unknown): AgentLoopToolObservation | null {
+  if (!isRecord(value)) return null;
+  if (value["type"] !== "tool_observation") return null;
+  const callId = stringField(value, "callId");
+  const toolName = stringField(value, "toolName");
+  const state = observationStateField(value, "state");
+  if (!callId || !toolName || !state || typeof value["success"] !== "boolean") return null;
+  const output = isRecord(value["output"]) ? value["output"] : null;
+  if (!output || typeof output["content"] !== "string") return null;
+  const execution = normalizeObservationExecution(value["execution"]);
+  const truncated = normalizeTruncated(value["truncated"]);
+
+  return {
+    type: "tool_observation",
+    callId,
+    toolName,
+    arguments: value["arguments"],
+    state,
+    success: value["success"],
+    ...(execution ? { execution } : {}),
+    durationMs: nonNegativeNumberField(value, "durationMs"),
+    output: {
+      content: output["content"],
+      ...(typeof output["summary"] === "string" ? { summary: output["summary"] } : {}),
+      ...(Object.prototype.hasOwnProperty.call(output, "data") ? { data: output["data"] } : {}),
+      ...(typeof output["error"] === "string" ? { error: output["error"] } : {}),
+    },
+    ...(typeof value["command"] === "string" ? { command: value["command"] } : {}),
+    ...(typeof value["cwd"] === "string" ? { cwd: value["cwd"] } : {}),
+    ...(Array.isArray(value["artifacts"]) ? { artifacts: value["artifacts"].filter((item): item is string => typeof item === "string") } : {}),
+    ...(truncated ? { truncated } : {}),
+    ...(toolActivityCategoryField(value, "activityCategory") ? { activityCategory: toolActivityCategoryField(value, "activityCategory")! } : {}),
+  };
+}
+
+function normalizeObservationExecution(value: unknown): AgentLoopToolObservationExecution | null {
+  if (!isRecord(value)) return null;
+  const status = value["status"];
+  if (status !== "executed" && status !== "not_executed") return null;
+  const reason = observationReasonField(value, "reason");
+  return {
+    status,
+    ...(reason ? { reason } : {}),
+    ...(typeof value["message"] === "string" ? { message: value["message"] } : {}),
+  };
+}
+
+function normalizeTruncated(value: unknown): AgentLoopToolObservation["truncated"] | null {
+  if (!isRecord(value)) return null;
+  const originalChars = nonNegativeNumberField(value, "originalChars");
+  return {
+    originalChars,
+    ...(typeof value["overflowPath"] === "string" ? { overflowPath: value["overflowPath"] } : {}),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -190,6 +257,44 @@ function roleField(value: Record<string, unknown>, field: string): AgentLoopMess
 function phaseField(value: Record<string, unknown>, field: string): AgentLoopMessagePhase | null {
   const raw = value[field];
   return raw === "commentary" || raw === "final_answer" ? raw : null;
+}
+
+function observationStateField(value: Record<string, unknown>, field: string): AgentLoopToolObservationState | null {
+  const raw = value[field];
+  return raw === "success"
+    || raw === "failure"
+    || raw === "denied"
+    || raw === "blocked"
+    || raw === "timed_out"
+    || raw === "interrupted"
+    ? raw
+    : null;
+}
+
+function observationReasonField(value: Record<string, unknown>, field: string): AgentLoopToolObservationReason | null {
+  const raw = value[field];
+  return raw === "approval_denied"
+    || raw === "permission_denied"
+    || raw === "policy_blocked"
+    || raw === "dry_run"
+    || raw === "tool_error"
+    || raw === "timed_out"
+    || raw === "interrupted"
+    ? raw
+    : null;
+}
+
+function toolActivityCategoryField(value: Record<string, unknown>, field: string): AgentLoopToolObservation["activityCategory"] | null {
+  const raw = value[field];
+  return raw === "search"
+    || raw === "read"
+    || raw === "command"
+    || raw === "file_create"
+    || raw === "file_modify"
+    || raw === "test"
+    || raw === "approval"
+    ? raw
+    : null;
 }
 
 function statusField(value: Record<string, unknown>, field: string): AgentLoopSessionState["status"] {

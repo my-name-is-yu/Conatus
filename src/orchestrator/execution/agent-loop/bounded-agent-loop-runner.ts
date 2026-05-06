@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import type { z } from "zod";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
-import type { AgentLoopMessage, AgentLoopModelClient, AgentLoopModelTurnProtocol } from "./agent-loop-model.js";
+import type {
+  AgentLoopMessage,
+  AgentLoopModelClient,
+  AgentLoopModelTurnProtocol,
+  AgentLoopToolCall,
+  AgentLoopToolObservation,
+  AgentLoopToolObservationExecution,
+  AgentLoopToolObservationState,
+} from "./agent-loop-model.js";
 import type { AgentLoopCommandResult, AgentLoopResult, AgentLoopToolResultSummary } from "./agent-loop-result.js";
 import type { AgentLoopToolRuntime } from "./agent-loop-tool-runtime.js";
 import type { AgentLoopToolRouter } from "./agent-loop-tool-router.js";
@@ -320,6 +328,12 @@ export class BoundedAgentLoopRunner {
 
       const { results: toolResults, timedOut: toolBatchTimedOut } = await this.executeToolBatchWithinBudget(response.toolCalls, turn, startedAt);
       for (const result of toolResults) {
+        const sourceCall = response.toolCalls.find((call) => call.id === result.callId);
+        const observation = this.createToolObservation(
+          result,
+          sourceCall,
+          toolBatchTimedOut,
+        );
         if (result.execution?.status !== "not_executed") {
           calledTools.add(result.toolName);
         }
@@ -340,6 +354,7 @@ export class BoundedAgentLoopRunner {
           toolCallId: result.callId,
           toolName: result.toolName,
           content: result.content,
+          observation,
         });
 
         await this.record(turn, {
@@ -355,6 +370,12 @@ export class BoundedAgentLoopRunner {
           ...(result.artifacts ? { artifacts: result.artifacts } : {}),
           ...(result.truncated ? { truncated: result.truncated } : {}),
           ...(result.activityCategory ? { activityCategory: result.activityCategory } : {}),
+        });
+
+        await this.record(turn, {
+          type: "tool_observation",
+          ...this.baseEvent(turn),
+          observation,
         });
 
         if (result.disposition === "approval_denied") {
@@ -665,6 +686,69 @@ export class BoundedAgentLoopRunner {
     calledTools: Set<string>,
   ): string[] {
     return [...(turn.toolPolicy.requiredTools ?? [])].filter((toolName) => !calledTools.has(toolName));
+  }
+
+  private createToolObservation(
+    result: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>[number],
+    sourceCall: AgentLoopToolCall | undefined,
+    toolBatchTimedOut: boolean,
+  ): AgentLoopToolObservation;
+  private createToolObservation(
+    result: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>[number],
+    sourceCall: AgentLoopToolCall | undefined,
+    toolBatchTimedOut: boolean,
+  ): AgentLoopToolObservation {
+    const state = this.toolObservationState(result, toolBatchTimedOut);
+    const execution = this.toolObservationExecution(result, state);
+    const rawResult = result.rawResult;
+    return {
+      type: "tool_observation",
+      callId: result.callId,
+      toolName: result.toolName,
+      arguments: sourceCall?.input ?? {},
+      state,
+      success: result.success,
+      execution,
+      durationMs: result.durationMs,
+      output: {
+        content: result.content,
+        ...(rawResult?.summary ? { summary: rawResult.summary } : {}),
+        ...(rawResult && Object.prototype.hasOwnProperty.call(rawResult, "data") ? { data: rawResult.data } : {}),
+        ...(rawResult?.error ? { error: rawResult.error } : {}),
+      },
+      ...(result.command ? { command: result.command } : {}),
+      ...(result.cwd ? { cwd: result.cwd } : {}),
+      ...(result.artifacts ? { artifacts: result.artifacts } : {}),
+      ...(result.truncated ? { truncated: result.truncated } : {}),
+      ...(result.activityCategory ? { activityCategory: result.activityCategory } : {}),
+    };
+  }
+
+  private toolObservationState(
+    result: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>[number],
+    toolBatchTimedOut: boolean,
+  ): AgentLoopToolObservationState {
+    const reason = result.execution?.reason;
+    if (reason === "timed_out" || (toolBatchTimedOut && result.disposition === "cancelled")) return "timed_out";
+    if (reason === "interrupted" || result.disposition === "cancelled") return "interrupted";
+    if (reason === "approval_denied" || reason === "permission_denied") return "denied";
+    if (reason === "policy_blocked" || reason === "dry_run") return "blocked";
+    return result.success ? "success" : "failure";
+  }
+
+  private toolObservationExecution(
+    result: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>[number],
+    state: AgentLoopToolObservationState,
+  ): AgentLoopToolObservationExecution {
+    if (result.execution) return result.execution;
+    if (state === "timed_out" || state === "interrupted") {
+      return {
+        status: "executed",
+        reason: state === "timed_out" ? "timed_out" : "interrupted",
+        message: result.content,
+      };
+    }
+    return { status: "executed" };
   }
 
   private async createTurnProtocol<TOutput>(

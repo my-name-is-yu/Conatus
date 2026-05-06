@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "../../../base/llm/llm-client.js";
+import type { ToolActivityCategory } from "../../../tools/types.js";
 import type { ResponseItem } from "./response-item.js";
 
 export interface AgentLoopModelRef {
@@ -41,12 +42,61 @@ export interface AgentLoopMessage {
   toolCallId?: string;
   toolName?: string;
   toolCalls?: AgentLoopToolCall[];
+  observation?: AgentLoopToolObservation;
 }
 
 export interface AgentLoopToolCall {
   id: string;
   name: string;
   input: unknown;
+}
+
+export type AgentLoopToolObservationState =
+  | "success"
+  | "failure"
+  | "denied"
+  | "blocked"
+  | "timed_out"
+  | "interrupted";
+
+export type AgentLoopToolObservationReason =
+  | "approval_denied"
+  | "permission_denied"
+  | "policy_blocked"
+  | "dry_run"
+  | "tool_error"
+  | "timed_out"
+  | "interrupted";
+
+export interface AgentLoopToolObservationExecution {
+  status: "executed" | "not_executed";
+  reason?: AgentLoopToolObservationReason;
+  message?: string;
+}
+
+export interface AgentLoopToolObservation {
+  type: "tool_observation";
+  callId: string;
+  toolName: string;
+  arguments: unknown;
+  state: AgentLoopToolObservationState;
+  success: boolean;
+  execution?: AgentLoopToolObservationExecution;
+  durationMs: number;
+  output: {
+    content: string;
+    summary?: string;
+    data?: unknown;
+    error?: string;
+  };
+  command?: string;
+  cwd?: string;
+  artifacts?: string[];
+  truncated?: {
+    originalChars: number;
+    overflowPath?: string;
+  };
+  activityCategory?: ToolActivityCategory;
 }
 
 export interface AgentLoopModelRequest {
@@ -123,4 +173,25 @@ export function parseAgentLoopModelRef(value: string): AgentLoopModelRef {
 
 export function formatAgentLoopModelRef(ref: AgentLoopModelRef): string {
   return `${ref.providerId}/${ref.modelId}${ref.variant ? `#${ref.variant}` : ""}`;
+}
+
+export function formatAgentLoopToolMessageContent(message: AgentLoopMessage): string {
+  if (message.role !== "tool" || !message.observation) return message.content;
+  return stringifyToolObservation(message.observation);
+}
+
+function stringifyToolObservation(observation: AgentLoopToolObservation): string {
+  try {
+    return JSON.stringify(observation, null, 2);
+  } catch {
+    return JSON.stringify({
+      type: "tool_observation",
+      callId: observation.callId,
+      toolName: observation.toolName,
+      state: observation.state,
+      success: observation.success,
+      durationMs: observation.durationMs,
+      output: observation.output.content,
+    }, null, 2);
+  }
 }

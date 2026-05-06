@@ -101,6 +101,8 @@ export function renderAgentTimelineItemForChat(item: AgentTimelineItem): string 
       const label = item.status === "started" ? "Started" : item.success ? "Finished" : "Failed";
       return detail ? `${label} ${item.toolName}: ${redactSetupSecrets(detail)}` : `${label} ${item.toolName}.`;
     }
+    case "tool_observation":
+      return `Observed ${item.toolName} (${item.state}): ${redactSetupSecrets(item.outputPreview)}`;
     case "plan":
       return `Plan changed: ${redactSetupSecrets(item.summary)}`;
     case "approval":

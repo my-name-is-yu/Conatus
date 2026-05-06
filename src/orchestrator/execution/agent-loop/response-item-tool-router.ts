@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { ToolExecutor } from "../../../tools/executor.js";
+import { ToolExecutionTimeoutError, type ToolExecutor } from "../../../tools/executor.js";
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { AgentLoopTurnContext } from "./agent-loop-turn-context.js";
 import type { AgentLoopToolRouter } from "./agent-loop-tool-router.js";
@@ -150,15 +150,12 @@ export class ResponseItemToolRouter {
         durationMs,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       return this.toolError(item, {
         code: "execution_failed",
-        message: err instanceof Error ? err.message : String(err),
+        message,
         durationMs: Date.now() - start,
-        execution: {
-          status: "not_executed",
-          reason: "tool_error",
-          message: err instanceof Error ? err.message : String(err),
-        },
+        execution: this.executionForException(message, turn, err),
       });
     }
   }
@@ -218,5 +215,31 @@ export class ResponseItemToolRouter {
         return `${path}: ${issue.message}`;
       })
       .join("; ");
+  }
+
+  private executionForException(
+    message: string,
+    turn: AgentLoopTurnContext<unknown>,
+    error?: unknown,
+  ): ToolErrorResponseItem["execution"] {
+    if (turn.abortSignal?.aborted) {
+      return {
+        status: "executed",
+        reason: "interrupted",
+        message,
+      };
+    }
+    if (error instanceof ToolExecutionTimeoutError) {
+      return {
+        status: "executed",
+        reason: "timed_out",
+        message,
+      };
+    }
+    return {
+      status: "not_executed",
+      reason: "tool_error",
+      message,
+    };
   }
 }
