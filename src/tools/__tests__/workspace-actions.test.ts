@@ -105,6 +105,34 @@ describe("workspace action typed tools", () => {
     await fsp.rm(workspace, { recursive: true, force: true });
   });
 
+  it("fails closed when shell input cwd escapes the execution policy workspace root", async () => {
+    const contextRoot = await makeTempWorkspace();
+    const policyRoot = path.join(contextRoot, "allowed");
+    const outside = path.join(contextRoot, "sibling");
+    await fsp.mkdir(policyRoot, { recursive: true });
+    await fsp.mkdir(outside, { recursive: true });
+    const execSpy = vi.spyOn(execMod, "execFileNoThrow").mockResolvedValue({
+      stdout: "should-not-run",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const result = await makeExecutor().execute(
+      "shell_command",
+      { command: "echo should-not-run", cwd: outside },
+      makeContext(contextRoot, { executionPolicy: makePolicy(policyRoot) }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cwd escapes workspace root");
+    expect(result.execution).toMatchObject({
+      status: "not_executed",
+      reason: "policy_blocked",
+    });
+    expect(execSpy).not.toHaveBeenCalled();
+    await fsp.rm(contextRoot, { recursive: true, force: true });
+  });
+
   it("preserves approval-denied non-execution for patch actions", async () => {
     const workspace = await makeTempWorkspace();
     const approvalFn = vi.fn(async () => false);
@@ -132,6 +160,38 @@ describe("workspace action typed tools", () => {
     });
     await expect(fsp.access(path.join(workspace, "approved.txt"))).rejects.toThrow();
     await fsp.rm(workspace, { recursive: true, force: true });
+  });
+
+  it("fails closed when apply_patch input cwd escapes the execution policy workspace root", async () => {
+    const contextRoot = await makeTempWorkspace();
+    const policyRoot = path.join(contextRoot, "allowed");
+    const outside = path.join(contextRoot, "sibling");
+    await fsp.mkdir(policyRoot, { recursive: true });
+    await fsp.mkdir(outside, { recursive: true });
+    const approvalFn = vi.fn(async () => true);
+    const patch = [
+      "*** Begin Patch",
+      "*** Add File: escaped.txt",
+      "+should-not-exist",
+      "*** End Patch",
+      "",
+    ].join("\n");
+
+    const result = await makeExecutor().execute(
+      "apply_patch",
+      { patch, cwd: outside },
+      makeContext(contextRoot, { approvalFn, executionPolicy: makePolicy(policyRoot) }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cwd escapes workspace root");
+    expect(result.execution).toMatchObject({
+      status: "not_executed",
+      reason: "policy_blocked",
+    });
+    expect(approvalFn).not.toHaveBeenCalled();
+    await expect(fsp.access(path.join(outside, "escaped.txt"))).rejects.toThrow();
+    await fsp.rm(contextRoot, { recursive: true, force: true });
   });
 
   it("blocks protected patch paths without writing", async () => {
