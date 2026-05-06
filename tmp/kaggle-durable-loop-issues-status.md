@@ -10,7 +10,7 @@ Updated: 2026-05-06 Asia/Tokyo
 
 ## #1089
 
-Status: implementation verified locally; preparing PR.
+Status: merged via PR #1096.
 
 Plan:
 - Resolve effective task workspace from task `workspace_path` constraint, then goal `workspace_path` constraint, then existing lifecycle default.
@@ -33,15 +33,6 @@ Verification:
 - `npm run test:changed`
 
 Review:
-- Fresh review found four material issues: shutdown could miss execution started by an in-flight poll, tree-mode did not pass the abort signal into node execution, operator abort during model request was classified as timeout, and shell/test tool abort only killed direct children.
-- Fixed shutdown ordering to wait for `currentPoll` before snapshotting/aborting active executions and added a stop guard after lease acquisition so shutdown does not start new executions from an in-flight poll.
-- Fixed tree-mode to pass the same abort signal through `runTreeIteration()` into node `runOneIteration()`.
-- Fixed model abort classification to `cancelled` with operator-stop text instead of timeout.
-- Switched shell/test command execution to an opt-in process-group `spawn` path that terminates the group on abort/timeout where supported, with direct-child fallback.
-- Added regressions for in-flight poll stop, aborted model request classification, and process-group options for shell/test commands.
-- `npm run test:changed`
-
-Review:
 - Fresh review agent: no material findings.
 
 PR:
@@ -49,7 +40,7 @@ PR:
 
 ## #1090
 
-Status: implementation verified locally; preparing PR.
+Status: merged via PR #1097.
 
 Plan:
 - Catch `soilPrefetch` failures in `AgentLoopContextAssembler` and return empty Soil context with a warning so task execution can continue.
@@ -78,7 +69,7 @@ PR:
 
 ## #1091
 
-Status: implementation verified locally; preparing PR.
+Status: merged via PR #1098.
 
 Plan:
 - Synthesize a goal-scoped artifact metric datasource during `ObservationEngine.observe()` when the goal has a `workspace_path:` constraint.
@@ -111,7 +102,7 @@ PR:
 
 ## #1093
 
-Status: implementation verified locally; pending final review agent.
+Status: merged via PR #1099.
 
 Plan:
 - Add an active execution abort path in `LoopSupervisor.shutdown()` with bounded wait before returning.
@@ -150,3 +141,6 @@ Review:
 - Final fresh review found two remaining broad AbortError classifiers in CoreLoop and GoalWorker.
 - Removed AbortError string/name classification from CoreLoop/GoalWorker cancellation paths; those boundaries now report stopped only when the propagated operator `AbortSignal` is actually aborted. Added regressions for provider AbortError staying error and operator-aborted GoalWorker errors becoming stopped.
 - After final review fixes, re-ran focused unit tests, `npm run typecheck`, `npm run lint:boundaries`, `git diff --check`, and `npm run test:changed`; all passed. `lint:boundaries` exits 0 with existing warnings.
+
+PR:
+- #1099 merged after CI passed.
