@@ -194,6 +194,7 @@ export class ChatRunnerEventBridge {
             toolCallId: event.callId,
             toolName: event.toolName,
             args: this.parseAgentLoopPreview(event.inputPreview),
+            ...(event.activityCategory ? { activityCategory: event.activityCategory } : {}),
             presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
@@ -203,6 +204,7 @@ export class ChatRunnerEventBridge {
             toolName: event.toolName,
             status: "running",
             message: "started",
+            ...(event.activityCategory ? { activityCategory: event.activityCategory } : {}),
             presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
@@ -235,6 +237,7 @@ export class ChatRunnerEventBridge {
             success: event.success,
             summary: event.outputPreview,
             durationMs: event.durationMs,
+            ...(event.activityCategory ? { activityCategory: event.activityCategory } : {}),
             presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });
@@ -255,6 +258,7 @@ export class ChatRunnerEventBridge {
             toolName: "update_plan",
             status: "result",
             message: event.summary,
+            activityCategory: "planning",
             presentation: { suppressTranscript: true },
             ...this.eventBase(eventContext),
           });

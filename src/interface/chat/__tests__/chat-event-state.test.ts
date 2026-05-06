@@ -100,6 +100,7 @@ describe("applyChatEventToMessages", () => {
       toolCallId: "tool-1",
       toolName: "shell_command",
       args: { command: "rg ChatEvent src/interface/chat", cwd: "/repo" },
+      activityCategory: "search",
     }, 20);
 
     expect(messages).toHaveLength(1);
@@ -296,6 +297,7 @@ describe("applyChatEventToMessages", () => {
       eventId: "tool-start-1",
       callId: "call-1",
       toolName: "shell_command",
+      activityCategory: "search",
       inputPreview: "{\"command\":\"rg ChatRunner src/interface/chat\"}",
     });
     await sink.emit({
@@ -304,6 +306,7 @@ describe("applyChatEventToMessages", () => {
       eventId: "tool-finish-1",
       callId: "call-1",
       toolName: "shell_command",
+      activityCategory: "search",
       success: true,
       inputPreview: "{\"command\":\"rg ChatRunner src/interface/chat\"}",
       outputPreview: "src/interface/chat/chat-runner.ts",
@@ -715,6 +718,41 @@ describe("applyChatEventToMessages", () => {
     expect(messages[0]!.text).not.toContain("\"observation\"");
   });
 
+  it("emits plan_update bridge events with typed planning metadata", async () => {
+    const events: ChatEvent[] = [];
+    const bridge = new ChatRunnerEventBridge(() => (event) => {
+      events.push(event);
+    });
+    const sink = bridge.createAgentLoopEventSink({ runId: "run-1", turnId: "turn-1" });
+    const base = {
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+    };
+
+    await sink.emit({
+      ...base,
+      type: "plan_update",
+      eventId: "plan-1",
+      summary: "inspect files, then verify behavior",
+    });
+
+    const toolUpdate = events.find((event): event is Extract<ChatEvent, { type: "tool_update" }> =>
+      event.type === "tool_update"
+    );
+
+    expect(toolUpdate).toMatchObject({
+      type: "tool_update",
+      toolName: "update_plan",
+      status: "result",
+      message: "inspect files, then verify behavior",
+      activityCategory: "planning",
+      presentation: { suppressTranscript: true },
+    });
+  });
+
   it("removes transient activity when assistant final arrives", () => {
     const withActivity = applyChatEventToMessages([], {
       type: "activity",
@@ -955,6 +993,7 @@ describe("applyChatEventToMessages", () => {
         toolCallId: `tool-${index}`,
         toolName: "read_file",
         args: { path: `src/file-${index}.ts` },
+        activityCategory: "read",
       }, 20);
     }
 
@@ -988,6 +1027,7 @@ describe("applyChatEventToMessages", () => {
       toolCallId: "tool-1",
       toolName: "shell_command",
       args: { command: "npm run test:changed -- --run" },
+      activityCategory: "test",
     }, 20);
 
     const running = applyChatEventToMessages(started, {
@@ -1013,9 +1053,25 @@ describe("applyChatEventToMessages", () => {
       toolName: "apply_patch",
       status: "awaiting_approval",
       message: "write src/example.ts",
+      activityCategory: "file_modify",
     }, 20);
 
     expect(waiting[0]!.text).toContain("Waiting for approval apply_patch - write src/example.ts");
+  });
+
+  it("renders update_plan as planning from typed tool metadata", () => {
+    const messages = applyChatEventToMessages([], {
+      type: "tool_start",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      toolCallId: "tool-plan",
+      toolName: "update_plan",
+      args: { steps: [{ step: "inspect", status: "in_progress" }] },
+      activityCategory: "planning",
+    }, 20);
+
+    expect(messages[0]!.text).toContain("Planning update_plan");
   });
 
   it("moves a tool out of waiting once execution resumes after approval", () => {
@@ -1028,6 +1084,7 @@ describe("applyChatEventToMessages", () => {
       toolName: "apply_patch",
       status: "awaiting_approval",
       message: "write src/example.ts",
+      activityCategory: "file_modify",
     }, 20);
 
     const running = applyChatEventToMessages(waiting, {

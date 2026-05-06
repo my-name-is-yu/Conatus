@@ -1051,6 +1051,7 @@ async function dispatchToolCall(
     host.eventBridge.emitActivity("tool", formatToolActivity("Failed", name, `Unknown tool: ${name}`), eventContext, toolCallId);
     return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
+  const activityCategory = tool.metadata.activityCategory;
   const startTime = Date.now();
   try {
     const parsed = tool.inputSchema.safeParse(args);
@@ -1063,6 +1064,7 @@ async function dispatchToolCall(
         success: false,
         summary: `Invalid input: ${parsed.error.message}`,
         durationMs: Date.now() - startTime,
+        ...(activityCategory ? { activityCategory } : {}),
         ...host.eventBridge.eventBase(eventContext),
       });
       return JSON.stringify({ error: `Invalid input: ${parsed.error.message}` });
@@ -1073,6 +1075,7 @@ async function dispatchToolCall(
       toolCallId,
       toolName: name,
       args,
+      ...(activityCategory ? { activityCategory } : {}),
       ...host.eventBridge.eventBase(eventContext),
     });
     host.eventBridge.emitActivity("tool", formatToolActivity("Running", name, JSON.stringify(args)), eventContext, toolCallId);
@@ -1085,6 +1088,7 @@ async function dispatchToolCall(
         toolName: name,
         status: "running",
         message: "running",
+        ...(activityCategory ? { activityCategory } : {}),
         ...host.eventBridge.eventBase(eventContext),
       });
       host.deps.onToolStart?.(name, args);
@@ -1099,6 +1103,7 @@ async function dispatchToolCall(
           success: false,
           summary: permResult.reason,
           durationMs: Date.now() - startTime,
+          ...(activityCategory ? { activityCategory } : {}),
           ...host.eventBridge.eventBase(eventContext),
         });
         return `Tool ${name} denied: ${permResult.reason}`;
@@ -1111,6 +1116,7 @@ async function dispatchToolCall(
           toolName: name,
           status: "awaiting_approval",
           message: permResult.reason,
+          ...(activityCategory ? { activityCategory } : {}),
           ...host.eventBridge.eventBase(eventContext),
         });
         const approved = await context.approvalFn({
@@ -1129,6 +1135,7 @@ async function dispatchToolCall(
             success: false,
             summary: `Not approved: ${permResult.reason}`,
             durationMs: Date.now() - startTime,
+            ...(activityCategory ? { activityCategory } : {}),
             ...host.eventBridge.eventBase(eventContext),
           });
           return `Tool ${name} not approved: ${permResult.reason}`;
@@ -1140,6 +1147,7 @@ async function dispatchToolCall(
         toolName: name,
         status: "running",
         message: "running",
+        ...(activityCategory ? { activityCategory } : {}),
         ...host.eventBridge.eventBase(eventContext),
       });
       host.deps.onToolStart?.(name, args);
@@ -1160,6 +1168,7 @@ async function dispatchToolCall(
       toolName: name,
       status: "result",
       message: result.summary || "...",
+      ...(activityCategory ? { activityCategory } : {}),
       ...host.eventBridge.eventBase(eventContext),
     });
     host.eventBridge.emitEvent({
@@ -1169,6 +1178,7 @@ async function dispatchToolCall(
       success: result.success,
       summary: result.summary || "...",
       durationMs,
+      ...(activityCategory ? { activityCategory } : {}),
       ...host.eventBridge.eventBase(eventContext),
     });
     return result.data != null ? JSON.stringify(result.data) : (result.summary ?? "(no result)");
@@ -1184,6 +1194,7 @@ async function dispatchToolCall(
       success: false,
       summary: message,
       durationMs,
+      ...(activityCategory ? { activityCategory } : {}),
       ...host.eventBridge.eventBase(eventContext),
     });
     return JSON.stringify({ error: `Tool ${name} failed: ${message}` });

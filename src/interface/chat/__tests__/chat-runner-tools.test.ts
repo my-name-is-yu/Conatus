@@ -6,7 +6,8 @@ import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js"
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { ToolRegistry } from "../../../tools/registry.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
-import type { ITool, ToolResult, ToolCallContext } from "../../../tools/types.js";
+import type { ITool, ToolActivityCategory, ToolResult, ToolCallContext } from "../../../tools/types.js";
+import type { ChatEvent } from "../chat-events.js";
 import { z } from "zod";
 
 // Mock context-provider so tests don't walk the real filesystem
@@ -32,7 +33,11 @@ function makeMockAdapter(): IAdapter {
 }
 
 /** Create a minimal mock ITool with controllable call behavior. */
-function makeMockTool(name: string, callImpl: (input: Record<string, unknown>, ctx: ToolCallContext) => Promise<ToolResult>): ITool {
+function makeMockTool(
+  name: string,
+  callImpl: (input: Record<string, unknown>, ctx: ToolCallContext) => Promise<ToolResult>,
+  activityCategory?: ToolActivityCategory
+): ITool {
   return {
     metadata: {
       name,
@@ -45,6 +50,7 @@ function makeMockTool(name: string, callImpl: (input: Record<string, unknown>, c
       maxConcurrency: 0,
       maxOutputChars: 4000,
       tags: [],
+      ...(activityCategory ? { activityCategory } : {}),
     },
     inputSchema: z.object({}),
     description: () => "mock tool",
@@ -280,6 +286,33 @@ describe("ChatRunner — tool status callbacks", () => {
       const [, result] = (onToolEnd as ReturnType<typeof vi.fn>).mock.calls[0];
       expect(result.summary).toBe("...");
     });
+  });
+
+  it("emits typed activity categories through the production tool-loop event path", async () => {
+    const events: ChatEvent[] = [];
+    const tool = makeMockTool("ambiguous-tool", async () => ({
+      success: true,
+      data: null,
+      summary: "done",
+      durationMs: 5,
+    }), "search");
+    const deps = makeDeps({
+      llmClient: makeLLMClientWithToolCall("ambiguous-tool", {}),
+      registry: makeMockRegistry(tool),
+      onEvent: (event) => { events.push(event); },
+    });
+    const runner = new ChatRunner(deps);
+
+    await runner.execute("Could you inspect the workspace surface?", "/repo");
+
+    const toolEvents = events.filter((event): event is Extract<ChatEvent, { type: "tool_start" | "tool_update" | "tool_end" }> =>
+      event.type === "tool_start" || event.type === "tool_update" || event.type === "tool_end"
+    );
+    expect(toolEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "tool_start", toolName: "ambiguous-tool", activityCategory: "search" }),
+      expect.objectContaining({ type: "tool_update", toolName: "ambiguous-tool", activityCategory: "search" }),
+      expect.objectContaining({ type: "tool_end", toolName: "ambiguous-tool", activityCategory: "search" }),
+    ]));
   });
 
   describe("onToolEnd callback — failure path", () => {

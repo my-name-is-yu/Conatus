@@ -1,4 +1,5 @@
 import type { FailureRecoveryGuidance } from "./failure-recovery.js";
+import type { ToolActivityCategory } from "../../tools/types.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 import type { TurnLanguageHint } from "./turn-language.js";
 import type { OperationProgressItem } from "./operation-progress.js";
@@ -53,6 +54,7 @@ export interface ToolStartEvent extends ChatEventBase {
   toolCallId: string;
   toolName: string;
   args: Record<string, unknown>;
+  activityCategory?: ToolActivityCategory;
   presentation?: {
     suppressTranscript?: boolean;
   };
@@ -64,6 +66,7 @@ export interface ToolUpdateEvent extends ChatEventBase {
   toolName: string;
   status: "awaiting_approval" | "running" | "result";
   message: string;
+  activityCategory?: ToolActivityCategory;
   presentation?: {
     suppressTranscript?: boolean;
   };
@@ -76,6 +79,7 @@ export interface ToolEndEvent extends ChatEventBase {
   success: boolean;
   summary: string;
   durationMs: number;
+  activityCategory?: ToolActivityCategory;
   presentation?: {
     suppressTranscript?: boolean;
   };

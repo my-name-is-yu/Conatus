@@ -351,7 +351,7 @@ describe("TelegramGatewayAdapter", () => {
         "Approval requested for shell_command: run a write command",
         "Observed shell_command (denied): TOOL NOT EXECUTED (approval_denied): Operator denied release execution.",
         "Compacted context (mid_turn, context_limit): 12 -> 4.",
-        "searched 1 search, requested 1 approval",
+        "ran 1 command, requested 1 approval",
       ]));
     });
     expect(sentMessages.some((message) => message.includes("[tool]"))).toBe(false);

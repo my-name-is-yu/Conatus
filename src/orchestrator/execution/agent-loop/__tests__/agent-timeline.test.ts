@@ -21,7 +21,7 @@ function finishedTool(
   eventId: string,
   toolName: string,
   inputPreview: string,
-  activityCategory?: "search" | "read" | "command" | "file_create" | "file_modify" | "test" | "approval",
+  activityCategory?: "search" | "read" | "planning" | "command" | "file_create" | "file_modify" | "test" | "approval",
 ): AgentLoopEvent {
   return baseEvent({
     type: "tool_call_finished",
@@ -39,12 +39,13 @@ function finishedTool(
 describe("agent timeline activity summaries", () => {
   it("classifies structured activity deterministically", () => {
     const items = [
-      finishedTool("search-1", "shell_command", JSON.stringify({ command: "rg ChatRunner src/interface/chat" })),
+      finishedTool("search-1", "shell_command", JSON.stringify({ command: "rg ChatRunner src/interface/chat" }), "search"),
       finishedTool("read-1", "read_file", JSON.stringify({ path: "src/interface/chat/chat-runner.ts" }), "read"),
+      finishedTool("plan-1", "update_plan", JSON.stringify({ steps: [{ step: "inspect", status: "in_progress" }] }), "planning"),
       finishedTool("command-1", "shell_command", JSON.stringify({ command: "node scripts/build.js" })),
       finishedTool("create-1", "file_write", JSON.stringify({ path: "src/new-file.ts" }), "file_create"),
       finishedTool("modify-1", "apply_patch", JSON.stringify({ path: "src/existing.ts" }), "file_modify"),
-      finishedTool("test-1", "shell_command", JSON.stringify({ command: "npm run typecheck" })),
+      finishedTool("test-1", "shell_command", JSON.stringify({ command: "npm run typecheck" }), "test"),
       baseEvent({
         type: "approval_request",
         eventId: "approval-1",
@@ -59,6 +60,7 @@ describe("agent timeline activity summaries", () => {
     expect(summarizeAgentTimelineActivity(items)).toEqual([
       { kind: "search", count: 1 },
       { kind: "read", count: 1 },
+      { kind: "planning", count: 1 },
       { kind: "command", count: 1 },
       { kind: "file_create", count: 1 },
       { kind: "file_modify", count: 1 },
@@ -79,14 +81,16 @@ describe("agent timeline activity summaries", () => {
     ]);
   });
 
-  it("uses shell command parsing for explicit command protocol input", () => {
+  it("uses declared shell command activity categories instead of parsing command text", () => {
     const items = [
-      finishedTool("shell-search", "shell_command", JSON.stringify({ command: "rg Timeline src" }), "command"),
-      finishedTool("shell-test", "shell_command", JSON.stringify({ command: "npm run test:changed" }), "command"),
+      finishedTool("shell-search", "shell_command", JSON.stringify({ command: "semantic paraphrase without command cues" }), "search"),
+      finishedTool("shell-test", "shell_command", JSON.stringify({ command: "semantic paraphrase without test cues" }), "test"),
+      finishedTool("shell-command", "shell_command", JSON.stringify({ command: "npm run test:changed" }), "command"),
     ].map(projectAgentLoopEventToTimeline);
 
     expect(summarizeAgentTimelineActivity(items)).toEqual([
       { kind: "search", count: 1 },
+      { kind: "command", count: 1 },
       { kind: "test", count: 1 },
     ]);
   });
@@ -180,7 +184,7 @@ describe("agent timeline activity summaries", () => {
 
   it("creates a shared summary item separate from detailed timeline items", () => {
     const items = [
-      finishedTool("search-1", "shell_command", JSON.stringify({ command: "rg Timeline src" })),
+      finishedTool("search-1", "shell_command", JSON.stringify({ command: "rg Timeline src" }), "search"),
       finishedTool("command-1", "shell_command", JSON.stringify({ command: "node scripts/build.js" })),
     ].map(projectAgentLoopEventToTimeline);
 
