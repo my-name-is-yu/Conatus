@@ -15,6 +15,10 @@ interface GhIssueJson {
   body: string;
 }
 
+interface FetchIssueContextOptions {
+  cwd?: string;
+}
+
 /**
  * Extract unique GitHub issue numbers from text.
  * Skips hex-color-like tokens (non-digit characters after #).
@@ -43,12 +47,15 @@ export function extractIssueNumbers(text: string): number[] {
  * Fetch a single GitHub issue and format it for prompt inclusion.
  * Returns null on any failure.
  */
-async function fetchIssue(num: number): Promise<string | null> {
+async function fetchIssue(num: number, options: FetchIssueContextOptions = {}): Promise<string | null> {
   try {
     const result = await execFileNoThrow(
       "gh",
       ["issue", "view", String(num), "--json", "title,body"],
-      { timeoutMs: FETCH_TIMEOUT_MS }
+      {
+        timeoutMs: FETCH_TIMEOUT_MS,
+        ...(options.cwd ? { cwd: options.cwd } : {}),
+      }
     );
     if (result.exitCode !== 0 || !result.stdout.trim()) {
       return null;
@@ -70,12 +77,12 @@ async function fetchIssue(num: number): Promise<string | null> {
  * - Processes at most 3 issues (first ones found).
  * - Returns empty string on any failure.
  */
-export async function fetchIssueContext(text: string): Promise<string> {
+export async function fetchIssueContext(text: string, options: FetchIssueContextOptions = {}): Promise<string> {
   try {
     const nums = extractIssueNumbers(text).slice(0, MAX_ISSUES);
     if (nums.length === 0) return "";
 
-    const parts = await Promise.all(nums.map(fetchIssue));
+    const parts = await Promise.all(nums.map((num) => fetchIssue(num, options)));
     const valid = parts.filter((p): p is string => p !== null);
     return valid.join("\n\n");
   } catch {

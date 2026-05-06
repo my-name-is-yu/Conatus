@@ -279,7 +279,8 @@ export async function generateTask(
   adapterType?: string,
   existingTasks?: string[],
   workspaceContext?: string,
-  executionMode?: ExecutionModeState
+  executionMode?: ExecutionModeState,
+  repoRoot?: string
 ): Promise<{ task: Task | null; tokensUsed: number; refusalReason?: string }> {
   const isCodeExecutionContext =
     adapterType === "openai_codex_cli" || adapterType === "claude_code_cli";
@@ -353,7 +354,8 @@ export async function generateTask(
     workspaceContext,
     reflectionsBlock || undefined,
     lessonsBlock || undefined,
-    executionMode
+    executionMode,
+    { ...(repoRoot ? { repoRoot } : {}) },
   );
   deps.logger?.info("Task generation prompt prepared", {
     goalId,

@@ -89,7 +89,7 @@ async function getReferencedIssueContext(repoRoot: string, issueLookupText: stri
 
     try {
       const { fetchIssueContext } = await import("../context/issue-context-fetcher.js");
-      return await fetchIssueContext(issueLookupText);
+      return await fetchIssueContext(issueLookupText, { cwd: repoRoot });
     } catch {
       // issue-context-fetcher not available
       return "";
@@ -188,7 +188,10 @@ export async function buildTaskGenerationPrompt(
   workspaceContext?: string,
   reflections?: string,
   lessons?: string,
-  executionMode?: ExecutionModeState
+  executionMode?: ExecutionModeState,
+  options?: {
+    repoRoot?: string;
+  },
 ): Promise<string> {
   // Load goal context to enrich the prompt
   const goal = await stateManager.loadGoal(goalId);
@@ -282,7 +285,7 @@ Constraints:
     ? `\nRelevant domain knowledge:\n${clampSection(knowledgeContext, MAX_KNOWLEDGE_CONTEXT_CHARS, "knowledge context")}\n`
     : "";
 
-  const repoRoot = process.cwd();
+  const repoRoot = options?.repoRoot ?? process.cwd();
   const issueLookupText = [goal?.title, goal?.description, ...parentChain.map((p) => `${p.title} ${p.description}`)]
     .filter(Boolean)
     .join(" ");

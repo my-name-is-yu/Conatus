@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { z } from "zod";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
@@ -142,6 +143,7 @@ describe("TaskLifecycle", async () => {
       adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
       operatorHandoffStore?: RuntimeOperatorHandoffStore;
+      revertCwd?: string;
     }
   ): TaskLifecycle {
     strategyManager = new StrategyManager(stateManager, llmClient);
@@ -171,6 +173,45 @@ describe("TaskLifecycle", async () => {
       const userMessage = spy.calls[0]!.messages[0]!.content;
       expect(userMessage).toContain("test_coverage");
       expect(userMessage).toContain("goal-42");
+    });
+
+    it("builds repository prompt context from goal workspace_path instead of daemon cwd", async () => {
+      const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
+      const daemonDir = path.join(tmpDir, "daemon-repo");
+      const workspaceDir = path.join(tmpDir, "workspace-repo");
+      fs.mkdirSync(daemonDir, { recursive: true });
+      fs.mkdirSync(workspaceDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(daemonDir, "package.json"),
+        JSON.stringify({
+          name: "daemon-package",
+          description: "context from daemon cwd",
+        }),
+        "utf-8",
+      );
+      fs.writeFileSync(
+        path.join(workspaceDir, "package.json"),
+        JSON.stringify({
+          name: "workspace-package",
+          description: "context from goal workspace",
+        }),
+        "utf-8",
+      );
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-workspace-context",
+        title: "Improve workspace context",
+        constraints: [`workspace_path:${workspaceDir}`],
+      }));
+      const lifecycle = createLifecycle(spy, { revertCwd: daemonDir });
+
+      await lifecycle.generateTask("goal-workspace-context", "test_coverage", undefined, undefined, "openai_codex_cli");
+
+      expect(spy.calls.length).toBe(1);
+      const userMessage = spy.calls[0]!.messages[0]!.content;
+      expect(userMessage).toContain("Project name: workspace-package");
+      expect(userMessage).toContain("Project description: context from goal workspace");
+      expect(userMessage).not.toContain("daemon-package");
+      expect(userMessage).not.toContain("context from daemon cwd");
     });
 
     it("does not inject learned pattern hints when verified-only planner mode is enabled", async () => {

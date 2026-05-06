@@ -78,6 +78,23 @@ describe("fetchIssueContext", () => {
     expect(result).toContain("Detailed description");
   });
 
+  it("runs gh from the provided workspace cwd", async () => {
+    mockExec.mockResolvedValueOnce({
+      stdout: JSON.stringify({ title: "Workspace issue", body: "Workspace body" }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const result = await fetchIssueContext("Fix #123 now", { cwd: "/tmp/workspace-repo" });
+
+    expect(result).toContain("Workspace issue");
+    expect(mockExec).toHaveBeenCalledWith(
+      "gh",
+      ["issue", "view", "123", "--json", "title,body"],
+      { timeoutMs: 10000, cwd: "/tmp/workspace-repo" },
+    );
+  });
+
   it("returns formatted context for multiple issues", async () => {
     mockExec
       .mockResolvedValueOnce({
