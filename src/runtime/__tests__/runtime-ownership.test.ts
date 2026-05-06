@@ -145,7 +145,7 @@ describe("RuntimeOwnershipCoordinator", () => {
           schema_version: "long-running-result-v1",
           objective: "reduce validation loss",
           status: "running",
-          evidence: [{ kind: "metric", label: "rmse", value, summary: "direction=minimize" }],
+          evidence: [{ kind: "metric", label: "rmse", value, direction: "minimize", summary: "direction=maximize" }],
           artifacts: [],
           failures: [],
           next_action: { type: "continue", summary: "continue" },
@@ -172,9 +172,66 @@ describe("RuntimeOwnershipCoordinator", () => {
     expect(snapshot?.long_running?.signals.metric_progress).toMatchObject({
       status: "improved",
       metric_name: "rmse",
+      direction: "minimize",
       previous_value: 0.5,
       current_value: 0.4,
     });
+  });
+
+  it("does not infer metric direction from summary text when typed direction is missing", async () => {
+    await fsp.mkdir(path.join(tmpDir, "artifacts", "run-a"), { recursive: true });
+    const coordinator = new RuntimeOwnershipCoordinator({
+      baseDir: tmpDir,
+      runtimeRoot: tmpDir,
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as never,
+      approvalStore: null,
+      outboxStore: null,
+      runtimeHealthStore: store,
+      leaderLockManager: null,
+      onLeadershipLost: vi.fn(),
+    });
+    const writeLoss = async (value: number) => {
+      await fsp.writeFile(
+        path.join(tmpDir, "artifacts", "run-a", "result.json"),
+        JSON.stringify({
+          schema_version: "long-running-result-v1",
+          objective: "reduce validation loss",
+          status: "running",
+          evidence: [{ kind: "metric", label: "rmse", value, summary: "direction=minimize" }],
+          artifacts: [],
+          failures: [],
+          next_action: { type: "continue", summary: "continue" },
+          source: { kind: "test" },
+          created_at: new Date().toISOString(),
+        })
+      );
+    };
+    const save = () => coordinator.saveRuntimeHealthSnapshot("daemon_health_snapshot", {
+      gateway: "ok",
+      queue: "ok",
+      leases: "ok",
+      approval: "ok",
+      outbox: "ok",
+      supervisor: "ok",
+    });
+
+    await writeLoss(0.5);
+    await save();
+    await writeLoss(0.4);
+    await save();
+
+    const snapshot = await store.loadSnapshot();
+    expect(snapshot?.long_running?.signals.metric_progress).toMatchObject({
+      status: "unknown",
+      metric_name: "rmse",
+      previous_value: 0.5,
+      current_value: 0.4,
+    });
+    expect(snapshot?.long_running?.signals.metric_progress).not.toHaveProperty("direction");
   });
 
   it("produces approval-wait long-running health from pending approvals", async () => {

@@ -208,7 +208,35 @@ describe("WaitDeadlineResolver", () => {
     const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
 
     expect(resolution.next_observe_at).toBe("2026-04-24T12:15:00.000Z");
+    expect(resolution.waiting_goals[0]).toEqual(expect.objectContaining({
+      approval_pending: true,
+    }));
     expect(getDueWaitGoalIds(resolution, Date.parse("2026-04-24T12:01:00.000Z"))).toEqual([]);
+  });
+
+  it("projects approval_pending from typed wait resume plans without reading wait text", async () => {
+    await stateManager.writeRaw("strategies/goal-1/portfolio.json", {
+      goal_id: "goal-1",
+      strategies: [makeActiveWaitStrategy({ wait_reason: "External handoff is paused" })],
+      rebalance_interval: { value: 1, unit: "hours" },
+      last_rebalanced_at: "2026-04-24T12:00:00.000Z",
+    });
+    await stateManager.writeRaw("strategies/goal-1/wait-meta/wait-1.json", {
+      schema_version: 1,
+      wait_until: "2026-04-24T12:10:00.000Z",
+      conditions: [{ type: "time_until", until: "2026-04-24T12:10:00.000Z" }],
+      resume_plan: { action: "request_approval", reason: "external submission" },
+    });
+    await writeProjectedWaitSchedule("2026-04-24T12:10:00.000Z");
+
+    const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
+
+    expect(resolution.waiting_goals).toEqual([
+      expect.objectContaining({
+        wait_reason: "External handoff is paused",
+        approval_pending: true,
+      }),
+    ]);
   });
 
   it("clamps interval so daemon sleep cannot overshoot the next wait deadline", () => {
