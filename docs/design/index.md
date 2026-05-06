@@ -34,3 +34,7 @@ Do not treat it as current guidance.
 
 Prefer the public docs before reading subsystem-specific design notes.
 The design index is a pointer into background material, not a replacement for the public documentation map.
+
+## Active Interaction Contracts
+
+- [Codex-Like User Interaction Contract](execution/codex-like-interaction-contract.md)
