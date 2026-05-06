@@ -73,6 +73,21 @@ describe("RunAdapterTool", () => {
     expect(registry.recordSuccess).toHaveBeenCalledWith("claude");
   });
 
+  it("passes cwd through to the adapter task when provided", async () => {
+    const mockAdapter = { execute: vi.fn().mockResolvedValue(mockResult) };
+    vi.mocked(registry.getAdapter).mockReturnValue(mockAdapter as any);
+
+    const result = await tool.call(
+      { adapter_id: "claude", task_description: "write tests", cwd: "/workspace/task" },
+      makeContext(),
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockAdapter.execute).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: "/workspace/task",
+    }));
+  });
+
   it("returns failure when adapter result is unsuccessful", async () => {
     const failResult = { ...mockResult, success: false, error: "timeout", stopped_reason: "timeout" as const };
     const mockAdapter = { execute: vi.fn().mockResolvedValue(failResult) };

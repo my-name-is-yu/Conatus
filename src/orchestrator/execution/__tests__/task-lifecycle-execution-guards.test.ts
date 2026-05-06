@@ -1,7 +1,7 @@
 /**
  * Focused coverage for executeTask guardrail behavior.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
@@ -12,6 +12,7 @@ import { TaskLifecycle } from "../task/task-lifecycle.js";
 import { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
 import type { Task } from "../../../base/types/task.js";
 import type { IGuardrailHook } from "../../../base/types/guardrail.js";
+import type { ToolExecutor } from "../../../tools/executor.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -86,6 +87,8 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     options?: {
       approvalFn?: (task: Task) => Promise<boolean>;
       guardrailRunner?: GuardrailRunner;
+      toolExecutor?: ToolExecutor;
+      execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
     }
   ): TaskLifecycle {
     strategyManager = new StrategyManager(stateManager, llmClient);
@@ -96,7 +99,11 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { healthCheckEnabled: false, execFileSyncFn: () => "some-file.ts", ...options }
+      {
+        healthCheckEnabled: false,
+        execFileSyncFn: options?.execFileSyncFn ?? (() => "some-file.ts"),
+        ...options,
+      }
     );
   }
 
@@ -149,6 +156,95 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toBe("all good");
+  });
+
+  it("passes task workspace_path through the run-adapter caller path and diff capture", async () => {
+    const goalWorkspace = `${tmpDir}/goal-workspace`;
+    const taskWorkspace = `${tmpDir}/task-workspace`;
+    await stateManager.writeRaw("goals/goal-1/goal.json", {
+      id: "goal-1",
+      title: "Test goal",
+      dimensions: [],
+      constraints: [`workspace_path:${goalWorkspace}`],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const execute = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        success: true,
+        output: "tool path done",
+        error: null,
+        exit_code: 0,
+        elapsed_ms: 7,
+        stopped_reason: "completed",
+      },
+      summary: "ok",
+      durationMs: 1,
+    });
+    const execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "diff" && args[1] === "--name-only") return "src/changed.ts\n.env";
+      if (args[0] === "ls-files") return "";
+      if (args[0] === "diff") return "";
+      return "";
+    });
+    const lifecycle = createLifecycle(createMockLLMClient([]), {
+      toolExecutor: { execute } as unknown as ToolExecutor,
+      execFileSyncFn,
+    });
+
+    const result = await lifecycle.executeTask(
+      makeTask({ constraints: [`workspace_path:${taskWorkspace}`] }),
+      createMockAdapter("direct adapter should not run"),
+    );
+
+    expect(execute).toHaveBeenCalledWith(
+      "run-adapter",
+      expect.objectContaining({ cwd: taskWorkspace }),
+      expect.objectContaining({ cwd: taskWorkspace }),
+    );
+    expect(result.output).toContain("tool path done");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(".env");
+    expect(result.filesChangedPaths).toEqual(["src/changed.ts", ".env"]);
+    expect(execFileSyncFn.mock.calls.every((call) => call[2].cwd === taskWorkspace)).toBe(true);
+  });
+
+  it("fails closed without re-running the adapter when run-adapter returns truncated non-result data", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      success: true,
+      data: "truncated adapter result",
+      summary: "truncated",
+      durationMs: 1,
+    });
+    const execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "diff" && args[1] === "--name-only") return ".env";
+      if (args[0] === "ls-files") return "";
+      if (args[0] === "diff") return "";
+      return "";
+    });
+    const lifecycle = createLifecycle(createMockLLMClient([]), {
+      toolExecutor: { execute } as unknown as ToolExecutor,
+      execFileSyncFn,
+    });
+    const directExecute = vi.fn();
+    const adapter = {
+      adapterType: "mock",
+      execute: directExecute,
+    };
+
+    const result = await lifecycle.executeTask(
+      makeTask(),
+      adapter,
+    );
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(directExecute).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("invalid or truncated");
+    expect(result.error).toContain(".env");
+    expect(result.filesChangedPaths).toEqual([".env"]);
+    expect(execFileSyncFn).toHaveBeenCalled();
   });
 
   it("preserves elapsed_ms when the after_tool guardrail rejects", async () => {

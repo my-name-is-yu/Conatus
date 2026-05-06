@@ -21,7 +21,7 @@ vi.mock("../../../base/llm/provider-config.js", async (importOriginal) => {
   };
 });
 
-function makeTask(): Task {
+function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "task-1",
     goal_id: "goal-1",
@@ -45,6 +45,7 @@ function makeTask(): Task {
     timeout_at: null,
     heartbeat_at: null,
     created_at: new Date().toISOString(),
+    ...overrides,
   };
 }
 
@@ -96,5 +97,60 @@ describe("executeTask protected paths", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("build/output.txt");
+  });
+
+  it("uses task workspace_path before goal workspace_path for adapter cwd, diff capture, and protected-path checks", async () => {
+    const goalWorkspace = "/repo/goal-workspace";
+    const taskWorkspace = "/repo/task-workspace";
+    vi.mocked(stateManager.loadGoal).mockResolvedValue({ constraints: [`workspace_path:${goalWorkspace}`] } as never);
+    const execute = vi.fn().mockResolvedValue({
+      success: true,
+      output: "done",
+      error: null,
+      exit_code: 0,
+      elapsed_ms: 1,
+      stopped_reason: "completed",
+    } as AgentResult);
+    adapter = {
+      adapterType: "mock",
+      execute,
+    } as unknown as IAdapter;
+    execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "diff" && args[1] === "--name-only") return "src/changed.ts\n.env";
+      if (args[0] === "ls-files") return "";
+      if (args[0] === "diff") return [
+        `diff --git a/${args[3]} b/${args[3]}`,
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n");
+      return "";
+    });
+
+    const result = await executeTask(
+      {
+        stateManager,
+        sessionManager,
+        execFileSyncFn,
+      },
+      makeTask({ constraints: [`workspace_path:${taskWorkspace}`] }),
+      adapter,
+    );
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ cwd: taskWorkspace }));
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(".env");
+    expect(result.filesChangedPaths).toEqual(["src/changed.ts", ".env"]);
+    expect(result.fileDiffs).toEqual([
+      expect.objectContaining({
+        path: "src/changed.ts",
+        patch: expect.stringContaining("+new"),
+      }),
+      expect.objectContaining({
+        path: ".env",
+        patch: expect.stringContaining("+new"),
+      }),
+    ]);
+    expect(vi.mocked(execFileSyncFn).mock.calls.every((call) => call[2].cwd === taskWorkspace)).toBe(true);
   });
 });
