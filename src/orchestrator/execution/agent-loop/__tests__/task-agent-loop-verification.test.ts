@@ -30,15 +30,16 @@ function makeTask(verificationMethod: string): Task {
 }
 
 describe("isTaskRelevantVerificationCommand", () => {
-  it("matches verification commands to blocking mechanical criteria", () => {
-    const task = makeTask("npx vitest run src/foo.test.ts");
+  it("matches verification commands to exact blocking criteria from the typed plan", () => {
+    const task = makeTask("printf proof > evidence.txt");
     expect(isTaskRelevantVerificationCommand(task, {
       toolName: "shell_command",
-      command: "npx vitest run src/foo.test.ts",
+      command: "printf proof > evidence.txt",
       cwd: process.cwd(),
       success: true,
       category: "verification",
       evidenceEligible: true,
+      evidenceSource: "verification_plan",
       relevantToTask: true,
       outputSummary: "ok",
       durationMs: 1,
@@ -46,29 +47,47 @@ describe("isTaskRelevantVerificationCommand", () => {
 
     expect(isTaskRelevantVerificationCommand(task, {
       toolName: "shell_command",
-      command: "npx tsc --noEmit",
+      command: "test -f old-target.ts",
       cwd: process.cwd(),
       success: true,
       category: "verification",
       evidenceEligible: true,
+      evidenceSource: "verification_plan",
       relevantToTask: true,
       outputSummary: "ok",
       durationMs: 1,
     })).toBe(false);
   });
 
-  it("falls back to any evidence-eligible verification command when criteria are non-mechanical", () => {
-    const task = makeTask("Manual review");
+  it("accepts typed test-category tool evidence when no exact command parsing is needed", () => {
+    const task = makeTask("");
     expect(isTaskRelevantVerificationCommand(task, {
       toolName: "verify",
-      command: "test -f src/foo.ts",
+      command: "任意の検証",
       cwd: process.cwd(),
       success: true,
       category: "verification",
       evidenceEligible: true,
+      evidenceSource: "tool_activity_category",
       relevantToTask: true,
       outputSummary: "ok",
       durationMs: 1,
     })).toBe(true);
+  });
+
+  it("rejects stale typed test-category commands when a current verification plan exists", () => {
+    const task = makeTask("npx vitest run src/current.test.ts");
+    expect(isTaskRelevantVerificationCommand(task, {
+      toolName: "test_runner",
+      command: "npx vitest run src/old.test.ts",
+      cwd: process.cwd(),
+      success: true,
+      category: "verification",
+      evidenceEligible: true,
+      evidenceSource: "tool_activity_category",
+      relevantToTask: true,
+      outputSummary: "ok",
+      durationMs: 1,
+    })).toBe(false);
   });
 });

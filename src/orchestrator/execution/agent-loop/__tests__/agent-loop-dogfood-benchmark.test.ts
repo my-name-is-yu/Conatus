@@ -515,7 +515,7 @@ describe("runTaskAgentLoopDogfoodBenchmark", () => {
       expect.objectContaining({
         command: "cat dogfood.txt",
         success: false,
-        category: "observation",
+        category: "other",
         evidenceEligible: false,
       }),
     ]));

@@ -505,6 +505,8 @@ export class BoundedAgentLoopRunner {
           const commandClassification = classifyAgentLoopCommandResult({
             toolName: result.toolName,
             command: result.command,
+            activityCategory: result.activityCategory,
+            verificationPlan: turn.verificationPlan,
           });
           commandResults.push({
             sequence: toolResultSequence,
@@ -513,8 +515,10 @@ export class BoundedAgentLoopRunner {
             cwd: result.cwd,
             success: result.success,
             ...(result.execution ? { execution: result.execution } : {}),
+            ...(result.activityCategory ? { activityCategory: result.activityCategory } : {}),
             category: commandClassification.category,
             evidenceEligible: commandClassification.evidenceEligible,
+            ...(commandClassification.evidenceSource ? { evidenceSource: commandClassification.evidenceSource } : {}),
             outputSummary: this.preview(result.content),
             durationMs: result.durationMs,
           });
