@@ -104,6 +104,7 @@ describe("ArtifactMetricDataSourceAdapter", () => {
   it("updates CoreLoop-observed goal dimensions through ObservationEngine.observe", async () => {
     writeJson(path.join(workspace, "artifacts", "probe-balanced", "metrics.json"), {
       oof_balanced_accuracy: 0.88,
+      status: "completed",
     });
     const stateManager = new StateManager(tmpDir);
     const goal = makeGoal({
@@ -241,6 +242,54 @@ describe("ArtifactMetricDataSourceAdapter", () => {
           path: "artifacts/old/metrics.json",
         },
       ],
+    });
+  });
+
+  it("requires completed current-progress artifacts unless live progress is explicitly allowed", async () => {
+    writeJson(path.join(workspace, "artifacts", "live", "metrics.json"), {
+      score: 0.7,
+      status: "running",
+    });
+    const completedOnly = new ArtifactMetricDataSourceAdapter({
+      id: "completed-only-artifacts",
+      name: "Completed-only artifacts",
+      type: "artifact_metric",
+      connection: {
+        path: workspace,
+        current_progress_policy: "completed_fresh_only",
+        dimension_metrics: { best_score: ["score"] },
+        require_metric_match: true,
+      },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    });
+
+    await expect(completedOnly.query({ dimension_name: "best_score", timeout_ms: 10000 }))
+      .rejects.toThrow(/No artifact metric found/);
+
+    const liveAllowed = new ArtifactMetricDataSourceAdapter({
+      id: "live-artifacts",
+      name: "Live artifacts",
+      type: "artifact_metric",
+      connection: {
+        path: workspace,
+        current_progress_policy: "allow_live",
+        dimension_metrics: { best_score: ["score"] },
+      },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    });
+
+    const result = await liveAllowed.query({ dimension_name: "best_score", timeout_ms: 10000 });
+
+    expect(result.value).toBe(0.7);
+    expect(result.raw).toMatchObject({
+      discovery: {
+        current_progress_policy: "allow_live",
+      },
+      selected: {
+        relativePath: "artifacts/live/metrics.json",
+      },
     });
   });
 

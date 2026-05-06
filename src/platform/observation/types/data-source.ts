@@ -37,6 +37,7 @@ export const DataSourceConfigSchema = z.object({
     max_artifact_files: z.number().int().positive().optional(),
     max_candidates: z.number().int().positive().optional(),
     stale_after_ms: z.number().int().positive().optional(),
+    current_progress_policy: z.enum(["legacy", "completed_fresh_only", "allow_live"]).optional(),
     dimension_metrics: z.record(z.string(), z.array(z.string())).optional(),
     dimension_aggregations: z.record(z.string(), z.enum(["max", "min", "count", "file_count"])).optional(),
     require_metric_match: z.boolean().optional(),
