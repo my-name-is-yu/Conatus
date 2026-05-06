@@ -894,6 +894,7 @@ export class ChatRunnerCommandHandler {
     const userTurns = messages.filter((message) => message.role === "user").length;
     const assistantTurns = messages.filter((message) => message.role === "assistant").length;
     const compactionSummary = session?.compactionSummary?.trim() ?? "";
+    const compactionRecords = session?.compactionRecords ?? [];
     const agentLoopPath = this.host.getNativeAgentLoopStatePath() ?? session?.agentLoopStatePath ?? null;
     const replyTarget = this.host.getRuntimeControlContext()?.replyTarget ?? this.host.deps.runtimeReplyTarget ?? null;
     const routeCapabilities = {
@@ -913,6 +914,7 @@ export class ChatRunnerCommandHandler {
       `- messages: ${messages.length} (${userTurns} user, ${assistantTurns} assistant)`,
       `- recent_turns_retained: ${recentMessages.length}`,
       `- compaction_summary: ${compactionSummary ? "present" : "none"}`,
+      `- compaction_records: ${compactionRecords.length}`,
       `- agentloop_state_path: ${agentLoopPath ?? "none"}`,
       "",
       "Turn context",
@@ -932,6 +934,7 @@ export class ChatRunnerCommandHandler {
       "- current session cwd and execution policy because they constrain tool and route behavior",
       `- ${recentMessages.length} latest persisted message(s)`,
       `- ${compactionSummary ? "compacted older chat summary because older turns were summarized" : "no compacted older chat summary because none is stored"}`,
+      `- ${compactionRecords.length > 0 ? "structured compaction records because compacted chat state was retained for replay" : "no structured compaction records because no compaction has run"}`,
       `- ${agentLoopPath ? "native agent-loop resume path because this session can persist agent-loop state" : "no native agent-loop resume path because none is active"}`,
       "",
       "Not included",

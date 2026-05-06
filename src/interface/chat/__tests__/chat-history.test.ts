@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   ChatHistory,
   reconstructModelVisibleMessagesFromRolloutJournal,
+  type ChatSession,
 } from "../chat-history.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 
@@ -248,4 +249,157 @@ describe("ChatHistory", () => {
       "The rollout journal is replayable.",
     ]);
   });
+
+  it("compacts into structured records with invalidated pending permissions and retained active targets", async () => {
+    const history = new ChatHistory(stateManager, SESSION_ID, CWD);
+    const eventContext = { runId: "run-compact", turnId: "turn-compact" };
+    const createdAt = "2026-05-06T00:00:00.000Z";
+
+    await history.appendUserMessage("Turn 1: check stale run", { eventContext });
+    await history.recordChatEvent({
+      type: "tool_update",
+      toolCallId: "call-approval",
+      toolName: "shell_command",
+      status: "awaiting_approval",
+      message: "write requires approval",
+      runId: eventContext.runId,
+      turnId: eventContext.turnId,
+      createdAt,
+    });
+    await history.appendAssistantMessage("Turn 1 answer", { eventContext });
+    await history.appendUserMessage("Turn 2: current run is run-current", { eventContext });
+    await history.appendAssistantMessage("Turn 2 answer", { eventContext });
+    await history.appendUserMessage("Turn 3: continue", { eventContext });
+    await history.appendAssistantMessage("Turn 3 answer", { eventContext });
+
+    const result = await history.compact("Summary: Turn 1 established stale run, Turn 2 selected run-current.", 4);
+
+    expect(result).toEqual({ before: 6, after: 4 });
+    const session = history.getSessionData();
+    const record = session.compactionRecords?.[0];
+    expect(record).toMatchObject({
+      schema_version: "chat-compaction-record-v1",
+      inputMessageCount: 6,
+      outputMessageCount: 4,
+      removedMessageCount: 2,
+      retainedMessageCount: 4,
+      replacementHistory: {
+        removedTurnIndexes: [0, 1],
+        retainedOriginalTurnIndexes: [2, 3, 4, 5],
+        rewrittenTurnIndexes: [0, 1, 2, 3],
+      },
+    });
+    expect(record?.archivedUserMessages.map((message) => message.content)).toEqual([
+      "Turn 1: check stale run",
+    ]);
+    expect(record?.pendingPermissions).toEqual([
+      expect.objectContaining({
+        status: "requested",
+        invalidatedByCompaction: true,
+        source: "chat_event",
+      }),
+    ]);
+    expect(record?.decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "permission_decision" }),
+    ]));
+    expect(record?.activeTargets).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: "retained_messages",
+        state: "retained",
+      }),
+    ]));
+    expect(history.getModelVisibleMessages().map((message) => message.content)).toEqual([
+      "Turn 2: current run is run-current",
+      "Turn 2 answer",
+      "Turn 3: continue",
+      "Turn 3 answer",
+    ]);
+  });
+
+  it("does not mark confirmed RunSpec confirmations as active compaction targets", async () => {
+    const createdAt = "2026-05-06T00:00:00.000Z";
+    const existingSession: ChatSession = {
+      id: SESSION_ID,
+      cwd: CWD,
+      createdAt,
+      updatedAt: createdAt,
+      runSpecConfirmation: {
+        state: "confirmed",
+        spec: makeRunSpec(createdAt),
+        prompt: "Start the confirmed run.",
+        createdAt,
+        updatedAt: createdAt,
+      },
+      messages: [
+        { role: "user", content: "Old run request", timestamp: createdAt, turnIndex: 0 },
+        { role: "assistant", content: "Confirmed and started", timestamp: createdAt, turnIndex: 1 },
+        { role: "user", content: "Current request", timestamp: createdAt, turnIndex: 2 },
+        { role: "assistant", content: "Current answer", timestamp: createdAt, turnIndex: 3 },
+        { role: "user", content: "Latest request", timestamp: createdAt, turnIndex: 4 },
+      ],
+    };
+    const history = ChatHistory.fromSession(stateManager, existingSession);
+
+    await history.compact("The old RunSpec confirmation has already been consumed.", 2);
+
+    const record = history.getSessionData().compactionRecords?.[0];
+    expect(record?.activeTargets).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "run_spec_confirmation" }),
+    ]));
+  });
 });
+
+function makeRunSpec(now: string): NonNullable<ChatSession["runSpecConfirmation"]>["spec"] {
+  return {
+    schema_version: "run-spec-v1",
+    id: "runspec-12345678-1234-4234-9234-123456789abc",
+    status: "confirmed",
+    profile: "generic",
+    source_text: "Start the confirmed run.",
+    objective: "Start the confirmed run.",
+    workspace: { path: "/tmp/test-repo", source: "user", confidence: "high" },
+    execution_target: { kind: "daemon", remote_host: null, confidence: "high" },
+    metric: null,
+    progress_contract: {
+      kind: "open_ended",
+      dimension: null,
+      threshold: null,
+      semantics: "Complete the requested work.",
+      confidence: "high",
+    },
+    deadline: null,
+    budget: {
+      max_trials: null,
+      max_wall_clock_minutes: null,
+      resident_policy: "best_effort",
+    },
+    approval_policy: {
+      submit: "unspecified",
+      publish: "unspecified",
+      secret: "unspecified",
+      external_action: "approval_required",
+      irreversible_action: "approval_required",
+    },
+    artifact_contract: {
+      expected_artifacts: [],
+      discovery_globs: [],
+      primary_outputs: [],
+    },
+    risk_flags: [],
+    missing_fields: [],
+    confidence: "high",
+    links: {
+      goal_id: null,
+      runtime_session_id: null,
+      conversation_id: null,
+    },
+    origin: {
+      channel: "chat",
+      session_id: "test-session-123",
+      reply_target: null,
+      metadata: {},
+    },
+    created_at: now,
+    updated_at: now,
+  };
+}

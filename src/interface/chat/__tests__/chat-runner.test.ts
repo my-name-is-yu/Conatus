@@ -2549,7 +2549,15 @@ describe("ChatRunner", () => {
 
     it("/compact falls back to deterministic summary and keeps latest turns", async () => {
       const stateManager = makeMockStateManager();
-      const writes: Array<{ messages: Array<{ role: string; content: string }>; compactionSummary?: string }> = [];
+      const writes: Array<{
+        messages: Array<{ role: string; content: string }>;
+        compactionSummary?: string;
+        compactionRecords?: Array<{
+          schema_version: string;
+          pendingPermissions: Array<{ status: string; invalidatedByCompaction: boolean }>;
+          replacementHistory: { retainedOriginalTurnIndexes: number[] };
+        }>;
+      }> = [];
       (stateManager.writeRaw as ReturnType<typeof vi.fn>).mockImplementation(async (_path, data) => {
         writes.push(JSON.parse(JSON.stringify(data)));
       });
@@ -2574,6 +2582,12 @@ describe("ChatRunner", () => {
         "Task completed successfully.",
       ]);
       expect(lastWrite.compactionSummary).toContain("Turn 1");
+      expect(lastWrite.compactionRecords?.[0]).toMatchObject({
+        schema_version: "chat-compaction-record-v1",
+        replacementHistory: {
+          retainedOriginalTurnIndexes: [2, 3, 4, 5],
+        },
+      });
     });
 
     it("/compact summary is included in the next adapter prompt", async () => {

@@ -82,6 +82,53 @@ export const ChatRolloutJournalRecordSchema = z.object({
 }).passthrough();
 export type ChatRolloutJournalRecord = z.infer<typeof ChatRolloutJournalRecordSchema>;
 
+export const CHAT_COMPACTION_RECORD_SCHEMA_VERSION = "chat-compaction-record-v1";
+
+export const ChatCompactionRecordSchema = z.object({
+  schema_version: z.literal(CHAT_COMPACTION_RECORD_SCHEMA_VERSION),
+  id: z.string(),
+  sessionId: z.string(),
+  sequence: z.number().int().nonnegative(),
+  createdAt: z.string(),
+  reason: z.enum(["manual_command", "auto_context_limit"]).default("manual_command"),
+  inputMessageCount: z.number().int().nonnegative(),
+  outputMessageCount: z.number().int().nonnegative(),
+  removedMessageCount: z.number().int().nonnegative(),
+  retainedMessageCount: z.number().int().nonnegative(),
+  summary: z.string(),
+  modelVisibleSummary: z.string(),
+  archivedUserMessages: z.array(ChatMessageSchema),
+  archivedAssistantMessages: z.array(ChatMessageSchema),
+  retainedMessages: z.array(ChatMessageSchema),
+  pendingPermissions: z.array(z.object({
+    sequence: z.number().int().nonnegative(),
+    source: z.string(),
+    status: z.enum(["requested", "resolved", "unknown"]),
+    invalidatedByCompaction: z.boolean(),
+    payload: z.unknown(),
+  }).passthrough()),
+  decisions: z.array(z.object({
+    sequence: z.number().int().nonnegative(),
+    kind: ChatRolloutJournalRecordKindSchema,
+    source: z.string(),
+    visibility: z.string(),
+    payload: z.unknown(),
+  }).passthrough()),
+  activeTargets: z.array(z.object({
+    source: z.string(),
+    state: z.enum(["retained", "session"]),
+    payload: z.unknown(),
+  }).passthrough()),
+  replacementHistory: z.object({
+    removedTurnIndexes: z.array(z.number().int().nonnegative()),
+    retainedOriginalTurnIndexes: z.array(z.number().int().nonnegative()),
+    rewrittenTurnIndexes: z.array(z.number().int().nonnegative()),
+    rolloutJournalSequences: z.array(z.number().int().nonnegative()),
+    turnContextCount: z.number().int().nonnegative(),
+  }).passthrough(),
+}).passthrough();
+export type ChatCompactionRecord = z.infer<typeof ChatCompactionRecordSchema>;
+
 export const RunSpecConfirmationStateSchema = z.object({
   state: z.enum(["pending", "confirmed", "cancelled"]),
   spec: RunSpecSchema,
@@ -122,6 +169,7 @@ export const ChatSessionSchema = z.object({
   runSpecConfirmation: RunSpecConfirmationStateSchema.nullable().optional(),
   messages: z.array(ChatMessageSchema),
   compactionSummary: z.string().optional(),
+  compactionRecords: z.array(ChatCompactionRecordSchema).optional(),
   agentLoopStatePath: z.string().nullable().optional(),
   agentLoopStatus: z.enum(["running", "completed", "failed"]).nullable().optional(),
   agentLoopResumable: z.boolean().nullable().optional(),
@@ -150,6 +198,7 @@ export class ChatHistory {
         cwd: existingSession.cwd,
         updatedAt: existingSession.updatedAt ?? existingSession.createdAt,
         messages: [...existingSession.messages],
+        ...(existingSession.compactionRecords ? { compactionRecords: cloneCompactionRecords(existingSession.compactionRecords) } : {}),
         ...(existingSession.turnContexts ? { turnContexts: [...existingSession.turnContexts] } : {}),
         ...(existingSession.rolloutJournal ? { rolloutJournal: [...existingSession.rolloutJournal] } : {}),
         ...(existingSession.usage ? { usage: cloneUsage(existingSession.usage) } : {}),
@@ -232,6 +281,7 @@ export class ChatHistory {
   async clear(): Promise<void> {
     this.session.messages = [];
     delete this.session.compactionSummary;
+    delete this.session.compactionRecords;
     this.replaceModelVisibleJournalFromMessages("clear");
     await this.persist();
   }
@@ -240,12 +290,19 @@ export class ChatHistory {
   async compact(summary: string, keepMessageCount = 4): Promise<{ before: number; after: number }> {
     const before = this.session.messages.length;
     const keepCount = Math.max(0, keepMessageCount);
+    const originalMessages = [...this.session.messages];
     const kept = keepCount === 0 ? [] : this.session.messages.slice(-keepCount);
+    const removed = keepCount === 0 ? originalMessages : originalMessages.slice(0, -keepCount);
+    const record = this.buildCompactionRecord(summary, originalMessages, removed, kept);
     this.session.messages = kept.map((message, index) => ({
       ...message,
       turnIndex: index,
     }));
     this.session.compactionSummary = summary;
+    this.session.compactionRecords = [
+      ...(this.session.compactionRecords ?? []),
+      record,
+    ].slice(-50);
     this.replaceModelVisibleJournalFromMessages("compact");
     await this.persist();
     return { before, after: this.session.messages.length };
@@ -283,6 +340,7 @@ export class ChatHistory {
     return {
       ...this.session,
       messages: [...this.session.messages],
+      ...(this.session.compactionRecords ? { compactionRecords: cloneCompactionRecords(this.session.compactionRecords) } : {}),
       ...(this.session.turnContexts ? { turnContexts: [...this.session.turnContexts] } : {}),
       ...(this.session.rolloutJournal ? { rolloutJournal: [...this.session.rolloutJournal] } : {}),
       ...(this.session.usage ? { usage: cloneUsage(this.session.usage) } : {}),
@@ -550,6 +608,46 @@ export class ChatHistory {
       });
     }
   }
+
+  private buildCompactionRecord(
+    summary: string,
+    originalMessages: ChatMessage[],
+    removed: ChatMessage[],
+    retained: ChatMessage[],
+  ): ChatCompactionRecord {
+    const current = this.session.compactionRecords ?? [];
+    const sequence = nextCompactionSequence(current);
+    const rewrittenTurnIndexes = retained.map((_message, index) => index);
+    const rolloutJournal = this.session.rolloutJournal ?? [];
+    const record = ChatCompactionRecordSchema.parse({
+      schema_version: CHAT_COMPACTION_RECORD_SCHEMA_VERSION,
+      id: `${this.sessionId}:compaction:${sequence}`,
+      sessionId: this.sessionId,
+      sequence,
+      createdAt: new Date().toISOString(),
+      reason: "manual_command",
+      inputMessageCount: originalMessages.length,
+      outputMessageCount: retained.length,
+      removedMessageCount: removed.length,
+      retainedMessageCount: retained.length,
+      summary,
+      modelVisibleSummary: summary,
+      archivedUserMessages: removed.filter((message) => message.role === "user"),
+      archivedAssistantMessages: removed.filter((message) => message.role === "assistant"),
+      retainedMessages: retained,
+      pendingPermissions: collectPendingPermissionRecords(rolloutJournal),
+      decisions: collectDecisionRecords(rolloutJournal),
+      activeTargets: collectActiveTargets(this.session, retained),
+      replacementHistory: {
+        removedTurnIndexes: removed.map((message) => message.turnIndex),
+        retainedOriginalTurnIndexes: retained.map((message) => message.turnIndex),
+        rewrittenTurnIndexes,
+        rolloutJournalSequences: rolloutJournal.map((record) => record.sequence),
+        turnContextCount: this.session.turnContexts?.length ?? 0,
+      },
+    });
+    return record;
+  }
 }
 
 export function reconstructModelVisibleMessagesFromRolloutJournal(
@@ -584,6 +682,118 @@ export function reconstructModelVisibleMessagesFromRolloutJournal(
 
 function nextRolloutSequence(records: ChatRolloutJournalRecord[]): number {
   return records.reduce((max, record) => Math.max(max, record.sequence), -1) + 1;
+}
+
+function nextCompactionSequence(records: ChatCompactionRecord[]): number {
+  return records.reduce((max, record) => Math.max(max, record.sequence), -1) + 1;
+}
+
+function cloneCompactionRecords(records: readonly ChatCompactionRecord[]): ChatCompactionRecord[] {
+  return records.map((record) => ChatCompactionRecordSchema.parse(cloneJson(record)));
+}
+
+function collectPendingPermissionRecords(records: ChatRolloutJournalRecord[]): ChatCompactionRecord["pendingPermissions"] {
+  return records.flatMap((record) => {
+    if (record.kind !== "permission_decision") return [];
+    const payload = isRecord(record.payload) ? record.payload : {};
+    const status = permissionStatus(payload);
+    return [{
+      sequence: record.sequence,
+      source: record.source,
+      status,
+      invalidatedByCompaction: status === "requested",
+      payload: cloneJson(record.payload),
+    }];
+  });
+}
+
+function collectDecisionRecords(records: ChatRolloutJournalRecord[]): ChatCompactionRecord["decisions"] {
+  return records.flatMap((record) => {
+    if (
+      record.kind !== "turn_context"
+      && record.kind !== "permission_decision"
+      && record.kind !== "completion_state"
+    ) {
+      return [];
+    }
+    return [{
+      sequence: record.sequence,
+      kind: record.kind,
+      source: record.source,
+      visibility: record.visibility,
+      payload: cloneJson(record.payload),
+    }];
+  });
+}
+
+function collectActiveTargets(
+  session: ChatSession,
+  retainedMessages: ChatMessage[],
+): ChatCompactionRecord["activeTargets"] {
+  const targets: ChatCompactionRecord["activeTargets"] = [{
+    source: "retained_messages",
+    state: "retained",
+    payload: retainedMessages.map((message) => ({
+      role: message.role,
+      turnIndex: message.turnIndex,
+      timestamp: message.timestamp,
+    })),
+  }];
+  if (session.notificationReplyTarget) {
+    targets.push({
+      source: "notification_reply_target",
+      state: "session",
+      payload: cloneJson(session.notificationReplyTarget),
+    });
+  }
+  if (session.agentLoopStatePath || session.agentLoop) {
+    targets.push({
+      source: "agent_loop",
+      state: "session",
+      payload: {
+        statePath: session.agentLoopStatePath ?? session.agentLoop?.statePath ?? null,
+        status: session.agentLoopStatus ?? session.agentLoop?.status ?? null,
+        resumable: session.agentLoopResumable ?? session.agentLoop?.resumable ?? null,
+        updatedAt: session.agentLoopUpdatedAt ?? session.agentLoop?.updatedAt ?? null,
+      },
+    });
+  }
+  if (session.runSpecConfirmation?.state === "pending") {
+    targets.push({
+      source: "run_spec_confirmation",
+      state: "session",
+      payload: {
+        state: session.runSpecConfirmation.state,
+        specId: session.runSpecConfirmation.spec.id,
+        createdAt: session.runSpecConfirmation.createdAt,
+        updatedAt: session.runSpecConfirmation.updatedAt,
+      },
+    });
+  }
+  if (session.setupDialogue) {
+    targets.push({
+      source: "setup_dialogue",
+      state: "session",
+      payload: {
+        id: session.setupDialogue.id,
+        channel: session.setupDialogue.selectedChannel,
+        state: session.setupDialogue.state,
+        updatedAt: session.setupDialogue.updatedAt,
+      },
+    });
+  }
+  return targets;
+}
+
+function permissionStatus(payload: Record<string, unknown>): "requested" | "resolved" | "unknown" {
+  if (payload["state"] === "requested") return "requested";
+  if (payload["state"] === "approved" || payload["state"] === "denied" || payload["state"] === "resolved") {
+    return "resolved";
+  }
+  const item = isRecord(payload["item"]) ? payload["item"] : null;
+  if (item?.["status"] === "requested" || item?.["status"] === "awaiting_approval") return "requested";
+  if (item?.["status"] === "approved" || item?.["status"] === "denied") return "resolved";
+  return "unknown";
 }
 
 function extractTurnContextEventContext(snapshot: { modelVisible: unknown }): ChatEventContext | undefined {
@@ -780,4 +990,9 @@ function cloneUsage(usage: ChatSessionUsage): ChatSessionUsage {
     ),
     ...(usage.updatedAt ? { updatedAt: usage.updatedAt } : {}),
   };
+}
+
+function cloneJson<T>(value: T): T {
+  if (value === undefined) return value;
+  return JSON.parse(JSON.stringify(value)) as T;
 }

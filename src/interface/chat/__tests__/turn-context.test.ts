@@ -44,6 +44,44 @@ describe("Chat TurnContext", () => {
           },
         ],
       } satisfies UserInput,
+      compactionSummary: "Archived stale target; retained current target from structured state.",
+      compactionRecords: [{
+        schema_version: "chat-compaction-record-v1",
+        id: "session-current:compaction:0",
+        sessionId: "session-current",
+        sequence: 0,
+        createdAt: "2026-05-06T06:59:00.000Z",
+        reason: "manual_command",
+        inputMessageCount: 8,
+        outputMessageCount: 4,
+        removedMessageCount: 4,
+        retainedMessageCount: 4,
+        summary: "Archived stale target; retained current target from structured state.",
+        modelVisibleSummary: "Archived stale target; retained current target from structured state.",
+        archivedUserMessages: [],
+        archivedAssistantMessages: [],
+        retainedMessages: [],
+        pendingPermissions: [{
+          sequence: 2,
+          source: "chat_event",
+          status: "requested",
+          invalidatedByCompaction: true,
+          payload: { state: "requested" },
+        }],
+        decisions: [],
+        activeTargets: [{
+          source: "notification_reply_target",
+          state: "session",
+          payload: { surface: "gateway", platform: "slack", conversation_id: "current-thread" },
+        }],
+        replacementHistory: {
+          removedTurnIndexes: [0, 1, 2, 3],
+          retainedOriginalTurnIndexes: [4, 5, 6, 7],
+          rewrittenTurnIndexes: [0, 1, 2, 3],
+          rolloutJournalSequences: [0, 1, 2],
+          turnContextCount: 1,
+        },
+      }],
       priorTurns: [],
       basePrompt: "Working directory: /repo\n\n進捗を見て",
       prompt: "Working directory: /repo\n\n進捗を見て",
@@ -90,12 +128,29 @@ describe("Chat TurnContext", () => {
       message_id: "current-message",
     });
     expect(context.modelVisible.runtime.approvalMode).toBe("preapproved");
+    expect(context.modelVisible.conversation.compactionRecords).toEqual([
+      expect.objectContaining({
+        sequence: 0,
+        pendingPermissions: [
+          expect.objectContaining({ status: "requested", invalidatedByCompaction: true }),
+        ],
+        activeTargets: [
+          expect.objectContaining({ source: "notification_reply_target" }),
+        ],
+      }),
+    ]);
     expect(context.hostOnly.runtime.fallbackReplyTarget).toMatchObject({
       conversation_id: "stale-thread",
     });
 
     const rendered = renderModelVisibleTurnContext(context.modelVisible);
     expect(rendered).toContain("current-thread");
+    expect(rendered).toContain("compaction_records: 1");
+    expect(rendered).toContain("pending_permissions:");
+    expect(rendered).toContain("invalidatedByCompaction");
+    expect(rendered).toContain("active_targets:");
+    expect(rendered).toContain("notification_reply_target");
+    expect(rendered).toContain("replacement_history:");
     expect(rendered).not.toContain("stale-thread");
 
     const snapshotJson = JSON.stringify(toTurnContextSnapshot(context));

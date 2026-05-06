@@ -11,6 +11,11 @@ import type {
   AgentLoopToolObservationReason,
   AgentLoopToolObservationState,
 } from "./agent-loop-model.js";
+import type { AgentLoopCompactionRecord } from "./agent-loop-compaction-record.js";
+import {
+  AGENT_LOOP_COMPACTION_RECORD_SCHEMA_VERSION,
+  cloneAgentLoopCompactionRecords,
+} from "./agent-loop-compaction-record.js";
 
 export interface AgentLoopSessionState {
   sessionId: string;
@@ -21,6 +26,7 @@ export interface AgentLoopSessionState {
   cwd: string;
   modelRef: string;
   messages: AgentLoopMessage[];
+  compactionRecords?: AgentLoopCompactionRecord[];
   modelTurns: number;
   toolCalls: number;
   usage?: {
@@ -53,6 +59,7 @@ export class InMemoryAgentLoopSessionStateStore implements AgentLoopSessionState
       ? {
           ...this.state,
           messages: [...this.state.messages],
+          compactionRecords: cloneAgentLoopCompactionRecords(this.state.compactionRecords),
           calledTools: [...this.state.calledTools],
           ...(this.state.usage ? { usage: { ...this.state.usage } } : {}),
         }
@@ -63,6 +70,7 @@ export class InMemoryAgentLoopSessionStateStore implements AgentLoopSessionState
     this.state = {
       ...state,
       messages: [...state.messages],
+      compactionRecords: cloneAgentLoopCompactionRecords(state.compactionRecords),
       calledTools: [...state.calledTools],
       ...(state.usage ? { usage: { ...state.usage } } : {}),
     };
@@ -112,6 +120,7 @@ export function normalizeAgentLoopSessionState(value: unknown): AgentLoopSession
     cwd,
     modelRef,
     messages,
+    compactionRecords: normalizeCompactionRecords(value["compactionRecords"]),
     modelTurns: nonNegativeNumberField(value, "modelTurns"),
     toolCalls: nonNegativeNumberField(value, "toolCalls"),
     usage: usageField(value),
@@ -187,6 +196,30 @@ function normalizeToolObservation(value: unknown): AgentLoopToolObservation | nu
     ...(truncated ? { truncated } : {}),
     ...(toolActivityCategoryField(value, "activityCategory") ? { activityCategory: toolActivityCategoryField(value, "activityCategory")! } : {}),
   };
+}
+
+function normalizeCompactionRecords(value: unknown): AgentLoopCompactionRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(isAgentLoopCompactionRecord)
+    .map((record) => cloneJson(record));
+}
+
+function isAgentLoopCompactionRecord(value: unknown): value is AgentLoopCompactionRecord {
+  if (!isRecord(value)) return false;
+  if (value["schemaVersion"] !== AGENT_LOOP_COMPACTION_RECORD_SCHEMA_VERSION) return false;
+  if (typeof value["sequence"] !== "number" || !Number.isFinite(value["sequence"]) || value["sequence"] < 0) return false;
+  if (typeof value["createdAt"] !== "string") return false;
+  if (typeof value["summary"] !== "string" || typeof value["modelVisibleSummary"] !== "string") return false;
+  if (!Array.isArray(value["userMessages"]) || !Array.isArray(value["toolObservations"])) return false;
+  if (!Array.isArray(value["pendingPermissions"]) || !Array.isArray(value["activeTargets"])) return false;
+  if (!Array.isArray(value["archivedTargets"]) || !isRecord(value["replacementHistory"])) return false;
+  return true;
+}
+
+function cloneJson<T>(value: T): T {
+  if (value === undefined) return value;
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function normalizeObservationExecution(value: unknown): AgentLoopToolObservationExecution | null {

@@ -61,6 +61,7 @@ export function loadedSessionToChatSession(session: LoadedChatSession): ChatSess
     ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
     ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
     ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
+    ...(session.compactionRecords ? { compactionRecords: [...session.compactionRecords] } : {}),
     ...(session.title ? { title: session.title } : {}),
     ...(session.agentLoopStatePath ? { agentLoopStatePath: session.agentLoopStatePath } : {}),
     ...(session.agentLoopStatus === "running" || session.agentLoopStatus === "completed" || session.agentLoopStatus === "failed"

@@ -19,6 +19,8 @@ import { createAgentLoopHistory } from "./agent-loop-history.js";
 import { formatAgentLoopModelRef } from "./agent-loop-model.js";
 import type { AgentLoopCompactionPhase, AgentLoopCompactionReason, AgentLoopCompactor } from "./agent-loop-compactor.js";
 import { ExtractiveAgentLoopCompactor } from "./agent-loop-compactor.js";
+import type { AgentLoopCompactionRecord } from "./agent-loop-compaction-record.js";
+import { cloneAgentLoopCompactionRecords } from "./agent-loop-compaction-record.js";
 import { classifyAgentLoopCommandResult } from "./agent-loop-command-classifier.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
 import type { FunctionToolCallResponseItem } from "./response-item.js";
@@ -52,12 +54,52 @@ export class BoundedAgentLoopRunner {
     let completionValidationAttempts = resumed?.completionValidationAttempts ?? 0;
     let finalText = resumed?.finalText ?? "";
     let compactions = resumed?.compactions ?? 0;
+    let compactionRecords = cloneAgentLoopCompactionRecords(resumed?.compactionRecords);
     const calledTools = new Set<string>(resumed?.calledTools ?? []);
     let lastToolLoopSignature: string | null = resumed?.lastToolLoopSignature ?? null;
     let repeatedToolLoopCount = resumed?.repeatedToolLoopCount ?? 0;
     const commandResults: AgentLoopCommandResult[] = [];
     const toolResultSummaries: AgentLoopToolResultSummary[] = [];
     const initialWorkspaceSnapshot = await this.captureWorkspaceSnapshot(turn.cwd);
+    const stop = (
+      reason: AgentLoopStopReason,
+      startedAt: number,
+      modelTurns: number,
+      toolCalls: number,
+      finalText: string,
+      output: TOutput | null,
+      success = false,
+      compactions = 0,
+      changedFiles: string[] = [],
+      toolResults: AgentLoopToolResultSummary[] = [],
+      commandResults: AgentLoopCommandResult[] = [],
+      messages?: AgentLoopMessage[],
+      calledTools?: Set<string>,
+      lastToolLoopSignature?: string | null,
+      repeatedToolLoopCount?: number,
+      completionValidationAttempts?: number,
+      reasonDetail?: string,
+    ): Promise<AgentLoopResult<TOutput>> => this.stop(
+      turn,
+      reason,
+      startedAt,
+      modelTurns,
+      toolCalls,
+      finalText,
+      output,
+      success,
+      compactions,
+      changedFiles,
+      toolResults,
+      commandResults,
+      messages,
+      calledTools,
+      lastToolLoopSignature,
+      repeatedToolLoopCount,
+      completionValidationAttempts,
+      reasonDetail,
+      compactionRecords,
+    );
 
     await this.record(turn, {
       type: "started",
@@ -74,26 +116,27 @@ export class BoundedAgentLoopRunner {
     }
 
     let messages: AgentLoopMessage[] = resumed?.messages ? [...resumed.messages] : [...turn.messages];
-    const preTurnCompaction = await this.compactIfNeeded(turn, messages, "pre_turn", "context_limit", undefined, compactions);
+    const preTurnCompaction = await this.compactIfNeeded(turn, messages, "pre_turn", "context_limit", undefined, compactions, compactionRecords);
     if (preTurnCompaction.error) {
-        return this.stop(turn, "fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, [], toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, [], toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
     }
     messages = preTurnCompaction.messages;
+    compactionRecords = preTurnCompaction.compactionRecords;
     compactions += preTurnCompaction.compacted ? 1 : 0;
-    await this.saveState(turn, messages, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
+    await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
 
     while (true) {
       if (Date.now() - startedAt > turn.budget.maxWallClockMs) {
-        return this.stop(turn, "timeout", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("timeout", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (modelTurns >= turn.budget.maxModelTurns) {
-        return this.stop(turn, "max_model_turns", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("max_model_turns", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (toolCalls >= turn.budget.maxToolCalls) {
-        return this.stop(turn, "max_tool_calls", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("max_tool_calls", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (turn.abortSignal?.aborted) {
-        return this.stop(turn, "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
 
       const tools = this.deps.toolRouter.modelVisibleTools(turn as AgentLoopTurnContext<unknown>);
@@ -118,11 +161,10 @@ export class BoundedAgentLoopRunner {
         protocol = await this.createTurnProtocol(turn, messages, tools);
       } catch (err) {
         if (turn.abortSignal?.aborted) {
-          return this.stop(turn, "cancelled", startedAt, modelTurns, toolCalls, "Agent loop stopped: operator stop aborted active model work.", null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, err instanceof Error ? err.message : String(err));
+          return stop("cancelled", startedAt, modelTurns, toolCalls, "Agent loop stopped: operator stop aborted active model work.", null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, err instanceof Error ? err.message : String(err));
         }
         const failure = this.classifyRunFailure(err);
-        return this.stop(
-          turn,
+        return stop(
           failure.reason,
           startedAt,
           modelTurns,
@@ -143,10 +185,10 @@ export class BoundedAgentLoopRunner {
         );
       }
       if (!protocol.responseCompleted) {
-        return this.stop(turn, "protocol_incomplete", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("protocol_incomplete", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (turn.abortSignal?.aborted) {
-        return this.stop(turn, "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
 
       const response = this.protocolToResponse(protocol);
@@ -168,7 +210,7 @@ export class BoundedAgentLoopRunner {
           if (response.content.trim().length === 0) {
             schemaRepairAttempts++;
             if (schemaRepairAttempts > turn.budget.maxSchemaRepairAttempts) {
-              return this.stop(turn, "schema_error", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+              return stop("schema_error", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
             }
 
             messages.push({ role: "assistant", content: response.content, phase: "final_answer" });
@@ -176,13 +218,14 @@ export class BoundedAgentLoopRunner {
               role: "user",
               content: "Your final answer was empty. Return a user-visible Markdown or plain text answer for the user.",
             });
-            const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions);
+            const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
             if (compacted.error) {
-              return this.stop(turn, "fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
             }
             messages = compacted.messages;
+            compactionRecords = compacted.compactionRecords;
             compactions += compacted.compacted ? 1 : 0;
-            await this.saveState(turn, messages, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
+            await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
             continue;
           }
 
@@ -193,13 +236,14 @@ export class BoundedAgentLoopRunner {
               role: "user",
               content: `Before the final answer, call these required tool(s) at least once: ${missingRequiredTools.join(", ")}.`,
             });
-            const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions);
+            const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
             if (compacted.error) {
-              return this.stop(turn, "fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
             }
             messages = compacted.messages;
+            compactionRecords = compacted.compactionRecords;
             compactions += compacted.compacted ? 1 : 0;
-            await this.saveState(turn, messages, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
+            await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
             continue;
           }
 
@@ -210,7 +254,7 @@ export class BoundedAgentLoopRunner {
             success: true,
             outputPreview: this.preview(response.content),
           });
-          return this.stop(turn, "completed", startedAt, modelTurns, toolCalls, response.content, null, true, compactions, changedFiles, toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts);
+          return stop("completed", startedAt, modelTurns, toolCalls, response.content, null, true, compactions, changedFiles, toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts);
         }
 
         const parsed = this.parseFinal(response.content, turn.outputSchema);
@@ -222,13 +266,14 @@ export class BoundedAgentLoopRunner {
               role: "user",
               content: `Before the final answer, call these required tool(s) at least once: ${missingRequiredTools.join(", ")}.`,
             });
-            const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions);
+            const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
             if (compacted.error) {
-              return this.stop(turn, "fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
             }
             messages = compacted.messages;
+            compactionRecords = compacted.compactionRecords;
             compactions += compacted.compacted ? 1 : 0;
-            await this.saveState(turn, messages, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
+            await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
             continue;
           }
 
@@ -244,7 +289,7 @@ export class BoundedAgentLoopRunner {
           if (completionValidation && !completionValidation.ok) {
             completionValidationAttempts++;
             if (completionValidationAttempts > turn.budget.maxCompletionValidationAttempts) {
-              return this.stop(turn, "completion_gate_failed", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, changedFiles, toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts);
+              return stop("completion_gate_failed", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, changedFiles, toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts);
             }
 
             messages.push({ role: "assistant", content: response.content, phase: "final_answer" });
@@ -252,13 +297,14 @@ export class BoundedAgentLoopRunner {
               role: "user",
               content: this.buildCompletionRepairPrompt(completionValidation.reasons),
             });
-            const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions);
+            const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
             if (compacted.error) {
-              return this.stop(turn, "fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, changedFiles, toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts);
+              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, changedFiles, toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts);
             }
             messages = compacted.messages;
+            compactionRecords = compacted.compactionRecords;
             compactions += compacted.compacted ? 1 : 0;
-            await this.saveState(turn, messages, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
+            await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
             continue;
           }
 
@@ -268,12 +314,12 @@ export class BoundedAgentLoopRunner {
             success: true,
             outputPreview: this.preview(response.content),
           });
-          return this.stop(turn, "completed", startedAt, modelTurns, toolCalls, response.content, parsed.output, true, compactions, changedFiles, toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts);
+          return stop("completed", startedAt, modelTurns, toolCalls, response.content, parsed.output, true, compactions, changedFiles, toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts);
         }
 
         schemaRepairAttempts++;
         if (schemaRepairAttempts > turn.budget.maxSchemaRepairAttempts) {
-          return this.stop(turn, "schema_error", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("schema_error", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
         }
 
         messages.push({ role: "assistant", content: response.content, phase: "final_answer" });
@@ -281,13 +327,14 @@ export class BoundedAgentLoopRunner {
           role: "user",
           content: `Your final answer did not match the required JSON schema. Return only valid JSON. Parse error: ${parsed.error}`,
         });
-        const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions);
+        const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
         if (compacted.error) {
-          return this.stop(turn, "fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
         }
         messages = compacted.messages;
+        compactionRecords = compacted.compactionRecords;
         compactions += compacted.compacted ? 1 : 0;
-        await this.saveState(turn, messages, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
+        await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
         continue;
       }
 
@@ -308,10 +355,10 @@ export class BoundedAgentLoopRunner {
       }
 
       if (repeatedToolLoopCount > turn.budget.maxRepeatedToolCalls) {
-        return this.stop(turn, "stalled_tool_loop", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("stalled_tool_loop", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (turn.abortSignal?.aborted) {
-        return this.stop(turn, "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
 
       for (const call of response.toolCalls) {
@@ -415,23 +462,24 @@ export class BoundedAgentLoopRunner {
         }
 
         if (result.disposition === "fatal" || result.fatal) {
-          return this.stop(turn, "fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
         }
         if (result.disposition === "cancelled") {
-          return this.stop(turn, toolBatchTimedOut ? "timeout" : "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop(toolBatchTimedOut ? "timeout" : "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
         }
         if (consecutiveToolErrors >= turn.budget.maxConsecutiveToolErrors) {
-          return this.stop(turn, "consecutive_tool_errors", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("consecutive_tool_errors", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
         }
       }
 
-      const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions);
+      const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
       if (compacted.error) {
-        return this.stop(turn, "fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       messages = compacted.messages;
+      compactionRecords = compacted.compactionRecords;
       compactions += compacted.compacted ? 1 : 0;
-      await this.saveState(turn, messages, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
+      await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
     }
   }
 
@@ -471,10 +519,12 @@ export class BoundedAgentLoopRunner {
     repeatedToolLoopCount?: number,
     completionValidationAttempts?: number,
     reasonDetail?: string,
+    compactionRecords: readonly AgentLoopCompactionRecord[] = [],
   ): Promise<AgentLoopResult<TOutput>> {
     await this.saveState(
       turn,
       messages ?? turn.messages,
+      compactionRecords,
       modelTurns,
       toolCalls,
       compactions,
@@ -589,26 +639,31 @@ export class BoundedAgentLoopRunner {
     reason: AgentLoopCompactionReason,
     usageTokens: number | undefined,
     compactions: number,
-  ): Promise<{ messages: AgentLoopMessage[]; compacted: boolean; error?: string }> {
+    compactionRecords: readonly AgentLoopCompactionRecord[],
+  ): Promise<{ messages: AgentLoopMessage[]; compactionRecords: AgentLoopCompactionRecord[]; compacted: boolean; error?: string }> {
     const limit = this.autoCompactLimit(turn);
     if (!limit || compactions >= turn.budget.maxCompactions) {
-      return { messages, compacted: false };
+      return { messages, compactionRecords: cloneAgentLoopCompactionRecords(compactionRecords), compacted: false };
     }
 
     const tokens = usageTokens && usageTokens > 0 ? usageTokens : this.estimateTokens(messages);
     if (tokens < limit) {
-      return { messages, compacted: false };
+      return { messages, compactionRecords: cloneAgentLoopCompactionRecords(compactionRecords), compacted: false };
     }
 
     try {
       const result = await this.compactor.compact({
-        history: createAgentLoopHistory(messages),
+        history: createAgentLoopHistory(messages, compactionRecords),
         maxMessages: turn.budget.compactionMaxMessages,
         phase,
         reason,
       });
       if (!result.compacted) {
-        return { messages: result.history.messages, compacted: false };
+        return {
+          messages: result.history.messages,
+          compactionRecords: cloneAgentLoopCompactionRecords(result.history.compactionRecords),
+          compacted: false,
+        };
       }
       await this.record(turn, {
         type: "context_compaction",
@@ -619,9 +674,18 @@ export class BoundedAgentLoopRunner {
         outputMessages: result.history.messages.length,
         summaryPreview: this.preview(result.summary ?? ""),
       });
-      return { messages: result.history.messages, compacted: true };
+      return {
+        messages: result.history.messages,
+        compactionRecords: cloneAgentLoopCompactionRecords(result.history.compactionRecords),
+        compacted: true,
+      };
     } catch (err) {
-      return { messages, compacted: false, error: err instanceof Error ? err.message : String(err) };
+      return {
+        messages,
+        compactionRecords: cloneAgentLoopCompactionRecords(compactionRecords),
+        compacted: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 
@@ -814,6 +878,7 @@ export class BoundedAgentLoopRunner {
   private async saveState<TOutput>(
     turn: AgentLoopTurnContext<TOutput>,
     messages: AgentLoopMessage[],
+    compactionRecords: readonly AgentLoopCompactionRecord[],
     modelTurns: number,
     toolCalls: number,
     compactions: number,
@@ -835,6 +900,7 @@ export class BoundedAgentLoopRunner {
       cwd: turn.cwd,
       modelRef: formatAgentLoopModelRef(turn.model),
       messages,
+      compactionRecords: cloneAgentLoopCompactionRecords(compactionRecords),
       modelTurns,
       toolCalls,
       compactions,

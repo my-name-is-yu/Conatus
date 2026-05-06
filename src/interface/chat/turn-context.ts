@@ -4,7 +4,7 @@ import type {
   RuntimeControlReplyTarget,
 } from "../../runtime/store/runtime-operation-schemas.js";
 import type { ChatEventContext } from "./chat-events.js";
-import type { ChatMessage, RunSpecConfirmationState } from "./chat-history.js";
+import type { ChatCompactionRecord, ChatMessage, RunSpecConfirmationState } from "./chat-history.js";
 import type { RuntimeControlChatContext } from "./chat-runner-contracts.js";
 import type { SelectedChatRoute } from "./ingress-router.js";
 import type { SetupDialoguePublicState } from "./setup-dialogue.js";
@@ -43,6 +43,7 @@ export interface ChatTurnModelVisibleContext {
   };
   conversation: {
     compactionSummary: string | null;
+    compactionRecords: PublicCompactionRecord[];
     priorTurns: Array<{ role: "user" | "assistant"; content: string }>;
   };
   prompts: {
@@ -102,6 +103,7 @@ export interface ChatTurnContextInput {
   input: string;
   userInput: UserInput;
   compactionSummary?: string | null;
+  compactionRecords?: ChatCompactionRecord[] | null;
   priorTurns: ChatMessage[];
   basePrompt: string;
   prompt: string;
@@ -156,6 +158,20 @@ interface PublicRunSpecConfirmationState {
   updatedAt: string;
 }
 
+interface PublicCompactionRecord {
+  sequence: number;
+  createdAt: string;
+  reason: string;
+  summary: string;
+  inputMessageCount: number;
+  outputMessageCount: number;
+  removedMessageCount: number;
+  retainedMessageCount: number;
+  pendingPermissions: ChatCompactionRecord["pendingPermissions"];
+  activeTargets: ChatCompactionRecord["activeTargets"];
+  replacementHistory: ChatCompactionRecord["replacementHistory"];
+}
+
 interface PublicUserInput {
   schema_version: typeof USER_INPUT_SCHEMA_VERSION;
   rawText?: string;
@@ -200,6 +216,7 @@ export function buildChatTurnContext(input: ChatTurnContextInput): ChatTurnConte
       },
       conversation: {
         compactionSummary: input.compactionSummary?.trim() ? input.compactionSummary : null,
+        compactionRecords: toPublicCompactionRecords(input.compactionRecords),
         priorTurns: input.priorTurns.map((message) => ({
           role: message.role === "assistant" ? "assistant" : "user",
           content: message.content,
@@ -251,6 +268,7 @@ export function buildChatTurnContext(input: ChatTurnContextInput): ChatTurnConte
 }
 
 export function renderModelVisibleTurnContext(context: ChatTurnModelVisibleContext): string {
+  const compactionRecordLines = context.conversation.compactionRecords.flatMap(renderCompactionRecord);
   const lines = [
     "## Turn Context",
     `- turn_id: ${context.turn.turnId}`,
@@ -267,6 +285,8 @@ export function renderModelVisibleTurnContext(context: ChatTurnModelVisibleConte
     `- activated_tools: ${context.tools.activatedTools.length > 0 ? context.tools.activatedTools.join(", ") : "none"}`,
     `- setup_dialogue: ${context.outstanding.setupDialogue ? `${context.outstanding.setupDialogue.channel}:${context.outstanding.setupDialogue.state}` : "none"}`,
     `- run_spec_confirmation: ${context.outstanding.runSpecConfirmation ? `${context.outstanding.runSpecConfirmation.state}:${context.outstanding.runSpecConfirmation.specId}` : "none"}`,
+    `- compaction_records: ${context.conversation.compactionRecords.length}`,
+    ...compactionRecordLines,
     `- runtime_evidence: ${context.runtimeEvidence.status}`,
   ];
   return lines.join("\n");
@@ -329,6 +349,46 @@ function toPublicRunSpecConfirmation(confirmation: RunSpecConfirmationState | nu
     createdAt: confirmation.createdAt,
     updatedAt: confirmation.updatedAt,
   };
+}
+
+function toPublicCompactionRecords(records: ChatCompactionRecord[] | null | undefined): PublicCompactionRecord[] {
+  return (records ?? []).slice(-5).map((record) => ({
+    sequence: record.sequence,
+    createdAt: record.createdAt,
+    reason: record.reason,
+    summary: record.modelVisibleSummary || record.summary,
+    inputMessageCount: record.inputMessageCount,
+    outputMessageCount: record.outputMessageCount,
+    removedMessageCount: record.removedMessageCount,
+    retainedMessageCount: record.retainedMessageCount,
+    pendingPermissions: record.pendingPermissions,
+    activeTargets: record.activeTargets,
+    replacementHistory: record.replacementHistory,
+  }));
+}
+
+function renderCompactionRecord(record: PublicCompactionRecord, index: number): string[] {
+  return [
+    `  - compaction_record[${index}].sequence: ${record.sequence}`,
+    `    reason: ${record.reason}`,
+    `    summary: ${preview(record.summary, 700)}`,
+    `    counts: input=${record.inputMessageCount} output=${record.outputMessageCount} removed=${record.removedMessageCount} retained=${record.retainedMessageCount}`,
+    `    pending_permissions: ${previewJson(record.pendingPermissions, 1200)}`,
+    `    active_targets: ${previewJson(record.activeTargets, 1200)}`,
+    `    replacement_history: ${previewJson(record.replacementHistory, 800)}`,
+  ];
+}
+
+function previewJson(value: unknown, maxChars: number): string {
+  try {
+    return preview(JSON.stringify(value), maxChars);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function preview(value: string, maxChars: number): string {
+  return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value;
 }
 
 function toPublicUserInput(input: UserInput, redactedText: string): PublicUserInput {
