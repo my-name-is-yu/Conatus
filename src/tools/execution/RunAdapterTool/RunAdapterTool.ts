@@ -8,6 +8,7 @@ export const RunAdapterInputSchema = z.object({
   adapter_id: z.string().min(1, "adapter_id is required"),
   task_description: z.string().min(1, "task_description is required"),
   goal_id: z.string().optional(),
+  cwd: z.string().optional(),
 });
 export type RunAdapterInput = z.infer<typeof RunAdapterInputSchema>;
 
@@ -51,6 +52,7 @@ export class RunAdapterTool implements ITool<RunAdapterInput, unknown> {
         prompt: input.task_description,
         timeout_ms: 60_000,
         adapter_type: input.adapter_id,
+        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       };
       const result = await adapter.execute(task);
       if (result.success) {

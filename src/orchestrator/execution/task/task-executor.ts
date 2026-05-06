@@ -9,6 +9,7 @@ import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { validateProtectedPath } from "../../../tools/fs/FileValidationTool/protected-path-policy.js";
 import { loadProviderConfig } from "../../../base/llm/provider-config.js";
 import { captureExecutionDiffArtifacts } from "./task-diff-capture.js";
+import { resolveTaskWorkspacePath } from "./task-workspace.js";
 const DEBUG = process.env.PULSEED_DEBUG === "true";
 
 // ─── Deps interface ───
@@ -49,17 +50,7 @@ export async function executeTask(
 ): Promise<AgentResult> {
   const { stateManager, sessionManager, logger, execFileSyncFn } = deps;
 
-  // Resolve workspace path from goal constraints (workspace_path:<path>)
-  let workspaceCwd: string | undefined;
-  try {
-    const goal = await stateManager.loadGoal(task.goal_id);
-    const wpConstraint = goal?.constraints.find((c) => c.startsWith("workspace_path:"));
-    if (wpConstraint) {
-      workspaceCwd = wpConstraint.slice("workspace_path:".length);
-    }
-  } catch {
-    // Non-fatal: fall back to process.cwd()
-  }
+  const workspaceCwd = await resolveTaskWorkspacePath({ stateManager, task });
 
   // Create execution session
   const session = await sessionManager.createSession(
@@ -173,47 +164,13 @@ export async function executeTask(
     };
   }
 
-  // Post-execution scope check: revert changes to protected files,
-  // and annotate result.filesChanged from the same git diff --name-only call.
-  if (result.success) {
-    try {
-      const gitCwd = workspaceCwd ?? process.cwd();
-      const diffArtifacts = captureExecutionDiffArtifacts(execFileSyncFn, gitCwd);
-      if (diffArtifacts.available) {
-        const changedFiles = diffArtifacts.changedPaths;
-        result.filesChangedPaths = changedFiles;
-        result.fileDiffs = diffArtifacts.fileDiffs;
-        result.filesChanged = changedFiles.length > 0;
-        if (!result.filesChanged) {
-          logger?.warn(
-            "[TaskLifecycle] Adapter reported success but no files were modified",
-            { taskId: task.id }
-          );
-          result.success = false;
-          result.error = "No files were modified";
-          result.stopped_reason = "completed";
-        }
-      }
-
-      if (diffArtifacts.available && diffArtifacts.changedPaths.length > 0) {
-        const providerConfig = await loadProviderConfig({ saveMigration: false });
-        const protectedPaths = providerConfig.agent_loop?.security?.protected_paths;
-        const protectedChanges = diffArtifacts.changedPaths.filter((changedFile) =>
-          !validateProtectedPath(changedFile, { cwd: gitCwd, workspaceRoot: gitCwd, protectedPaths }).valid
-        );
-
-        if (protectedChanges.length > 0) {
-          result.success = false;
-          result.error = `Protected files were modified: ${protectedChanges.join(", ")}`;
-          result.output = (result.output || "") +
-            `\n[Scope Check] Protected files were modified: ${protectedChanges.join(", ")}`;
-          result.stopped_reason = "error";
-        }
-      }
-    } catch {
-      // Non-fatal: scope check failure should not break execution
-    }
-  }
+  await applyPostExecutionDiffScopeChecks({
+    result,
+    taskId: task.id,
+    cwd: workspaceCwd ?? process.cwd(),
+    execFileSyncFn,
+    logger,
+  });
 
   // End session
   const summary = result.success
@@ -242,6 +199,57 @@ export async function executeTask(
   await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, updatedTask);
 
   return result;
+}
+
+export async function applyPostExecutionDiffScopeChecks(input: {
+  result: AgentResult;
+  taskId: string;
+  cwd: string;
+  execFileSyncFn: TaskExecutorDeps["execFileSyncFn"];
+  logger?: Logger;
+}): Promise<void> {
+  if (!input.result.success) return;
+
+  try {
+    const diffArtifacts = captureExecutionDiffArtifacts(input.execFileSyncFn, input.cwd);
+    if (diffArtifacts.available) {
+      const changedFiles = diffArtifacts.changedPaths;
+      input.result.filesChangedPaths = changedFiles;
+      input.result.fileDiffs = diffArtifacts.fileDiffs;
+      input.result.filesChanged = changedFiles.length > 0;
+      if (!input.result.filesChanged) {
+        input.logger?.warn(
+          "[TaskLifecycle] Adapter reported success but no files were modified",
+          { taskId: input.taskId }
+        );
+        input.result.success = false;
+        input.result.error = "No files were modified";
+        input.result.stopped_reason = "completed";
+      }
+    }
+
+    if (diffArtifacts.available && diffArtifacts.changedPaths.length > 0) {
+      const providerConfig = await loadProviderConfig({ saveMigration: false });
+      const protectedPaths = providerConfig.agent_loop?.security?.protected_paths;
+      const protectedChanges = diffArtifacts.changedPaths.filter((changedFile) =>
+        !validateProtectedPath(changedFile, {
+          cwd: input.cwd,
+          workspaceRoot: input.cwd,
+          protectedPaths,
+        }).valid
+      );
+
+      if (protectedChanges.length > 0) {
+        input.result.success = false;
+        input.result.error = `Protected files were modified: ${protectedChanges.join(", ")}`;
+        input.result.output = (input.result.output || "") +
+          `\n[Scope Check] Protected files were modified: ${protectedChanges.join(", ")}`;
+        input.result.stopped_reason = "error";
+      }
+    }
+  } catch {
+    // Non-fatal: scope check failure should not break execution.
+  }
 }
 
 // ─── reloadTaskFromDisk ───
