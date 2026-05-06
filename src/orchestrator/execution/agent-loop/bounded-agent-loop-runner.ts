@@ -76,6 +76,7 @@ const FILESYSTEM_SNAPSHOT_EXCLUDED_DIRS = new Set([
 ]);
 const FILESYSTEM_SNAPSHOT_MAX_FILES = 5_000;
 const FILESYSTEM_SNAPSHOT_HASH_MAX_BYTES = 1_000_000;
+const MIN_MUTATING_TOOL_BATCH_REMAINING_MS = 1_000;
 
 export class BoundedAgentLoopRunner {
   private readonly compactor: AgentLoopCompactor;
@@ -379,6 +380,11 @@ export class BoundedAgentLoopRunner {
         continue;
       }
 
+      const toolBatchBudgetRefusal = this.toolBatchBudgetRefusalReason(response.toolCalls, turn, startedAt);
+      if (toolBatchBudgetRefusal) {
+        return stop("timeout", startedAt, modelTurns, toolCalls, toolBatchBudgetRefusal, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, toolBatchBudgetRefusal);
+      }
+
       messages.push({
         role: "assistant",
         content: response.content || `Calling ${response.toolCalls.map((call) => call.name).join(", ")}`,
@@ -415,6 +421,10 @@ export class BoundedAgentLoopRunner {
       }
 
       const { results: toolResults, timedOut: toolBatchTimedOut } = await this.executeToolBatchWithinBudget(response.toolCalls, turn, startedAt);
+      if (toolBatchTimedOut && toolResults.length === 0) {
+        const timeoutReason = this.formatToolBatchWallClockExhaustedReason(response.toolCalls, turn.budget.maxWallClockMs);
+        return stop("timeout", startedAt, modelTurns, toolCalls, timeoutReason, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, timeoutReason);
+      }
       for (const result of toolResults) {
         const sourceCall = response.toolCalls.find((call) => call.id === result.callId);
         const observation = this.createToolObservation(
@@ -752,7 +762,10 @@ export class BoundedAgentLoopRunner {
     turn: AgentLoopTurnContext<TOutput>,
     startedAt: number,
   ): Promise<{ results: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>; timedOut: boolean }> {
-    const remainingMs = Math.max(1, turn.budget.maxWallClockMs - (Date.now() - startedAt));
+    const remainingMs = turn.budget.maxWallClockMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
+      return { results: [], timedOut: true };
+    }
     const controller = new AbortController();
     const parentSignal = turn.abortSignal;
     let timedOut = false;
@@ -783,6 +796,43 @@ export class BoundedAgentLoopRunner {
       clearTimeout(timer);
       parentSignal?.removeEventListener("abort", abortFromParent);
     }
+  }
+
+  private toolBatchBudgetRefusalReason<TOutput>(
+    calls: AgentLoopToolCall[],
+    turn: AgentLoopTurnContext<TOutput>,
+    startedAt: number,
+  ): string | null {
+    const remainingMs = turn.budget.maxWallClockMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
+      return this.formatToolBatchWallClockExhaustedReason(calls, turn.budget.maxWallClockMs);
+    }
+
+    const mutatingToolNames = calls
+      .filter((call) => this.isMutatingToolCall(call))
+      .map((call) => call.name);
+    if (mutatingToolNames.length === 0 || remainingMs >= MIN_MUTATING_TOOL_BATCH_REMAINING_MS) {
+      return null;
+    }
+
+    return [
+      "Tool batch was not started because the remaining wall-clock budget",
+      `(${Math.floor(remainingMs)}ms) is below the ${MIN_MUTATING_TOOL_BATCH_REMAINING_MS}ms minimum`,
+      `for mutating tools: ${[...new Set(mutatingToolNames)].join(", ")}.`,
+    ].join(" ");
+  }
+
+  private formatToolBatchWallClockExhaustedReason(calls: AgentLoopToolCall[], maxWallClockMs: number): string {
+    return [
+      "Tool batch was not started because the agent loop wall-clock budget is exhausted",
+      `(0ms remaining; limit ${maxWallClockMs}ms).`,
+      `Requested tools: ${calls.map((call) => call.name).join(", ")}.`,
+    ].join(" ");
+  }
+
+  private isMutatingToolCall(call: AgentLoopToolCall): boolean {
+    const metadata = this.deps.toolRouter.resolveTool(call.name)?.metadata;
+    return metadata?.isReadOnly !== true;
   }
 
   private responseUsageTokens(response: { usage?: { inputTokens: number; outputTokens: number } }): number | undefined {
