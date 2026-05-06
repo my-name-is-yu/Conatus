@@ -5,6 +5,7 @@ import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { StallDetector } from "../../../platform/drive/stall-detector.js";
 import { AdapterRegistry } from "../adapter-layer.js";
+import type { AgentResult } from "../adapter-layer.js";
 import type { Logger } from "../../../runtime/logger.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
@@ -39,6 +40,10 @@ export interface RevertAttemptResult {
   concretePaths: string[];
   reason: string;
   method?: "git_restore_tool" | "git_restore_child_process";
+}
+
+export interface VerdictHandlingContext {
+  stoppedReason?: AgentResult["stopped_reason"] | null;
 }
 
 // ─── CompletionJudgerResponseSchema: Zod schema for LLM completion judgment response ───

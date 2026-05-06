@@ -155,7 +155,28 @@ export interface RuntimeTaskOutcomeDetails {
     abandoned: number;
     retried: number;
   };
+  failure_reasons?: {
+    timeout: number;
+    cancelled: number;
+    error: number;
+    unknown: number;
+    other: number;
+  };
   healthy_at_0_95: boolean | null;
+}
+
+export function formatTaskFailureReasonCounts(
+  failureReasons: RuntimeTaskOutcomeDetails["failure_reasons"] | undefined
+): string | null {
+  if (!failureReasons) return null;
+  const total =
+    failureReasons.timeout +
+    failureReasons.cancelled +
+    failureReasons.error +
+    failureReasons.unknown +
+    failureReasons.other;
+  if (total === 0) return null;
+  return `timeout=${failureReasons.timeout}, cancelled=${failureReasons.cancelled}, error=${failureReasons.error}, unknown=${failureReasons.unknown}, other=${failureReasons.other}`;
 }
 
 export function formatTaskOutcomeLine(taskOutcome: RuntimeTaskOutcomeDetails): string {
@@ -165,9 +186,11 @@ export function formatTaskOutcomeLine(taskOutcome: RuntimeTaskOutcomeDetails): s
     taskOutcome.healthy_at_0_95 === null
       ? "threshold n/a"
       : taskOutcome.healthy_at_0_95
-        ? "healthy @ 0.95"
-        : "degraded @ 0.95";
-  return `${rate} (${terminalCounts.succeeded}/${terminalCounts.terminal_tasks} terminal, ${thresholdLabel})`;
+      ? "healthy @ 0.95"
+      : "degraded @ 0.95";
+  const failureReasons = formatTaskFailureReasonCounts(taskOutcome.failure_reasons);
+  const failureSuffix = failureReasons ? `, failures: ${failureReasons}` : "";
+  return `${rate} (${terminalCounts.succeeded}/${terminalCounts.terminal_tasks} terminal, ${thresholdLabel}${failureSuffix})`;
 }
 
 export function formatTaskSuccessRateLine(
@@ -186,7 +209,9 @@ export function formatTaskSuccessRateLine(
       : taskOutcome.healthy_at_0_95
         ? "healthy @ 0.95"
         : "degraded @ 0.95";
-  return `task_success_rate: ${rate} (${terminalCounts.succeeded}/${terminalCounts.terminal_tasks} terminal, ${thresholdLabel})`;
+  const failureReasons = formatTaskFailureReasonCounts(taskOutcome.failure_reasons);
+  const failureSuffix = failureReasons ? `, failures: ${failureReasons}` : "";
+  return `task_success_rate: ${rate} (${terminalCounts.succeeded}/${terminalCounts.terminal_tasks} terminal, ${thresholdLabel}${failureSuffix})`;
 }
 
 export function isPidAlive(pidStatus: Awaited<ReturnType<PIDManager["inspect"]>>, pid?: number | null): boolean {

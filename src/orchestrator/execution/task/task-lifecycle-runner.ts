@@ -13,7 +13,7 @@ import type { EthicsGate } from "../../../platform/traits/ethics-gate.js";
 import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/knowledge-transfer.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
-import type { VerifierDeps, VerdictResult } from "./task-verifier-types.js";
+import type { VerifierDeps, VerdictResult, VerdictHandlingContext } from "./task-verifier-types.js";
 import { _verifyTask as verifyTaskWithDeps } from "./task-verifier-internal.js";
 import { buildEnrichedKnowledgeContext } from "./task-context-enricher.js";
 import { runPreExecutionChecks } from "./task-approval.js";
@@ -99,7 +99,7 @@ export interface TaskLifecycleTaskCycleContext {
     knowledgeContext?: string,
     abortSignal?: AbortSignal,
   ) => Promise<AgentResult>;
-  handleVerdict: (task: Task, verificationResult: VerificationResult) => Promise<VerdictResult>;
+  handleVerdict: (task: Task, verificationResult: VerificationResult, context?: VerdictHandlingContext) => Promise<VerdictResult>;
 }
 
 export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleContext): Promise<TaskCycleResult> {
@@ -314,7 +314,11 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   logger?.debug(`[DEBUG-TL] Verification: verdict=${verificationResult.verdict}, evidence=${verificationResult.evidence.map((e) => e.description).join("; ").substring(0, 300)}`);
 
   const verdictResult = await runPhase("handle-verdict", () =>
-    context.handleVerdict(taskForVerification, verificationResult)
+    context.handleVerdict(
+      taskForVerification,
+      verificationResult,
+      { stoppedReason: executionResult.success ? null : executionResult.stopped_reason }
+    )
   );
   logger?.info(`[task] verdict: ${verdictResult.action}`, { taskId: task.id });
 

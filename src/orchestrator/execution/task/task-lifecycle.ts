@@ -27,6 +27,7 @@ import {
   type VerdictResult,
   type FailureResult,
   type CompletionJudgerConfig,
+  type VerdictHandlingContext,
 } from "./task-verifier.js";
 export type { CompletionJudgerConfig } from "./task-verifier.js";
 export type {
@@ -598,6 +599,7 @@ export class TaskLifecycle {
       type: result.success ? "succeeded" : "failed",
       attempt: task.consecutive_failure_count + 1,
       reason: result.error ?? undefined,
+      stoppedReason: result.success ? undefined : result.stopped_reason,
     });
 
     return result;
@@ -615,17 +617,19 @@ export class TaskLifecycle {
   /** Handle a verification verdict (pass/partial/fail). */
   async handleVerdict(
     task: Task,
-    verificationResult: VerificationResult
+    verificationResult: VerificationResult,
+    context?: VerdictHandlingContext
   ): Promise<VerdictResult> {
-    return _handleVerdict(this.verifierDeps(), task, verificationResult);
+    return _handleVerdict(this.verifierDeps(), task, verificationResult, context);
   }
 
   /** Handle a task failure: increment failure count, record failure, decide keep/discard/escalate. */
   async handleFailure(
     task: Task,
-    verificationResult: VerificationResult
+    verificationResult: VerificationResult,
+    context?: VerdictHandlingContext
   ): Promise<FailureResult> {
-    return _handleFailure(this.verifierDeps(), task, verificationResult);
+    return _handleFailure(this.verifierDeps(), task, verificationResult, context);
   }
 
   /** Run a full task cycle: select → generate → approve → execute → verify → verdict. */
@@ -673,7 +677,7 @@ export class TaskLifecycle {
       executeTask: (task, runAdapter, runWorkspaceContext) => this.executeTask(task, runAdapter, runWorkspaceContext),
       executeTaskWithAgentLoop: (task, runWorkspaceContext, runKnowledgeContext, abortSignal) =>
         this.executeTaskWithAgentLoop(task, runWorkspaceContext, runKnowledgeContext, abortSignal),
-      handleVerdict: (task, verificationResult) => this.handleVerdict(task, verificationResult),
+      handleVerdict: (task, verificationResult, handleContext) => this.handleVerdict(task, verificationResult, handleContext),
     });
   }
 
