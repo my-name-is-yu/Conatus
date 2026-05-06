@@ -699,7 +699,7 @@ export class ChatRunner {
         turnContext,
         eventContext,
         assistantBuffer,
-        systemPrompt: renderSystemPromptWithTurnContext(systemPrompt || undefined, turnContext.modelVisible),
+        systemPrompt: systemPrompt || undefined,
         executionGoalId,
         history,
         gitRoot,
