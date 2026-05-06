@@ -123,6 +123,7 @@ function isCurrentRunForControl(run: BackgroundRun, kind: RuntimeControlOperatio
   if (kind === "inspect_run") return ACTIVE_RUN_STATUSES.has(run.status) || ATTENTION_RUN_STATUSES.has(run.status);
   if (kind === "pause_run") return ACTIVE_RUN_STATUSES.has(run.status);
   if (kind === "resume_run") return ACTIVE_RUN_STATUSES.has(run.status) || ATTENTION_RUN_STATUSES.has(run.status);
+  if (kind === "cancel_run") return ACTIVE_RUN_STATUSES.has(run.status);
   if (kind === "finalize_run") return ACTIVE_RUN_STATUSES.has(run.status) || ATTENTION_RUN_STATUSES.has(run.status);
   return false;
 }

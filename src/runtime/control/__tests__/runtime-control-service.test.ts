@@ -143,7 +143,7 @@ describe("RuntimeControlService", () => {
     }
   });
 
-  it("routes typed pause and resume through the selected run goal bridge", async () => {
+  it("routes typed pause, resume, and cancel through the selected run goal bridge", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-run-");
     try {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
@@ -174,16 +174,27 @@ describe("RuntimeControlService", () => {
         cwd: "/repo",
         approvalFn: vi.fn().mockResolvedValue(true),
       });
+      const cancel = await service.cancelRun({
+        runId: "run:coreloop:active",
+        reason: "cancel this run",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
 
       expect(pause).toMatchObject({ success: true, message: "typed run control sent", state: "running" });
       expect(resume).toMatchObject({ success: true, message: "typed run control sent", state: "running" });
-      expect(executor).toHaveBeenCalledTimes(2);
+      expect(cancel).toMatchObject({ success: true, message: "typed run control sent", state: "running" });
+      expect(executor).toHaveBeenCalledTimes(3);
       expect(executor.mock.calls[0][0]).toMatchObject({
         kind: "pause_run",
         target: { run_id: "run:coreloop:active", goal_id: "goal-1" },
       });
       expect(executor.mock.calls[1][0]).toMatchObject({
         kind: "resume_run",
+        target: { run_id: "run:coreloop:active", goal_id: "goal-1" },
+      });
+      expect(executor.mock.calls[2][0]).toMatchObject({
+        kind: "cancel_run",
         target: { run_id: "run:coreloop:active", goal_id: "goal-1" },
       });
       expect(evidenceLedger.append).toHaveBeenCalled();

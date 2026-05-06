@@ -47,6 +47,12 @@ const RunSpecIdToolInputSchema = z.object({
 }).strict();
 type RunSpecIdToolInput = z.infer<typeof RunSpecIdToolInputSchema>;
 
+const ObservedRunSpecInputSchema = z.object({
+  run_spec_id: z.string().min(1),
+  observed_run_spec_epoch: z.string().min(1),
+}).strict();
+type ObservedRunSpecInput = z.infer<typeof ObservedRunSpecInputSchema>;
+
 export interface RunSpecHandoffToolDeps {
   stateManager: StateManager;
   llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
@@ -60,6 +66,9 @@ export function createRunSpecHandoffTools(deps: RunSpecHandoffToolDeps): ITool[]
     new UpdateRunSpecDraftTool(deps),
     new CancelRunSpecDraftTool(deps),
     new StartDurableRunTool(deps),
+    new RunSpecProposeTool(deps),
+    new RunSpecConfirmTool(deps),
+    new RunStartTool(deps),
   ];
 }
 
@@ -161,9 +170,9 @@ class CancelRunSpecDraftTool implements ITool<RunSpecIdToolInput> {
   }
 }
 
-class StartDurableRunTool implements ITool<RunSpecIdToolInput> {
+class StartDurableRunTool implements ITool<ObservedRunSpecInput> {
   readonly metadata = makeMetadata("start_durable_run", "write_local");
-  readonly inputSchema = RunSpecIdToolInputSchema;
+  readonly inputSchema = ObservedRunSpecInputSchema;
 
   constructor(private readonly deps: RunSpecHandoffToolDeps) {}
 
@@ -175,16 +184,137 @@ class StartDurableRunTool implements ITool<RunSpecIdToolInput> {
     ].join(" ");
   }
 
-  async call(input: RunSpecIdToolInput, context: ToolCallContext): Promise<ToolResult> {
+  async call(input: ObservedRunSpecInput, context: ToolCallContext): Promise<ToolResult> {
     const started = Date.now();
+    const freshness = await validateObservedRunSpec(this.deps, context, input);
+    if (!freshness.ok) {
+      return toolResult(false, freshness.data, freshness.message, started, {
+        status: "not_executed",
+        reason: "stale_state",
+        message: freshness.message,
+      });
+    }
     const result = await createService(this.deps, context).startPendingDraft(input.run_spec_id);
     return toolResult(result.success, result.data ?? null, result.message, started);
   }
 
-  async checkPermissions(_input: RunSpecIdToolInput, context: ToolCallContext): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: ObservedRunSpecInput, context: ToolCallContext): Promise<PermissionCheckResult> {
     return context.preApproved
       ? { status: "allowed" }
       : { status: "needs_approval", reason: "start_durable_run starts daemon-backed DurableLoop work" };
+  }
+
+  isConcurrencySafe(): boolean {
+    return false;
+  }
+}
+
+class RunSpecProposeTool implements ITool<DraftRunSpecToolInput> {
+  readonly metadata = makeMetadata("runspec_propose", "write_local");
+  readonly inputSchema = DraftRunSpecToolInputSchema;
+
+  constructor(private readonly deps: RunSpecHandoffToolDeps) {}
+
+  description(context?: ToolDescriptionContext): string {
+    return [
+      "Propose and persist a typed long-running RunSpec from the current user request.",
+      "This only creates a pending draft and returns observed_run_spec_epoch for a later runspec_confirm or run_start call.",
+      context?.cwd ? `Current cwd: ${context.cwd}.` : "",
+    ].filter(Boolean).join(" ");
+  }
+
+  async call(input: DraftRunSpecToolInput, context: ToolCallContext): Promise<ToolResult> {
+    const started = Date.now();
+    const result = await createService(this.deps, context).draft({
+      text: input.request,
+      cwd: input.cwd ?? context.cwd,
+      channel: input.channel ?? "agent_loop",
+      conversationId: input.conversation_id ?? context.conversationSessionId ?? null,
+      sessionId: context.conversationSessionId ?? input.conversation_id ?? null,
+      replyTarget: context.runtimeReplyTarget ?? null,
+      originMetadata: {
+        tool_name: this.metadata.name,
+        ...(input.origin_metadata ?? {}),
+      },
+    });
+    return toolResult(result.success, {
+      ...(result.data ?? {}),
+      ...(result.spec ? { observed_run_spec_epoch: result.spec.updated_at } : {}),
+    }, result.message, started);
+  }
+
+  checkPermissions(): Promise<PermissionCheckResult> {
+    return Promise.resolve({ status: "allowed" });
+  }
+
+  isConcurrencySafe(): boolean {
+    return false;
+  }
+}
+
+class RunSpecConfirmTool implements ITool<ObservedRunSpecInput> {
+  readonly metadata = makeMetadata("runspec_confirm", "write_local");
+  readonly inputSchema = ObservedRunSpecInputSchema;
+
+  constructor(private readonly deps: RunSpecHandoffToolDeps) {}
+
+  description(): string {
+    return "Confirm the pending typed RunSpec by exact run_spec_id and observed_run_spec_epoch, then start the daemon-backed run when policy and safety gates allow it.";
+  }
+
+  async call(input: ObservedRunSpecInput, context: ToolCallContext): Promise<ToolResult> {
+    const started = Date.now();
+    const freshness = await validateObservedRunSpec(this.deps, context, input);
+    if (!freshness.ok) {
+      return toolResult(false, freshness.data, freshness.message, started, {
+        status: "not_executed",
+        reason: "stale_state",
+        message: freshness.message,
+      });
+    }
+    const result = await createService(this.deps, context).startPendingDraft(input.run_spec_id);
+    return toolResult(result.success, result.data ?? null, result.message, started);
+  }
+
+  async checkPermissions(_input: ObservedRunSpecInput, context: ToolCallContext): Promise<PermissionCheckResult> {
+    return context.preApproved
+      ? { status: "allowed" }
+      : { status: "needs_approval", reason: "runspec_confirm starts daemon-backed DurableLoop work" };
+  }
+
+  isConcurrencySafe(): boolean {
+    return false;
+  }
+}
+
+class RunStartTool implements ITool<ObservedRunSpecInput> {
+  readonly metadata = makeMetadata("run_start", "write_local");
+  readonly inputSchema = ObservedRunSpecInputSchema;
+
+  constructor(private readonly deps: RunSpecHandoffToolDeps) {}
+
+  description(): string {
+    return "Start a pending typed RunSpec as a daemon-backed runtime run using exact run_spec_id and observed_run_spec_epoch.";
+  }
+
+  async call(input: ObservedRunSpecInput, context: ToolCallContext): Promise<ToolResult> {
+    const started = Date.now();
+    const freshness = await validateObservedRunSpec(this.deps, context, input);
+    if (!freshness.ok) {
+      return toolResult(false, freshness.data, freshness.message, started, {
+        status: "not_executed",
+        reason: "stale_state",
+        message: freshness.message,
+      });
+    }
+    const result = await createService(this.deps, context).startPendingDraft(input.run_spec_id);
+    return toolResult(result.success, result.data ?? null, result.message, started);
+  }
+
+  async checkPermissions(_input: ObservedRunSpecInput, context: ToolCallContext): Promise<PermissionCheckResult> {
+    return context.preApproved
+      ? { status: "allowed" }
+      : { status: "needs_approval", reason: "run_start starts daemon-backed DurableLoop work" };
   }
 
   isConcurrencySafe(): boolean {
@@ -205,6 +335,54 @@ function createService(deps: RunSpecHandoffToolDeps, context: ToolCallContext): 
     getPendingConfirmation: async () => getPendingConfirmation(deps.stateManager, context),
     setPendingConfirmation: async (confirmation) => setPendingConfirmation(deps.stateManager, context, confirmation),
   });
+}
+
+async function validateObservedRunSpec(
+  deps: RunSpecHandoffToolDeps,
+  context: ToolCallContext,
+  input: ObservedRunSpecInput,
+): Promise<
+  | { ok: true }
+  | { ok: false; message: string; data: Record<string, unknown> }
+> {
+  const pending = await getPendingConfirmation(deps.stateManager, context);
+  if (!pending || pending.state !== "pending") {
+    return {
+      ok: false,
+      message: "No matching pending RunSpec is available; refusing to reuse stale RunSpec state.",
+      data: {
+        status: "stale_state",
+        run_spec_id: input.run_spec_id,
+      },
+    };
+  }
+  if (pending.spec.id !== input.run_spec_id) {
+    return {
+      ok: false,
+      message: `Pending RunSpec mismatch: expected ${pending.spec.id}, received ${input.run_spec_id}.`,
+      data: {
+        status: "stale_state",
+        expected_run_spec_id: pending.spec.id,
+        received_run_spec_id: input.run_spec_id,
+        current_run_spec_epoch: pending.updatedAt,
+        observed_run_spec_epoch: input.observed_run_spec_epoch,
+      },
+    };
+  }
+  if (pending.updatedAt !== input.observed_run_spec_epoch && pending.spec.updated_at !== input.observed_run_spec_epoch) {
+    return {
+      ok: false,
+      message: `RunSpec ${input.run_spec_id} changed since it was observed; refusing to start from stale state.`,
+      data: {
+        status: "stale_state",
+        run_spec_id: input.run_spec_id,
+        current_run_spec_epoch: pending.updatedAt,
+        current_spec_updated_at: pending.spec.updated_at,
+        observed_run_spec_epoch: input.observed_run_spec_epoch,
+      },
+    };
+  }
+  return { ok: true };
 }
 
 async function getPendingConfirmation(
@@ -260,12 +438,19 @@ function makeMetadata(name: string, permissionLevel: ToolMetadata["permissionLev
   };
 }
 
-function toolResult(success: boolean, data: unknown, summary: string, started: number): ToolResult {
+function toolResult(
+  success: boolean,
+  data: unknown,
+  summary: string,
+  started: number,
+  execution?: ToolResult["execution"],
+): ToolResult {
   return {
     success,
     data,
     summary,
     ...(success ? {} : { error: summary }),
+    ...(execution ? { execution } : {}),
     durationMs: Date.now() - started,
   };
 }

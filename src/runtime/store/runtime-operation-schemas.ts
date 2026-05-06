@@ -8,6 +8,7 @@ export const RuntimeControlOperationKindSchema = z.enum([
   "inspect_run",
   "pause_run",
   "resume_run",
+  "cancel_run",
   "finalize_run",
 ]);
 export type RuntimeControlOperationKind = z.infer<typeof RuntimeControlOperationKindSchema>;

@@ -4,7 +4,12 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import { ChatHistory, ChatSessionSchema, type ChatMessage, type ChatSession } from "../../interface/chat/chat-history.js";
 import { ChatSessionCatalog, type LoadedChatSession } from "../../interface/chat/chat-session-store.js";
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
-import type { BackgroundRun, RuntimeReplyTarget, RuntimeSession } from "../../runtime/session-registry/types.js";
+import {
+  BackgroundRunStatusSchema,
+  type BackgroundRun,
+  type RuntimeReplyTarget,
+  type RuntimeSession,
+} from "../../runtime/session-registry/types.js";
 import { OutboxStore } from "../../runtime/store/outbox-store.js";
 import { RuntimeDreamReviewTool } from "./runtime-dream-review-tool.js";
 import type {
@@ -29,6 +34,16 @@ function normalizeConversationSelector(selector: string): string {
 
 function toConversationRuntimeId(sessionId: string): string {
   return `session:conversation:${sessionId}`;
+}
+
+function normalizeRuntimeSessionSelector(sessionId: string): string {
+  return sessionId.startsWith("session:")
+    ? sessionId
+    : toConversationRuntimeId(sessionId);
+}
+
+function backgroundRunEpoch(run: BackgroundRun): string | null {
+  return run.updated_at ?? run.started_at ?? run.created_at;
 }
 
 function buildCompletionMessage(session: LoadedChatSession, status: "completed" | "failed", summary: string): string {
@@ -144,6 +159,55 @@ class RuntimeSessionToolService {
       return run.child_session_id ? sessions.some((session) => session.id === run.child_session_id) : false;
     });
     return { sessions, runs };
+  }
+
+  async observeRuns(
+    input: RuntimeRunsObserveInput,
+    context: ToolCallContext,
+  ): Promise<{
+    generatedAt: string;
+    observedSnapshotEpoch: string;
+    runs: Array<BackgroundRun & { observed_run_epoch: string | null }>;
+    sessions?: RuntimeSession[];
+  }> {
+    const snapshot = await this.registry().snapshot();
+    const allowedConversationIds = await this.allowedConversationIds(input.scope, context);
+    const runtimeAllowedIds = allowedConversationIds
+      ? new Set(Array.from(allowedConversationIds, (id) => toConversationRuntimeId(id)))
+      : null;
+    const statusFilter = input.statuses?.length ? new Set(input.statuses) : null;
+    const sessionSelector = input.session_id ? normalizeRuntimeSessionSelector(input.session_id) : null;
+    const runs = snapshot.background_runs
+      .filter((run) => {
+        if (input.run_id && run.id !== input.run_id) return false;
+        if (sessionSelector && run.parent_session_id !== sessionSelector && run.child_session_id !== sessionSelector) return false;
+        if (statusFilter && !statusFilter.has(run.status)) return false;
+        if (input.activeOnly && run.status !== "queued" && run.status !== "running") return false;
+        if (!runtimeAllowedIds) return true;
+        if (run.parent_session_id && runtimeAllowedIds.has(run.parent_session_id)) return true;
+        return run.child_session_id ? runtimeAllowedIds.has(run.child_session_id) : false;
+      })
+      .sort((left, right) => Date.parse(backgroundRunEpoch(right) ?? "") - Date.parse(backgroundRunEpoch(left) ?? ""))
+      .slice(0, input.limit)
+      .map((run) => ({
+        ...run,
+        observed_run_epoch: backgroundRunEpoch(run),
+      }));
+
+    const runSessionIds = new Set<string>();
+    for (const run of runs) {
+      if (run.parent_session_id) runSessionIds.add(run.parent_session_id);
+      if (run.child_session_id) runSessionIds.add(run.child_session_id);
+    }
+
+    return {
+      generatedAt: snapshot.generated_at,
+      observedSnapshotEpoch: snapshot.generated_at,
+      runs,
+      ...(input.includeSessions
+        ? { sessions: snapshot.sessions.filter((session) => runSessionIds.has(session.id)) }
+        : {}),
+    };
   }
 
   async loadHistory(selector: string, limit: number): Promise<{
@@ -613,6 +677,68 @@ export class RuntimeSessionsListTool implements ITool<RuntimeSessionsListInput, 
         success: false,
         data: null,
         summary: `sessions_list failed: ${error instanceof Error ? error.message : String(error)}`,
+        error: error instanceof Error ? error.message : String(error),
+        durationMs: Date.now() - started,
+      };
+    }
+  }
+
+  async checkPermissions(): Promise<PermissionCheckResult> {
+    return { status: "allowed" };
+  }
+
+  isConcurrencySafe(): boolean {
+    return true;
+  }
+}
+
+export const RuntimeRunsObserveInputSchema = z.object({
+  scope: z.enum(["self", "tree", "all"]).default("tree"),
+  run_id: z.string().min(1).optional(),
+  session_id: z.string().min(1).optional(),
+  statuses: z.array(BackgroundRunStatusSchema).optional(),
+  activeOnly: z.boolean().default(false),
+  includeSessions: z.boolean().default(true),
+  limit: z.number().int().positive().max(50).default(20),
+});
+export type RuntimeRunsObserveInput = z.infer<typeof RuntimeRunsObserveInputSchema>;
+
+export class RuntimeRunsObserveTool implements ITool<RuntimeRunsObserveInput, unknown> {
+  readonly metadata: ToolMetadata = {
+    name: "runs_observe",
+    aliases: ["observe_runs", "runtime_runs_observe"],
+    permissionLevel: READ_PERMISSION,
+    isReadOnly: READ_ONLY,
+    isDestructive: false,
+    shouldDefer: false,
+    alwaysLoad: false,
+    maxConcurrency: 0,
+    maxOutputChars: 12000,
+    tags: [...TAGS, "runtime-control"],
+  };
+  readonly inputSchema = RuntimeRunsObserveInputSchema;
+
+  constructor(private readonly service: RuntimeSessionToolService) {}
+
+  description(): string {
+    return "Observe typed background runtime runs and return exact run ids plus observed_run_epoch values required by mutating run-control tools.";
+  }
+
+  async call(input: RuntimeRunsObserveInput, context: ToolCallContext): Promise<ToolResult> {
+    const started = Date.now();
+    try {
+      const data = await this.service.observeRuns(input, context);
+      return {
+        success: true,
+        data,
+        summary: `Observed ${data.runs.length} runtime run(s)`,
+        durationMs: Date.now() - started,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        data: null,
+        summary: `runs_observe failed: ${error instanceof Error ? error.message : String(error)}`,
         error: error instanceof Error ? error.message : String(error),
         durationMs: Date.now() - started,
       };
@@ -1176,6 +1302,7 @@ export function createRuntimeSessionTools(stateManager: StateManager): ITool[] {
   const service = new RuntimeSessionToolService(stateManager);
   return [
     new RuntimeSessionsListTool(service),
+    new RuntimeRunsObserveTool(service),
     new RuntimeSessionsHistoryTool(service),
     new RuntimeSessionsReadTool(service),
     new RuntimeSessionsChildrenTool(service),

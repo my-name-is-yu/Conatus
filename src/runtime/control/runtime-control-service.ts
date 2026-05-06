@@ -129,6 +129,10 @@ export class RuntimeControlService {
     return this.request({ ...request, intent: { kind: "resume_run", reason: request.reason, target: targetFromRunRequest(request) } });
   }
 
+  cancelRun(request: RuntimeRunControlRequestBase): Promise<RuntimeControlResult> {
+    return this.request({ ...request, intent: { kind: "cancel_run", reason: request.reason, target: targetFromRunRequest(request) } });
+  }
+
   finalizeRun(request: RuntimeFinalizeRunRequest): Promise<RuntimeControlResult> {
     return this.request({
       ...request,
@@ -458,19 +462,20 @@ export class RuntimeControlService {
 
 export function isExecutableRuntimeControlKind(
   kind: RuntimeControlOperationKind
-): kind is Extract<RuntimeControlOperationKind, "restart_daemon" | "restart_gateway" | "reload_config" | "self_update" | "pause_run" | "resume_run"> {
+): kind is Extract<RuntimeControlOperationKind, "restart_daemon" | "restart_gateway" | "reload_config" | "self_update" | "pause_run" | "resume_run" | "cancel_run"> {
   return kind === "restart_daemon"
     || kind === "restart_gateway"
     || kind === "reload_config"
     || kind === "self_update"
     || kind === "pause_run"
-    || kind === "resume_run";
+    || kind === "resume_run"
+    || kind === "cancel_run";
 }
 
 function isRunControlKind(
   kind: RuntimeControlOperationKind
-): kind is Extract<RuntimeControlOperationKind, "inspect_run" | "pause_run" | "resume_run" | "finalize_run"> {
-  return kind === "inspect_run" || kind === "pause_run" || kind === "resume_run" || kind === "finalize_run";
+): kind is Extract<RuntimeControlOperationKind, "inspect_run" | "pause_run" | "resume_run" | "cancel_run" | "finalize_run"> {
+  return kind === "inspect_run" || kind === "pause_run" || kind === "resume_run" || kind === "cancel_run" || kind === "finalize_run";
 }
 
 function requiresApproval(kind: RuntimeControlOperationKind): boolean {
@@ -480,6 +485,7 @@ function requiresApproval(kind: RuntimeControlOperationKind): boolean {
     || kind === "self_update"
     || kind === "pause_run"
     || kind === "resume_run"
+    || kind === "cancel_run"
     || kind === "finalize_run";
 }
 
@@ -533,6 +539,8 @@ function ackMessage(kind: RuntimeControlOperationKind): string {
       return "runtime run の safe pause を要求します。";
     case "resume_run":
       return "runtime run の再開を要求します。";
+    case "cancel_run":
+      return "runtime run のキャンセルを要求します。";
     case "finalize_run":
       return "runtime run の最終化 proposal を作成します。";
   }

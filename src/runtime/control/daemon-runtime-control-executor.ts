@@ -19,6 +19,7 @@ export function createDaemonRuntimeControlExecutor(
       && operation.kind !== "restart_gateway"
       && operation.kind !== "pause_run"
       && operation.kind !== "resume_run"
+      && operation.kind !== "cancel_run"
     ) {
       return {
         ok: false,
@@ -43,7 +44,7 @@ export function createDaemonRuntimeControlExecutor(
       baseDir: options.baseDir,
     });
 
-    if (operation.kind === "pause_run" || operation.kind === "resume_run") {
+    if (operation.kind === "pause_run" || operation.kind === "resume_run" || operation.kind === "cancel_run") {
       const goalId = operation.target?.goal_id;
       if (!goalId) {
         return {
@@ -54,7 +55,9 @@ export function createDaemonRuntimeControlExecutor(
       }
       const response = operation.kind === "pause_run"
         ? await client.pauseGoal(goalId)
-        : await client.resumeGoal(goalId);
+        : operation.kind === "resume_run"
+          ? await client.resumeGoal(goalId)
+          : await client.stopGoal(goalId);
       if (!response.ok) {
         return {
           ok: false,
@@ -67,7 +70,9 @@ export function createDaemonRuntimeControlExecutor(
         state: "running",
         message: operation.kind === "pause_run"
           ? `Safe-pause request for ${operation.target?.run_id ?? goalId} was sent through the typed daemon API.`
-          : `Resume request for ${operation.target?.run_id ?? goalId} was sent through the typed daemon API.`,
+          : operation.kind === "resume_run"
+            ? `Resume request for ${operation.target?.run_id ?? goalId} was sent through the typed daemon API.`
+            : `Cancel request for ${operation.target?.run_id ?? goalId} was sent through the typed daemon API.`,
       };
     }
 
