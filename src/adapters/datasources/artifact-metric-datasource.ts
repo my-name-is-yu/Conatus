@@ -90,6 +90,10 @@ interface ArtifactLifecycle {
   success: boolean | null;
 }
 
+interface MetricCandidateSnapshot {
+  candidates: MetricCandidate[];
+}
+
 const BUILTIN_SOURCE_ID = "ds_builtin_workspace_artifacts";
 const DEFAULT_METRIC_FILE_NAMES = ["metrics.json", "result.json"];
 const DEFAULT_ARTIFACT_ROOTS = ["artifacts", "experiments", "runs", "reports", "outputs", "results", "logs"];
@@ -158,6 +162,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
   readonly sourceId: string;
   readonly sourceType: DataSourceType = "artifact_metric";
   readonly config: DataSourceConfig;
+  private observationPassCache: Map<string, MetricCandidateSnapshot> | null = null;
 
   constructor(config: DataSourceConfig) {
     this.config = config;
@@ -179,6 +184,14 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
     } catch {
       return false;
     }
+  }
+
+  beginObservationPass(): void {
+    this.observationPassCache = new Map();
+  }
+
+  endObservationPass(): void {
+    this.observationPassCache = null;
   }
 
   getSupportedDimensions(): string[] {
@@ -220,7 +233,8 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
     }
 
     const keys = resolveMetricKeys(params.dimension_name, expression, this.config);
-    const candidates = await discoverMetricCandidates(root, options, keys);
+    const snapshot = await this.discoverMetricCandidatesForPass(root, options);
+    const candidates = selectCandidatesForKeys(snapshot.candidates, keys, options);
     const observations = await readMetricObservations(candidates, options);
     const evidenceCandidates = buildEvidenceCandidates(observations, keys, aggregation === "min" ? "min" : "max");
 
@@ -337,6 +351,17 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
       nowMs: Date.now(),
     };
   }
+
+  private async discoverMetricCandidatesForPass(root: string, options: ScanOptions): Promise<MetricCandidateSnapshot> {
+    const cacheKey = scanCacheKey(root, options);
+    const cached = this.observationPassCache?.get(cacheKey);
+    if (cached) return cached;
+
+    const candidates = await discoverMetricCandidates(root, options, []);
+    const snapshot = { candidates };
+    this.observationPassCache?.set(cacheKey, snapshot);
+    return snapshot;
+  }
 }
 
 interface ScanOptions {
@@ -384,7 +409,51 @@ async function discoverMetricCandidates(root: string, options: ScanOptions, keys
 
   return Array.from(discovered.values())
     .sort(compareCandidates)
+    .slice(0, keys.length === 0 ? options.maxMetricFiles : options.maxCandidates);
+}
+
+function selectCandidatesForKeys(
+  candidates: MetricCandidate[],
+  keys: string[],
+  options: ScanOptions,
+): MetricCandidate[] {
+  return candidates
+    .map((candidate) => applyMetricKeyScore(candidate, keys))
+    .sort(compareCandidates)
     .slice(0, options.maxCandidates);
+}
+
+function applyMetricKeyScore<T extends MetricCandidate>(candidate: T, keys: string[]): T {
+  let score = candidate.candidateScore;
+  const reasons = [...candidate.reasons];
+  for (const key of keys) {
+    if (candidate.relativePath.toLowerCase().includes(key.toLowerCase())) {
+      score += 8;
+      reasons.push(`path metric hint: ${key}`);
+      break;
+    }
+  }
+  return { ...candidate, candidateScore: score, reasons };
+}
+
+function scanCacheKey(root: string, options: ScanOptions): string {
+  return JSON.stringify({
+    root,
+    metricFileNames: [...options.metricFileNames].sort(),
+    artifactRoots: options.artifactRoots,
+    includePaths: options.includePaths,
+    parserHints: [...options.parserHints].sort(),
+    excludeDirs: [...options.excludeDirs].sort(),
+    excludePaths: [...options.excludePaths].sort(),
+    maxMetricFiles: options.maxMetricFiles,
+    maxArtifactFiles: options.maxArtifactFiles,
+    maxCandidates: options.maxCandidates,
+    staleAfterMs: options.staleAfterMs,
+    freshAfterTime: options.freshAfterTime,
+    freshnessScope: options.freshnessScope,
+    freshnessScopeId: options.freshnessScopeId,
+    currentProgressPolicy: options.currentProgressPolicy,
+  });
 }
 
 async function resolveSearchRoots(root: string, options: ScanOptions): Promise<string[]> {

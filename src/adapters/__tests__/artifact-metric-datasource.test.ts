@@ -129,6 +129,122 @@ describe("ArtifactMetricDataSourceAdapter", () => {
     expect(updated?.dimensions[0]?.last_observed_layer).toBe("mechanical");
   });
 
+  it("reuses artifact metric discovery across dimensions in one ObservationEngine.observe pass", async () => {
+    writeJson(path.join(workspace, "artifacts", "probe", "metrics.json"), {
+      balanced_accuracy: 0.88,
+      f1_score: 0.81,
+      status: "completed",
+    });
+    const stateManager = new StateManager(tmpDir);
+    const goal = makeGoal({
+      id: "goal-artifact-metrics-cache",
+      constraints: [`workspace_path:${workspace}`],
+      dimensions: [
+        makeDimension({
+          name: "balanced_accuracy",
+          current_value: 0,
+          threshold: { type: "min", value: 0.9 },
+        }),
+        makeDimension({
+          name: "f1_score",
+          current_value: 0,
+          threshold: { type: "min", value: 0.9 },
+        }),
+      ],
+    });
+    await stateManager.saveGoal(goal);
+    const adapter = createWorkspaceArtifactMetricDataSource(workspace);
+
+    const engine = new ObservationEngine(stateManager, [adapter]);
+    await engine.observe("goal-artifact-metrics-cache", []);
+
+    const updated = await stateManager.loadGoal("goal-artifact-metrics-cache");
+    expect(updated?.dimensions.map((dimension) => dimension.current_value)).toEqual([0.88, 0.81]);
+    writeJson(path.join(workspace, "artifacts", "probe-new", "metrics.json"), {
+      balanced_accuracy: 0.91,
+      f1_score: 0.87,
+      status: "completed",
+    });
+
+    await engine.observe("goal-artifact-metrics-cache", []);
+
+    const refreshed = await stateManager.loadGoal("goal-artifact-metrics-cache");
+    expect(refreshed?.dimensions.map((dimension) => dimension.current_value)).toEqual([0.91, 0.87]);
+  });
+
+  it("keeps per-dimension max_candidates bounds when reusing pass discovery", async () => {
+    writeJson(path.join(workspace, "artifacts", "best-balanced", "metrics.json"), {
+      balanced_accuracy: 0.95,
+      status: "completed",
+    });
+    writeJson(path.join(workspace, "artifacts", "best-f1_score", "metrics.json"), {
+      f1_score: 0.91,
+      status: "completed",
+    });
+    const adapter = new ArtifactMetricDataSourceAdapter({
+      id: "bounded-artifacts",
+      name: "bounded artifacts",
+      type: "artifact_metric",
+      connection: {
+        path: workspace,
+        max_candidates: 1,
+      },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    });
+
+    adapter.beginObservationPass();
+    try {
+      const balanced = await adapter.query({ dimension_name: "balanced_accuracy", timeout_ms: 10000 });
+      const f1 = await adapter.query({ dimension_name: "f1_score", timeout_ms: 10000 });
+
+      expect(balanced.value).toBe(0.95);
+      expect(f1.value).toBe(0.91);
+      expect(balanced.raw).toMatchObject({ inspected_metric_files: 1 });
+      expect(f1.raw).toMatchObject({ inspected_metric_files: 1 });
+    } finally {
+      adapter.endObservationPass();
+    }
+  });
+
+  it("rereads lifecycle state for later dimensions within the same observation pass", async () => {
+    const metricPath = path.join(workspace, "artifacts", "probe", "metrics.json");
+    writeJson(metricPath, {
+      balanced_accuracy: 0.88,
+      f1_score: 0.81,
+      status: "running",
+    });
+    const adapter = new ArtifactMetricDataSourceAdapter({
+      id: "fresh-lifecycle-artifacts",
+      name: "fresh lifecycle artifacts",
+      type: "artifact_metric",
+      connection: {
+        path: workspace,
+        current_progress_policy: "completed_fresh_only",
+        require_metric_match: true,
+      },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    });
+
+    adapter.beginObservationPass();
+    try {
+      await expect(adapter.query({ dimension_name: "balanced_accuracy", timeout_ms: 10000 }))
+        .rejects.toThrow(/No artifact metric found/);
+
+      writeJson(metricPath, {
+        balanced_accuracy: 0.88,
+        f1_score: 0.81,
+        status: "completed",
+      });
+      const completed = await adapter.query({ dimension_name: "f1_score", timeout_ms: 10000 });
+
+      expect(completed.value).toBe(0.81);
+    } finally {
+      adapter.endObservationPass();
+    }
+  });
+
   it("does not claim unrelated best-prefixed dimensions in the CoreLoop observation path", async () => {
     const stateManager = new StateManager(tmpDir);
     const goal = makeGoal({
