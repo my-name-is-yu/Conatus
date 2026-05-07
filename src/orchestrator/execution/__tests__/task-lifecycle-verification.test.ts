@@ -533,6 +533,44 @@ describe("TaskLifecycle", async () => {
       expect(verification.confidence).toBeGreaterThanOrEqual(0.8);
     });
 
+    it("runs safe workspace-relative Python verification commands locally", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const workspace = path.join(tmpDir, "python-verification-workspace");
+      const pythonPath = path.join(workspace, ".venv", "bin", "python");
+      const scriptPath = path.join(workspace, "src", "experiments", "check_contract.py");
+      fs.mkdirSync(path.dirname(pythonPath), { recursive: true });
+      fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+      fs.writeFileSync(
+        pythonPath,
+        [
+          "#!/bin/sh",
+          "printf '%s\\n' \"$@\" > python.args",
+          "exit 0",
+          "",
+        ].join("\n"),
+        "utf-8"
+      );
+      fs.chmodSync(pythonPath, 0o755);
+      fs.writeFileSync(scriptPath, "print('contract ok')\n", "utf-8");
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [
+          {
+            description: "Generated experiment contract validates",
+            verification_method: ".venv/bin/python src/experiments/check_contract.py --check-contract",
+            is_blocking: true,
+          },
+        ],
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult());
+
+      expect(verification.verdict).toBe("pass");
+      expect(verification.evidence[0]?.description).toContain("Mechanical verification passed");
+      expect(fs.readFileSync(path.join(workspace, "python.args"), "utf-8")).toContain("--check-contract");
+    });
+
     it("uses execution-provided diffs as the source of truth", async () => {
       const llm = createMockLLMClient([LLM_REVIEW_PASS]);
       const execute = vi.fn();

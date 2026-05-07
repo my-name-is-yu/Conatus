@@ -276,7 +276,7 @@ For operational KPI dimensions such as reliability, recovery, latency, uptime, o
 Constraints:
 - No git commit/push/merge operations
 - Success criteria must be directly verifiable. Use file/content checks as supporting evidence, but for runtime/code behavior changes include at least one relevant test/build command such as "npx vitest run <test-file>" or "npm run build".
-- verification_method: start with a directly runnable check command such as "rg ...", "grep ...", "test -f ...", "npm ...", or "npx ..."; do not wrap it in prose like "Use rg ..."\n`;
+- verification_method: use one single-line, directly runnable check command such as "rg ...", "grep ...", "test -f ...", "npm ...", "npx ...", "python src/experiments/run.py --check-contract", or ".venv/bin/python src/experiments/run.py --check-contract"; do not use heredocs, multiline inline scripts, or prose like "Use rg ..."\n`;
   } else if (adapterType) {
     adapterSection = `\nExecution context: ${adapterType} adapter.\n`;
   }
@@ -361,6 +361,8 @@ Requirements:
 - Always include artifact_contract. Use artifact_contract.required=false and an empty required_artifacts array when generated artifacts are not completion evidence.
 - For Kaggle/profile experiment tasks that claim score or submission progress, set artifact_contract.required=true and include fresh metrics_json and submission_csv outputs. Source-file or marker checks are only supporting evidence for those tasks; the artifact contract is the completion evidence.
 - In artifact_contract metrics_json entries, use required_fields for field presence and field_types for fields that must have a concrete JSON type such as {"roc_auc":"number"}.
+- For generated experiment scripts with a --check-contract mode, the script's metrics writer and --check-contract validator must emit and validate the exact artifact_contract.required_fields and field_types. Do not invent alias fields in artifact_contract unless the script is required to write those exact keys.
+- verification_method must be a single line. Do not generate heredocs, here-strings, or multiline inline Python/Node/Ruby/Perl checks.
 
 Return JSON only (inside markdown code block):
 {

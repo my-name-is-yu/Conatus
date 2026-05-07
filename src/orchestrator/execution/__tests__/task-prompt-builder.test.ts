@@ -235,7 +235,9 @@ describe("buildTaskGenerationPrompt — code-agent operational KPI grounding", (
     expect(prompt).toContain("do not generate a test-only/regression-only task");
     expect(prompt).toContain("include at least one relevant test/build command");
     expect(prompt).toContain("npx vitest run <test-file>");
-    expect(prompt).toContain("do not wrap it in prose like \"Use rg ...\"");
+    expect(prompt).toContain(
+      "do not use heredocs, multiline inline scripts, or prose like \"Use rg ...\""
+    );
   });
 });
 

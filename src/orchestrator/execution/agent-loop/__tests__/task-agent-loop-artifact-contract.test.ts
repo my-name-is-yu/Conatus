@@ -70,6 +70,46 @@ function makeKaggleArtifactTask(overrides: Partial<Task> = {}): Task {
 }
 
 describe("task agent loop artifact contract completion gate", () => {
+  it("passes the exact artifact contract into the production task prompt", () => {
+    const modelInfo = makeModelInfo();
+    const turn = buildTaskAgentLoopTurnContext({
+      task: makeKaggleArtifactTask({
+        artifact_contract: {
+          required: true,
+          required_artifacts: [
+            {
+              kind: "metrics_json",
+              path: "reports/hgb_lap_context_auc.json",
+              required_fields: ["roc_auc", "engineered_features", "output_paths"],
+              field_types: {
+                roc_auc: "number",
+                engineered_features: "array",
+                output_paths: "object",
+              },
+              fresh_after_task_start: true,
+            },
+            {
+              kind: "submission_csv",
+              path: "submissions/hgb_lap_context_auc.csv",
+              required_fields: ["id", "PitNextLap"],
+              fresh_after_task_start: true,
+            },
+          ],
+        },
+      }),
+      model: modelInfo.ref,
+      modelInfo,
+      session: createAgentLoopSession(),
+      cwd: process.cwd(),
+    });
+
+    const taskPrompt = turn.messages.find((message) => message.role === "user")?.content ?? "";
+    expect(taskPrompt).toContain("Artifact contract:");
+    expect(taskPrompt).toContain('"required_fields"');
+    expect(taskPrompt).toContain('"engineered_features"');
+    expect(taskPrompt).toContain("metrics writer must emit those exact keys");
+  });
+
   it("rejects done when required metrics and submission artifacts are missing", async () => {
     const modelInfo = makeModelInfo();
     const turn = buildTaskAgentLoopTurnContext({
