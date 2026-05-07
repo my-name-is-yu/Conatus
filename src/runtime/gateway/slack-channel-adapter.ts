@@ -9,7 +9,9 @@ import {
 } from "./channel-policy.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
-import { SLACK_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
+import { SLACK_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
+import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
+import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
 export interface SlackChannelAdapterConfig {
   signingSecret: string;
@@ -234,13 +236,19 @@ export class SlackChannelAdapter implements ChannelAdapter {
     goalId?: string;
     metadata: Record<string, unknown>;
   }): Promise<void> {
-    let sentAssistantOutput = false;
-    const sendReply = async (text: string): Promise<void> => {
-      const trimmed = text.trim();
-      if (!trimmed || sentAssistantOutput || !this.api) return;
-      sentAssistantOutput = true;
-      await this.api.postMessage(input.channel, trimmed, input.messageId);
-    };
+    if (!this.api) return;
+    const projector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: SLACK_GATEWAY_DISPLAY_CONTRACT.capabilities,
+        policy: {
+          ...createGatewayDisplayPolicy(SLACK_GATEWAY_DISPLAY_CONTRACT.capabilities),
+          progressSurface: "editable",
+          finalSurface: "edit_stream",
+          cleanupPolicy: "delete",
+        },
+      },
+      transport: new SlackDisplayTransport(this.api, input.channel, input.messageId),
+    });
 
     const reply = await dispatchGatewayChatInput({
       text: input.text,
@@ -251,26 +259,32 @@ export class SlackChannelAdapter implements ChannelAdapter {
       message_id: input.messageId,
       goal_id: input.goalId,
       cwd: process.cwd(),
-      onEvent: (event) => {
-        if (event.type === "assistant_final" && typeof event.text === "string") {
-          return sendReply(event.text).catch((err: unknown) => {
-            console.warn("SlackChannelAdapter: failed to send assistant event", err);
-          });
-        }
-        return undefined;
-      },
+      onEvent: (event) => projector.handle(event as unknown as ChatEvent).catch((err: unknown) => {
+        console.warn("SlackChannelAdapter: failed to project assistant event", err);
+      }),
       metadata: input.metadata,
     });
-    if (reply) {
-      await sendReply(reply);
+    if (reply && !projector.renderedAssistantOutput) {
+      await projector.handle({
+        type: "assistant_final",
+        runId: "fallback",
+        turnId: "fallback",
+        createdAt: new Date().toISOString(),
+        text: reply,
+        persisted: false,
+      });
     }
   }
+}
+
+interface SlackMessageRef {
+  ts: string;
 }
 
 class SlackAPI {
   constructor(private readonly botToken: string) {}
 
-  async postMessage(channel: string, text: string, threadTs?: string): Promise<void> {
+  async postMessage(channel: string, text: string, threadTs?: string): Promise<SlackMessageRef> {
     const response = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
@@ -287,10 +301,79 @@ class SlackAPI {
       const body = await response.text().catch(() => "(unreadable)");
       throw new Error(`slack-api: chat.postMessage returned ${response.status}: ${body}`);
     }
-    const json = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+    const json = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; ts?: string };
     if (json.ok === false) {
       throw new Error(`slack-api: chat.postMessage failed: ${json.error ?? "unknown error"}`);
     }
+    return { ts: json.ts ?? `${Date.now() / 1000}` };
+  }
+
+  async updateMessage(channel: string, ts: string, text: string): Promise<void> {
+    const response = await fetch("https://slack.com/api/chat.update", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.botToken}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ channel, ts, text }),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "(unreadable)");
+      throw new Error(`slack-api: chat.update returned ${response.status}: ${body}`);
+    }
+    const json = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+    if (json.ok === false) {
+      throw new Error(`slack-api: chat.update failed: ${json.error ?? "unknown error"}`);
+    }
+  }
+
+  async deleteMessage(channel: string, ts: string): Promise<void> {
+    const response = await fetch("https://slack.com/api/chat.delete", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.botToken}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ channel, ts }),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "(unreadable)");
+      throw new Error(`slack-api: chat.delete returned ${response.status}: ${body}`);
+    }
+    const json = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+    if (json.ok === false) {
+      throw new Error(`slack-api: chat.delete failed: ${json.error ?? "unknown error"}`);
+    }
+  }
+}
+
+class SlackDisplayTransport implements NonTuiDisplayTransport {
+  constructor(
+    private readonly api: SlackAPI,
+    private readonly channel: string,
+    private readonly threadTs: string | undefined,
+  ) {}
+
+  async sendProgress(text: string): Promise<NonTuiDisplayMessageRef> {
+    const message = await this.api.postMessage(this.channel, text, this.threadTs);
+    return { id: message.ts };
+  }
+
+  async editProgress(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
+    await this.api.updateMessage(this.channel, ref.id, text);
+  }
+
+  async deleteProgress(ref: NonTuiDisplayMessageRef): Promise<void> {
+    await this.api.deleteMessage(this.channel, ref.id);
+  }
+
+  async sendFinal(text: string): Promise<NonTuiDisplayMessageRef> {
+    const message = await this.api.postMessage(this.channel, text, this.threadTs);
+    return { id: message.ts };
+  }
+
+  async editFinal(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
+    await this.api.updateMessage(this.channel, ref.id, text);
   }
 }
 

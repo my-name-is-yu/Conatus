@@ -204,7 +204,7 @@ describe("TelegramGatewayAdapter", () => {
     await adapter.start();
 
     await vi.waitFor(() => {
-      expect(sentMessages).toContain("Read Telegram config: Config file does not exist yet.");
+      expect(sentMessages.some((message) => message.includes("Read Telegram config: Config file does not exist yet."))).toBe(true);
       expect(sentMessages).toContain("Final setup guidance.");
     });
     expect(sentMessages.filter((message) => message === "Final setup guidance.")).toHaveLength(1);
@@ -344,15 +344,14 @@ describe("TelegramGatewayAdapter", () => {
     await adapter.start();
 
     await vi.waitFor(() => {
-      expect(sentMessages).toEqual(expect.arrayContaining([
-        "Reviewing the timeline path.",
-        `Started shell_command: ${JSON.stringify({ command: "rg Timeline src/interface/chat" })}`,
-        "Finished shell_command: src/interface/chat/chat-events.ts",
-        "Approval requested for shell_command: run a write command",
-        "Observed shell_command (denied): TOOL NOT EXECUTED (approval_denied): Operator denied release execution.",
-        "Compacted context (mid_turn, context_limit): 12 -> 4.",
-        "ran 1 command, requested 1 approval",
-      ]));
+      const renderedProgress = sentMessages.join("\n");
+      expect(renderedProgress).toContain("Reviewing the timeline path.");
+      expect(renderedProgress).toContain(`Started shell_command: ${JSON.stringify({ command: "rg Timeline src/interface/chat" })}`);
+      expect(renderedProgress).toContain("Finished shell_command: src/interface/chat/chat-events.ts");
+      expect(renderedProgress).toContain("Approval requested for shell_command: run a write command");
+      expect(renderedProgress).toContain("Observed shell_command (denied): TOOL NOT EXECUTED (approval_denied): Operator denied release execution.");
+      expect(renderedProgress).toContain("Compacted context (mid_turn, context_limit): 12 -> 4.");
+      expect(renderedProgress).toContain("ran 1 command, requested 1 approval");
     });
     expect(sentMessages.some((message) => message.includes("[tool]"))).toBe(false);
     expect(sentMessages).not.toContain("Done from final.");

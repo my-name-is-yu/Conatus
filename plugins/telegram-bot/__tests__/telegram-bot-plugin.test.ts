@@ -782,9 +782,8 @@ describe("TelegramChatEventAdapter", () => {
     });
 
     expect(sendPlainMessage).toHaveBeenCalledOnce();
-    expect(editMessageText).toHaveBeenCalledTimes(2);
+    expect(editMessageText).toHaveBeenCalledTimes(1);
     expect(editMessageText.mock.calls[0]![2]).toBe("Hello");
-    expect(editMessageText.mock.calls[1]![2]).toBe("Hello");
   });
 
   it("renders tool events as a separate Telegram message and updates it", async () => {
@@ -823,7 +822,7 @@ describe("TelegramChatEventAdapter", () => {
     expect(editMessageText.mock.calls[0]![2]).toContain("done");
   });
 
-  it("renders plugin activity but ignores lifecycle activity", async () => {
+  it("renders visible activity in one progress message", async () => {
     const sendPlainMessage = vi.fn().mockResolvedValue(13);
     const editMessageText = vi.fn().mockResolvedValue(undefined);
     const api = {
@@ -852,7 +851,12 @@ describe("TelegramChatEventAdapter", () => {
     });
 
     expect(sendPlainMessage).toHaveBeenCalledOnce();
-    expect(sendPlainMessage).toHaveBeenCalledWith(777, "[plugin] Plugin completed");
+    expect(sendPlainMessage).toHaveBeenCalledWith(777, "- Received. Starting work...");
+    expect(editMessageText).toHaveBeenCalledWith(
+      777,
+      13,
+      "- Received. Starting work...\n- Plugin completed"
+    );
   });
 
   it("edits the assistant message to show lifecycle_error partial text", async () => {
@@ -881,10 +885,16 @@ describe("TelegramChatEventAdapter", () => {
       error: "boom",
       partialText: "Partial",
       persisted: false,
+      recovery: {
+        label: "retry",
+        summary: "Retry the interrupted turn.",
+        nextActions: ["Send the request again."],
+      },
     });
 
     expect(sendPlainMessage).toHaveBeenCalledOnce();
-    expect(editMessageText).toHaveBeenLastCalledWith(777, 12, "Partial\n\n[interrupted: boom]");
+    expect(editMessageText.mock.calls.at(-1)?.[2]).toContain("Partial\n\n[interrupted: boom]");
+    expect(editMessageText.mock.calls.at(-1)?.[2]).toContain("Recovery");
   });
 });
 

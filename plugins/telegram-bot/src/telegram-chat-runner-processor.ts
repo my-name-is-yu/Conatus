@@ -29,6 +29,7 @@ import {
   shouldUseNativeTaskAgentLoop,
   resolveChannelRoute,
   createIngressRouter,
+  createTextUserInput,
 } from "pulseed";
 import { TrustManager } from "pulseed";
 
@@ -128,6 +129,11 @@ export class TelegramChatRunnerProcessor {
       runner.onEvent = emit;
       const ingress = {
         text,
+        userInput: createTextUserInput(text, {
+          platform: "telegram",
+          conversation_id: String(chatId),
+          user_id: String(fromUserId ?? chatId),
+        }),
         channel: "plugin_gateway",
         platform: "telegram",
         conversation_id: String(chatId),
@@ -158,7 +164,6 @@ export class TelegramChatRunnerProcessor {
         },
       } as const;
       const selectedRoute = createIngressRouter().selectRoute(ingress, {
-        hasLightweightLlm: bootstrap.llmClient !== undefined,
         hasAgentLoop: bootstrap.chatAgentLoopRunner !== undefined,
         hasToolLoop: bootstrap.llmClient !== undefined,
         hasRuntimeControlService: false,
