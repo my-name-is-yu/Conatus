@@ -73,7 +73,7 @@ export interface AgentResult {
   /** Wall-clock time from execute() call to resolution, in milliseconds */
   elapsed_ms: number;
   /** How execution ended */
-  stopped_reason: "completed" | "timeout" | "error" | "cancelled" | "blocked";
+  stopped_reason: "completed" | "timeout" | "error" | "cancelled" | "blocked" | "policy_blocked";
   /**
    * Whether the adapter actually modified any files, as detected by git diff --stat.
    * undefined = check was not performed (e.g., not a git repo, or adapter skipped).

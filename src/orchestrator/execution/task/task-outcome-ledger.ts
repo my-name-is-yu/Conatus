@@ -75,6 +75,7 @@ export interface TaskOutcomeAggregateSummary {
   retried: number;
   failure_stopped_reasons: {
     timeout: number;
+    policy_blocked: number;
     cancelled: number;
     error: number;
     unknown: number;
@@ -380,6 +381,7 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
         retried: 0,
         failure_stopped_reasons: {
           timeout: 0,
+          policy_blocked: 0,
           cancelled: 0,
           error: 0,
           unknown: 0,
@@ -426,6 +428,8 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
         null;
       if (stoppedReason === "timeout" || record.summary.task_status === "timed_out") {
         counts.timeout += 1;
+      } else if (stoppedReason === "policy_blocked") {
+        counts.policy_blocked += 1;
       } else if (stoppedReason === "cancelled" || record.summary.task_status === "cancelled") {
         counts.cancelled += 1;
       } else if (stoppedReason === "error") {
@@ -438,6 +442,7 @@ export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<Task
       return counts;
     }, {
       timeout: 0,
+      policy_blocked: 0,
       cancelled: 0,
       error: 0,
       unknown: 0,

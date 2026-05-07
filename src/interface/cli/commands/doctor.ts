@@ -84,19 +84,22 @@ function formatPercent(value: number | null): string {
 
 function formatFailureReasonCounts(failureReasons: {
   timeout: number;
+  policy_blocked?: number;
   cancelled: number;
   error: number;
   unknown: number;
   other: number;
 }): string | null {
+  const policyBlocked = failureReasons.policy_blocked ?? 0;
   const total =
     failureReasons.timeout +
+    policyBlocked +
     failureReasons.cancelled +
     failureReasons.error +
     failureReasons.unknown +
     failureReasons.other;
   if (total === 0) return null;
-  return `failures timeout=${failureReasons.timeout}, cancelled=${failureReasons.cancelled}, error=${failureReasons.error}, unknown=${failureReasons.unknown}, other=${failureReasons.other}`;
+  return `failures timeout=${failureReasons.timeout}, policy_blocked=${policyBlocked}, cancelled=${failureReasons.cancelled}, error=${failureReasons.error}, unknown=${failureReasons.unknown}, other=${failureReasons.other}`;
 }
 
 function formatLivePingDetail(latencyMs: number, error?: string): string {

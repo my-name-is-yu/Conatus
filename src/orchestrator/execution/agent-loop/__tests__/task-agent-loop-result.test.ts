@@ -126,4 +126,96 @@ describe("taskAgentLoopResultToAgentResult", () => {
       workspaceDisposition: "handoff_required",
     });
   });
+
+  it("preserves policy-blocked tool non-execution as the stopped reason", () => {
+    const result = taskAgentLoopResultToAgentResult({
+      success: false,
+      output: null,
+      finalText: "shell command was not executed",
+      stopReason: "completed",
+      elapsedMs: 1,
+      modelTurns: 1,
+      toolCalls: 1,
+      compactions: 0,
+      changedFiles: [],
+      commandResults: [{
+        toolName: "shell_command",
+        command: "python - <<'PY'\nprint('rewrite')\nPY",
+        cwd: "/workspace",
+        success: false,
+        execution: {
+          status: "not_executed",
+          reason: "policy_blocked",
+          message: "Shell command contains unsupported multiline syntax",
+        },
+        category: "other",
+        evidenceEligible: false,
+        outputSummary: "blocked by shell policy",
+        durationMs: 1,
+      }],
+      traceId: "trace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.stopped_reason).toBe("policy_blocked");
+    expect(result.output).toContain("Command shell_command was not executed (policy_blocked)");
+    expect(result.error).toContain("unsupported multiline syntax");
+    expect(result.agentLoop?.verificationHints).toContain(result.output);
+  });
+
+  it("does not preserve an older policy block as terminal after a later successful edit recovers", () => {
+    const result = taskAgentLoopResultToAgentResult({
+      success: true,
+      output: {
+        status: "done",
+        finalAnswer: "recovered",
+        summary: "recovered with typed edit",
+        filesChanged: ["README.md"],
+        testsRun: [],
+        completionEvidence: ["typed edit succeeded"],
+        verificationHints: [],
+        blockers: [],
+      },
+      finalText: "recovered",
+      stopReason: "completed",
+      elapsedMs: 1,
+      modelTurns: 2,
+      toolCalls: 2,
+      compactions: 0,
+      changedFiles: ["README.md"],
+      commandResults: [{
+        sequence: 0,
+        toolName: "shell_command",
+        command: "python - <<'PY'\nprint('rewrite')\nPY",
+        cwd: "/workspace",
+        success: false,
+        execution: {
+          status: "not_executed",
+          reason: "policy_blocked",
+          message: "Shell command contains unsupported multiline syntax",
+        },
+        category: "other",
+        evidenceEligible: false,
+        outputSummary: "blocked by shell policy",
+        durationMs: 1,
+      }],
+      toolResults: [{
+        sequence: 1,
+        toolName: "apply_patch",
+        success: true,
+        artifacts: ["README.md"],
+        outputSummary: "Patch applied: README.md",
+        durationMs: 1,
+      }],
+      traceId: "trace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.stopped_reason).toBe("completed");
+    expect(result.error).toBeNull();
+  });
 });
