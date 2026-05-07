@@ -7,6 +7,7 @@ import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
+import { DISCORD_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 const MAX_DISCORD_ACTIVITY_MESSAGES = 8;
@@ -84,6 +85,7 @@ export class DiscordGatewayNotifier implements INotifier {
 export class DiscordGatewayAdapter implements ChannelAdapter {
   readonly name = "discord";
   readonly typingIndicator: TypingIndicatorCapability;
+  readonly displayContract = DISCORD_GATEWAY_DISPLAY_CONTRACT;
 
   private handler: EnvelopeHandler | null = null;
   private server: http.Server | null = null;

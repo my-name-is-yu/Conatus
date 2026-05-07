@@ -6,6 +6,7 @@ import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
+import { SIGNAL_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 export interface SignalGatewayConfig {
@@ -59,6 +60,7 @@ export class SignalGatewayNotifier implements INotifier {
 
 export class SignalGatewayAdapter implements ChannelAdapter {
   readonly name = "signal";
+  readonly displayContract = SIGNAL_GATEWAY_DISPLAY_CONTRACT;
   readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
     "signal-bridge adapter has no configured typing endpoint"
   );

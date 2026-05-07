@@ -9,6 +9,7 @@ import {
 } from "./channel-policy.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
+import { SLACK_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 
 export interface SlackChannelAdapterConfig {
   signingSecret: string;
@@ -38,6 +39,7 @@ const MAX_TIMESTAMP_AGE_SEC = 5 * 60;
  */
 export class SlackChannelAdapter implements ChannelAdapter {
   readonly name = "slack";
+  readonly displayContract = SLACK_GATEWAY_DISPLAY_CONTRACT;
   readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
     "slack events adapter has no native bot typing indicator in the current API path"
   );

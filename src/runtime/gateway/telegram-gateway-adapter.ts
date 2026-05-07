@@ -11,6 +11,7 @@ import {
   renderGatewayOperationProgress,
 } from "./chat-event-rendering.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
+import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
@@ -55,6 +56,7 @@ export class TelegramGatewayNotifier implements INotifier {
 export class TelegramGatewayAdapter implements ChannelAdapter {
   readonly name = "telegram";
   readonly typingIndicator: TypingIndicatorCapability;
+  readonly displayContract = TELEGRAM_GATEWAY_DISPLAY_CONTRACT;
 
   private handler: EnvelopeHandler | null = null;
   private readonly api: TelegramAPI;
