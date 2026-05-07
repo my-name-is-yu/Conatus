@@ -189,7 +189,18 @@ describe("completion_judger timeout + retry", () => {
       logger: logger as never,
       completionJudgerConfig: { timeoutMs: 30_000, maxRetries: 2, retryBackoffMs: 1_000 },
     });
-    const task = makeTask();
+    const task = {
+      ...makeTask(),
+      artifact_contract: {
+        required: true,
+        required_artifacts: [{
+          kind: "metrics_json" as const,
+          path: "experiments/hgb_cv_auc_fast/metrics.json",
+          required_fields: ["roc_auc"],
+          fresh_after_task_start: true,
+        }],
+      },
+    };
     const result = await verifyTask(deps, task, {
       ...makeExecutionResult(),
       success: false,
@@ -215,6 +226,10 @@ describe("completion_judger timeout + retry", () => {
     expect(reviewEvidence?.description).toContain("completion judging skipped");
     expect(reviewEvidence?.description).toContain("generated estimate: 2700000ms");
     expect(reviewEvidence?.description).toContain("active budget: 3000000ms");
+    expect(result.artifact_contract_status).toMatchObject({
+      applicable: true,
+      passed: false,
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining("Skipping completion judging"),
       expect.objectContaining({ taskId: task.id })

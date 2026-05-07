@@ -477,6 +477,7 @@ export async function verifyTask(
       evidence,
       dimension_updates: [],
       file_diffs: await collectVerificationDiffs(deps, task, executionResult),
+      artifact_contract_status: artifactResult,
       timestamp: new Date().toISOString(),
     });
   }
