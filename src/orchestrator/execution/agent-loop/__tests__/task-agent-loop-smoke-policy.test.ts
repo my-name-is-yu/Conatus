@@ -302,6 +302,85 @@ describe("TaskAgentLoopRunner non-interactive smoke command policy", () => {
     );
   });
 
+  it("steers edit tasks away from multiline shell rewrites through the production task runner path", async () => {
+    const workspace = makeGitWorkspace();
+    const modelInfo = makeModelInfo();
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      {
+        content: "",
+        toolCalls: [{
+          id: "edit-1",
+          name: "apply_patch",
+          input: {
+            patch: [
+              "*** Begin Patch",
+              "*** Update File: README.md",
+              "@@",
+              "-fixture",
+              "+fixture edited with typed patch tool",
+              "*** End Patch",
+            ].join("\n"),
+          },
+        }],
+        stopReason: "tool_use",
+      },
+      {
+        content: "",
+        toolCalls: [{
+          id: "verify-1",
+          name: "shell_command",
+          input: { command: "grep -q 'typed patch tool' README.md", timeoutMs: 30_000 },
+        }],
+        stopReason: "tool_use",
+      },
+      {
+        content: JSON.stringify({
+          status: "done",
+          finalAnswer: "implemented edit",
+          summary: "README updated with apply_patch",
+          filesChanged: ["README.md"],
+          testsRun: [{ command: "grep -q 'typed patch tool' README.md", passed: true, outputSummary: "verified" }],
+          completionEvidence: ["README.md verified after typed patch"],
+          verificationHints: [],
+          blockers: [],
+        }),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+    ]);
+    const task = makeTask({
+      work_description: "Edit README.md for a Kaggle training note.",
+      approach: "Modify README.md and verify the text.",
+      success_criteria: [{
+        description: "README contains the typed edit marker",
+        verification_method: "grep -q 'typed patch tool' README.md",
+        is_blocking: true,
+      }],
+    });
+    const runner = makeRunner({
+      workspace,
+      modelInfo,
+      modelClient,
+      defaultExecutionPolicy: withExecutionPolicyOverrides(defaultExecutionPolicy(workspace), {
+        approvalPolicy: "never",
+      }),
+    });
+
+    const result = await runner.runTask({ task, cwd: workspace });
+
+    const firstRequest = modelClient.calls[0]!;
+    const systemPrompt = firstRequest.messages.find((message) => message.role === "system")?.content ?? "";
+    const shellDescription = firstRequest.tools.find((tool) => tool.function.name === "shell_command")?.function.description ?? "";
+    expect(systemPrompt).toContain("Do not use shell_command for file edits");
+    expect(systemPrompt).toContain("multiline shell write patterns");
+    expect(shellDescription).toContain("Do not use for file edits");
+    expect(shellDescription).toContain("heredocs");
+    expect(result.toolResults?.map((entry) => entry.toolName)).toEqual(["apply_patch", "shell_command"]);
+    expect(result.commandResults.some((entry) => entry.command.includes("\n"))).toBe(false);
+    expect(result.commandResults.some((entry) => entry.command.includes("<<"))).toBe(false);
+    expect(fs.readFileSync(path.join(workspace, "README.md"), "utf-8")).toBe("fixture edited with typed patch tool\n");
+  });
+
   it("does not keep isolated workspaces when a later typed tool recovers after denial", async () => {
     const policyRoot = makeTempDir();
     tmpDirs.push(policyRoot);
