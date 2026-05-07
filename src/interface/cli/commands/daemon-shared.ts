@@ -146,6 +146,9 @@ export function formatLongRunHealthLines(
   if (signals.expected_next_checkpoint_at !== undefined) {
     lines.push(`  Next checkpoint:${" ".repeat(1)}${formatEvidenceTimestamp(signals.expected_next_checkpoint_at)}`);
   }
+  if ((signals.blocker.unrelated_pending_approval_count ?? 0) > 0) {
+    lines.push(`  Unrelated approvals: ${signals.blocker.unrelated_pending_approval_count} pending outside active goal scope`);
+  }
   return lines;
 }
 

@@ -219,6 +219,10 @@ export const RuntimeLongRunHealthSignalsSchema = z.object({
   }),
   blocker: RuntimeLongRunSignalBaseSchema.extend({
     status: RuntimeLongRunBlockerStatusSchema,
+    active_goal_ids: z.array(z.string()).optional(),
+    pending_approval_count: z.number().int().nonnegative().optional(),
+    goal_scoped_pending_approval_count: z.number().int().nonnegative().optional(),
+    unrelated_pending_approval_count: z.number().int().nonnegative().optional(),
   }),
   expected_next_checkpoint_at: z.number().int().nonnegative().optional(),
   resumable: z.boolean().optional(),

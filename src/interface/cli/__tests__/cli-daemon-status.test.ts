@@ -316,6 +316,97 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Ack latency:     p95 1.0s");
   });
 
+  it("separates unrelated approvals from the active goal blocker in long-run health output", async () => {
+    const now = Date.now();
+    fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "runtime", "health", "daemon.json"),
+      JSON.stringify({
+        status: "degraded",
+        leader: true,
+        checked_at: now,
+        long_running: {
+          summary: "alive_but_waiting",
+          checked_at: now,
+          signals: {
+            process: { status: "alive", checked_at: now, observed_at: now, pid: process.pid },
+            child_activity: { status: "active", checked_at: now, observed_at: now, active_count: 1 },
+            log_freshness: { status: "fresh", checked_at: now, observed_at: now, path: "coreloop.log" },
+            artifact_freshness: { status: "fresh", checked_at: now, observed_at: now, path: "result.json" },
+            metric_freshness: { status: "fresh", checked_at: now, observed_at: now, metric_name: "score" },
+            metric_progress: {
+              status: "plateau",
+              checked_at: now,
+              observed_at: now,
+              metric_name: "score",
+              previous_value: 0.7,
+              current_value: 0.7,
+            },
+            blocker: {
+              status: "blocked",
+              checked_at: now,
+              observed_at: now,
+              reason: "1 policy-blocked task for active goal",
+              active_goal_ids: ["goal-active"],
+              pending_approval_count: 1,
+              goal_scoped_pending_approval_count: 0,
+              unrelated_pending_approval_count: 1,
+            },
+            expected_next_checkpoint_at: now + 60_000,
+            resumable: true,
+          },
+        },
+        details: { pid: process.pid },
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "runtime", "health", "components.json"),
+      JSON.stringify({
+        checked_at: now,
+        components: {
+          gateway: "ok",
+          queue: "ok",
+          leases: "ok",
+          approval: "ok",
+          outbox: "ok",
+          supervisor: "ok",
+        },
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({
+        pid: process.pid,
+        started_at: new Date(now - 60_000).toISOString(),
+        last_loop_at: new Date(now).toISOString(),
+        loop_count: 2,
+        active_goals: ["goal-active"],
+        status: "running",
+        crash_count: 0,
+        last_error: null,
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date(now).toISOString(),
+      })
+    );
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Long-run health:");
+    expect(output).toContain("Blocker:        blocked; evidence=");
+    expect(output).toContain("Unrelated approvals: 1 pending outside active goal scope");
+    expect(output).not.toContain("Blocker:        approval_wait");
+  });
+
   it("reconciles stale runtime health with stopped live PID state", async () => {
     const now = Date.now();
     const stalePid = 999999991;

@@ -9,8 +9,10 @@ import { summarizeTaskOutcomeLedgers } from "../../orchestrator/execution/task/t
 import {
   buildLongRunHealth,
   evolveRuntimeHealthKpi,
+  type ApprovalRecord,
   type RuntimeDaemonHealth,
   type RuntimeHealthCapabilityStatuses,
+  type RuntimeLongRunBlockerStatus,
   type RuntimeLongRunHealth,
   type RuntimeLongRunHealthSignals,
 } from "../store/index.js";
@@ -60,6 +62,25 @@ interface LatestFileEvidence {
     direction?: "maximize" | "minimize";
     observedAt: number;
   };
+}
+
+interface SupervisorActivity {
+  status: RuntimeLongRunHealthSignals["child_activity"]["status"];
+  activeCount?: number;
+  observedAt?: number;
+  activeGoalIds: string[];
+}
+
+interface ApprovalScopeSummary {
+  total: number;
+  goalScoped: number;
+  unrelated: number;
+}
+
+interface ActiveGoalTaskBlocker {
+  status: Extract<RuntimeLongRunBlockerStatus, "blocked">;
+  reason: string;
+  observedAt?: number;
 }
 
 export class RuntimeOwnershipCoordinator {
@@ -274,13 +295,9 @@ export class RuntimeOwnershipCoordinator {
     return undefined;
   }
 
-  private async readSupervisorActivity(checkedAt: number): Promise<{
-    status: RuntimeLongRunHealthSignals["child_activity"]["status"];
-    activeCount?: number;
-    observedAt?: number;
-  }> {
+  private async readSupervisorActivity(checkedAt: number): Promise<SupervisorActivity> {
     if (!this.deps.runtimeRoot) {
-      return { status: "unknown" };
+      return { status: "unknown", activeGoalIds: [] };
     }
 
     const supervisorPath = path.join(this.deps.runtimeRoot, "supervisor-state.json");
@@ -293,27 +310,190 @@ export class RuntimeOwnershipCoordinator {
         ? (raw as { workers: Array<Record<string, unknown>> }).workers
         : [];
       const activeCount = workers.filter((worker) => typeof worker["goalId"] === "string").length;
+      const activeGoalIds = this.uniqueStrings(
+        workers
+          .map((worker) => worker["goalId"])
+          .filter((goalId): goalId is string => typeof goalId === "string" && goalId.length > 0)
+      );
       return {
         status: activeCount > 0 ? "active" : "idle",
         activeCount,
         observedAt: updatedAt,
+        activeGoalIds,
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return { status: "unknown" };
+        return { status: "unknown", activeGoalIds: [] };
       }
       throw err;
     }
   }
 
+  private async readDaemonActiveGoalIds(): Promise<string[]> {
+    if (!this.deps.baseDir) {
+      return [];
+    }
+
+    try {
+      const raw = JSON.parse(await fsp.readFile(path.join(this.deps.baseDir, "daemon-state.json"), "utf8")) as unknown;
+      const activeGoals = Array.isArray((raw as { active_goals?: unknown })?.active_goals)
+        ? (raw as { active_goals: unknown[] }).active_goals
+        : [];
+      return this.uniqueStrings(
+        activeGoals.filter((goalId): goalId is string => typeof goalId === "string" && goalId.length > 0)
+      );
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      throw err;
+    }
+  }
+
+  private uniqueStrings(values: string[]): string[] {
+    return [...new Set(values)];
+  }
+
+  private summarizeApprovalScope(
+    pendingApprovals: ApprovalRecord[],
+    activeGoalIds: string[]
+  ): ApprovalScopeSummary {
+    if (activeGoalIds.length === 0) {
+      return {
+        total: pendingApprovals.length,
+        goalScoped: pendingApprovals.length,
+        unrelated: 0,
+      };
+    }
+
+    const activeGoals = new Set(activeGoalIds);
+    const goalScoped = pendingApprovals.filter((approval) =>
+      typeof approval.goal_id === "string" && activeGoals.has(approval.goal_id)
+    ).length;
+    return {
+      total: pendingApprovals.length,
+      goalScoped,
+      unrelated: pendingApprovals.length - goalScoped,
+    };
+  }
+
+  private parseTimestamp(value: string | null | undefined): number | undefined {
+    if (!value) {
+      return undefined;
+    }
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private classifyTaskBlocker(summary: Record<string, unknown>): "policy_blocked" | "blocked" | null {
+    const latestEventType = typeof summary["latest_event_type"] === "string"
+      ? summary["latest_event_type"]
+      : null;
+    if (latestEventType !== "failed" && latestEventType !== "abandoned") {
+      return null;
+    }
+
+    const stoppedReason = typeof summary["stopped_reason"] === "string"
+      ? summary["stopped_reason"]
+      : null;
+    if (stoppedReason === "policy_blocked") {
+      return "policy_blocked";
+    }
+    if (stoppedReason === "blocked" || summary["task_status"] === "blocked") {
+      return "blocked";
+    }
+    return null;
+  }
+
+  private async readLatestGoalTaskBlocker(goalId: string): Promise<{
+    kind: "policy_blocked" | "blocked";
+    observedAt?: number;
+  } | null> {
+    if (!this.deps.baseDir) {
+      return null;
+    }
+
+    const ledgerDir = path.join(this.deps.baseDir, "tasks", goalId, "ledger");
+    let entries: string[];
+    try {
+      entries = await fsp.readdir(ledgerDir, { withFileTypes: false });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw err;
+    }
+
+    let latest: { summary: Record<string, unknown>; observedAt?: number } | null = null;
+    for (const entry of entries.filter((name) => name.endsWith(".json"))) {
+      try {
+        const raw = JSON.parse(await fsp.readFile(path.join(ledgerDir, entry), "utf8")) as unknown;
+        if (!raw || typeof raw !== "object") {
+          continue;
+        }
+        const summary = (raw as { summary?: unknown }).summary;
+        if (!summary || typeof summary !== "object") {
+          continue;
+        }
+        const observedAt = this.parseTimestamp((summary as { latest_event_at?: unknown }).latest_event_at as string | null | undefined);
+        if (!latest || (observedAt ?? 0) > (latest.observedAt ?? 0)) {
+          latest = { summary: summary as Record<string, unknown>, observedAt };
+        }
+      } catch {
+        // Ignore malformed ledger records during health snapshot aggregation.
+      }
+    }
+
+    if (!latest) {
+      return null;
+    }
+    const kind = this.classifyTaskBlocker(latest.summary);
+    return kind ? { kind, observedAt: latest.observedAt } : null;
+  }
+
+  private async readActiveGoalTaskBlocker(activeGoalIds: string[]): Promise<ActiveGoalTaskBlocker | null> {
+    if (activeGoalIds.length === 0) {
+      return null;
+    }
+
+    const blockers = (await Promise.all(
+      activeGoalIds.map(async (goalId) => ({
+        goalId,
+        blocker: await this.readLatestGoalTaskBlocker(goalId),
+      }))
+    )).filter((entry): entry is { goalId: string; blocker: { kind: "policy_blocked" | "blocked"; observedAt?: number } } =>
+      entry.blocker !== null
+    );
+    if (blockers.length === 0) {
+      return null;
+    }
+
+    const policyBlocked = blockers.filter((entry) => entry.blocker.kind === "policy_blocked");
+    const selected = policyBlocked.length > 0 ? policyBlocked : blockers;
+    const observedAt = selected
+      .map((entry) => entry.blocker.observedAt)
+      .filter((value): value is number => typeof value === "number")
+      .sort((a, b) => b - a)[0];
+    const label = policyBlocked.length > 0 ? "policy-blocked" : "blocked";
+    return {
+      status: "blocked",
+      observedAt,
+      reason: `${selected.length} ${label} task${selected.length === 1 ? "" : "s"} for active goal${selected.length === 1 ? "" : "s"}`,
+    };
+  }
+
   private async buildLongRunHealthSnapshot(checkedAt: number): Promise<RuntimeLongRunHealth> {
-    const [previous, logEvidence, artifactEvidence, supervisorActivity, pendingApprovals] = await Promise.all([
+    const [previous, logEvidence, artifactEvidence, supervisorActivity, daemonActiveGoalIds, pendingApprovals] = await Promise.all([
       this.deps.runtimeHealthStore?.loadDaemonHealth(),
       this.latestKnownLogEvidence(),
       this.latestArtifactEvidence(),
       this.readSupervisorActivity(checkedAt),
+      this.readDaemonActiveGoalIds(),
       this.deps.approvalStore?.listPending().catch(() => []),
     ]);
+    const activeGoalIds = this.uniqueStrings([...supervisorActivity.activeGoalIds, ...daemonActiveGoalIds]);
+    const approvalScope = this.summarizeApprovalScope(pendingApprovals ?? [], activeGoalIds);
+    const taskBlocker = await this.readActiveGoalTaskBlocker(activeGoalIds);
     const previousMetric = previous?.long_running?.signals.metric_progress.current_value;
     const currentMetric = artifactEvidence?.metric?.value;
     const metricDirection = artifactEvidence?.metric?.direction;
@@ -335,7 +515,16 @@ export class RuntimeOwnershipCoordinator {
                 : currentMetric < previousMetric
                   ? "regressed"
                   : "plateau";
-    const approvalCount = pendingApprovals?.length ?? 0;
+    const blockerStatus: RuntimeLongRunBlockerStatus =
+      approvalScope.goalScoped > 0
+        ? "approval_wait"
+        : taskBlocker?.status ?? "none";
+    const blockerReason =
+      approvalScope.goalScoped > 0
+        ? activeGoalIds.length > 0
+          ? `${approvalScope.goalScoped} active-goal pending approval${approvalScope.goalScoped === 1 ? "" : "s"}`
+          : `${approvalScope.goalScoped} pending approval${approvalScope.goalScoped === 1 ? "" : "s"}`
+        : taskBlocker?.reason;
     return buildLongRunHealth({
       process: {
         status: "alive",
@@ -379,10 +568,14 @@ export class RuntimeOwnershipCoordinator {
         current_value: currentMetric,
       },
       blocker: {
-        status: approvalCount > 0 ? "approval_wait" : "none",
+        status: blockerStatus,
         checked_at: checkedAt,
-        observed_at: checkedAt,
-        reason: approvalCount > 0 ? `${approvalCount} pending approval${approvalCount === 1 ? "" : "s"}` : undefined,
+        observed_at: taskBlocker?.observedAt ?? checkedAt,
+        reason: blockerReason,
+        active_goal_ids: activeGoalIds,
+        pending_approval_count: approvalScope.total,
+        goal_scoped_pending_approval_count: approvalScope.goalScoped,
+        unrelated_pending_approval_count: approvalScope.unrelated,
       },
       expected_next_checkpoint_at:
         supervisorActivity.status === "active" ? checkedAt + 5 * 60_000 : undefined,

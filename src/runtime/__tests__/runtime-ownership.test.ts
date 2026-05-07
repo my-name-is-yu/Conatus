@@ -20,6 +20,44 @@ describe("RuntimeOwnershipCoordinator", () => {
     cleanupTempDir(tmpDir);
   });
 
+  async function writeSupervisorState(goalIds: string[], updatedAt = Date.now()): Promise<void> {
+    await fsp.writeFile(
+      path.join(tmpDir, "supervisor-state.json"),
+      JSON.stringify({
+        workers: goalIds.map((goalId, index) => ({
+          workerId: `worker-${index + 1}`,
+          goalId,
+          startedAt: updatedAt - 1_000,
+          iterations: 1,
+        })),
+        crashCounts: {},
+        suspendedGoals: [],
+        updatedAt,
+      })
+    );
+  }
+
+  async function writeLatestTaskLedger(
+    goalId: string,
+    taskId: string,
+    summary: Record<string, unknown>
+  ): Promise<void> {
+    await fsp.mkdir(path.join(tmpDir, "tasks", goalId, "ledger"), { recursive: true });
+    await fsp.writeFile(
+      path.join(tmpDir, "tasks", goalId, "ledger", `${taskId}.json`),
+      JSON.stringify({
+        task_id: taskId,
+        goal_id: goalId,
+        events: [],
+        summary: {
+          task_id: taskId,
+          goal_id: goalId,
+          ...summary,
+        },
+      })
+    );
+  }
+
   it("preserves an observed command failure across heartbeats until a fresh recovery signal arrives", async () => {
     const coordinator = new RuntimeOwnershipCoordinator({
       baseDir: tmpDir,
@@ -276,5 +314,125 @@ describe("RuntimeOwnershipCoordinator", () => {
       status: "approval_wait",
       reason: "1 pending approval",
     });
+  });
+
+  it("produces approval-wait long-running health from active-goal pending approvals", async () => {
+    await writeSupervisorState(["goal-active"]);
+    const approvalStore = new ApprovalStore(tmpDir);
+    await approvalStore.ensureReady();
+    await approvalStore.savePending({
+      approval_id: "approval-active-goal",
+      goal_id: "goal-active",
+      request_envelope_id: "message-1",
+      correlation_id: "correlation-1",
+      state: "pending",
+      created_at: Date.now(),
+      expires_at: Date.now() + 60_000,
+      origin: {
+        channel: "telegram",
+        conversation_id: "conversation-active",
+        user_id: "user-1",
+        session_id: "session-active",
+      },
+      payload: { reason: "active goal approval required" },
+    });
+    const coordinator = new RuntimeOwnershipCoordinator({
+      baseDir: tmpDir,
+      runtimeRoot: tmpDir,
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as never,
+      approvalStore,
+      outboxStore: null,
+      runtimeHealthStore: store,
+      leaderLockManager: null,
+      onLeadershipLost: vi.fn(),
+    });
+
+    await coordinator.saveRuntimeHealthSnapshot("daemon_health_snapshot", {
+      gateway: "ok",
+      queue: "ok",
+      leases: "ok",
+      approval: "ok",
+      outbox: "ok",
+      supervisor: "ok",
+    });
+
+    const snapshot = await store.loadSnapshot();
+    expect(snapshot?.long_running?.summary).toBe("alive_but_waiting");
+    expect(snapshot?.long_running?.signals.blocker).toMatchObject({
+      status: "approval_wait",
+      reason: "1 active-goal pending approval",
+      active_goal_ids: ["goal-active"],
+      pending_approval_count: 1,
+      goal_scoped_pending_approval_count: 1,
+      unrelated_pending_approval_count: 0,
+    });
+  });
+
+  it("keeps unrelated chat approvals from masking an active goal task blocker", async () => {
+    const now = Date.now();
+    await writeSupervisorState(["goal-active"], now);
+    await writeLatestTaskLedger("goal-active", "task-policy-blocked", {
+      latest_event_type: "failed",
+      latest_event_at: new Date(now - 1_000).toISOString(),
+      task_status: "blocked",
+      stopped_reason: "policy_blocked",
+      latencies: {},
+    });
+    const approvalStore = new ApprovalStore(tmpDir);
+    await approvalStore.ensureReady();
+    await approvalStore.savePending({
+      approval_id: "approval-chat-side-channel",
+      goal_id: "goal-chat-side-channel",
+      request_envelope_id: "message-chat",
+      correlation_id: "correlation-chat",
+      state: "pending",
+      created_at: now,
+      expires_at: now + 60_000,
+      origin: {
+        channel: "telegram",
+        conversation_id: "conversation-chat",
+        user_id: "user-chat",
+        session_id: "session-chat",
+      },
+      payload: { reason: "chat-side approval required" },
+    });
+    const coordinator = new RuntimeOwnershipCoordinator({
+      baseDir: tmpDir,
+      runtimeRoot: tmpDir,
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as never,
+      approvalStore,
+      outboxStore: null,
+      runtimeHealthStore: store,
+      leaderLockManager: null,
+      onLeadershipLost: vi.fn(),
+    });
+
+    await coordinator.saveRuntimeHealthSnapshot("daemon_health_snapshot", {
+      gateway: "ok",
+      queue: "ok",
+      leases: "ok",
+      approval: "ok",
+      outbox: "ok",
+      supervisor: "ok",
+    });
+
+    const blocker = (await store.loadSnapshot())?.long_running?.signals.blocker;
+    expect(blocker).toMatchObject({
+      status: "blocked",
+      active_goal_ids: ["goal-active"],
+      pending_approval_count: 1,
+      goal_scoped_pending_approval_count: 0,
+      unrelated_pending_approval_count: 1,
+    });
+    expect(blocker?.reason).toContain("policy-blocked");
+    expect(blocker?.status).not.toBe("approval_wait");
   });
 });
