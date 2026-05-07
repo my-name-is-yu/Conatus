@@ -107,6 +107,12 @@ vi.mock("pulseed", () => {
     createNativeChatAgentLoopRunner: mockCreateNativeChatAgentLoopRunner,
     resolveChannelRoute: mockResolveChannelRoute,
     createIngressRouter: mockCreateIngressRouter,
+    createTextUserInput: (text: string, metadata?: Record<string, unknown>) => ({
+      schema_version: "user-input-v1",
+      items: [{ kind: "text", text }],
+      rawText: text,
+      ...(metadata ? { metadata } : {}),
+    }),
   };
 });
 
@@ -184,9 +190,9 @@ describe("TelegramChatRunnerProcessor", () => {
         platform: "telegram",
       }),
       expect.objectContaining({
-        hasLightweightLlm: true,
         hasAgentLoop: false,
         hasToolLoop: true,
+        hasRuntimeControlService: false,
       })
     );
     cwdSpy.mockRestore();

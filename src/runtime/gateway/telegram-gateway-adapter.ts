@@ -5,14 +5,11 @@ import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
-import {
-  formatGatewayLifecycleFailureMessage,
-  renderGatewayAgentTimelineItem,
-  renderGatewayOperationProgress,
-} from "./chat-event-rendering.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
-import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
+import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
+import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
+import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
 const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 
@@ -220,12 +217,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         message_id: String(messageId),
         goal_id: route.goalId,
         cwd: process.cwd(),
-        onEvent: (event) => {
-          if (isGatewayChatEvent(event)) {
-            return eventAdapter.handle(event);
-          }
-          return undefined;
-        },
+        onEvent: (event) => eventAdapter.handle(event as unknown as ChatEvent),
         metadata: {
           ...route.metadata,
           chat_id: chatId,
@@ -333,6 +325,13 @@ class TelegramAPI {
     }
   }
 
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    await this.call("deleteMessage", {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  }
+
   private async sendMessageInternal(chatId: number, text: string, parseMode: "Markdown" | null): Promise<number> {
     const chunks = splitMessage(text, 4096);
     let firstMessageId = -1;
@@ -400,185 +399,76 @@ class TelegramHomeChatStore {
 }
 
 class TelegramChatEventAdapter {
-  private assistantMessage: { messageId: number; text: string } | null = null;
-  private readonly toolMessages = new Map<string, { messageId: number; text: string }>();
-  private readonly activityMessages = new Map<string, { messageId: number; text: string }>();
-  private readonly timelineMessages = new Map<string, { messageId: number; text: string }>();
-  private hasAssistantOutput = false;
+  private readonly projector: NonTuiDisplayProjector;
 
   constructor(
     private readonly api: TelegramAPI,
     private readonly chatId: number
-  ) {}
-
-  get renderedAssistantOutput(): boolean {
-    return this.hasAssistantOutput;
+  ) {
+    this.projector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities,
+        policy: {
+          ...createGatewayDisplayPolicy(TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities),
+          progressSurface: "editable",
+          finalSurface: "edit_stream",
+          cleanupPolicy: "delete",
+        },
+      },
+      transport: new TelegramDisplayTransport(api, chatId),
+    });
   }
 
-  async handle(event: GatewayChatEvent): Promise<void> {
-    switch (event.type) {
-      case "lifecycle_start":
-        this.assistantMessage = null;
-        this.toolMessages.clear();
-        this.activityMessages.clear();
-        this.timelineMessages.clear();
-        this.hasAssistantOutput = false;
-        return;
-      case "assistant_delta":
-      case "assistant_final":
-        await this.upsertAssistantMessage(event.text);
-        return;
-      case "activity":
-        if (event.kind === "plugin" || event.kind === "skill") {
-          await this.upsertActivityMessage(event.sourceId ?? event.kind, `[${event.kind}] ${event.message}`);
-        }
-        return;
-      case "operation_progress":
-        if (event.item.metadata?.["source"] === "agent_timeline_activity_summary") return;
-        await this.upsertActivityMessage(event.item.id, renderGatewayOperationProgress(event.item));
-        return;
-      case "agent_timeline": {
-        if (event.item.visibility !== "user") return;
-        const text = renderGatewayAgentTimelineItem(event.item).trim();
-        if (!text) return;
-        if (event.item.kind === "final") {
-          this.hasAssistantOutput = true;
-          return;
-        }
-        await this.upsertTimelineMessage(event.item.sourceEventId, text);
-        return;
-      }
-      case "tool_start":
-        if (event.presentation?.suppressTranscript) return;
-        await this.upsertToolMessage(event.toolCallId, `[tool] ${event.toolName} started`);
-        return;
-      case "tool_update":
-        if (event.presentation?.suppressTranscript) return;
-        await this.upsertToolMessage(event.toolCallId, `[tool] ${event.toolName} ${event.status}: ${event.message}`);
-        return;
-      case "tool_end":
-        if (event.presentation?.suppressTranscript) return;
-        await this.upsertToolMessage(
-          event.toolCallId,
-          `[tool] ${event.toolName} ${event.success ? "done" : "failed"}: ${event.summary}`
-        );
-        return;
-      case "lifecycle_error":
-        await this.sendFinalFallback(formatGatewayLifecycleFailureMessage(event.error, event.partialText, event.recovery));
-        return;
-      case "lifecycle_end":
-        return;
-    }
+  get renderedAssistantOutput(): boolean {
+    return this.projector.renderedAssistantOutput;
+  }
+
+  async handle(event: ChatEvent): Promise<void> {
+    if (event.type === "operation_progress" && event.item.metadata?.["source"] === "agent_timeline_activity_summary") return;
+    if (event.type === "agent_timeline" && event.item.visibility !== "user") return;
+    await this.projector.handle(event);
   }
 
   async sendFinalFallback(text: string): Promise<void> {
     if (!text.trim()) return;
-    await this.upsertAssistantMessage(text);
-  }
-
-  private async upsertAssistantMessage(text: string): Promise<void> {
-    if (!this.assistantMessage) {
-      const messageId = await this.api.sendPlainMessage(this.chatId, text);
-      this.assistantMessage = { messageId, text };
-      this.hasAssistantOutput = true;
-      return;
-    }
-    await this.api.editMessageText(this.chatId, this.assistantMessage.messageId, text);
-    this.assistantMessage.text = text;
-    this.hasAssistantOutput = true;
-  }
-
-  private async upsertToolMessage(toolCallId: string, text: string): Promise<void> {
-    const existing = this.toolMessages.get(toolCallId);
-    if (!existing) {
-      const messageId = await this.api.sendPlainMessage(this.chatId, text);
-      this.toolMessages.set(toolCallId, { messageId, text });
-      return;
-    }
-    await this.api.editMessageText(this.chatId, existing.messageId, text);
-    existing.text = text;
-  }
-
-  private async upsertActivityMessage(activityId: string, text: string): Promise<void> {
-    const existing = this.activityMessages.get(activityId);
-    if (!existing) {
-      const messageId = await this.api.sendPlainMessage(this.chatId, text);
-      this.activityMessages.set(activityId, { messageId, text });
-      return;
-    }
-    await this.api.editMessageText(this.chatId, existing.messageId, text);
-    existing.text = text;
-  }
-
-  private async upsertTimelineMessage(sourceEventId: string, text: string): Promise<void> {
-    const existing = this.timelineMessages.get(sourceEventId);
-    if (!existing) {
-      const messageId = await this.api.sendPlainMessage(this.chatId, text);
-      this.timelineMessages.set(sourceEventId, { messageId, text });
-      return;
-    }
-    await this.api.editMessageText(this.chatId, existing.messageId, text);
-    existing.text = text;
+    await this.projector.handle({
+      type: "assistant_final",
+      runId: "fallback",
+      turnId: "fallback",
+      createdAt: new Date().toISOString(),
+      text,
+      persisted: false,
+    });
   }
 }
 
-type GatewayChatEvent =
-  | { type: "lifecycle_start" }
-  | { type: "assistant_delta"; text: string }
-  | { type: "assistant_final"; text: string }
-  | { type: "activity"; kind: string; sourceId?: string; message: string }
-  | {
-      type: "operation_progress";
-      item: {
-        id: string;
-        title: string;
-        detail?: string;
-        metadata?: Record<string, unknown>;
-      };
-    }
-  | {
-      type: "agent_timeline";
-      item: {
-        visibility?: string;
-        kind: "lifecycle" | "turn_context" | "model_request" | "assistant_message" | "tool" | "tool_observation" | "plan" | "approval" | "compaction" | "activity_summary" | "final" | "stopped";
-        status?: string;
-        restoredMessages?: number;
-        fromUpdatedAt?: string;
-        model?: string;
-        visibleTools?: unknown[];
-        toolCount?: number;
-        text?: string;
-        inputPreview?: string;
-        outputPreview?: string;
-        success?: boolean;
-        toolName?: string;
-        state?: string;
-        summary?: string;
-        reason?: string;
-        phase?: string;
-        inputMessages?: number;
-        outputMessages?: number;
-        reasonDetail?: string;
-        sourceEventId: string;
-      };
-    }
-  | { type: "tool_start"; presentation?: { suppressTranscript?: boolean }; toolCallId: string; toolName: string }
-  | { type: "tool_update"; presentation?: { suppressTranscript?: boolean }; toolCallId: string; toolName: string; status: string; message: string }
-  | { type: "tool_end"; presentation?: { suppressTranscript?: boolean }; toolCallId: string; toolName: string; success: boolean; summary: string }
-  | {
-      type: "lifecycle_error";
-      error: string;
-      partialText: string;
-      recovery: {
-        label: string;
-        summary: string;
-        nextActions: string[];
-      };
-    }
-  | { type: "lifecycle_end" };
+class TelegramDisplayTransport implements NonTuiDisplayTransport {
+  constructor(
+    private readonly api: TelegramAPI,
+    private readonly chatId: number,
+  ) {}
 
-function isGatewayChatEvent(event: { type?: unknown }): event is GatewayChatEvent {
-  return typeof event.type === "string";
+  async sendProgress(text: string): Promise<NonTuiDisplayMessageRef> {
+    const messageId = await this.api.sendPlainMessage(this.chatId, text);
+    return { id: String(messageId) };
+  }
+
+  async editProgress(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
+    await this.api.editMessageText(this.chatId, Number(ref.id), text);
+  }
+
+  async deleteProgress(ref: NonTuiDisplayMessageRef): Promise<void> {
+    await this.api.deleteMessage(this.chatId, Number(ref.id));
+  }
+
+  async sendFinal(text: string): Promise<NonTuiDisplayMessageRef> {
+    const messageId = await this.api.sendPlainMessage(this.chatId, text);
+    return { id: String(messageId) };
+  }
+
+  async editFinal(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
+    await this.api.editMessageText(this.chatId, Number(ref.id), text);
+  }
 }
 
 function loadTelegramGatewayConfig(pluginDir: string): TelegramGatewayConfig {

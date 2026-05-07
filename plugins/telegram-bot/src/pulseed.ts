@@ -23,6 +23,10 @@ export {
   NotifierRegistry,
   resolveChannelRoute,
   createIngressRouter,
+  createTextUserInput,
+  NonTuiDisplayProjector,
+  createGatewayDisplayPolicy,
+  TELEGRAM_GATEWAY_DISPLAY_CONTRACT,
 } from "../../../src/index.js";
 
 export type {
@@ -33,6 +37,8 @@ export type {
   ChatEventHandler,
   ChatRunResult,
   ChatAgentLoopRunner,
+  NonTuiDisplayMessageRef,
+  NonTuiDisplayTransport,
 } from "../../../src/index.js";
 
 export type ChatRunnerLike =

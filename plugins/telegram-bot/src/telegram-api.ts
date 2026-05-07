@@ -71,6 +71,13 @@ export class TelegramAPI {
     }
   }
 
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    await this.call("deleteMessage", {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  }
+
   private async sendMessageInternal(chatId: number, text: string, parseMode: "Markdown" | null): Promise<number> {
     const chunks = splitMessage(text, 4096);
     let firstMessageId = -1;

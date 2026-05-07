@@ -11,6 +11,11 @@ vi.mock("../chat-session-dispatch.js", () => ({
 }));
 
 const SIGNING_SECRET = "test-signing-secret-abc123";
+const eventBase = {
+  runId: "run-1",
+  turnId: "turn-1",
+  createdAt: "2026-05-07T00:00:00.000Z",
+};
 
 /** Build valid Slack request headers with correct HMAC signature */
 function buildHeaders(body: string, timestampSec?: number): Record<string, string> {
@@ -405,6 +410,58 @@ describe("SlackChannelAdapter — chat dispatch", () => {
         })
       );
     });
+  });
+
+  it("projects Slack progress and final output through editable thread messages", async () => {
+    let nextTs = 1000;
+    const fetchMock = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, ts: String(++nextTs) }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({ ...eventBase, type: "activity", kind: "tool", message: "Running lookup" });
+      await input.onEvent?.({ ...eventBase, type: "assistant_delta", delta: "Hel", text: "Hel" });
+      await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Hello", persisted: true });
+      await input.onEvent?.({ ...eventBase, type: "lifecycle_end", status: "completed", elapsedMs: 10, persisted: true });
+      return "Hello";
+    });
+    const adapter = makeAdapter({ botToken: "xoxb-test-token" });
+    const body = JSON.stringify({
+      type: "event_callback",
+      team_id: "T1",
+      event_id: "E1",
+      event: { type: "message", text: "hello", channel: "C_HELP", user: "U_HELP", ts: "123.456" },
+    });
+
+    adapter.handleRequest(body, buildHeaders(body));
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("https://slack.com/api/chat.delete", expect.any(Object));
+    });
+    const calls = fetchMock.mock.calls.map(([url, init]) => ({
+      url: String(url),
+      body: JSON.parse(String((init as RequestInit).body ?? "{}")) as Record<string, unknown>,
+    }));
+    expect(calls.filter((call) => call.url === "https://slack.com/api/chat.postMessage")).toHaveLength(2);
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        url: "https://slack.com/api/chat.postMessage",
+        body: expect.objectContaining({ text: "- Running lookup", thread_ts: "123.456" }),
+      }),
+      expect.objectContaining({
+        url: "https://slack.com/api/chat.postMessage",
+        body: expect.objectContaining({ text: "Hel", thread_ts: "123.456" }),
+      }),
+      expect.objectContaining({
+        url: "https://slack.com/api/chat.update",
+        body: expect.objectContaining({ text: "Hello", ts: "1002" }),
+      }),
+      expect.objectContaining({
+        url: "https://slack.com/api/chat.delete",
+        body: expect.objectContaining({ ts: "1001" }),
+      }),
+    ]));
   });
 
   it("keeps signing-secret-only Slack text events on the envelope path", () => {

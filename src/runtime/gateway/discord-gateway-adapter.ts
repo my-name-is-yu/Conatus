@@ -7,11 +7,11 @@ import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
-import { DISCORD_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
+import { DISCORD_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
+import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
-const MAX_DISCORD_ACTIVITY_MESSAGES = 8;
-const MAX_DISCORD_ACTIVITY_CHARS = 300;
+let discordSyntheticMessageId = 0;
 
 interface DiscordInteractionOption {
   name: string;
@@ -37,12 +37,6 @@ interface DiscordInteractionPayload {
     name?: string;
     options?: DiscordInteractionOption[];
   };
-}
-
-interface ActivityChatEvent {
-  type: "activity";
-  kind: "lifecycle" | "commentary" | "tool" | "plugin" | "skill";
-  message: string;
 }
 
 export interface DiscordGatewayConfig {
@@ -247,8 +241,20 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
     payload: DiscordInteractionPayload,
     input: Parameters<typeof dispatchGatewayChatInput>[0]
   ): Promise<void> {
-    let sentActivityCount = 0;
-    let lastActivity = "";
+    const projector = payload.application_id !== undefined && payload.token !== undefined
+      ? new NonTuiDisplayProjector({
+        display: {
+          capabilities: DISCORD_GATEWAY_DISPLAY_CONTRACT.capabilities,
+          policy: {
+            ...createGatewayDisplayPolicy(DISCORD_GATEWAY_DISPLAY_CONTRACT.capabilities),
+            progressSurface: "editable",
+            finalSurface: "edit_stream",
+            cleanupPolicy: "delete",
+          },
+        },
+        transport: new DiscordInteractionDisplayTransport(this.api, payload.application_id, payload.token, this.config.ephemeral),
+      })
+      : null;
     const reply = await withTypingIndicator(
       this.typingIndicator,
       {
@@ -260,28 +266,20 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
       },
       () => dispatchGatewayChatInput({
         ...input,
-        onEvent: async (event: unknown) => {
-          if (
-            !isActivityChatEvent(event) ||
-            (event.kind !== "tool" && event.kind !== "plugin" && event.kind !== "skill") ||
-            payload.application_id === undefined ||
-            payload.token === undefined ||
-            sentActivityCount >= MAX_DISCORD_ACTIVITY_MESSAGES
-          ) {
-            return;
-          }
-          const content = truncateDiscordActivity(event.message);
-          if (content === lastActivity) return;
-          lastActivity = content;
-          sentActivityCount++;
-          await this.api.sendInteractionFollowUp(payload.application_id, payload.token, content);
-        },
+        onEvent: (event) => projector?.handle(event as unknown as Parameters<NonTuiDisplayProjector["handle"]>[0]),
       })
     );
     const content = reply ?? "Received.";
 
-    if (payload.application_id !== undefined && payload.token !== undefined) {
-      await this.api.sendInteractionFollowUp(payload.application_id, payload.token, content);
+    if (projector !== null && !projector.renderedAssistantOutput) {
+      await projector.handle({
+        type: "assistant_final",
+        runId: "fallback",
+        turnId: "fallback",
+        createdAt: new Date().toISOString(),
+        text: content,
+        persisted: false,
+      });
     }
   }
 
@@ -375,6 +373,51 @@ class DiscordAPI {
     }
   }
 
+  async sendInteractionFollowUpMessage(applicationId: string, interactionToken: string, content: string, ephemeral: boolean): Promise<string> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}?wait=true`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        content,
+        ...(ephemeral ? { flags: 64 } : {}),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`discord-bot: follow-up send failed with ${response.status}`);
+    }
+    const json = await response.json().catch(() => ({})) as { id?: string };
+    discordSyntheticMessageId += 1;
+    return json.id ?? `discord-followup-${discordSyntheticMessageId}`;
+  }
+
+  async editInteractionFollowUp(applicationId: string, interactionToken: string, messageId: string, content: string): Promise<void> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/${messageId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        content,
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`discord-bot: follow-up edit failed with ${response.status}`);
+    }
+  }
+
+  async deleteInteractionFollowUp(applicationId: string, interactionToken: string, messageId: string): Promise<void> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/${messageId}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error(`discord-bot: follow-up delete failed with ${response.status}`);
+    }
+  }
+
   async triggerTyping(channelId: string): Promise<void> {
     const response = await this.fetchImpl(`https://discord.com/api/v10/channels/${channelId}/typing`, {
       method: "POST",
@@ -446,16 +489,37 @@ function loadDiscordGatewayConfig(pluginDir: string): DiscordGatewayConfig {
   };
 }
 
-function isActivityChatEvent(event: unknown): event is ActivityChatEvent {
-  return typeof event === "object" && event !== null &&
-    (event as Record<string, unknown>)["type"] === "activity" &&
-    typeof (event as Record<string, unknown>)["message"] === "string";
-}
+class DiscordInteractionDisplayTransport implements NonTuiDisplayTransport {
+  constructor(
+    private readonly api: DiscordAPI,
+    private readonly applicationId: string,
+    private readonly interactionToken: string,
+    private readonly ephemeral: boolean,
+  ) {}
 
-function truncateDiscordActivity(message: string): string {
-  const trimmed = message.trim();
-  if (trimmed.length <= MAX_DISCORD_ACTIVITY_CHARS) return trimmed;
-  return `${trimmed.slice(0, MAX_DISCORD_ACTIVITY_CHARS - 1)}...`;
+  async sendProgress(text: string): Promise<NonTuiDisplayMessageRef> {
+    return {
+      id: await this.api.sendInteractionFollowUpMessage(this.applicationId, this.interactionToken, text, this.ephemeral),
+    };
+  }
+
+  async editProgress(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
+    await this.api.editInteractionFollowUp(this.applicationId, this.interactionToken, ref.id, text);
+  }
+
+  async deleteProgress(ref: NonTuiDisplayMessageRef): Promise<void> {
+    await this.api.deleteInteractionFollowUp(this.applicationId, this.interactionToken, ref.id);
+  }
+
+  async sendFinal(text: string): Promise<NonTuiDisplayMessageRef> {
+    return {
+      id: await this.api.sendInteractionFollowUpMessage(this.applicationId, this.interactionToken, text, this.ephemeral),
+    };
+  }
+
+  async editFinal(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
+    await this.api.editInteractionFollowUp(this.applicationId, this.interactionToken, ref.id, text);
+  }
 }
 
 function assertNonEmptyString(value: unknown, message: string): asserts value is string {

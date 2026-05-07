@@ -41,6 +41,7 @@ export class NonTuiDisplayProjector {
   private lastProgressText = "";
   private lastFinalText = "";
   private finalText = "";
+  private sawFinalSignal = false;
   private readonly progressEntries = new Map<string, ProgressEntry>();
 
   constructor(options: NonTuiDisplayProjectorOptions) {
@@ -77,6 +78,10 @@ export class NonTuiDisplayProjector {
         return;
       case "agent_timeline":
         if (event.item.visibility !== "user") return;
+        if (event.item.kind === "final") {
+          this.sawFinalSignal = true;
+          return;
+        }
         await this.upsertProgress(
           `timeline:${event.item.sourceEventId}`,
           renderGatewayAgentTimelineItem(event.item),
@@ -86,6 +91,7 @@ export class NonTuiDisplayProjector {
         await this.updateFinal(event.text);
         return;
       case "assistant_final":
+        this.sawFinalSignal = true;
         await this.updateFinal(event.text);
         return;
       case "lifecycle_error":
@@ -100,6 +106,10 @@ export class NonTuiDisplayProjector {
       case "turn_steer":
         return;
     }
+  }
+
+  get renderedAssistantOutput(): boolean {
+    return this.sawFinalSignal || this.finalRef !== null || this.finalText.trim().length > 0;
   }
 
   private async upsertProgress(id: string, text: string): Promise<void> {

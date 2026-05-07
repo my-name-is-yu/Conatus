@@ -172,6 +172,8 @@ export type {
   LifecycleEndEvent,
   LifecycleErrorEvent,
 } from "./interface/chat/chat-events.js";
+export { createTextUserInput } from "./interface/chat/user-input.js";
+export type { UserInput, UserInputItem } from "./interface/chat/user-input.js";
 export { IntentRecognizer } from "./interface/tui/intent-recognizer.js";
 export type { IntentType, RecognizedIntent } from "./interface/tui/intent-recognizer.js";
 export { ActionHandler } from "./interface/tui/actions.js";
@@ -192,6 +194,25 @@ export {
   RuntimeControlService,
   recognizeRuntimeControlIntent,
 } from "./runtime/control/index.js";
+export {
+  NonTuiDisplayProjector,
+  createNonTuiDisplayProjector,
+  createGatewayDisplayPolicy,
+  resolveGatewayChannelDisplayContract,
+  TELEGRAM_GATEWAY_DISPLAY_CONTRACT,
+  SLACK_GATEWAY_DISPLAY_CONTRACT,
+  DISCORD_GATEWAY_DISPLAY_CONTRACT,
+  WHATSAPP_GATEWAY_DISPLAY_CONTRACT,
+  SIGNAL_GATEWAY_DISPLAY_CONTRACT,
+  WEBHOOK_GATEWAY_DISPLAY_CONTRACT,
+} from "./runtime/gateway/index.js";
+export type {
+  NonTuiDisplayMessageRef,
+  NonTuiDisplayTransport,
+  GatewayChannelDisplayContract,
+  GatewayDisplayCapabilities,
+  GatewayDisplayPolicy,
+} from "./runtime/gateway/index.js";
 export type {
   RuntimeControlExecutor,
   RuntimeControlExecutorResult,
