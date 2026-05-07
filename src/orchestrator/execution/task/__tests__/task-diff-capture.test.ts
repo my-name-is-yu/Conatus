@@ -208,6 +208,41 @@ describe("captureExecutionDiffArtifacts", () => {
     }
   });
 
+  it("keeps patches for paths whose names contain git header separators", () => {
+    const workspace = makeGitWorkspace();
+    try {
+      const execFileSyncFn = makeExecFileSync({
+        "git diff --name-only": "dir b/file.txt\n",
+        "git diff --cached --name-only": "",
+        "git ls-files --others --exclude-standard": "",
+        "git diff -- dir b/file.txt": [
+          "diff --git a/dir b/file.txt b/dir b/file.txt",
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+          "",
+        ].join("\n"),
+      });
+
+      const baseline = captureExecutionDiffBaseline(execFileSyncFn, workspace);
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace, { baseline: {
+        ...baseline,
+        pathFingerprints: { "dir b/file.txt": "different baseline patch" },
+      } });
+
+      expect(result.changedPaths).toEqual(["dir b/file.txt"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "dir b/file.txt",
+          patch: expect.stringContaining("+after"),
+          safe_to_revert: false,
+        }),
+      ]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("captures staged file diffs without counting fallback paths as git-backed changes", () => {
     const workspace = makeGitWorkspace();
     try {

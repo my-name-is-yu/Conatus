@@ -180,6 +180,7 @@ function readGitPathPatches(
     trackedPaths.length > 0
       ? runGitRead(execFileSyncFn, cwd, ["diff", "--", ...trackedPaths]) ?? ""
       : "",
+    trackedPaths,
   )) {
     appendPatch(filePath, patch);
   }
@@ -188,6 +189,7 @@ function readGitPathPatches(
     stagedPaths.length > 0
       ? runGitRead(execFileSyncFn, cwd, ["diff", "--cached", "--", ...stagedPaths]) ?? ""
       : "",
+    stagedPaths,
   )) {
     appendPatch(filePath, patch);
   }
@@ -241,15 +243,19 @@ export function captureExecutionDiffArtifacts(
   return { available: true, changedPaths, fileDiffs };
 }
 
-function parseGitDiffByPath(output: string): Map<string, string> {
+function parseGitDiffByPath(output: string, expectedPaths: string[]): Map<string, string> {
   const patches = new Map<string, string>();
   if (output.trim().length === 0) return patches;
 
+  const expectedByLength = [...expectedPaths].sort((left, right) => right.length - left.length);
   const sections = output.split(/^diff --git /m).filter((section) => section.trim().length > 0);
   for (const section of sections) {
     const patch = `diff --git ${section}`.trim();
-    const match = /^diff --git a\/(.+?) b\/(.+)$/m.exec(patch);
-    const filePath = match?.[2] ?? match?.[1];
+    const header = patch.split("\n", 1)[0] ?? "";
+    const filePath = expectedByLength.find((candidate) =>
+      header === `diff --git a/${candidate} b/${candidate}` ||
+      header.endsWith(` b/${candidate}`)
+    );
     if (filePath) {
       patches.set(filePath, patch);
     }
