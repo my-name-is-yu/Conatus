@@ -221,6 +221,35 @@ function mergeMechanicalAndArtifactVerification(
   };
 }
 
+function isTimedOutAgentLoopResult(executionResult: AgentResult): boolean {
+  return executionResult.stopped_reason === "timeout" || executionResult.agentLoop?.stopReason === "timeout";
+}
+
+function formatTimeoutBudgetEvidence(executionResult: AgentResult): string {
+  const details = [
+    "AgentLoop stopped because the wall-clock budget timed out",
+    typeof executionResult.agentLoop?.generatedEstimateMs === "number"
+      ? `generated estimate: ${executionResult.agentLoop.generatedEstimateMs}ms`
+      : "",
+    typeof executionResult.agentLoop?.activeBudgetMs === "number"
+      ? `active budget: ${executionResult.agentLoop.activeBudgetMs}ms`
+      : "",
+  ].filter(Boolean);
+  return details.join("; ");
+}
+
+function boundCompletionJudgerForTimedOutTask(deps: VerifierDeps): VerifierDeps {
+  const existing = deps.completionJudgerConfig;
+  return {
+    ...deps,
+    completionJudgerConfig: {
+      timeoutMs: Math.min(existing?.timeoutMs ?? 30_000, 5_000),
+      maxRetries: 0,
+      retryBackoffMs: 0,
+    },
+  };
+}
+
 function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -413,6 +442,44 @@ export async function verifyTask(
   const l1Result = await runMechanicalVerification(deps, task);
   const effectiveL1Result = mergeMechanicalAndArtifactVerification(l1Result, artifactResult);
 
+  const timedOutAgentLoop = isTimedOutAgentLoopResult(executionResult);
+  if (timedOutAgentLoop && !effectiveL1Result.passed) {
+    deps.logger?.info?.("[completion_judger] Skipping completion judging for timed-out AgentLoop task without mechanical salvage evidence", {
+      taskId: task.id,
+      stoppedReason: executionResult.stopped_reason,
+      generatedEstimateMs: executionResult.agentLoop?.generatedEstimateMs,
+      activeBudgetMs: executionResult.agentLoop?.activeBudgetMs,
+    });
+    const evidence = [
+      ...(effectiveL1Result.applicable
+        ? [{
+            layer: "mechanical" as const,
+            description: effectiveL1Result.description,
+            confidence: 0.9,
+          }]
+        : []),
+      {
+        layer: "independent_review" as const,
+        description: `${formatTimeoutBudgetEvidence(executionResult)}; completion judging skipped because timeout is the primary terminal reason and no mechanical salvage evidence passed`,
+        confidence: 0,
+      },
+      {
+        layer: "self_report" as const,
+        description: formatSelfReportEvidence(parseExecutorReport(executionResult)),
+        confidence: 0.3,
+      },
+    ];
+    return VerificationResultSchema.parse({
+      task_id: task.id,
+      verdict: "fail",
+      confidence: 0.9,
+      evidence,
+      dimension_updates: [],
+      file_diffs: await collectVerificationDiffs(deps, task, executionResult),
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   // ─── Build optional enrichment blocks for LLM review ───
   let knowledgeBlock = "";
   if (deps.knowledgeManager?.getRelevantKnowledge) {
@@ -449,7 +516,18 @@ export async function verifyTask(
   } catch { /* state enrichment is optional */ }
 
   // ─── Layer 2: LLM task reviewer (independent) ───
-  const l2Result = await runLLMReview(deps, task, executionResult, knowledgeBlock, stateBlock);
+  const reviewDeps = timedOutAgentLoop ? boundCompletionJudgerForTimedOutTask(deps) : deps;
+  if (timedOutAgentLoop) {
+    deps.logger?.info?.("[completion_judger] Running sharply bounded completion judging for timed-out AgentLoop task with mechanical salvage evidence", {
+      taskId: task.id,
+      stoppedReason: executionResult.stopped_reason,
+      generatedEstimateMs: executionResult.agentLoop?.generatedEstimateMs,
+      activeBudgetMs: executionResult.agentLoop?.activeBudgetMs,
+      timeoutMs: reviewDeps.completionJudgerConfig?.timeoutMs,
+      maxRetries: reviewDeps.completionJudgerConfig?.maxRetries,
+    });
+  }
+  const l2Result = await runLLMReview(reviewDeps, task, executionResult, knowledgeBlock, stateBlock);
 
   // ─── Layer 3: Executor self-report (reference only) ───
   const executorReport = parseExecutorReport(executionResult);
@@ -469,7 +547,7 @@ export async function verifyTask(
       confidence = 0.7;
     } else if (effectiveL1Result.passed && !l2Result.passed && !l2Result.partial) {
       // L1 pass + L2 fail → re-review
-      l2Retry = await runLLMReview(deps, task, executionResult, knowledgeBlock, stateBlock, 'main');
+      l2Retry = timedOutAgentLoop ? l2Result : await runLLMReview(deps, task, executionResult, knowledgeBlock, stateBlock, 'main');
       if (l2Retry.passed) {
         verdict = "pass";
         confidence = 0.75;

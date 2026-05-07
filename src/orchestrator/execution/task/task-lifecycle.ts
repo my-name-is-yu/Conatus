@@ -17,7 +17,7 @@ import {
 import type { Task, VerificationResult } from "../../../base/types/task.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveContext } from "../../../base/types/drive.js";
-import type { Dimension } from "../../../base/types/goal.js";
+import type { Dimension, Goal } from "../../../base/types/goal.js";
 import type { EthicsGate } from "../../../platform/traits/ethics-gate.js";
 import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import {
@@ -58,6 +58,7 @@ import type { GuardrailRunner } from "../../../platform/traits/guardrail-runner.
 import type { HookManager } from "../../../runtime/hook-manager.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
 import type { TaskAgentLoopRunner } from "../agent-loop/task-agent-loop-runner.js";
+import { defaultAgentLoopBudget, type AgentLoopBudget } from "../agent-loop/agent-loop-budget.js";
 import { taskAgentLoopResultToAgentResult } from "../agent-loop/task-agent-loop-result.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
@@ -90,9 +91,50 @@ import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { runTaskLifecycleCycle } from "./task-lifecycle-runner.js";
 
 const NATIVE_CODE_TASK_NO_CHANGES_ERROR = "No files were modified";
+const PROFILED_TASK_BUDGET_PADDING_MS = 5 * 60 * 1000;
 
 function nativeTaskRequiresCapturedFileChanges(task: Task): boolean {
   return task.task_category === "normal" || task.task_category === "capability_acquisition";
+}
+
+function isProfiledLongRunningTask(task: Task, goal?: Pick<Goal, "constraints"> | null): boolean {
+  return [...task.constraints, ...(goal?.constraints ?? [])].some((constraint) => {
+    const trimmed = constraint.trim();
+    return trimmed.startsWith("run_spec_profile:") || trimmed.startsWith("profile:");
+  });
+}
+
+function estimateTaskDurationMs(task: Task): number | null {
+  if (!task.estimated_duration) return null;
+  return durationToMs(task.estimated_duration);
+}
+
+function deriveTaskAgentLoopBudget(task: Task, goal?: Pick<Goal, "constraints"> | null, baseBudget: AgentLoopBudget = defaultAgentLoopBudget): {
+  budget?: Partial<AgentLoopBudget>;
+  activeBudgetMs: number;
+  generatedEstimateMs: number | null;
+  reason: "default" | "profiled_estimate";
+} {
+  const generatedEstimateMs = estimateTaskDurationMs(task);
+  if (
+    generatedEstimateMs !== null &&
+    generatedEstimateMs > baseBudget.maxWallClockMs &&
+    isProfiledLongRunningTask(task, goal)
+  ) {
+    const activeBudgetMs = generatedEstimateMs + PROFILED_TASK_BUDGET_PADDING_MS;
+    return {
+      budget: { maxWallClockMs: activeBudgetMs },
+      activeBudgetMs,
+      generatedEstimateMs,
+      reason: "profiled_estimate",
+    };
+  }
+
+  return {
+    activeBudgetMs: baseBudget.maxWallClockMs,
+    generatedEstimateMs,
+    reason: "default",
+  };
 }
 
 function failNativeCodeTaskWithoutFileChanges(input: {
@@ -582,15 +624,40 @@ export class TaskLifecycle {
       });
       const diffBaseline = captureExecutionDiffBaseline(this.execFileSyncFn, taskCwd ?? process.cwd());
       const artifactGoal = await this.stateManager.loadGoal(runningTask.goal_id).catch(() => null);
+      const agentLoopBudget = deriveTaskAgentLoopBudget(runningTask, artifactGoal);
+      if (agentLoopBudget.reason === "profiled_estimate") {
+        this.logger?.info?.("[TaskLifecycle] Aligning profiled task AgentLoop budget with generated estimate", {
+          taskId: runningTask.id,
+          generatedEstimateMs: agentLoopBudget.generatedEstimateMs,
+          activeBudgetMs: agentLoopBudget.activeBudgetMs,
+        });
+      }
       const agentLoopResult = await this.agentLoopRunner.runTask({
         task: runningTask,
         artifactGoal,
         workspaceContext,
         knowledgeContext,
         cwd: taskCwd,
+        ...(agentLoopBudget.budget ? { budget: agentLoopBudget.budget } : {}),
         ...(abortSignal ? { abortSignal } : {}),
       });
+      agentLoopResult.activeBudgetMs ??= agentLoopBudget.activeBudgetMs;
+      if (agentLoopBudget.generatedEstimateMs !== null) {
+        agentLoopResult.generatedEstimateMs ??= agentLoopBudget.generatedEstimateMs;
+      }
       result = taskAgentLoopResultToAgentResult(agentLoopResult);
+      if (result.stopped_reason === "timeout" && result.agentLoop) {
+        const generated = result.agentLoop.generatedEstimateMs;
+        const active = result.agentLoop.activeBudgetMs;
+        const budgetDetail = [
+          typeof generated === "number" ? `generated estimate ${generated}ms` : null,
+          typeof active === "number" ? `active AgentLoop budget ${active}ms` : null,
+        ].filter(Boolean).join("; ");
+        if (budgetDetail) {
+          result.error = [result.error, budgetDetail].filter(Boolean).join(" — ");
+          result.output = [result.output, budgetDetail].filter(Boolean).join("\n");
+        }
+      }
       let capturedChangedPaths = [...new Set(agentLoopResult.changedFiles)];
       if (agentLoopResult.workspace?.executionCwd) {
         const fallbackChangedPaths = [

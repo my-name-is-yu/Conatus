@@ -99,6 +99,8 @@ export interface AgentLoopResult<TOutput> {
   profileName?: string;
   reasoningEffort?: AgentLoopReasoningEffort;
   executionPolicy?: ExecutionPolicy;
+  activeBudgetMs?: number;
+  generatedEstimateMs?: number;
 }
 
 export interface AgentLoopCompletionValidationResult {

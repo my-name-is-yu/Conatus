@@ -125,6 +125,7 @@ export class TaskAgentLoopRunner {
         ...result,
         success,
         commandResults,
+        activeBudgetMs: turn.budget.maxWallClockMs,
       };
     } catch (error) {
       runError = error;
