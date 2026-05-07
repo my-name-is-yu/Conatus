@@ -83,6 +83,20 @@ describe("ShellTool", () => {
       expect(result.status).toBe("needs_approval");
     });
 
+    it("denies multiline rewrites with immediate typed-tool guidance", async () => {
+      const result = await tool.checkPermissions({
+        command: "python - <<'PY'\nprint('rewrite')\nPY",
+        timeoutMs: 120_000,
+      });
+      expect(result.status).toBe("denied");
+      if (result.status === "denied") {
+        expect(result.executionReason).toBe("policy_blocked");
+        expect(result.reason).toContain("unsupported multiline syntax");
+        expect(result.reason).toContain("Use apply_patch for edits");
+        expect(result.reason).toContain("Do not retry with heredocs");
+      }
+    });
+
     describe("trusted mode", () => {
       const trustedCtx = {
         cwd: process.cwd(),

@@ -404,6 +404,7 @@ export async function verifyTask(
           : []),
       ],
       dimension_updates: [],
+      artifact_contract_status: artifactResult,
       timestamp: new Date().toISOString(),
     });
     return scResult;
@@ -602,6 +603,7 @@ export async function verifyTask(
     evidence,
     dimension_updates,
     file_diffs: await collectVerificationDiffs(deps, task, executionResult),
+    artifact_contract_status: artifactResult,
     timestamp: now,
   });
 
@@ -1018,7 +1020,9 @@ export async function handleFailure(
       attempt: updatedTask.consecutive_failure_count,
       action: "escalate",
       verificationResult,
-      reason: (revertSuccess.unsafePaths?.length ?? 0) > 0
+      reason: revertSuccess.method === "git_unavailable"
+        ? `${revertSuccess.reason}; git restore is unavailable for this non-git workspace, so changed filesystem paths and artifacts require operator handoff`
+        : (revertSuccess.unsafePaths?.length ?? 0) > 0
         ? `revert could not safely discard all task changes because some share pre-existing dirty paths: ${revertSuccess.unsafePaths?.join(", ")}`
         : revertSuccess.concretePaths.length === 0
         ? "revert skipped because no concrete changed paths were captured; task output requires operator review"

@@ -47,6 +47,7 @@ export async function generateLoopReport(
             dimension: iterationResult.taskResult.task.primary_dimension,
             verificationDiffs: iterationResult.taskResult.verificationResult.file_diffs,
             diffEvidenceSource: iterationResult.taskResult.diffEvidenceSource,
+            artifactContractStatus: iterationResult.taskResult.verificationResult.artifact_contract_status,
           }
         : null;
     const waitStatus = buildWaitStatus(iterationResult);

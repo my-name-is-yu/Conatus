@@ -4,7 +4,7 @@ import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { expandTildePath } from "../../fs/FileValidationTool/protected-path-policy.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
-import { assessShellCommand, isReadOnlyShellCommand } from "./command-policy.js";
+import { assessShellCommand, formatShellPolicyDenialReason, isReadOnlyShellCommand } from "./command-policy.js";
 import { resolveWorkspaceCwd } from "../../workspace-scope.js";
 
 export const ShellInputSchema = z.object({
@@ -87,7 +87,11 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
     if (assessment.status === "needs_approval") {
       return { status: "needs_approval", reason: assessment.reason ?? "Shell command requires approval" };
     }
-    return { status: "denied", reason: assessment.reason ?? "Shell command denied by policy" };
+    return {
+      status: "denied",
+      reason: formatShellPolicyDenialReason(assessment.reason ?? "Shell command denied by policy"),
+      executionReason: "policy_blocked",
+    };
   }
 
   isConcurrencySafe(input: ShellInput): boolean {
