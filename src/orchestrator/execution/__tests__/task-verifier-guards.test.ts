@@ -550,6 +550,89 @@ describe("attemptRevert safety", () => {
     }
   });
 
+  it("escalates non-git Kaggle failures with changed paths and git-unavailable handoff", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-kaggle-"));
+    fs.mkdirSync(path.join(workspace, "src", "experiments"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "src", "experiments", "train_hgb_cv_auc_fast.py"), "print('dirty')\n", "utf-8");
+    fs.writeFileSync(path.join(workspace, "reports", "hgb.json"), "{\"balanced_accuracy\":0.42}\n", "utf-8");
+
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: workspace,
+    };
+    const task = makeTask({
+      constraints: [`workspace_path:${workspace}`, "run_spec_profile:kaggle"],
+      scope_boundary: {
+        in_scope: ["src/experiments/train_hgb_cv_auc_fast.py", "reports/hgb.json"],
+        out_of_scope: [],
+        blast_radius: "runtime-state",
+      },
+      reversibility: "reversible",
+      artifact_contract: {
+        required: true,
+        required_artifacts: [
+          {
+            kind: "metrics_json",
+            path: "reports/hgb.json",
+            required_fields: ["balanced_accuracy"],
+            fresh_after_task_start: true,
+          },
+          {
+            kind: "submission_csv",
+            path: "submissions/hgb.csv",
+            required_fields: [],
+            fresh_after_task_start: true,
+          },
+        ],
+      },
+    });
+
+    try {
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await handleFailure(deps, task, makeVerificationResult({
+        verdict: "fail",
+        evidence: [
+          {
+            layer: "mechanical",
+            description: "Artifact contract verification failed: submissions/hgb.csv is missing",
+            confidence: 0.95,
+          },
+        ],
+        file_diffs: [
+          {
+            path: "src/experiments/train_hgb_cv_auc_fast.py",
+            patch: "diff --git a/src/experiments/train_hgb_cv_auc_fast.py b/src/experiments/train_hgb_cv_auc_fast.py",
+            safe_to_revert: false,
+          },
+          {
+            path: "reports/hgb.json",
+            patch: "diff --git a/reports/hgb.json b/reports/hgb.json",
+          },
+        ],
+      }));
+
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+      };
+      const abandoned = ledger.events.at(-1)!;
+
+      expect(result.action).toBe("escalate");
+      expect(abandoned.action).toBe("escalate");
+      expect(abandoned.reason).toContain("git restore is unavailable because workspace is not a git repository");
+      expect(abandoned.reason).toContain("unsafe task changes share pre-existing dirty paths: src/experiments/train_hgb_cv_auc_fast.py");
+      expect(abandoned.reason).toContain("changed filesystem paths and artifacts require operator handoff");
+      expect(fs.readFileSync(path.join(workspace, "src", "experiments", "train_hgb_cv_auc_fast.py"), "utf-8")).toBe("print('dirty')\n");
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("does not revert the requested workspace when dirty isolated worktree handoff is required", async () => {
     const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
     initGitRepo(repoDir);

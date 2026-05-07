@@ -167,14 +167,32 @@ describe("generateExecutionSummary", () => {
         taskId: "task-kaggle",
         action: "keep",
         dimension: "score",
-        verificationDiffs: [],
+        verificationDiffs: [{
+          path: "src/experiments/train_hgb_cv_auc_fast.py",
+          patch: "diff --git a/src/experiments/train_hgb_cv_auc_fast.py b/src/experiments/train_hgb_cv_auc_fast.py",
+          safe_to_revert: false,
+        }, {
+          path: "reports/hgb.json",
+          patch: "diff --git a/reports/hgb.json b/reports/hgb.json",
+        }],
         diffEvidenceSource: "filesystem_artifact",
+        artifactContractStatus: {
+          applicable: true,
+          passed: false,
+          description: "submissions/hgb.csv is missing",
+        },
       },
     }));
 
     expect(report.metadata?.task_diff_evidence_source).toBe("filesystem_artifact");
     expect(report.content).toContain("Changed-path evidence source");
     expect(report.content).toContain("filesystem/artifact evidence (git unavailable)");
+    expect(report.content).toContain("Changed filesystem paths");
+    expect(report.content).toContain("src/experiments/train_hgb_cv_auc_fast.py, reports/hgb.json");
+    expect(report.content).toContain("Safety handoff");
+    expect(report.content).toContain("git restore was not used for overlapping dirty path(s): src/experiments/train_hgb_cv_auc_fast.py");
+    expect(report.content).toContain("Artifact-contract status");
+    expect(report.content).toContain("submissions/hgb.csv is missing");
   });
 
   it("shows 'No task executed' when taskResult is null", () => {

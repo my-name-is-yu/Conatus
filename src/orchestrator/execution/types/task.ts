@@ -133,6 +133,11 @@ export const VerificationResultSchema = z.object({
   evidence: z.array(EvidenceSchema),
   dimension_updates: z.array(DimensionUpdateSchema),
   file_diffs: z.array(VerificationFileDiffSchema).optional(),
+  artifact_contract_status: z.object({
+    applicable: z.boolean(),
+    passed: z.boolean(),
+    description: z.string(),
+  }).optional(),
   timestamp: z.string(),
 });
 export type VerificationResult = z.infer<typeof VerificationResultSchema>;

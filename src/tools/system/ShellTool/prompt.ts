@@ -1,1 +1,1 @@
-export const DESCRIPTION = `Execute a read-only shell command and return stdout, stderr, and exit code. Mutation commands are blocked.`;
+export const DESCRIPTION = `Execute a read-only shell command and return stdout, stderr, and exit code. Use for inspection, verification, and supported one-line commands. Mutation commands are blocked. Do not use for file edits, heredocs, here-strings, inline language rewrites, or other multiline shell write patterns; use apply_patch or another typed file edit tool instead.`;

@@ -144,6 +144,17 @@ export function assessShellCommand(
   return { status: "allowed", capabilities };
 }
 
+export function formatShellPolicyDenialReason(reason: string): string {
+  if (reason === "Shell command contains unsupported multiline syntax") {
+    return [
+      reason,
+      "Use apply_patch for edits, read/list tools for inspection, or a supported one-line shell command for verification.",
+      "Do not retry with heredocs, here-strings, or inline language rewrites.",
+    ].join(" ");
+  }
+  return reason;
+}
+
 export function isReadOnlyShellCommand(command: string): boolean {
   const assessment = assessShellCommand(command);
   return assessment.status === "allowed"

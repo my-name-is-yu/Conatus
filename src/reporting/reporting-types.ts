@@ -25,6 +25,11 @@ export type ExecutionSummaryParams = {
     dimension: string;
     verificationDiffs?: VerificationFileDiff[];
     diffEvidenceSource?: AgentResult["diffEvidenceSource"];
+    artifactContractStatus?: {
+      applicable: boolean;
+      passed: boolean;
+      description: string;
+    };
   } | null;
   stallDetected: boolean;
   pivotOccurred: boolean;

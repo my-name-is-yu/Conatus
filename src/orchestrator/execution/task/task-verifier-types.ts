@@ -40,7 +40,7 @@ export interface RevertAttemptResult {
   concretePaths: string[];
   unsafePaths?: string[];
   reason: string;
-  method?: "git_restore_tool" | "git_restore_child_process";
+  method?: "git_restore_tool" | "git_restore_child_process" | "git_unavailable";
 }
 
 export interface VerdictHandlingContext {
