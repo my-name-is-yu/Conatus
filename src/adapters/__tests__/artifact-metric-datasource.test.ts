@@ -173,7 +173,7 @@ describe("ArtifactMetricDataSourceAdapter", () => {
   });
 
   it("keeps per-dimension max_candidates bounds when reusing pass discovery", async () => {
-    writeJson(path.join(workspace, "artifacts", "best-balanced", "metrics.json"), {
+    writeJson(path.join(workspace, "artifacts", "best-balanced_accuracy", "metrics.json"), {
       balanced_accuracy: 0.95,
       status: "completed",
     });
