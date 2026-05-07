@@ -299,4 +299,96 @@ describe("task agent loop artifact contract completion gate", () => {
 
     expect(result).toEqual({ ok: true, reasons: [] });
   });
+
+  it("allows required metrics fields that are arrays or objects while enforcing declared field types", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-artifact-types-"));
+    try {
+      const metricsPath = path.join(workspace, "reports", "group_target_encoding_auc.json");
+      const submissionPath = path.join(workspace, "submissions", "group_target_encoding_auc.csv");
+      fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+      fs.mkdirSync(path.dirname(submissionPath), { recursive: true });
+      fs.writeFileSync(metricsPath, JSON.stringify({
+        roc_auc: 0.531,
+        fold_roc_auc: [0.5, 0.56, 0.51],
+        target_encoding_features: ["te_Driver"],
+        model_params: { max_iter: 5 },
+        output_paths: { metrics_json: "reports/group_target_encoding_auc.json" },
+      }), "utf8");
+      fs.writeFileSync(submissionPath, "id,PitNextLap\n1,0.1\n", "utf8");
+
+      const modelInfo = makeModelInfo();
+      const turn = buildTaskAgentLoopTurnContext({
+        task: makeKaggleArtifactTask({
+          created_at: "2020-01-01T00:00:00.000Z",
+          started_at: "2020-01-01T00:00:00.000Z",
+          success_criteria: [
+            {
+              description: "Metrics artifact exists",
+              verification_method: "test -f reports/group_target_encoding_auc.json",
+              is_blocking: true,
+            },
+          ],
+          artifact_contract: {
+            required: true,
+            required_artifacts: [
+              {
+                kind: "metrics_json",
+                path: "reports/group_target_encoding_auc.json",
+                required_fields: ["roc_auc", "fold_roc_auc", "target_encoding_features", "model_params", "output_paths"],
+                field_types: {
+                  roc_auc: "number",
+                  fold_roc_auc: "array",
+                  target_encoding_features: "array",
+                  model_params: "object",
+                  output_paths: "object",
+                },
+                fresh_after_task_start: true,
+              },
+              {
+                kind: "submission_csv",
+                path: "submissions/group_target_encoding_auc.csv",
+                required_fields: [],
+                fresh_after_task_start: true,
+              },
+            ],
+          },
+        }),
+        model: modelInfo.ref,
+        modelInfo,
+        session: createAgentLoopSession(),
+        cwd: workspace,
+      });
+
+      const result = await turn.completionValidator!({
+        output: {
+          status: "done",
+          finalAnswer: "Produced fresh metrics and submission artifacts.",
+          summary: "fresh artifacts",
+          filesChanged: ["reports/group_target_encoding_auc.json"],
+          testsRun: [],
+          completionEvidence: ["contract check passed"],
+          verificationHints: [],
+          blockers: [],
+        },
+        changedFiles: ["reports/group_target_encoding_auc.json"],
+        commandResults: [{
+          toolName: "shell_command",
+          command: "test -f reports/group_target_encoding_auc.json",
+          cwd: workspace,
+          success: true,
+          category: "verification",
+          evidenceEligible: true,
+          outputSummary: "exists",
+          durationMs: 1,
+        }],
+        calledTools: ["shell_command"],
+        modelTurns: 2,
+        toolCalls: 1,
+      });
+
+      expect(result).toEqual({ ok: true, reasons: [] });
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
 });

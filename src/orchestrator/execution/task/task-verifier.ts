@@ -225,6 +225,14 @@ function isTimedOutAgentLoopResult(executionResult: AgentResult): boolean {
   return executionResult.stopped_reason === "timeout" || executionResult.agentLoop?.stopReason === "timeout";
 }
 
+function isRecoverableAgentLoopFinalizationFailure(executionResult: AgentResult): boolean {
+  if (executionResult.success) return false;
+  const stopReason = executionResult.agentLoop?.stopReason;
+  return stopReason === "max_model_turns" ||
+    stopReason === "schema_error" ||
+    stopReason === "completion_gate_failed";
+}
+
 function formatTimeoutBudgetEvidence(executionResult: AgentResult): string {
   const details = [
     "AgentLoop stopped because the wall-clock budget timed out",
@@ -442,6 +450,45 @@ export async function verifyTask(
   // ─── Layer 1: Mechanical verification ───
   const l1Result = await runMechanicalVerification(deps, task);
   const effectiveL1Result = mergeMechanicalAndArtifactVerification(l1Result, artifactResult);
+
+  if (
+    isRecoverableAgentLoopFinalizationFailure(executionResult) &&
+    effectiveL1Result.applicable &&
+    effectiveL1Result.passed &&
+    (artifactResult.passed || (executionResult.agentLoop?.completionEvidence?.length ?? 0) > 0)
+  ) {
+    deps.logger?.info?.("[completion_judger] Skipping completion judging for AgentLoop finalization failure with mechanical salvage evidence", {
+      taskId: task.id,
+      stoppedReason: executionResult.stopped_reason,
+      agentLoopStopReason: executionResult.agentLoop?.stopReason,
+    });
+    return VerificationResultSchema.parse({
+      task_id: task.id,
+      verdict: "pass",
+      confidence: 0.85,
+      evidence: [
+        {
+          layer: "mechanical" as const,
+          description: effectiveL1Result.description,
+          confidence: 0.9,
+        },
+        {
+          layer: "independent_review" as const,
+          description: `completion judging skipped because AgentLoop stopped with ${executionResult.agentLoop?.stopReason ?? executionResult.stopped_reason} after mechanical/artifact evidence passed`,
+          confidence: 0.85,
+        },
+        {
+          layer: "self_report" as const,
+          description: formatSelfReportEvidence(parseExecutorReport(executionResult)),
+          confidence: 0.3,
+        },
+      ],
+      dimension_updates: [],
+      file_diffs: await collectVerificationDiffs(deps, task, executionResult),
+      artifact_contract_status: artifactResult,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   const timedOutAgentLoop = isTimedOutAgentLoopResult(executionResult);
   if (timedOutAgentLoop && !effectiveL1Result.passed) {

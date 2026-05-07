@@ -49,6 +49,7 @@ export const TaskArtifactRequirementSchema = z.object({
   kind: z.enum(["metrics_json", "submission_csv"]),
   path: z.string(),
   required_fields: z.array(z.string()).default([]),
+  field_types: z.record(z.enum(["number", "string", "array", "object", "boolean"])).optional(),
   fresh_after_task_start: z.boolean().default(true),
 });
 export type TaskArtifactRequirement = z.infer<typeof TaskArtifactRequirementSchema>;

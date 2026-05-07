@@ -236,6 +236,99 @@ describe("completion_judger timeout + retry", () => {
     );
   }, 2_000);
 
+  it("skips completion judging for AgentLoop finalization errors when artifact evidence passes", async () => {
+    const workspace = `${tmpDir}/kaggle-workspace`;
+    fs.mkdirSync(`${workspace}/reports`, { recursive: true });
+    fs.mkdirSync(`${workspace}/submissions`, { recursive: true });
+    fs.writeFileSync(`${workspace}/reports/group_target_encoding_auc.json`, JSON.stringify({
+      roc_auc: 0.531,
+      fold_roc_auc: [0.5, 0.56, 0.51],
+      target_encoding_features: ["te_Driver"],
+      model_params: { max_iter: 5 },
+      output_paths: { metrics_json: "reports/group_target_encoding_auc.json" },
+    }), "utf8");
+    fs.writeFileSync(`${workspace}/submissions/group_target_encoding_auc.csv`, "id,PitNextLap\n1,0.1\n", "utf8");
+
+    const failingLLM = makeFailingLLMClient(1);
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const deps = makeDeps(failingLLM, {
+      logger: logger as never,
+      completionJudgerConfig: { timeoutMs: 30_000, maxRetries: 2, retryBackoffMs: 1_000 },
+    });
+    const task = {
+      ...makeTask(),
+      created_at: "2020-01-01T00:00:00.000Z",
+      started_at: "2020-01-01T00:00:00.000Z",
+      success_criteria: [
+        {
+          description: "Manual artifact review",
+          verification_method: "Manual review",
+          is_blocking: true,
+        },
+      ],
+      artifact_contract: {
+        required: true,
+        required_artifacts: [
+          {
+            kind: "metrics_json" as const,
+            path: "reports/group_target_encoding_auc.json",
+            required_fields: ["roc_auc", "fold_roc_auc", "target_encoding_features", "model_params", "output_paths"],
+            field_types: {
+              roc_auc: "number" as const,
+              fold_roc_auc: "array" as const,
+              target_encoding_features: "array" as const,
+              model_params: "object" as const,
+              output_paths: "object" as const,
+            },
+            fresh_after_task_start: true,
+          },
+          {
+            kind: "submission_csv" as const,
+            path: "submissions/group_target_encoding_auc.csv",
+            required_fields: [],
+            fresh_after_task_start: true,
+          },
+        ],
+      },
+    };
+
+    const result = await verifyTask(deps, task, {
+      ...makeExecutionResult(),
+      success: false,
+      output: "{\"status\":\"done\",\"finalAnswer\":\"done\"}",
+      error: "{\"status\":\"done\",\"finalAnswer\":\"done\"}",
+      stopped_reason: "error",
+      agentLoop: {
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        stopReason: "max_model_turns",
+        failureReason: "max_model_turns",
+        modelTurns: 12,
+        toolCalls: 12,
+        compactions: 0,
+        completionEvidence: ["verified command: .venv/bin/python src/experiments/train_group_target_encoding_auc.py --contract-check"],
+        executionCwd: workspace,
+      },
+    });
+
+    expect(failingLLM.callCount).toBe(0);
+    expect(result.verdict).toBe("pass");
+    expect(result.artifact_contract_status).toMatchObject({
+      applicable: true,
+      passed: true,
+    });
+    expect(result.evidence.find((e) => e.layer === "independent_review")?.description).toContain("completion judging skipped");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping completion judging"),
+      expect.objectContaining({ taskId: task.id, agentLoopStopReason: "max_model_turns" })
+    );
+  }, 2_000);
+
   // ─────────────────────────────────────
   // Retry count
   // ─────────────────────────────────────

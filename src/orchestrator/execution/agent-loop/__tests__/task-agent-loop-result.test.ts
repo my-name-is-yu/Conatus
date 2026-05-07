@@ -1,7 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { taskAgentLoopResultToAgentResult } from "../task-agent-loop-result.js";
+import { TaskAgentLoopOutputSchema, taskAgentLoopResultToAgentResult } from "../task-agent-loop-result.js";
 
 describe("taskAgentLoopResultToAgentResult", () => {
+  it("normalizes common final JSON aliases instead of burning repair turns", () => {
+    const parsed = TaskAgentLoopOutputSchema.parse({
+      status: "completed",
+      summary: "Created the experiment and verified artifacts.",
+      changed_files: ["src/experiments/train_group_target_encoding_auc.py"],
+      completionEvidence: [
+        {
+          type: "runtime_verification",
+          command: ".venv/bin/python src/experiments/train_group_target_encoding_auc.py --contract-check",
+          status: "passed",
+          output: "Contract OK",
+        },
+      ],
+    });
+
+    expect(parsed).toMatchObject({
+      status: "done",
+      finalAnswer: "Created the experiment and verified artifacts.",
+      filesChanged: ["src/experiments/train_group_target_encoding_auc.py"],
+      completionEvidence: [
+        "runtime_verification; .venv/bin/python src/experiments/train_group_target_encoding_auc.py --contract-check; passed; Contract OK",
+      ],
+    });
+  });
+
   it("carries apply_patch artifacts as concrete changed paths", () => {
     const result = taskAgentLoopResultToAgentResult({
       success: true,

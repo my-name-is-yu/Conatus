@@ -53,6 +53,8 @@ export function buildTaskAgentLoopTurnContext(
     mode: "task",
     extraRules: [
       "When you return status=done, include concrete completionEvidence.",
+      "Final JSON status must be one of done, blocked, partial, or failed. Do not use completed.",
+      "Final JSON completionEvidence, verificationHints, blockers, and filesChanged must be arrays of strings, not objects.",
       "If files changed or you claim files changed, run at least one focused verification command through tools before the final answer.",
       "Do not return status=done while blockers remain.",
     ],
