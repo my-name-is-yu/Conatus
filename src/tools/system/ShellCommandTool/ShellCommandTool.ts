@@ -24,7 +24,7 @@ export class ShellCommandTool implements ITool<ShellCommandInput> {
   readonly inputSchema = ShellCommandInputSchema;
 
   description(): string {
-    return "Run a shell command with explicit cwd and timeout. Prefer apply_patch for file edits.";
+    return "Run a shell command with explicit cwd and timeout. Use for inspection, verification, and supported one-line commands. Do not use for file edits, heredocs, here-strings, inline language rewrites, or other multiline shell write patterns; use apply_patch or another typed file edit tool instead.";
   }
 
   async call(input: ShellCommandInput, context: ToolCallContext): Promise<ToolResult> {
