@@ -41,6 +41,7 @@ export type TaskRiskProfile = z.infer<typeof TaskRiskProfileSchema>;
 export const VerificationFileDiffSchema = z.object({
   path: z.string(),
   patch: z.string(),
+  safe_to_revert: z.boolean().optional(),
 });
 export type VerificationFileDiff = z.infer<typeof VerificationFileDiffSchema>;
 

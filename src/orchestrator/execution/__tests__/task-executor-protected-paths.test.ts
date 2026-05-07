@@ -52,6 +52,33 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
+function makeChangedPathsExecFileSync(paths: string[]): TaskExecutorDeps["execFileSyncFn"] {
+  let snapshotReadCount = 0;
+  return vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+    if (
+      args[0] === "diff" && args[1] === "--name-only"
+      || args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only"
+      || args[0] === "ls-files"
+    ) {
+      snapshotReadCount += 1;
+      if (snapshotReadCount <= 3) return "";
+    }
+    if (args[0] === "diff" && args[1] === "--name-only") return paths.join("\n");
+    if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
+    if (args[0] === "ls-files") return "";
+    if (args[0] === "diff") {
+      const filePath = args.at(-1) ?? "";
+      return [
+        `diff --git a/${filePath} b/${filePath}`,
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n");
+    }
+    return "";
+  }) as TaskExecutorDeps["execFileSyncFn"];
+}
+
 describe("executeTask protected paths", () => {
   let stateManager: TaskExecutorDeps["stateManager"];
   let sessionManager: SessionManager;
@@ -83,11 +110,7 @@ describe("executeTask protected paths", () => {
         stopped_reason: "completed",
       } as AgentResult),
     } as unknown as IAdapter;
-    execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
-      if (args[0] === "diff") return "build/output.txt";
-      if (args[0] === "ls-files") return "";
-      return "";
-    });
+    execFileSyncFn = makeChangedPathsExecFileSync(["build/output.txt"]);
   });
 
   afterEach(() => {
@@ -127,18 +150,7 @@ describe("executeTask protected paths", () => {
       adapterType: "mock",
       execute,
     } as unknown as IAdapter;
-    execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
-      if (args[0] === "diff" && args[1] === "--name-only") return "src/changed.ts\n.env";
-      if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
-      if (args[0] === "ls-files") return "";
-      if (args[0] === "diff") return [
-        `diff --git a/${args[3]} b/${args[3]}`,
-        "@@ -1 +1 @@",
-        "-old",
-        "+new",
-      ].join("\n");
-      return "";
-    });
+    execFileSyncFn = makeChangedPathsExecFileSync(["src/changed.ts", ".env"]);
 
     const result = await executeTask(
       {

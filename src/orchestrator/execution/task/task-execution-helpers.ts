@@ -7,6 +7,8 @@ import {
   applyPostExecutionDiffScopeChecks,
   executeTask as executeTaskDirect,
 } from "./task-executor.js";
+import { captureExecutionDiffBaseline } from "./task-diff-capture.js";
+import type { ExecutionDiffBaseline } from "./task-diff-capture.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { SessionManager } from "../session-manager.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
@@ -61,6 +63,7 @@ export async function executeTaskWithGuards(
     }
   }
 
+  let directFallbackDiffBaseline: ExecutionDiffBaseline | undefined;
   if (toolExecutor) {
     try {
       const workspaceCwd = await resolveTaskWorkspacePath({ stateManager, task, fallbackCwd });
@@ -77,6 +80,8 @@ export async function executeTaskWithGuards(
         preApproved: true,
         approvalFn: async () => false,
       };
+      const diffBaseline = captureExecutionDiffBaseline(execFileSyncFn, toolCtx.cwd);
+      directFallbackDiffBaseline = diffBaseline;
       const toolResult = await toolExecutor.execute(
         "run-adapter",
         {
@@ -97,6 +102,7 @@ export async function executeTaskWithGuards(
             execFileSyncFn,
             logger,
             fallbackChangedPaths: result.filesChangedPaths,
+            baseline: diffBaseline,
           });
           return result;
         }
@@ -107,6 +113,7 @@ export async function executeTaskWithGuards(
           cwd: workspaceCwd ?? process.cwd(),
           execFileSyncFn,
           logger,
+          baseline: diffBaseline,
           reason: "run-adapter returned invalid or truncated adapter result",
         });
       } else {
@@ -127,7 +134,9 @@ export async function executeTaskWithGuards(
     },
     task,
     adapter,
-    workspaceContext
+    workspaceContext,
+    undefined,
+    { diffBaseline: directFallbackDiffBaseline },
   );
   recordAdapterCircuitOutcome(adapterRegistry, adapter.adapterType, result);
 
@@ -158,6 +167,7 @@ async function buildInvalidRunAdapterResult(input: {
   cwd: string;
   execFileSyncFn: ExecuteTaskWithGuardsParams["execFileSyncFn"];
   logger?: Logger;
+  baseline?: ExecutionDiffBaseline;
   reason: string;
 }): Promise<AgentResult> {
   const result: AgentResult = {
@@ -174,6 +184,7 @@ async function buildInvalidRunAdapterResult(input: {
     cwd: input.cwd,
     execFileSyncFn: input.execFileSyncFn,
     logger: input.logger,
+    baseline: input.baseline,
   });
 
   const scopeError = result.error;

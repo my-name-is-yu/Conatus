@@ -208,6 +208,9 @@ async function collectVerificationDiffs(
     ...(executionResult.filesChangedPaths ?? []),
     ...(executionResult.agentLoop?.filesChangedPaths ?? []),
   ].filter((path, index, all) => path.length > 0 && all.indexOf(path) === index);
+  const hasExplicitExecutionDiffPaths =
+    executionResult.filesChangedPaths !== undefined ||
+    executionResult.agentLoop?.filesChangedPaths !== undefined;
 
   const toolContext = {
     cwd,
@@ -263,6 +266,10 @@ async function collectVerificationDiffs(
   if (changedPaths.length > 0) {
     const diffs = await Promise.all(changedPaths.slice(0, 5).map((path) => collectForPath(path)));
     return diffs.filter((diff): diff is VerificationFileDiff => diff !== null);
+  }
+
+  if (hasExplicitExecutionDiffPaths) {
+    return [];
   }
 
   try {
@@ -909,21 +916,33 @@ export async function handleFailure(
   }
 
   if (updatedTask.reversibility === "reversible") {
+    const fileDiffs = verificationResult.file_diffs ?? [];
     const concreteRevertPaths = [
       ...new Set(
-        (verificationResult.file_diffs ?? [])
+        fileDiffs
+          .filter((diff) => diff.safe_to_revert !== false)
+          .map((diff) => diff.path)
+          .filter((filePath) => filePath.trim().length > 0)
+      ),
+    ];
+    const unsafeRevertPaths = [
+      ...new Set(
+        fileDiffs
+          .filter((diff) => diff.safe_to_revert === false)
           .map((diff) => diff.path)
           .filter((filePath) => filePath.trim().length > 0)
       ),
     ];
     const revertSuccess = await attemptRevert(deps, updatedTask, {
       concretePaths: concreteRevertPaths,
+      unsafePaths: unsafeRevertPaths,
     });
     deps.logger?.warn(`[task] revert attempted`, {
       taskId: task.id,
       success: revertSuccess.success,
       reason: revertSuccess.reason,
       concretePaths: revertSuccess.concretePaths,
+      unsafePaths: revertSuccess.unsafePaths,
     });
     if (revertSuccess.success) {
       await appendTaskHistory(deps, task.goal_id, updatedTask);
@@ -947,7 +966,9 @@ export async function handleFailure(
       attempt: updatedTask.consecutive_failure_count,
       action: "escalate",
       verificationResult,
-      reason: revertSuccess.concretePaths.length === 0
+      reason: (revertSuccess.unsafePaths?.length ?? 0) > 0
+        ? `revert could not safely discard all task changes because some share pre-existing dirty paths: ${revertSuccess.unsafePaths?.join(", ")}`
+        : revertSuccess.concretePaths.length === 0
         ? "revert skipped because no concrete changed paths were captured; task output requires operator review"
         : `revert failed after wrong-direction result: ${revertSuccess.reason}`,
       stoppedReason: context.stoppedReason ?? undefined,

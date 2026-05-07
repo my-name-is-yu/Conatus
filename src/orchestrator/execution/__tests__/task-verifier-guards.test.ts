@@ -509,6 +509,47 @@ describe("attemptRevert safety", () => {
     }
   });
 
+  it("does not path-restore task edits that share a pre-existing dirty file", async () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
+    initGitRepo(repoDir);
+    fs.writeFileSync(path.join(repoDir, "tracked.txt"), "dirty before task\nand task edit\n", "utf-8");
+
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: repoDir,
+    };
+    const task = makeTask({
+      scope_boundary: { in_scope: ["tracked.txt"], out_of_scope: [], blast_radius: "low" },
+      reversibility: "reversible",
+    });
+
+    try {
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await handleFailure(deps, task, makeVerificationResult({
+        verdict: "fail",
+        evidence: [
+          { layer: "independent_review", description: "Wrong direction", confidence: 0.3 },
+          { layer: "self_report", description: "Failed", confidence: 0.3 },
+        ],
+        file_diffs: [{
+          path: "tracked.txt",
+          patch: "diff --git a/tracked.txt b/tracked.txt",
+          safe_to_revert: false,
+        }],
+      }));
+
+      expect(result.action).toBe("escalate");
+      expect(fs.readFileSync(path.join(repoDir, "tracked.txt"), "utf-8")).toBe("dirty before task\nand task edit\n");
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not revert the requested workspace when dirty isolated worktree handoff is required", async () => {
     const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-repo-"));
     initGitRepo(repoDir);

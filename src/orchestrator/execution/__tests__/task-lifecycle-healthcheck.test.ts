@@ -114,9 +114,29 @@ describe("TaskLifecycle — post-execution health check", () => {
     vi.restoreAllMocks();
   });
 
-  // Default mock execFileSyncFn: simulates a changed file so the post-execution
-  // scope check does not force success=false when no real git repo is available.
-  const mockExecFileSync = (_cmd: string, _args: string[], _opts: { cwd: string; encoding: "utf-8" }): string => "some-file.ts";
+  // Default mock execFileSyncFn: baseline reads are clean, then post-execution
+  // scope checks see a modification and do not force success=false.
+  function makeMockExecFileSync(): (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string {
+    let snapshotReadCount = 0;
+    return (_cmd: string, args: string[]): string => {
+      const key = args.join(" ");
+      if (
+        key === "diff --name-only"
+        || key === "diff --cached --name-only"
+        || key === "ls-files --others --exclude-standard"
+      ) {
+        snapshotReadCount += 1;
+        if (snapshotReadCount <= 3) return "";
+      }
+      if (key === "diff --name-only") return "some-file.ts\n";
+      if (key === "diff --cached --name-only") return "";
+      if (key === "ls-files --others --exclude-standard") return "";
+      if (key === "diff -- some-file.ts") {
+        return "diff --git a/some-file.ts b/some-file.ts\n@@ -1 +1 @@\n-old\n+new\n";
+      }
+      return "";
+    };
+  }
 
   function createLifecycle(options?: {
     healthCheckEnabled?: boolean;
@@ -132,7 +152,7 @@ describe("TaskLifecycle — post-execution health check", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { execFileSyncFn: mockExecFileSync, ...options }
+      { execFileSyncFn: makeMockExecFileSync(), ...options }
     );
   }
 
@@ -212,7 +232,7 @@ describe("TaskLifecycle — post-execution health check", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async () => true, execFileSyncFn: mockExecFileSync }
+      { approvalFn: async () => true, execFileSyncFn: makeMockExecFileSync() }
     );
     const healthCheckSpy = vi.spyOn(lifecycle, "runPostExecutionHealthCheck");
 
@@ -317,7 +337,7 @@ describe("TaskLifecycle — post-execution health check", () => {
       {
         healthCheckEnabled: true,
         approvalFn: async () => true,
-        execFileSyncFn: mockExecFileSync,
+        execFileSyncFn: makeMockExecFileSync(),
       }
     );
 

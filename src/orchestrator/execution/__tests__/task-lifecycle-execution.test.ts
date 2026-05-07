@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
@@ -176,9 +178,56 @@ describe("TaskLifecycle", async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
-  // Default mock execFileSyncFn: simulates "some-file.ts" as a changed file
-  // so the post-execution scope check sees a modification and does not force success=false.
-  const mockExecFileSync = (_cmd: string, _args: string[], _opts: { cwd: string; encoding: "utf-8" }): string => "some-file.ts";
+  // Default mock execFileSyncFn: baseline reads are clean, then post-execution
+  // scope checks see a modification and do not force success=false.
+  function makeDefaultMockExecFileSync(): (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string {
+    let snapshotReadCount = 0;
+    return (_cmd: string, args: string[]): string => {
+      const key = args.join(" ");
+      if (
+        key === "diff --name-only"
+        || key === "diff --cached --name-only"
+        || key === "ls-files --others --exclude-standard"
+      ) {
+        snapshotReadCount += 1;
+        if (snapshotReadCount <= 3) return "";
+      }
+      if (key === "diff --name-only") return "some-file.ts\n";
+      if (key === "diff --cached --name-only") return "";
+      if (key === "ls-files --others --exclude-standard") return "";
+      if (key === "diff -- some-file.ts") {
+        return "diff --git a/some-file.ts b/some-file.ts\n@@ -1 +1 @@\n-old\n+new\n";
+      }
+      return "";
+    };
+  }
+
+  const realExecFileSync = (
+    cmd: string,
+    args: string[],
+    opts: { cwd: string; encoding: "utf-8"; stdio?: "pipe" },
+  ): string => execFileSync(cmd, args, {
+    cwd: opts.cwd,
+    encoding: opts.encoding,
+    stdio: opts.stdio ?? "pipe",
+  });
+
+  function runGit(cwd: string, args: string[]): void {
+    execFileSync("git", args, { cwd, stdio: "pipe" });
+  }
+
+  function makeDirtyGitRepo(name: string): string {
+    const repo = path.join(tmpDir, name);
+    fs.mkdirSync(repo, { recursive: true });
+    runGit(repo, ["init"]);
+    runGit(repo, ["config", "user.name", "PulSeed Test"]);
+    runGit(repo, ["config", "user.email", "pulseed-test@example.com"]);
+    fs.writeFileSync(path.join(repo, "preexisting.txt"), "clean\n", "utf-8");
+    runGit(repo, ["add", "preexisting.txt"]);
+    runGit(repo, ["commit", "-m", "initial"]);
+    fs.writeFileSync(path.join(repo, "preexisting.txt"), "dirty before task\n", "utf-8");
+    return repo;
+  }
 
   function createLifecycle(
     llmClient: ILLMClient,
@@ -198,7 +247,7 @@ describe("TaskLifecycle", async () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { execFileSyncFn: mockExecFileSync, ...options }
+      { execFileSyncFn: options?.execFileSyncFn ?? makeDefaultMockExecFileSync(), ...options }
     );
   }
 
@@ -242,6 +291,111 @@ describe("TaskLifecycle", async () => {
 
       await lifecycle.executeTask(makeTask(), adapter);
       expect(executeCalled).toBe(true);
+    });
+
+    it("excludes pre-existing dirty workspace paths from adapter file diffs", async () => {
+      const llm = createMockLLMClient([]);
+      const repo = makeDirtyGitRepo("adapter-dirty-repo");
+      const lifecycle = createLifecycle(llm, { execFileSyncFn: realExecFileSync });
+      const adapter: import("../task/task-lifecycle.js").IAdapter = {
+        adapterType: "mock",
+        async execute() {
+          fs.writeFileSync(path.join(repo, "task-output.txt"), "task output\n", "utf-8");
+          return {
+            success: true,
+            output: "Task completed successfully",
+            error: null,
+            exit_code: 0,
+            elapsed_ms: 100,
+            stopped_reason: "completed",
+          };
+        },
+      };
+      const task = makeTask({
+        id: "task-dirty-adapter",
+        constraints: [`workspace_path:${repo}`],
+      });
+
+      const result = await lifecycle.executeTask(task, adapter);
+
+      expect(result.success).toBe(true);
+      expect(result.filesChangedPaths).toEqual(["task-output.txt"]);
+      expect(result.fileDiffs?.map((diff) => diff.path)).toEqual(["task-output.txt"]);
+      expect(result.fileDiffs?.[0]?.patch).toContain("+task output");
+      expect(fs.readFileSync(path.join(repo, "preexisting.txt"), "utf-8")).toBe("dirty before task\n");
+    });
+
+    it("filters failed adapter file diffs to task-produced paths", async () => {
+      const llm = createMockLLMClient([]);
+      const repo = makeDirtyGitRepo("failed-adapter-dirty-repo");
+      const lifecycle = createLifecycle(llm, { execFileSyncFn: realExecFileSync });
+      const adapter: import("../task/task-lifecycle.js").IAdapter = {
+        adapterType: "mock",
+        async execute() {
+          fs.writeFileSync(path.join(repo, "task-output.txt"), "task output\n", "utf-8");
+          return {
+            success: false,
+            output: "Task failed after writing output",
+            error: "adapter failed",
+            exit_code: 1,
+            elapsed_ms: 100,
+            stopped_reason: "error",
+            filesChangedPaths: ["preexisting.txt", "task-output.txt"],
+            fileDiffs: [
+              { path: "preexisting.txt", patch: "diff --git a/preexisting.txt b/preexisting.txt" },
+              { path: "task-output.txt", patch: "diff --git a/task-output.txt b/task-output.txt" },
+            ],
+          };
+        },
+      };
+      const task = makeTask({
+        id: "task-failed-dirty-adapter",
+        constraints: [`workspace_path:${repo}`],
+      });
+
+      const result = await lifecycle.executeTask(task, adapter);
+
+      expect(result.success).toBe(false);
+      expect(result.filesChangedPaths).toEqual(["task-output.txt"]);
+      expect(result.fileDiffs?.map((diff) => diff.path)).toEqual(["task-output.txt"]);
+      expect(result.fileDiffs?.[0]?.patch).toContain("+task output");
+      expect(fs.readFileSync(path.join(repo, "preexisting.txt"), "utf-8")).toBe("dirty before task\n");
+    });
+
+    it("keeps same-file edits to a dirty baseline path but marks them unsafe for path restore", async () => {
+      const llm = createMockLLMClient([]);
+      const repo = makeDirtyGitRepo("same-file-dirty-adapter-repo");
+      const lifecycle = createLifecycle(llm, { execFileSyncFn: realExecFileSync });
+      const adapter: import("../task/task-lifecycle.js").IAdapter = {
+        adapterType: "mock",
+        async execute() {
+          fs.writeFileSync(path.join(repo, "preexisting.txt"), "dirty before task\nand task edit\n", "utf-8");
+          return {
+            success: false,
+            output: "Task failed after editing a dirty file",
+            error: "adapter failed",
+            exit_code: 1,
+            elapsed_ms: 100,
+            stopped_reason: "error",
+          };
+        },
+      };
+      const task = makeTask({
+        id: "task-same-file-dirty-adapter",
+        constraints: [`workspace_path:${repo}`],
+      });
+
+      const result = await lifecycle.executeTask(task, adapter);
+
+      expect(result.success).toBe(false);
+      expect(result.filesChangedPaths).toEqual(["preexisting.txt"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "preexisting.txt",
+          patch: expect.stringContaining("and task edit"),
+          safe_to_revert: false,
+        }),
+      ]);
     });
 
     it("returns AgentResult from adapter", async () => {
@@ -510,7 +664,25 @@ describe("TaskLifecycle", async () => {
 
     it("sets filesChanged=true when git diff --stat reports changed files", async () => {
       // Inject mock via execFileSyncFn option to avoid ES module spy issues
-      const mockExecFileSync = vi.fn().mockReturnValue("src/foo.ts | 5 +++++\n 1 file changed, 5 insertions(+)");
+      let snapshotReadCount = 0;
+      const mockExecFileSync = vi.fn((_cmd: string, args: string[]) => {
+        const key = args.join(" ");
+        if (
+          key === "diff --name-only"
+          || key === "diff --cached --name-only"
+          || key === "ls-files --others --exclude-standard"
+        ) {
+          snapshotReadCount += 1;
+          if (snapshotReadCount <= 3) return "";
+        }
+        if (key === "diff --name-only") return "src/foo.ts\n";
+        if (key === "diff --cached --name-only") return "";
+        if (key === "ls-files --others --exclude-standard") return "";
+        if (key === "diff -- src/foo.ts") {
+          return "diff --git a/src/foo.ts b/src/foo.ts\n@@ -1 +1 @@\n-old\n+new\n";
+        }
+        return "";
+      });
 
       const llm = createMockLLMClient([]);
       const lifecycle = createLifecycle(llm, { execFileSyncFn: mockExecFileSync });
@@ -569,7 +741,7 @@ describe("TaskLifecycle", async () => {
       expect(result.filesChanged).toBeUndefined();
     });
 
-    it("does not run git diff check when adapter reports failure", async () => {
+    it("filters diff evidence when adapter reports failure", async () => {
       const mockExecFileSync = vi.fn().mockReturnValue("some output");
 
       const llm = createMockLLMClient([]);
@@ -579,9 +751,11 @@ describe("TaskLifecycle", async () => {
 
       const result = await lifecycle.executeTask(task, adapter);
 
-      // Git diff check is skipped for failed tasks
-      expect(result.filesChanged).toBeUndefined();
-      expect(mockExecFileSync).not.toHaveBeenCalled();
+      // Baseline and post-execution capture still run so failed-result evidence cannot bypass filtering.
+      expect(result.filesChanged).toBe(false);
+      expect(result.filesChangedPaths).toEqual([]);
+      expect(result.fileDiffs).toEqual([]);
+      expect(mockExecFileSync.mock.calls.length).toBeGreaterThanOrEqual(6);
     });
   });
 
@@ -628,6 +802,46 @@ describe("TaskLifecycle", async () => {
       expect(ledger.events.map((event) => event.type)).toEqual(["started", "failed"]);
       expect(ledger.events.at(-1)!.reason).toContain("operator handoff");
       expect(ledger.summary.task_status).toBe("error");
+    });
+
+    it("excludes pre-existing dirty workspace paths from worktree-disabled native file diffs", async () => {
+      const llm = createMockLLMClient([]);
+      const repo = makeDirtyGitRepo("native-dirty-repo");
+      const task = makeTask({
+        id: "task-dirty-native",
+        constraints: [`workspace_path:${repo}`],
+      });
+      const agentLoopRunner = {
+        runTask: vi.fn().mockImplementation(async (input: { cwd?: string }) => {
+          expect(input.cwd).toBe(repo);
+          fs.writeFileSync(path.join(repo, "task-output.txt"), "task output\n", "utf-8");
+          return makeAgentLoopResult("completed", {
+            filesChanged: true,
+            changedFiles: ["preexisting.txt", "task-output.txt"],
+            workspace: {
+              requestedCwd: repo,
+              executionCwd: repo,
+              isolated: false,
+              cleanupStatus: "not_requested",
+              dirty: false,
+              disposition: "not_isolated",
+            },
+          });
+        }),
+      } as unknown as TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: realExecFileSync,
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      expect(result.success).toBe(true);
+      expect(result.filesChangedPaths).toEqual(["task-output.txt"]);
+      expect(result.fileDiffs?.map((diff) => diff.path)).toEqual(["task-output.txt"]);
+      expect(result.fileDiffs?.[0]?.patch).toContain("+task output");
+      expect(fs.readFileSync(path.join(repo, "preexisting.txt"), "utf-8")).toBe("dirty before task\n");
     });
 
     it.each([

@@ -3,6 +3,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
@@ -62,6 +64,41 @@ function createMockAdapter(output = "done", elapsed_ms = 100): import("../task/t
   };
 }
 
+function makeChangedPathsExecFileSync(
+  paths: string[],
+): ReturnType<typeof vi.fn> & ((cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string) {
+  let snapshotReadCount = 0;
+  const fn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+    if (
+      args[0] === "diff" && args[1] === "--name-only"
+      || args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only"
+      || args[0] === "ls-files"
+    ) {
+      snapshotReadCount += 1;
+      if (snapshotReadCount <= 3) return "";
+    }
+    if (args[0] === "diff" && args[1] === "--name-only") return paths.join("\n");
+    if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
+    if (args[0] === "ls-files") return "";
+    return "";
+  });
+  return fn as ReturnType<typeof vi.fn> & ((cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string);
+}
+
+const realExecFileSync = (
+  cmd: string,
+  args: string[],
+  opts: { cwd: string; encoding: "utf-8" },
+): string => execFileSync(cmd, args, {
+  cwd: opts.cwd,
+  encoding: opts.encoding,
+  stdio: "pipe",
+});
+
+function runGit(cwd: string, args: string[]): void {
+  execFileSync("git", args, { cwd, stdio: "pipe" });
+}
+
 describe("TaskLifecycle — executeTask guardrail behavior", () => {
   let tmpDir: string;
   let stateManager: StateManager;
@@ -102,7 +139,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
       stallDetector,
       {
         healthCheckEnabled: false,
-        execFileSyncFn: options?.execFileSyncFn ?? (() => "some-file.ts"),
+        execFileSyncFn: options?.execFileSyncFn ?? makeChangedPathsExecFileSync(["some-file.ts"]),
         revertCwd: options?.revertCwd,
         ...options,
       }
@@ -186,13 +223,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
       summary: "ok",
       durationMs: 1,
     });
-    const execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
-      if (args[0] === "diff" && args[1] === "--name-only") return "src/changed.ts\n.env";
-      if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
-      if (args[0] === "ls-files") return "";
-      if (args[0] === "diff") return "";
-      return "";
-    });
+    const execFileSyncFn = makeChangedPathsExecFileSync(["src/changed.ts", ".env"]);
     const lifecycle = createLifecycle(createMockLLMClient([]), {
       toolExecutor: { execute } as unknown as ToolExecutor,
       execFileSyncFn,
@@ -271,13 +302,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
       summary: "truncated",
       durationMs: 1,
     });
-    const execFileSyncFn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
-      if (args[0] === "diff" && args[1] === "--name-only") return ".env";
-      if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
-      if (args[0] === "ls-files") return "";
-      if (args[0] === "diff") return "";
-      return "";
-    });
+    const execFileSyncFn = makeChangedPathsExecFileSync([".env"]);
     const lifecycle = createLifecycle(createMockLLMClient([]), {
       toolExecutor: { execute } as unknown as ToolExecutor,
       execFileSyncFn,
@@ -300,6 +325,63 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     expect(result.error).toContain(".env");
     expect(result.filesChangedPaths).toEqual([".env"]);
     expect(execFileSyncFn).toHaveBeenCalled();
+  });
+
+  it("preserves run-adapter fallback baseline after a first attempt writes files", async () => {
+    const repo = path.join(tmpDir, "fallback-baseline-repo");
+    fs.mkdirSync(repo, { recursive: true });
+    runGit(repo, ["init"]);
+    runGit(repo, ["config", "user.name", "PulSeed Test"]);
+    runGit(repo, ["config", "user.email", "pulseed-test@example.com"]);
+    fs.writeFileSync(path.join(repo, "preexisting.txt"), "clean\n", "utf-8");
+    runGit(repo, ["add", "preexisting.txt"]);
+    runGit(repo, ["commit", "-m", "initial"]);
+    fs.writeFileSync(path.join(repo, "preexisting.txt"), "dirty before task\n", "utf-8");
+
+    const execute = vi.fn().mockImplementation(async () => {
+      fs.writeFileSync(path.join(repo, "first-attempt.txt"), "first attempt\n", "utf-8");
+      return {
+        success: false,
+        data: null,
+        error: "run-adapter failed after writing",
+        summary: "failed",
+        durationMs: 1,
+      };
+    });
+    const adapter = {
+      adapterType: "mock",
+      async execute(): Promise<import("../task/task-lifecycle.js").AgentResult> {
+        fs.writeFileSync(path.join(repo, "second-attempt.txt"), "second attempt\n", "utf-8");
+        return {
+          success: false,
+          output: "direct fallback failed",
+          error: "direct fallback failed",
+          exit_code: 1,
+          elapsed_ms: 10,
+          stopped_reason: "error",
+        };
+      },
+    };
+    const lifecycle = createLifecycle(createMockLLMClient([]), {
+      toolExecutor: { execute } as unknown as ToolExecutor,
+      execFileSyncFn: realExecFileSync,
+    });
+
+    const result = await lifecycle.executeTask(
+      makeTask({
+        id: "task-run-adapter-fallback-baseline",
+        constraints: [`workspace_path:${repo}`],
+      }),
+      adapter,
+    );
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(result.success).toBe(false);
+    expect(new Set(result.filesChangedPaths)).toEqual(new Set(["first-attempt.txt", "second-attempt.txt"]));
+    expect(new Set(result.fileDiffs?.map((diff) => diff.path))).toEqual(
+      new Set(["first-attempt.txt", "second-attempt.txt"]),
+    );
+    expect(result.filesChangedPaths).not.toContain("preexisting.txt");
   });
 
   it("preserves elapsed_ms when the after_tool guardrail rejects", async () => {

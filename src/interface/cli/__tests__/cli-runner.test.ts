@@ -608,7 +608,9 @@ describe("run subcommand", async () => {
     );
 
     expect(code).toBe(0);
-    expect(mockRun).toHaveBeenCalledWith("g-relative-workspace");
+    expect(mockRun).toHaveBeenCalledWith("g-relative-workspace", {
+      abortSignal: expect.any(AbortSignal),
+    });
   });
 
   it("exits with code 0 when finalStatus is completed", async () => {
