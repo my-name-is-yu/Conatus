@@ -278,6 +278,10 @@ export class ObservationEngine {
       ? [...this.dataSources, goalArtifactDataSource]
       : this.dataSources;
 
+    for (const dataSource of observationDataSources) {
+      dataSource.beginObservationPass?.();
+    }
+    try {
     for (let idx = 0; idx < observeCount; idx++) {
       const dim = goal.dimensions[idx]!;
       const method: ObservationMethod = methods[idx] ?? dim.observation_method;
@@ -373,6 +377,11 @@ export class ObservationEngine {
         logger: this.logger,
         hookManager: this.hookManager,
       });
+    }
+    } finally {
+      for (const dataSource of observationDataSources) {
+        dataSource.endObservationPass?.();
+      }
     }
   }
 

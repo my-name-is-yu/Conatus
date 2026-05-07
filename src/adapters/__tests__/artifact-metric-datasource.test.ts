@@ -129,6 +129,49 @@ describe("ArtifactMetricDataSourceAdapter", () => {
     expect(updated?.dimensions[0]?.last_observed_layer).toBe("mechanical");
   });
 
+  it("reuses artifact metric discovery across dimensions in one ObservationEngine.observe pass", async () => {
+    writeJson(path.join(workspace, "artifacts", "probe", "metrics.json"), {
+      balanced_accuracy: 0.88,
+      f1_score: 0.81,
+      status: "completed",
+    });
+    const stateManager = new StateManager(tmpDir);
+    const goal = makeGoal({
+      id: "goal-artifact-metrics-cache",
+      constraints: [`workspace_path:${workspace}`],
+      dimensions: [
+        makeDimension({
+          name: "balanced_accuracy",
+          current_value: 0,
+          threshold: { type: "min", value: 0.9 },
+        }),
+        makeDimension({
+          name: "f1_score",
+          current_value: 0,
+          threshold: { type: "min", value: 0.9 },
+        }),
+      ],
+    });
+    await stateManager.saveGoal(goal);
+    const adapter = createWorkspaceArtifactMetricDataSource(workspace);
+
+    const engine = new ObservationEngine(stateManager, [adapter]);
+    await engine.observe("goal-artifact-metrics-cache", []);
+
+    const updated = await stateManager.loadGoal("goal-artifact-metrics-cache");
+    expect(updated?.dimensions.map((dimension) => dimension.current_value)).toEqual([0.88, 0.81]);
+    writeJson(path.join(workspace, "artifacts", "probe-new", "metrics.json"), {
+      balanced_accuracy: 0.91,
+      f1_score: 0.87,
+      status: "completed",
+    });
+
+    await engine.observe("goal-artifact-metrics-cache", []);
+
+    const refreshed = await stateManager.loadGoal("goal-artifact-metrics-cache");
+    expect(refreshed?.dimensions.map((dimension) => dimension.current_value)).toEqual([0.91, 0.87]);
+  });
+
   it("does not claim unrelated best-prefixed dimensions in the CoreLoop observation path", async () => {
     const stateManager = new StateManager(tmpDir);
     const goal = makeGoal({

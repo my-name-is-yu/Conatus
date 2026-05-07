@@ -40,6 +40,8 @@ export interface IDataSourceAdapter {
   healthCheck(): Promise<boolean>;
   getSupportedDimensions?(): string[];
   supportsDimension?(dimensionName: string, goalId?: string): boolean;
+  beginObservationPass?(): void;
+  endObservationPass?(): void;
 }
 
 // ─── FileDataSourceAdapter ───
