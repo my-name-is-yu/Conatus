@@ -7,6 +7,8 @@ import {
 import { RuntimeEvidenceLedger, type RuntimeEvidenceLedgerPort } from "../store/evidence-ledger.js";
 import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
+import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
+import { breakerKey, GuardrailStore } from "../guardrails/index.js";
 import type {
   RuntimeControlActor,
   RuntimeControlOperation,
@@ -47,6 +49,22 @@ export interface RuntimeControlResult {
   state?: RuntimeControlOperationState;
 }
 
+export type RuntimeAutomationControlDomain = "auth_handoff" | "browser_session" | "guardrail" | "backpressure";
+
+export interface RuntimeAutomationControlRequest {
+  domain: RuntimeAutomationControlDomain;
+  action: string;
+  reason: string;
+  cwd: string;
+  handoffId?: string;
+  sessionId?: string;
+  providerId?: string;
+  serviceKey?: string;
+  requestedBy?: RuntimeControlActor;
+  replyTarget?: RuntimeControlReplyTarget;
+  approvalFn?: (reason: string) => Promise<boolean>;
+}
+
 export interface RuntimeControlExecutorResult {
   ok: boolean;
   message?: string;
@@ -65,6 +83,9 @@ export interface RuntimeControlServiceOptions {
   sessionRegistry?: Pick<ReturnType<typeof createRuntimeSessionRegistry>, "snapshot">;
   evidenceLedger?: RuntimeEvidenceLedgerPort;
   operatorHandoffStore?: Pick<RuntimeOperatorHandoffStore, "create">;
+  authHandoffStore?: RuntimeAuthHandoffStore;
+  browserSessionStore?: BrowserSessionStore;
+  guardrailStore?: GuardrailStore;
   executor?: RuntimeControlExecutor;
   now?: () => Date;
 }
@@ -82,6 +103,9 @@ export class RuntimeControlService {
   private readonly sessionRegistry?: Pick<ReturnType<typeof createRuntimeSessionRegistry>, "snapshot">;
   private readonly evidenceLedger?: RuntimeEvidenceLedgerPort;
   private readonly operatorHandoffStore?: Pick<RuntimeOperatorHandoffStore, "create">;
+  private readonly authHandoffStore: RuntimeAuthHandoffStore;
+  private readonly browserSessionStore: BrowserSessionStore;
+  private readonly guardrailStore: GuardrailStore;
   private readonly executor?: RuntimeControlExecutor;
   private readonly now: () => Date;
 
@@ -92,6 +116,9 @@ export class RuntimeControlService {
       : undefined);
     this.evidenceLedger = options.evidenceLedger ?? (options.runtimeRoot ? new RuntimeEvidenceLedger(options.runtimeRoot) : undefined);
     this.operatorHandoffStore = options.operatorHandoffStore ?? (options.runtimeRoot ? new RuntimeOperatorHandoffStore(options.runtimeRoot) : undefined);
+    this.authHandoffStore = options.authHandoffStore ?? new RuntimeAuthHandoffStore(options.runtimeRoot);
+    this.browserSessionStore = options.browserSessionStore ?? new BrowserSessionStore(options.runtimeRoot);
+    this.guardrailStore = options.guardrailStore ?? new GuardrailStore(options.runtimeRoot);
     this.executor = options.executor;
     this.now = options.now ?? (() => new Date());
   }
@@ -144,6 +171,27 @@ export class RuntimeControlService {
         irreversible: request.irreversible ?? true,
       },
     });
+  }
+
+  async controlAutomation(request: RuntimeAutomationControlRequest): Promise<RuntimeControlResult> {
+    const mutation = request.action !== "inspect";
+    if (mutation && !request.approvalFn) {
+      return this.recordAutomationOperation(request, "blocked", false, "Runtime automation mutation requires an approval surface.");
+    }
+    if (mutation) {
+      const approved = await request.approvalFn?.(`Runtime automation ${request.domain}.${request.action}: ${request.reason}`);
+      if (!approved) {
+        return this.recordAutomationOperation(request, "cancelled", false, "Runtime automation operation was not approved.");
+      }
+    }
+
+    const result = await this.applyAutomationControl(request);
+    return this.recordAutomationOperation(
+      request,
+      result.success ? "verified" : "blocked",
+      result.success,
+      result.message,
+    );
   }
 
   private async handleRunControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
@@ -236,6 +284,148 @@ export class RuntimeControlService {
       expected_health: expectedHealthFor(request.intent.kind),
       result: { ok: false, message },
     });
+  }
+
+  private async applyAutomationControl(request: RuntimeAutomationControlRequest): Promise<{ success: boolean; message: string }> {
+    if (request.domain === "auth_handoff") {
+      if (!request.handoffId) return { success: false, message: "auth_handoff control requires handoffId." };
+      const handoff = await this.authHandoffStore.load(request.handoffId);
+      if (!handoff) return { success: false, message: `Auth handoff not found: ${request.handoffId}` };
+      if (request.action === "inspect") return { success: true, message: `Auth handoff ${handoff.handoff_id} is ${handoff.state}.` };
+      if (handoff.state === "completed" || handoff.state === "cancelled" || handoff.state === "expired" || handoff.state === "superseded") {
+        return { success: false, message: `Auth handoff ${handoff.handoff_id} is terminal: ${handoff.state}.` };
+      }
+      if (isPastIso(handoff.expires_at)) {
+        await this.authHandoffStore.transition(handoff.handoff_id, "expired");
+        return { success: false, message: `Auth handoff ${handoff.handoff_id} is expired.` };
+      }
+      if (request.action === "complete") {
+        const sessionId = handoff.browser_session_id ?? handoff.resumable_session_id ?? null;
+        if (!sessionId) {
+          return { success: false, message: `Auth handoff ${handoff.handoff_id} has no linked browser session.` };
+        }
+        const session = await this.browserSessionStore.load(sessionId);
+        if (!session) {
+          return { success: false, message: `Linked browser session not found: ${sessionId}` };
+        }
+        if (isPastIso(session.expires_at)) {
+          return { success: false, message: `Linked browser session ${sessionId} is expired.` };
+        }
+        await this.authHandoffStore.transition(handoff.handoff_id, "completed", {
+          browser_session_id: sessionId,
+          resumable_session_id: handoff.resumable_session_id ?? sessionId,
+        });
+        const marked = await this.browserSessionStore.markAuthenticated(sessionId);
+        if (!marked) return { success: false, message: `Linked browser session not found: ${sessionId}` };
+        return { success: true, message: `Auth handoff ${handoff.handoff_id} completed.` };
+      }
+      if (request.action === "cancel" || request.action === "expire") {
+        await this.authHandoffStore.transition(handoff.handoff_id, request.action === "cancel" ? "cancelled" : "expired");
+        return { success: true, message: `Auth handoff ${handoff.handoff_id} ${request.action === "cancel" ? "cancelled" : "expired"}.` };
+      }
+    }
+
+    if (request.domain === "browser_session") {
+      if (!request.sessionId) return { success: false, message: "browser_session control requires sessionId." };
+      const session = await this.browserSessionStore.load(request.sessionId);
+      if (!session) return { success: false, message: `Browser session not found: ${request.sessionId}` };
+      if (request.action === "inspect") return { success: true, message: `Browser session ${session.session_id} is ${session.state}.` };
+      if (request.action === "expire") {
+        await this.browserSessionStore.upsert({ ...session, state: "expired", updated_at: this.nowIso() });
+        return { success: true, message: `Browser session ${session.session_id} expired.` };
+      }
+    }
+
+    if (request.domain === "guardrail") {
+      if (!request.providerId || !request.serviceKey) return { success: false, message: "guardrail control requires providerId and serviceKey." };
+      const key = breakerKey(request.providerId, request.serviceKey);
+      const breaker = await this.guardrailStore.loadBreaker(key);
+      if (request.action === "inspect") return { success: true, message: `Guardrail ${key} is ${breaker?.state ?? "closed"}.` };
+      const now = this.nowIso();
+      if (request.action === "reset" || request.action === "unpause") {
+        await this.guardrailStore.saveBreaker({
+          key,
+          provider_id: request.providerId,
+          service_key: request.serviceKey,
+          state: "closed",
+          failure_count: 0,
+          last_failure_code: null,
+          last_failure_message: null,
+          last_failure_at: null,
+          opened_at: null,
+          cooldown_until: null,
+          updated_at: now,
+        });
+        return { success: true, message: `Guardrail ${key} reset.` };
+      }
+      if (request.action === "pause") {
+        await this.guardrailStore.saveBreaker({
+          key,
+          provider_id: request.providerId,
+          service_key: request.serviceKey,
+          state: "paused",
+          failure_count: breaker?.failure_count ?? 0,
+          last_failure_code: breaker?.last_failure_code ?? null,
+          last_failure_message: breaker?.last_failure_message ?? null,
+          last_failure_at: breaker?.last_failure_at ?? null,
+          opened_at: breaker?.opened_at ?? now,
+          cooldown_until: null,
+          updated_at: now,
+        });
+        return { success: true, message: `Guardrail ${key} paused.` };
+      }
+      if (request.action === "half_open") {
+        if (!breaker) return { success: false, message: `Guardrail not found: ${key}` };
+        await this.guardrailStore.saveBreaker({ ...breaker, state: "half_open", updated_at: now });
+        return { success: true, message: `Guardrail ${key} moved to half_open.` };
+      }
+    }
+
+    if (request.domain === "backpressure") {
+      const snapshot = await this.guardrailStore.loadBackpressureSnapshot();
+      if (request.action === "inspect") return { success: true, message: `Backpressure active leases: ${snapshot?.active.length ?? 0}.` };
+      if (request.action === "reset") {
+        await this.guardrailStore.saveBackpressureSnapshot({ updated_at: this.nowIso(), active: [], throttled: [] });
+        return { success: true, message: "Backpressure leases reset." };
+      }
+    }
+
+    return { success: false, message: `Unsupported runtime automation operation: ${request.domain}.${request.action}` };
+  }
+
+  private async recordAutomationOperation(
+    request: RuntimeAutomationControlRequest,
+    state: Extract<RuntimeControlOperationState, "verified" | "blocked" | "cancelled">,
+    ok: boolean,
+    message: string,
+  ): Promise<RuntimeControlResult> {
+    const now = this.nowIso();
+    const operation = await this.operationStore.save({
+      operation_id: randomUUID(),
+      kind: "automation_control",
+      state,
+      requested_at: now,
+      updated_at: now,
+      requested_by: request.requestedBy ?? { surface: "chat" },
+      reply_target: normalizeReplyTarget(request.replyTarget ?? { surface: "chat" }),
+      reason: request.reason,
+      target: {
+        ...(request.handoffId ? { handoff_id: request.handoffId } : {}),
+        ...(request.sessionId ? { session_id: request.sessionId } : {}),
+        ...(request.providerId ? { provider_id: request.providerId } : {}),
+        ...(request.serviceKey ? { service_key: request.serviceKey } : {}),
+      },
+      automation_control: { domain: request.domain, action: request.action },
+      risk: {
+        requires_approval: request.action !== "inspect",
+        irreversible: request.action === "cancel" || request.action === "expire" || request.action === "reset",
+        external_actions: [],
+      },
+      expected_health: expectedHealthFor("automation_control"),
+      completed_at: now,
+      result: { ok, message },
+    });
+    return { success: ok, message, operationId: operation.operation_id, state };
   }
 
   private async resolveTarget(request: RuntimeControlRequest): Promise<TargetResolution> {
@@ -523,6 +713,12 @@ function approvalReason(operation: RuntimeControlOperation): string {
   return `Runtime control ${operation.kind}${target}: ${operation.reason}`;
 }
 
+function isPastIso(value?: string | null): boolean {
+  if (!value) return false;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && ms <= Date.now();
+}
+
 function ackMessage(kind: RuntimeControlOperationKind): string {
   switch (kind) {
     case "restart_gateway":
@@ -543,6 +739,8 @@ function ackMessage(kind: RuntimeControlOperationKind): string {
       return "runtime run のキャンセルを要求します。";
     case "finalize_run":
       return "runtime run の最終化 proposal を作成します。";
+    case "automation_control":
+      return "runtime automation control を記録しました。";
   }
 }
 

@@ -4,6 +4,8 @@ import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.
 import { RuntimeOperationStore } from "../../store/runtime-operation-store.js";
 import { RuntimeControlService } from "../runtime-control-service.js";
 import type { RuntimeSessionRegistrySnapshot } from "../../session-registry/types.js";
+import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../../interactive-automation/index.js";
+import { GuardrailStore } from "../../guardrails/index.js";
 
 function snapshotWithRuns(runs: RuntimeSessionRegistrySnapshot["background_runs"]): RuntimeSessionRegistrySnapshot {
   return {
@@ -138,6 +140,201 @@ describe("RuntimeControlService", () => {
           message: "Runtime control operation was not approved.",
         },
       });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("completes pending auth handoffs through typed automation control and rejects stale completion", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-auth-handoff-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const authHandoffStore = new RuntimeAuthHandoffStore(runtimeRoot);
+      const browserSessionStore = new BrowserSessionStore(runtimeRoot);
+      await browserSessionStore.recordAuthRequired({
+        sessionId: "sess-auth",
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        failureCode: "auth_required",
+        failureMessage: "login required",
+      });
+      const handoff = await authHandoffStore.createPending({
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        browserSessionId: "sess-auth",
+        resumableSessionId: "sess-auth",
+        taskSummary: "Open mail",
+      });
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        authHandoffStore,
+        browserSessionStore,
+      });
+
+      const completed = await service.controlAutomation({
+        domain: "auth_handoff",
+        action: "complete",
+        handoffId: handoff.handoff_id,
+        reason: "operator completed login",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+      const stale = await service.controlAutomation({
+        domain: "auth_handoff",
+        action: "complete",
+        handoffId: handoff.handoff_id,
+        reason: "repeat stale completion",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      expect(completed).toMatchObject({ success: true, state: "verified" });
+      await expect(authHandoffStore.load(handoff.handoff_id)).resolves.toMatchObject({ state: "completed" });
+      await expect(browserSessionStore.load("sess-auth")).resolves.toMatchObject({ state: "authenticated" });
+      expect(stale).toMatchObject({ success: false, state: "blocked" });
+      expect(stale.message).toContain("terminal");
+      const completedOperations = await new RuntimeOperationStore(runtimeRoot).listCompleted();
+      expect(completedOperations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "automation_control", state: "verified" }),
+        expect.objectContaining({ kind: "automation_control", state: "blocked" }),
+      ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("rejects expired auth handoffs and missing linked browser sessions", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-auth-stale-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const authHandoffStore = new RuntimeAuthHandoffStore(runtimeRoot);
+      const expired = await authHandoffStore.createPending({
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        browserSessionId: "sess-expired-handoff",
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        taskSummary: "Open mail",
+      });
+      const missingSession = await authHandoffStore.createPending({
+        providerId: "browser",
+        serviceKey: "docs.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        browserSessionId: "sess-missing",
+        taskSummary: "Open docs",
+      });
+      const service = new RuntimeControlService({ runtimeRoot, authHandoffStore });
+      const approvalFn = vi.fn().mockResolvedValue(true);
+
+      const expiredResult = await service.controlAutomation({
+        domain: "auth_handoff",
+        action: "complete",
+        handoffId: expired.handoff_id,
+        reason: "complete expired handoff",
+        cwd: "/repo",
+        approvalFn,
+      });
+      const missingResult = await service.controlAutomation({
+        domain: "auth_handoff",
+        action: "complete",
+        handoffId: missingSession.handoff_id,
+        reason: "complete missing session handoff",
+        cwd: "/repo",
+        approvalFn,
+      });
+
+      expect(expiredResult).toMatchObject({ success: false, state: "blocked" });
+      expect(expiredResult.message).toContain("expired");
+      await expect(authHandoffStore.load(expired.handoff_id)).resolves.toMatchObject({ state: "expired" });
+      expect(missingResult).toMatchObject({ success: false, state: "blocked" });
+      expect(missingResult.message).toContain("Linked browser session not found");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("fails closed for unauthorized automation mutations when approval is unavailable", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-auth-unauthorized-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const service = new RuntimeControlService({ runtimeRoot });
+
+      const result = await service.controlAutomation({
+        domain: "guardrail",
+        action: "reset",
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        reason: "reset without approval surface",
+        cwd: "/repo",
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "blocked",
+        message: "Runtime automation mutation requires an approval surface.",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("controls guardrails and browser sessions through typed automation operations", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-guardrail-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const browserSessionStore = new BrowserSessionStore(runtimeRoot);
+      const guardrailStore = new GuardrailStore(runtimeRoot);
+      await browserSessionStore.recordAuthenticated({
+        sessionId: "sess-browser",
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+      });
+      const service = new RuntimeControlService({ runtimeRoot, browserSessionStore, guardrailStore });
+      const approvalFn = vi.fn().mockResolvedValue(true);
+
+      const pause = await service.controlAutomation({
+        domain: "guardrail",
+        action: "pause",
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        reason: "pause mail browser work",
+        cwd: "/repo",
+        approvalFn,
+      });
+      const reset = await service.controlAutomation({
+        domain: "guardrail",
+        action: "reset",
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        reason: "reset mail breaker",
+        cwd: "/repo",
+        approvalFn,
+      });
+      const expire = await service.controlAutomation({
+        domain: "browser_session",
+        action: "expire",
+        sessionId: "sess-browser",
+        reason: "expire invalid session",
+        cwd: "/repo",
+        approvalFn,
+      });
+
+      expect(pause).toMatchObject({ success: true, state: "verified" });
+      expect(reset).toMatchObject({ success: true, state: "verified" });
+      expect(expire).toMatchObject({ success: true, state: "verified" });
+      await expect(guardrailStore.loadBreaker("browser::mail.example.com")).resolves.toMatchObject({
+        state: "closed",
+        failure_count: 0,
+      });
+      await expect(browserSessionStore.load("sess-browser")).resolves.toMatchObject({ state: "expired" });
     } finally {
       cleanupTempDir(tmpDir);
     }
