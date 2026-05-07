@@ -207,6 +207,13 @@ function mergeMechanicalAndArtifactVerification(
   artifact: Awaited<ReturnType<typeof verifyTaskArtifactContract>>,
 ): Awaited<ReturnType<typeof runMechanicalVerification>> {
   if (!artifact.applicable) return mechanical;
+  if (isArtifactFreshnessDisagreement(mechanical, artifact)) {
+    return {
+      applicable: true,
+      passed: true,
+      description: `${artifact.description}; mechanical --check-contract reported a stale-artifact freshness failure, but PulSeed artifact_contract passed using task-start freshness: ${mechanical.description}`,
+    };
+  }
   if (!mechanical.applicable) {
     return {
       applicable: true,
@@ -219,6 +226,17 @@ function mergeMechanicalAndArtifactVerification(
     passed: mechanical.passed && artifact.passed,
     description: `${mechanical.description}; ${artifact.description}`,
   };
+}
+
+function isArtifactFreshnessDisagreement(
+  mechanical: Awaited<ReturnType<typeof runMechanicalVerification>>,
+  artifact: Awaited<ReturnType<typeof verifyTaskArtifactContract>>,
+): boolean {
+  return artifact.applicable &&
+    artifact.passed &&
+    mechanical.applicable &&
+    !mechanical.passed &&
+    /\bstale artifact:/i.test(mechanical.description);
 }
 
 function isTimedOutAgentLoopResult(executionResult: AgentResult): boolean {
@@ -456,6 +474,7 @@ export async function verifyTask(
 
   // ─── Layer 1: Mechanical verification ───
   const l1Result = await runMechanicalVerification(deps, task);
+  const artifactFreshnessDisagreement = isArtifactFreshnessDisagreement(l1Result, artifactResult);
   const effectiveL1Result = mergeMechanicalAndArtifactVerification(l1Result, artifactResult);
 
   if (
@@ -583,7 +602,15 @@ export async function verifyTask(
       maxRetries: reviewDeps.completionJudgerConfig?.maxRetries,
     });
   }
-  const l2Result = await runLLMReview(reviewDeps, task, executionResult, knowledgeBlock, stateBlock);
+  const l2Result = artifactFreshnessDisagreement && executionResult.success === true
+    ? {
+        passed: true,
+        partial: false,
+        description: "completion judging skipped because PulSeed artifact_contract is authoritative for fresh_after_task_start and the contract passed",
+        confidence: 0.85,
+        tokensUsed: 0,
+      }
+    : await runLLMReview(reviewDeps, task, executionResult, knowledgeBlock, stateBlock);
 
   // ─── Layer 3: Executor self-report (reference only) ───
   const executorReport = parseExecutorReport(executionResult);

@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
@@ -407,6 +408,106 @@ describe("completion_judger timeout + retry", () => {
     const reviewEvidence = result.evidence.find((e) => e.layer === "independent_review");
     expect(reviewEvidence?.description).toContain("completion_judger failed after 1 attempt");
     expect(reviewEvidence?.description).toContain("using passing mechanical/artifact evidence");
+  }, 5_000);
+
+  it("treats PulSeed artifact_contract freshness as authoritative when script check-contract reports stale artifacts", async () => {
+    const workspace = path.join(tmpDir, "freshness-workspace");
+    fs.mkdirSync(path.join(workspace, ".venv", "bin"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "src", "experiments"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "submissions"), { recursive: true });
+
+    const pythonShim = path.join(workspace, ".venv", "bin", "python");
+    fs.writeFileSync(pythonShim, [
+      "#!/bin/sh",
+      "echo 'contract validation failed:' >&2",
+      "echo 'stale artifact: reports/fresh_auc.json' >&2",
+      "echo 'stale artifact: submissions/fresh_auc.csv' >&2",
+      "exit 1",
+      "",
+    ].join("\n"), "utf8");
+    fs.chmodSync(pythonShim, 0o755);
+    fs.writeFileSync(path.join(workspace, "src", "experiments", "check_contract.py"), "", "utf8");
+    fs.writeFileSync(path.join(workspace, "reports", "fresh_auc.json"), JSON.stringify({
+      created_at: "2026-05-07T13:07:20.000Z",
+      run_name: "fresh_auc",
+      roc_auc: 0.815,
+      mean_roc_auc: 0.815,
+      std_roc_auc: 0.01,
+      output_paths: { metrics_json: "reports/fresh_auc.json", submission_csv: "submissions/fresh_auc.csv" },
+    }), "utf8");
+    fs.writeFileSync(path.join(workspace, "submissions", "fresh_auc.csv"), "id,PitNextLap\n1,0.2\n", "utf8");
+
+    const failingLLM = makeFailingLLMClient(1);
+    const deps = makeDeps(failingLLM, {
+      completionJudgerConfig: { timeoutMs: 5_000, maxRetries: 0, retryBackoffMs: 0 },
+    });
+    const task = {
+      ...makeTask(),
+      created_at: "2020-01-01T00:00:00.000Z",
+      started_at: "2020-01-01T00:00:00.000Z",
+      constraints: [`workspace_path:${workspace}`],
+      success_criteria: [
+        {
+          description: "Script contract validates artifacts",
+          verification_method: ".venv/bin/python src/experiments/check_contract.py --check-contract",
+          is_blocking: true,
+        },
+      ],
+      artifact_contract: {
+        required: true,
+        required_artifacts: [
+          {
+            kind: "metrics_json" as const,
+            path: "reports/fresh_auc.json",
+            required_fields: ["created_at", "run_name", "roc_auc", "mean_roc_auc", "std_roc_auc", "output_paths"],
+            field_types: {
+              created_at: "string" as const,
+              run_name: "string" as const,
+              roc_auc: "number" as const,
+              mean_roc_auc: "number" as const,
+              std_roc_auc: "number" as const,
+              output_paths: "object" as const,
+            },
+            fresh_after_task_start: true,
+          },
+          {
+            kind: "submission_csv" as const,
+            path: "submissions/fresh_auc.csv",
+            required_fields: [],
+            fresh_after_task_start: true,
+          },
+        ],
+      },
+    };
+
+    const result = await verifyTask(deps, task, {
+      ...makeExecutionResult(),
+      agentLoop: {
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        stopReason: "completed",
+        modelTurns: 6,
+        toolCalls: 10,
+        compactions: 0,
+        executionCwd: workspace,
+      },
+    });
+
+    expect(failingLLM.callCount).toBe(0);
+    expect(result.verdict).toBe("pass");
+    expect(result.confidence).toBe(0.9);
+    expect(result.artifact_contract_status).toMatchObject({
+      applicable: true,
+      passed: true,
+    });
+    expect(result.evidence.find((e) => e.layer === "mechanical")?.description).toContain(
+      "mechanical --check-contract reported a stale-artifact freshness failure"
+    );
+    expect(result.evidence.find((e) => e.layer === "independent_review")?.description).toContain(
+      "PulSeed artifact_contract is authoritative"
+    );
   }, 5_000);
 
   // ─────────────────────────────────────
