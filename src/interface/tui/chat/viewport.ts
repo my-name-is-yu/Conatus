@@ -11,6 +11,14 @@ const MESSAGE_INNER_PADDING = 2;
 const MIN_MESSAGE_WIDTH = 10;
 const USER_PROMPT_PREFIX = "◉ ";
 const USER_CONTINUATION_PREFIX = "  ";
+const MESSAGE_ROW_CACHE_LIMIT = 500;
+
+type MessageRowCacheEntry = {
+  key: string;
+  rows: ChatDisplayRow[];
+};
+
+const messageRowCache = new Map<string, MessageRowCacheEntry>();
 
 function getRowWidth(termCols: number): number {
   return Math.max(
@@ -76,6 +84,35 @@ function buildMessageRows(msg: ChatMessage, width: number): ChatDisplayRow[] {
   return rows;
 }
 
+function getMessageCacheKey(msg: ChatMessage, width: number): string {
+  return [
+    msg.id,
+    msg.role,
+    msg.messageType ?? "",
+    width,
+    msg.text.length,
+    msg.text,
+  ].join("\u0000");
+}
+
+function getCachedMessageRows(msg: ChatMessage, width: number): ChatDisplayRow[] {
+  const key = getMessageCacheKey(msg, width);
+  const cached = messageRowCache.get(msg.id);
+  if (cached?.key === key) {
+    return cached.rows;
+  }
+
+  const rows = buildMessageRows(msg, width);
+  messageRowCache.set(msg.id, { key, rows });
+  if (messageRowCache.size > MESSAGE_ROW_CACHE_LIMIT) {
+    const oldestKey = messageRowCache.keys().next().value;
+    if (oldestKey) {
+      messageRowCache.delete(oldestKey);
+    }
+  }
+  return rows;
+}
+
 export function buildChatViewport(
   messages: ChatMessage[],
   termCols: number,
@@ -84,23 +121,47 @@ export function buildChatViewport(
 ): ChatViewport {
   const maxVisibleRows = Math.max(1, Math.floor(availableRows));
   const rowWidth = getRowWidth(termCols);
-  const flatRows: ChatDisplayRow[] = [];
+  const messageRows = messages.map((msg) => ({
+    msg,
+    rows: getCachedMessageRows(msg, rowWidth),
+  }));
 
-  for (const msg of messages) {
-    flatRows.push(...buildMessageRows(msg, rowWidth));
-    flatRows.push({
-      key: `${msg.id}:spacer`,
-      kind: "spacer",
-      text: "",
-    });
-  }
-
-  const totalRows = flatRows.length;
+  const totalRows = messageRows.reduce(
+    (total, entry) => total + entry.rows.length + 1,
+    0,
+  );
   const visibleEndIdx = Math.max(0, totalRows - scrollOffsetRows);
   const visibleStartIdx = Math.max(0, visibleEndIdx - maxVisibleRows);
+  const visibleRows: ChatDisplayRow[] = [];
+  let cursor = 0;
+
+  for (const { msg, rows } of messageRows) {
+    const messageStart = cursor;
+    const messageEnd = messageStart + rows.length;
+
+    if (messageEnd > visibleStartIdx && messageStart < visibleEndIdx) {
+      const sliceStart = Math.max(0, visibleStartIdx - messageStart);
+      const sliceEnd = Math.min(rows.length, visibleEndIdx - messageStart);
+      visibleRows.push(...rows.slice(sliceStart, sliceEnd));
+    }
+
+    cursor = messageEnd;
+    if (cursor >= visibleStartIdx && cursor < visibleEndIdx) {
+      visibleRows.push({
+        key: `${msg.id}:spacer`,
+        kind: "spacer",
+        text: "",
+      });
+    }
+    cursor += 1;
+
+    if (cursor >= visibleEndIdx) {
+      break;
+    }
+  }
 
   return {
-    rows: flatRows.slice(visibleStartIdx, visibleEndIdx),
+    rows: visibleRows,
     hiddenAboveRows: visibleStartIdx,
     hiddenBelowRows: totalRows - visibleEndIdx,
     totalRows,
