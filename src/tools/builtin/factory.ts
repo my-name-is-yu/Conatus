@@ -134,6 +134,7 @@ import type { SessionManager } from "../../orchestrator/execution/session-manage
 import type { PluginLoader } from "../../runtime/plugin-loader.js";
 import {
   BrowserSessionStore as RuntimeBrowserSessionStore,
+  RuntimeAuthHandoffStore,
   createDefaultInteractiveAutomationRegistry,
   type CodexAppComputerUseBridge,
   type InteractiveAutomationRegistry,
@@ -175,6 +176,7 @@ export interface BuiltinToolDeps {
   interactiveAutomationPolicy?: InteractiveAutomationToolPolicy;
   codexAppComputerUseBridge?: CodexAppComputerUseBridge;
   browserSessionStore?: BrowserSessionStore;
+  authHandoffStore?: RuntimeAuthHandoffStore;
   browserCircuitBreaker?: CircuitBreakerController;
   browserBackpressure?: BackpressureController;
   coreLoopControl?: CoreLoopControlToolset;
@@ -367,6 +369,7 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
   };
   const runtimeRoot = path.join(deps?.stateManager?.getBaseDir?.() ?? getPulseedDirPath(), "runtime");
   const browserSessionStore = deps?.browserSessionStore ?? new RuntimeBrowserSessionStore(runtimeRoot);
+  const authHandoffStore = deps?.authHandoffStore ?? new RuntimeAuthHandoffStore(runtimeRoot);
   const guardrailStore = deps?.browserCircuitBreaker || deps?.browserBackpressure
     ? undefined
     : new GuardrailStore(runtimeRoot);
@@ -379,6 +382,7 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
       new BrowserGetStateTool(interactiveAutomationRegistry, interactiveAutomationPolicy),
       new BrowserRunWorkflowTool(interactiveAutomationRegistry, interactiveAutomationPolicy, {
         browserSessionStore,
+        authHandoffStore,
         circuitBreaker: browserCircuitBreaker,
         backpressure: browserBackpressure,
       }),

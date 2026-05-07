@@ -17,6 +17,7 @@ export interface RuntimeStorePaths {
   approvalsResolvedDir: string;
   outboxDir: string;
   backgroundRunsDir: string;
+  authHandoffsDir: string;
   browserSessionsDir: string;
   evidenceLedgerDir: string;
   evidenceLedgerGoalsDir: string;
@@ -44,6 +45,7 @@ export interface RuntimeStorePaths {
   approvalResolvedPath(approvalId: string): string;
   outboxRecordPath(seq: number): string;
   backgroundRunPath(runId: string): string;
+  authHandoffPath(handoffId: string): string;
   browserSessionPath(sessionId: string): string;
   evidenceGoalPath(goalId: string): string;
   evidenceRunPath(runId: string): string;
@@ -101,6 +103,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const approvalsResolvedDir = path.join(approvalsDir, "resolved");
   const outboxDir = path.join(rootDir, "outbox");
   const backgroundRunsDir = path.join(rootDir, "background-runs");
+  const authHandoffsDir = path.join(rootDir, "auth-handoffs");
   const browserSessionsDir = path.join(rootDir, "browser-sessions");
   const evidenceLedgerDir = path.join(rootDir, "evidence-ledger");
   const evidenceLedgerGoalsDir = path.join(evidenceLedgerDir, "goals");
@@ -133,6 +136,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     approvalsResolvedDir,
     outboxDir,
     backgroundRunsDir,
+    authHandoffsDir,
     browserSessionsDir,
     evidenceLedgerDir,
     evidenceLedgerGoalsDir,
@@ -171,6 +175,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     backgroundRunPath(runId: string) {
       return path.join(backgroundRunsDir, recordFileName(encodeRuntimePathSegment(runId)));
+    },
+    authHandoffPath(handoffId: string) {
+      return path.join(authHandoffsDir, recordFileName(encodeRuntimePathSegment(handoffId)));
     },
     browserSessionPath(sessionId: string) {
       return path.join(browserSessionsDir, recordFileName(encodeRuntimePathSegment(sessionId)));
@@ -238,6 +245,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.approvalsResolvedDir,
       paths.outboxDir,
       paths.backgroundRunsDir,
+      paths.authHandoffsDir,
       paths.browserSessionsDir,
       paths.evidenceLedgerDir,
       paths.evidenceLedgerGoalsDir,
