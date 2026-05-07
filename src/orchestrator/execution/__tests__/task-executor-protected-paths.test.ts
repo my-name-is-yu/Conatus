@@ -67,13 +67,13 @@ function makeChangedPathsExecFileSync(paths: string[]): TaskExecutorDeps["execFi
     if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--name-only") return "";
     if (args[0] === "ls-files") return "";
     if (args[0] === "diff") {
-      const filePath = args.at(-1) ?? "";
-      return [
+      const requestedPaths = args.slice(args.indexOf("--") + 1);
+      return requestedPaths.flatMap((filePath) => [
         `diff --git a/${filePath} b/${filePath}`,
         "@@ -1 +1 @@",
         "-old",
         "+new",
-      ].join("\n");
+      ]).join("\n");
     }
     return "";
   }) as TaskExecutorDeps["execFileSyncFn"];

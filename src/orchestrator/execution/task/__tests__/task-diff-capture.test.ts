@@ -43,8 +43,17 @@ describe("captureExecutionDiffArtifacts", () => {
         if (key === "git diff -- preexisting.txt") {
           return "diff --git a/preexisting.txt b/preexisting.txt\n@@ -1 +1 @@\n-clean\n+dirty\n";
         }
-        if (key === "git diff -- task-output.txt") {
-          return "diff --git a/task-output.txt b/task-output.txt\n@@ -0,0 +1 @@\n+task output\n";
+        if (key === "git diff -- preexisting.txt task-output.txt" || key === "git diff -- task-output.txt") {
+          return [
+            "diff --git a/preexisting.txt b/preexisting.txt",
+            "@@ -1 +1 @@",
+            "-clean",
+            "+dirty",
+            "diff --git a/task-output.txt b/task-output.txt",
+            "@@ -0,0 +1 @@",
+            "+task output",
+            "",
+          ].join("\n");
         }
         return "";
       }) as ExecFileSyncFn;
@@ -135,17 +144,11 @@ describe("captureExecutionDiffArtifacts", () => {
           "git diff -- src/new-file.ts": "",
         },
         {
-          "git diff --no-index -- /dev/null src/new-file.ts": [
-            "diff --git a/src/new-file.ts b/src/new-file.ts",
-            "new file mode 100644",
-            "--- /dev/null",
-            "+++ b/src/new-file.ts",
-            "@@ -0,0 +1 @@",
-            "+export const created = true;",
-            "",
-          ].join("\n"),
+        "git diff --no-index -- /dev/null src/new-file.ts": "should not be called",
         },
       );
+      fs.mkdirSync(path.join(workspace, "src"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "src/new-file.ts"), "export const created = true;\n", "utf-8");
 
       const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace);
 
@@ -154,6 +157,85 @@ describe("captureExecutionDiffArtifacts", () => {
         expect.objectContaining({
           path: "src/new-file.ts",
           patch: expect.stringContaining("new file mode 100644"),
+        }),
+      ]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("batches tracked and staged diff capture instead of reading each path separately", () => {
+    const workspace = makeGitWorkspace();
+    try {
+      const execFileSyncFn = vi.fn(makeExecFileSync({
+        "git diff --name-only": "src/a.ts\nsrc/b.ts\n",
+        "git diff --cached --name-only": "src/c.ts\nsrc/d.ts\n",
+        "git ls-files --others --exclude-standard": "",
+        "git diff -- src/a.ts src/b.ts": [
+          "diff --git a/src/a.ts b/src/a.ts",
+          "@@ -1 +1 @@",
+          "-a",
+          "+aa",
+          "diff --git a/src/b.ts b/src/b.ts",
+          "@@ -1 +1 @@",
+          "-b",
+          "+bb",
+          "",
+        ].join("\n"),
+        "git diff --cached -- src/c.ts src/d.ts": [
+          "diff --git a/src/c.ts b/src/c.ts",
+          "@@ -1 +1 @@",
+          "-c",
+          "+cc",
+          "diff --git a/src/d.ts b/src/d.ts",
+          "@@ -1 +1 @@",
+          "-d",
+          "+dd",
+          "",
+        ].join("\n"),
+      }));
+
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace);
+
+      expect(result.changedPaths).toEqual(["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"]);
+      expect(result.fileDiffs.map((diff) => diff.path)).toEqual(["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"]);
+      expect(execFileSyncFn).not.toHaveBeenCalledWith("git", ["diff", "--", "src/a.ts"], expect.any(Object));
+      expect(execFileSyncFn).not.toHaveBeenCalledWith("git", ["diff", "--", "src/b.ts"], expect.any(Object));
+      expect(execFileSyncFn).not.toHaveBeenCalledWith("git", ["diff", "--cached", "--", "src/c.ts"], expect.any(Object));
+      expect(execFileSyncFn).not.toHaveBeenCalledWith("git", ["diff", "--cached", "--", "src/d.ts"], expect.any(Object));
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps patches for paths whose names contain git header separators", () => {
+    const workspace = makeGitWorkspace();
+    try {
+      const execFileSyncFn = makeExecFileSync({
+        "git diff --name-only": "dir b/file.txt\n",
+        "git diff --cached --name-only": "",
+        "git ls-files --others --exclude-standard": "",
+        "git diff -- dir b/file.txt": [
+          "diff --git a/dir b/file.txt b/dir b/file.txt",
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+          "",
+        ].join("\n"),
+      });
+
+      const baseline = captureExecutionDiffBaseline(execFileSyncFn, workspace);
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace, { baseline: {
+        ...baseline,
+        pathFingerprints: { "dir b/file.txt": "different baseline patch" },
+      } });
+
+      expect(result.changedPaths).toEqual(["dir b/file.txt"]);
+      expect(result.fileDiffs).toEqual([
+        expect.objectContaining({
+          path: "dir b/file.txt",
+          patch: expect.stringContaining("+after"),
+          safe_to_revert: false,
         }),
       ]);
     } finally {

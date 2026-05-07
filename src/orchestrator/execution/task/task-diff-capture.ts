@@ -124,6 +124,7 @@ export function captureExecutionDiffBaseline(
 
   const snapshot = captureGitChangedPaths(execFileSyncFn, cwd);
   const untrackedSet = new Set(uniqueNonEmpty(snapshot.untrackedPaths));
+  const patchMap = readGitPathPatches(execFileSyncFn, cwd, snapshot);
   return {
     available: snapshot.available,
     cwd: normalizedCwd,
@@ -131,7 +132,9 @@ export function captureExecutionDiffBaseline(
     pathFingerprints: Object.fromEntries(
       snapshot.changedPaths.map((filePath) => [
         filePath,
-        readGitPathPatch(execFileSyncFn, cwd, filePath, untrackedSet),
+        patchMap.get(filePath) ?? (untrackedSet.has(filePath)
+          ? renderCurrentFileDiff(cwd, filePath, 200_000)[0]?.patch.trim() ?? ""
+          : ""),
       ]),
     ),
   };
@@ -155,22 +158,43 @@ function baselinePathFingerprintsForCwd(
   return new Map(Object.entries(baseline.pathFingerprints));
 }
 
-function readGitPathPatch(
+function readGitPathPatches(
   execFileSyncFn: ExecFileSyncFn,
   cwd: string,
-  filePath: string,
-  untrackedSet: Set<string>,
-): string {
-  const trackedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--", filePath])?.trim() ?? "";
-  const stagedPatch = runGitRead(execFileSyncFn, cwd, ["diff", "--cached", "--", filePath])?.trim() ?? "";
-  const patches = [trackedPatch, stagedPatch].filter((patch) => patch.length > 0);
-  if (patches.length > 0) return patches.join("\n");
+  snapshot: ReturnType<typeof captureGitChangedPaths>,
+): Map<string, string> {
+  const patches = new Map<string, string>();
+  const appendPatch = (filePath: string, patch: string): void => {
+    const trimmed = patch.trim();
+    if (trimmed.length === 0) return;
+    const existing = patches.get(filePath);
+    patches.set(filePath, existing ? `${existing}\n${trimmed}` : trimmed);
+  };
 
-  if (!untrackedSet.has(filePath)) {
-    return "";
+  const trackedPaths = uniqueNonEmpty(snapshot.trackedPaths)
+    .filter((filePath) => isSafeRelativePath(cwd, filePath));
+  const stagedPaths = uniqueNonEmpty(snapshot.stagedPaths)
+    .filter((filePath) => isSafeRelativePath(cwd, filePath));
+
+  for (const [filePath, patch] of parseGitDiffByPath(
+    trackedPaths.length > 0
+      ? runGitRead(execFileSyncFn, cwd, ["diff", "--", ...trackedPaths]) ?? ""
+      : "",
+    trackedPaths,
+  )) {
+    appendPatch(filePath, patch);
   }
 
-  return runGitRead(execFileSyncFn, cwd, ["diff", "--no-index", "--", "/dev/null", filePath])?.trim() ?? "";
+  for (const [filePath, patch] of parseGitDiffByPath(
+    stagedPaths.length > 0
+      ? runGitRead(execFileSyncFn, cwd, ["diff", "--cached", "--", ...stagedPaths]) ?? ""
+      : "",
+    stagedPaths,
+  )) {
+    appendPatch(filePath, patch);
+  }
+
+  return patches;
 }
 
 export function captureExecutionDiffArtifacts(
@@ -192,11 +216,15 @@ export function captureExecutionDiffArtifacts(
   }
 
   const untrackedSet = new Set(uniqueNonEmpty(snapshot.untrackedPaths));
+  const patchMap = readGitPathPatches(execFileSyncFn, cwd, snapshot);
   const changedPaths: string[] = [];
   const fileDiffs: VerificationFileDiff[] = [];
 
   for (const filePath of snapshot.changedPaths) {
-    const patch = readGitPathPatch(execFileSyncFn, cwd, filePath, untrackedSet);
+    const patch = patchMap.get(filePath)
+      ?? (untrackedSet.has(filePath)
+        ? renderCurrentFileDiff(cwd, filePath, options.maxFallbackDiffBytes ?? 200_000)[0]?.patch.trim() ?? ""
+        : "");
     const baselinePatch = baselinePathFingerprints?.get(filePath);
     if (baselinePatch !== undefined && patch === baselinePatch) {
       continue;
@@ -213,6 +241,26 @@ export function captureExecutionDiffArtifacts(
   }
 
   return { available: true, changedPaths, fileDiffs };
+}
+
+function parseGitDiffByPath(output: string, expectedPaths: string[]): Map<string, string> {
+  const patches = new Map<string, string>();
+  if (output.trim().length === 0) return patches;
+
+  const expectedByLength = [...expectedPaths].sort((left, right) => right.length - left.length);
+  const sections = output.split(/^diff --git /m).filter((section) => section.trim().length > 0);
+  for (const section of sections) {
+    const patch = `diff --git ${section}`.trim();
+    const header = patch.split("\n", 1)[0] ?? "";
+    const filePath = expectedByLength.find((candidate) =>
+      header === `diff --git a/${candidate} b/${candidate}` ||
+      header.endsWith(` b/${candidate}`)
+    );
+    if (filePath) {
+      patches.set(filePath, patch);
+    }
+  }
+  return patches;
 }
 
 function renderFallbackDiffArtifacts(
