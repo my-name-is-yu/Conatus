@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { InteractiveAutomationCapability, InteractiveAutomationProviderFamily, InteractiveAutomationRegistry } from "../../runtime/interactive-automation/index.js";
 import {
   BrowserSessionStore,
+  RuntimeAuthHandoffStore,
   type BrowserSessionScope,
 } from "../../runtime/interactive-automation/index.js";
 import {
@@ -80,6 +81,7 @@ export type BrowserGetStateInput = z.infer<typeof BrowserGetStateInputSchema>;
 
 export interface BrowserWorkflowRuntimeDeps {
   browserSessionStore?: BrowserSessionStore;
+  authHandoffStore?: RuntimeAuthHandoffStore;
   circuitBreaker?: CircuitBreakerController;
   backpressure?: BackpressureController;
 }
@@ -492,12 +494,32 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
             metadata: input.startUrl ? { startUrl: input.startUrl } : undefined,
           });
         }
+        await this.runtimeDeps.authHandoffStore?.transitionLatestActive(scope, "completed", {
+          browser_session_id: result.sessionId ?? resolvedSessionId ?? null,
+          resumable_session_id: result.sessionId ?? resolvedSessionId ?? null,
+        });
         await this.runtimeDeps.circuitBreaker?.recordSuccess(provider.id, scope.serviceKey);
         return this.success({ providerId: provider.id, result }, result.summary, startTime);
       }
 
       if (result.authRequired && this.runtimeDeps.browserSessionStore) {
         const handoffSessionId = result.sessionId ?? syntheticAuthHandoffSessionId(provider.id, scope);
+        const authHandoff = await this.runtimeDeps.authHandoffStore?.createPending({
+          providerId: provider.id,
+          serviceKey: scope.serviceKey,
+          workspace: scope.workspace,
+          actorKey: scope.actorKey,
+          browserSessionId: handoffSessionId,
+          resumableSessionId: result.sessionId ?? null,
+          failureCode: result.failureCode ?? null,
+          failureMessage: result.error ?? result.summary,
+          taskSummary: input.task,
+          evidenceRefs: [{
+            kind: "tool_result",
+            ref: _context.callId ?? "browser_run_workflow",
+            observed_at: new Date().toISOString(),
+          }],
+        });
         await this.runtimeDeps.browserSessionStore.recordAuthRequired({
           sessionId: handoffSessionId,
           providerId: provider.id,
@@ -508,11 +530,18 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
           failureMessage: result.error ?? result.summary,
           metadata: {
             ...(input.startUrl ? { startUrl: input.startUrl } : {}),
+            auth_handoff_id: authHandoff?.handoff_id ?? null,
             resumable_session: result.sessionId ?? null,
           },
         });
         const approved = await requestAuthHandoffApproval(_context, provider.id, scope, input.task, handoffSessionId);
         if (!approved) {
+          if (authHandoff) {
+            await this.runtimeDeps.authHandoffStore?.transition(authHandoff.handoff_id, "cancelled", {
+              failure_code: "approval_denied",
+              failure_message: "Authentication handoff approval was denied",
+            });
+          }
           return this.fail(`Authentication handoff denied for ${scope.serviceKey}.`, startTime);
         }
         return {
@@ -521,6 +550,7 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
             providerId: provider.id,
             status: "auth_handoff_pending",
             serviceKey: scope.serviceKey,
+            authHandoffId: authHandoff?.handoff_id,
             sessionId: handoffSessionId,
             resumableSessionId: result.sessionId,
           },

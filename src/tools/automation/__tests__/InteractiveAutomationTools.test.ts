@@ -11,6 +11,7 @@ import { createBuiltinTools } from "../../builtin/index.js";
 import {
   BrowserSessionStore,
   InteractiveAutomationRegistry,
+  RuntimeAuthHandoffStore,
   type InteractiveAutomationProvider,
 } from "../../../runtime/interactive-automation/index.js";
 import {
@@ -256,8 +257,10 @@ describe("interactive automation tools", () => {
         }),
       });
       const store = new BrowserSessionStore(tmpRuntime);
+      const handoffStore = new RuntimeAuthHandoffStore(tmpRuntime);
       const tool = new BrowserRunWorkflowTool(registry, undefined, {
         browserSessionStore: store,
+        authHandoffStore: handoffStore,
         circuitBreaker: new CircuitBreakerController(new GuardrailStore(tmpRuntime)),
         backpressure: new BackpressureController(new GuardrailStore(tmpRuntime)),
       });
@@ -286,6 +289,18 @@ describe("interactive automation tools", () => {
           service_key: "mail.google.com",
           actor_key: "chat-1",
           state: "auth_required",
+        }),
+      ]);
+      await expect(handoffStore.listActive()).resolves.toEqual([
+        expect.objectContaining({
+          schema_version: "runtime-auth-handoff-v1",
+          provider_id: "browser-auth",
+          service_key: "mail.google.com",
+          actor_key: "chat-1",
+          state: "pending_operator",
+          browser_session_id: "sess-auth",
+          resumable_session_id: "sess-auth",
+          failure_code: "auth_required",
         }),
       ]);
     } finally {
@@ -319,8 +334,10 @@ describe("interactive automation tools", () => {
         }),
       });
       const store = new BrowserSessionStore(tmpRuntime);
+      const handoffStore = new RuntimeAuthHandoffStore(tmpRuntime);
       const tool = new BrowserRunWorkflowTool(registry, undefined, {
         browserSessionStore: store,
+        authHandoffStore: handoffStore,
       });
 
       const result = await tool.call(
@@ -344,6 +361,124 @@ describe("interactive automation tools", () => {
           metadata: expect.objectContaining({
             resumable_session: null,
           }),
+        }),
+      ]);
+      const persistedHandoffs = await new RuntimeAuthHandoffStore(tmpRuntime).listActive();
+      expect(persistedHandoffs).toEqual([
+        expect.objectContaining({
+          provider_id: "browser-auth-no-session",
+          service_key: "billing.example.com",
+          actor_key: "chat-no-session",
+          state: "pending_operator",
+          browser_session_id: "auth-handoff:browser-auth-no-session:billing.example.com:chat-no-session",
+          resumable_session_id: null,
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("cancels the durable auth handoff when operator approval is denied", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-auth-denied-"));
+    try {
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-auth-denied" },
+      });
+      registry.register({
+        id: "browser-auth-denied",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-auth-denied",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow: async () => ({
+          success: false,
+          summary: "login required",
+          error: "login required",
+          sessionId: "sess-denied",
+          authRequired: true,
+          failureCode: "auth_required",
+        }),
+      });
+      const handoffStore = new RuntimeAuthHandoffStore(tmpRuntime);
+      const tool = new BrowserRunWorkflowTool(registry, undefined, {
+        browserSessionStore: new BrowserSessionStore(tmpRuntime),
+        authHandoffStore: handoffStore,
+      });
+
+      const result = await tool.call(
+        { task: "Open dashboard", startUrl: "https://denied.example.com" },
+        makeContext({ approvalFn: vi.fn().mockResolvedValue(false), conversationSessionId: "chat-denied" }),
+      );
+
+      expect(result.success).toBe(false);
+      await expect(handoffStore.listActive()).resolves.toEqual([]);
+      await expect(handoffStore.list()).resolves.toEqual([
+        expect.objectContaining({
+          state: "cancelled",
+          failure_code: "approval_denied",
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("completes the latest pending handoff when a later workflow succeeds for the same scope", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-auth-complete-"));
+    try {
+      const handoffStore = new RuntimeAuthHandoffStore(tmpRuntime);
+      await handoffStore.createPending({
+        providerId: "browser-complete",
+        serviceKey: "complete.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-complete",
+        browserSessionId: "sess-complete",
+        resumableSessionId: "sess-complete",
+        taskSummary: "Open dashboard",
+      });
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-complete" },
+      });
+      registry.register({
+        id: "browser-complete",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-complete",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow: async () => ({
+          success: true,
+          summary: "workflow done",
+          sessionId: "sess-complete",
+        }),
+      });
+      const tool = new BrowserRunWorkflowTool(registry, undefined, {
+        browserSessionStore: new BrowserSessionStore(tmpRuntime),
+        authHandoffStore: handoffStore,
+      });
+
+      const result = await tool.call(
+        { task: "Open dashboard", startUrl: "https://complete.example.com" },
+        makeContext({ conversationSessionId: "chat-complete" }),
+      );
+
+      expect(result.success).toBe(true);
+      await expect(handoffStore.listActive()).resolves.toEqual([]);
+      await expect(handoffStore.list()).resolves.toEqual([
+        expect.objectContaining({
+          state: "completed",
+          browser_session_id: "sess-complete",
+          completed_at: expect.any(String),
         }),
       ]);
     } finally {

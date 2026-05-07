@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  RuntimeControlActorSchema,
+  RuntimeControlReplyTargetSchema,
+} from "./runtime-operation-schemas.js";
 
 export const RuntimeEnvelopeKindSchema = z.enum(["event", "command", "approval", "system"]);
 export type RuntimeEnvelopeKind = z.infer<typeof RuntimeEnvelopeKindSchema>;
@@ -315,6 +319,51 @@ export const BrowserAutomationSessionRecordSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 export type BrowserAutomationSessionRecord = z.infer<typeof BrowserAutomationSessionRecordSchema>;
+
+export const RuntimeAuthHandoffStateSchema = z.enum([
+  "requested",
+  "pending_operator",
+  "in_progress",
+  "completed",
+  "cancelled",
+  "expired",
+  "superseded",
+  "blocked",
+]);
+export type RuntimeAuthHandoffState = z.infer<typeof RuntimeAuthHandoffStateSchema>;
+
+export const RuntimeAuthHandoffRecordSchema = z.object({
+  schema_version: z.literal("runtime-auth-handoff-v1"),
+  handoff_id: z.string().min(1),
+  provider_id: z.string().min(1),
+  service_key: z.string().min(1),
+  workspace: z.string().min(1),
+  actor_key: z.string().min(1),
+  state: RuntimeAuthHandoffStateSchema,
+  requested_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+  expires_at: z.string().datetime().nullable().optional(),
+  completed_at: z.string().datetime().nullable().optional(),
+  browser_session_id: z.string().nullable().optional(),
+  resumable_session_id: z.string().nullable().optional(),
+  supersedes_handoff_id: z.string().nullable().optional(),
+  superseded_by_handoff_id: z.string().nullable().optional(),
+  reply_target: RuntimeControlReplyTargetSchema.nullable().optional(),
+  requested_by: RuntimeControlActorSchema.nullable().optional(),
+  failure_code: z.string().nullable().optional(),
+  failure_message: z.string().nullable().optional(),
+  resume_hint: z.object({
+    tool_name: z.literal("browser_run_workflow"),
+    input_ref: z.string().optional(),
+    task_summary: z.string().min(1),
+  }).nullable().optional(),
+  evidence_refs: z.array(z.object({
+    kind: z.string().min(1),
+    ref: z.string().min(1),
+    observed_at: z.string().datetime().optional(),
+  })).default([]),
+});
+export type RuntimeAuthHandoffRecord = z.infer<typeof RuntimeAuthHandoffRecordSchema>;
 
 export const CircuitBreakerStateSchema = z.enum(["closed", "open", "half_open", "paused"]);
 export type CircuitBreakerState = z.infer<typeof CircuitBreakerStateSchema>;
