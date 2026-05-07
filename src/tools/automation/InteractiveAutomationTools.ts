@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { InteractiveAutomationCapability, InteractiveAutomationProviderFamily, InteractiveAutomationRegistry } from "../../runtime/interactive-automation/index.js";
 import {
+  BrowserSessionResolver,
   BrowserSessionStore,
   RuntimeAuthHandoffStore,
   type BrowserSessionScope,
@@ -71,11 +72,14 @@ export const BrowserRunWorkflowInputSchema = ProviderInputSchema.extend({
   task: z.string().min(1),
   startUrl: z.string().url().optional(),
   sessionId: z.string().optional(),
+  serviceKey: z.string().optional(),
 });
 export type BrowserRunWorkflowInput = z.infer<typeof BrowserRunWorkflowInputSchema>;
 
 export const BrowserGetStateInputSchema = ProviderInputSchema.extend({
   sessionId: z.string().optional(),
+  serviceKey: z.string().optional(),
+  startUrl: z.string().url().optional(),
 });
 export type BrowserGetStateInput = z.infer<typeof BrowserGetStateInputSchema>;
 
@@ -455,8 +459,23 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
     if (unavailable) return unavailable;
     if (!provider?.runBrowserWorkflow) return this.fail(`${provider?.id ?? "provider"} does not support browser workflows`, startTime);
     const scope = buildBrowserScope(provider.id, input, _context);
-    const resolvedSessionId = input.sessionId
-      ?? await this.resolveSessionId(scope);
+    const sessionResolution = await new BrowserSessionResolver(this.runtimeDeps.browserSessionStore)
+      .resolveForWorkflow({ scope, sessionId: input.sessionId });
+    if (!sessionResolution.ok) {
+      return {
+        success: false,
+        data: {
+          providerId: provider.id,
+          status: "browser_session_not_executed",
+          code: sessionResolution.code,
+          sessionId: sessionResolution.sessionId,
+        },
+        summary: sessionResolution.summary,
+        error: sessionResolution.summary,
+        durationMs: Date.now() - startTime,
+      };
+    }
+    const resolvedSessionId = sessionResolution.sessionId;
     const breakerDecision = this.runtimeDeps.circuitBreaker
       ? await this.runtimeDeps.circuitBreaker.beforeRun(provider.id, scope.serviceKey)
       : { allowed: true as const };
@@ -582,19 +601,14 @@ export class BrowserRunWorkflowTool extends AutomationTool<BrowserRunWorkflowInp
     return false;
   }
 
-  private async resolveSessionId(scope: BrowserSessionScope): Promise<string | undefined> {
-    if (!this.runtimeDeps.browserSessionStore) return undefined;
-    const latest = await this.runtimeDeps.browserSessionStore.findLatest(scope, ["authenticated"]);
-    return latest?.session_id;
-  }
 }
 
 function buildBrowserScope(
   providerId: string,
-  input: BrowserRunWorkflowInput,
+  input: BrowserRunWorkflowInput & { serviceKey?: string },
   context: ToolCallContext,
 ): BrowserSessionScope {
-  const serviceKey = browserServiceKey(input.startUrl);
+  const serviceKey = input.serviceKey ?? browserServiceKey(input.startUrl);
   return {
     providerId,
     serviceKey,
@@ -665,6 +679,14 @@ export class BrowserGetStateTool extends AutomationTool<BrowserGetStateInput> {
   };
   readonly inputSchema = BrowserGetStateInputSchema;
 
+  constructor(
+    registry: InteractiveAutomationRegistry,
+    policy: InteractiveAutomationToolPolicy = DEFAULT_INTERACTIVE_AUTOMATION_TOOL_POLICY,
+    private readonly runtimeDeps: BrowserWorkflowRuntimeDeps = {},
+  ) {
+    super(registry, policy);
+  }
+
   description(): string {
     return "Read state from the configured browser automation provider.";
   }
@@ -675,7 +697,26 @@ export class BrowserGetStateTool extends AutomationTool<BrowserGetStateInput> {
     const unavailable = await this.availableOrFail(provider, startTime);
     if (unavailable) return unavailable;
     if (!provider?.getBrowserState) return this.fail(`${provider?.id ?? "provider"} does not support browser state`, startTime);
-    const result = await provider.getBrowserState({ sessionId: input.sessionId });
+    const scope = input.serviceKey || input.startUrl
+      ? buildBrowserScope(provider.id, { task: "browser_get_state", startUrl: input.startUrl, serviceKey: input.serviceKey }, _context)
+      : undefined;
+    const resolution = await new BrowserSessionResolver(this.runtimeDeps.browserSessionStore)
+      .resolveForState({ scope, sessionId: input.sessionId });
+    if (!resolution.ok) {
+      return {
+        success: false,
+        data: {
+          providerId: provider.id,
+          status: "browser_session_not_executed",
+          code: resolution.code,
+          sessionId: resolution.sessionId,
+        },
+        summary: resolution.summary,
+        error: resolution.summary,
+        durationMs: Date.now() - startTime,
+      };
+    }
+    const result = await provider.getBrowserState({ sessionId: resolution.sessionId });
     return result.success
       ? this.success({ providerId: provider.id, result }, result.summary, startTime)
       : this.fail(result.error ?? result.summary, startTime);
