@@ -778,10 +778,25 @@ function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean
     && Array.isArray(summary.near_miss_candidates)
     && typeof summary.artifact_retention === "object"
     && summary.artifact_retention !== null
+    && isCurrentArtifactRetentionShape(summary.artifact_retention)
     && Array.isArray(summary.evaluator_summary.budgets)
     && Array.isArray(summary.evaluator_summary.calibration)
     && typeof summary.candidate_selection_summary === "object"
     && summary.candidate_selection_summary !== null;
+}
+
+function isCurrentArtifactRetentionShape(
+  artifactRetention: RuntimeEvidenceSummary["artifact_retention"]
+): boolean {
+  const cleanupPlan = artifactRetention.cleanup_plan;
+  if (
+    typeof cleanupPlan !== "object"
+    || cleanupPlan === null
+    || !Array.isArray(cleanupPlan.actions)
+  ) {
+    return false;
+  }
+  return cleanupPlan.actions.every((action) => typeof action.retention_basis === "string");
 }
 
 function updateSummaryFromAppend(

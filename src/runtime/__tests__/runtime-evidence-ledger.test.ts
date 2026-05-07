@@ -431,6 +431,55 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.candidate_selection_summary.raw_best?.candidate_id).toBe("candidate-index-a");
   });
 
+  it("rebuilds stale summary indexes that predate typed artifact retention basis", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "artifact-retention-basis-source",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "artifact",
+      scope: { run_id: "run:artifact-retention-basis" },
+      artifacts: [{
+        label: "smoke-cache-output",
+        state_relative_path: "tmp/smoke/cache-output.bin",
+        kind: "other",
+      }],
+      summary: "Artifact with cleanup-looking words in its path.",
+    });
+    await ledger.rebuildSummaryIndexForRun("run:artifact-retention-basis");
+    const indexPath = `${ledger.runPath("run:artifact-retention-basis")}.summary.json`;
+    const staleIndex = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
+      summary: {
+        artifact_retention: {
+          cleanup_plan: {
+            actions: Array<Record<string, unknown>>;
+          };
+        };
+      };
+    };
+    staleIndex.summary.artifact_retention.cleanup_plan.actions = staleIndex.summary.artifact_retention.cleanup_plan.actions.map((action) => {
+      const { retention_basis: _retentionBasis, ...staleAction } = action;
+      return {
+        ...staleAction,
+        retention_class: "low_value_smoke",
+        cleanup_action: "delete_candidate",
+        destructive: true,
+        approval_required: true,
+      };
+    });
+    await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
+
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:artifact-retention-basis");
+
+    expect(summary.artifact_retention.cleanup_plan.actions).toContainEqual(expect.objectContaining({
+      label: "smoke-cache-output",
+      retention_class: "other",
+      retention_basis: "unknown",
+      cleanup_action: "review",
+      destructive: false,
+      approval_required: false,
+    }));
+  });
+
   it("preserves full canonical history when append maintains an existing index", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     for (let index = 0; index < 12; index += 1) {

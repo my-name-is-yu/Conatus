@@ -21,6 +21,15 @@ export type RuntimeArtifactCleanupActionKind =
   | "delete_candidate"
   | "review";
 
+export type RuntimeArtifactRetentionDecisionBasis =
+  | "manifest"
+  | "candidate_near_miss"
+  | "candidate_role"
+  | "final_artifact_entry"
+  | "explicit_retention_class"
+  | "artifact_kind"
+  | "unknown";
+
 export interface RuntimeArtifactRetentionDecision {
   key: string;
   label: string;
@@ -29,6 +38,7 @@ export interface RuntimeArtifactRetentionDecision {
   url?: string;
   kind: RuntimeEvidenceArtifactRef["kind"];
   retention_class: RuntimeArtifactRetentionClass;
+  retention_basis: RuntimeArtifactRetentionDecisionBasis;
   protected: boolean;
   protection_reasons: string[];
   size_bytes?: number;
@@ -164,7 +174,8 @@ function mergeArtifactRecords(existing: ArtifactRecord, incoming: ArtifactRecord
 }
 
 function classifyArtifactRecord(record: ArtifactRecord): RuntimeArtifactRetentionDecision {
-  const retentionClass = inferRetentionClass(record);
+  const retention = classifyRetention(record);
+  const retentionClass = retention.retention_class;
   const protectionReasons = protectionReasonsFor(retentionClass, record);
   const cleanupAction = cleanupActionFor(retentionClass, protectionReasons.length > 0);
   const destructive = cleanupAction === "delete_candidate";
@@ -176,6 +187,7 @@ function classifyArtifactRecord(record: ArtifactRecord): RuntimeArtifactRetentio
     ...(record.artifact.url ? { url: record.artifact.url } : {}),
     kind: record.artifact.kind,
     retention_class: retentionClass,
+    retention_basis: retention.retention_basis,
     protected: protectionReasons.length > 0,
     protection_reasons: protectionReasons,
     ...(record.artifact.size_bytes !== undefined ? { size_bytes: record.artifact.size_bytes } : {}),
@@ -190,20 +202,32 @@ function classifyArtifactRecord(record: ArtifactRecord): RuntimeArtifactRetentio
   };
 }
 
-function inferRetentionClass(record: ArtifactRecord): RuntimeArtifactRetentionClass {
-  if (record.manifestCritical) return "reproducibility_critical";
-  if (record.candidate?.near_miss) return "near_miss";
-  if (record.candidateRole === "robust_best" || record.candidateRole === "safe") return "robust_candidate";
-  if (record.candidateRole === "raw_best" || record.candidateRole === "aggressive") return "best_candidate";
-  if (record.entry.kind === "artifact" && record.entry.outcome === "improved") return "final_deliverable";
-  if (record.artifact.retention_class) return record.artifact.retention_class;
-  if (record.artifact.kind === "report" || record.artifact.kind === "metrics" || record.entry.kind === "verification") {
-    return "evidence_report";
+function classifyRetention(record: ArtifactRecord): {
+  retention_class: RuntimeArtifactRetentionClass;
+  retention_basis: RuntimeArtifactRetentionDecisionBasis;
+} {
+  if (record.manifestCritical) {
+    return { retention_class: "reproducibility_critical", retention_basis: "manifest" };
   }
-  const haystack = `${record.artifact.label} ${record.artifact.path ?? ""} ${record.artifact.state_relative_path ?? ""}`.toLowerCase();
-  if (haystack.includes("smoke")) return "low_value_smoke";
-  if (haystack.includes("cache") || haystack.includes("tmp/") || haystack.includes("intermediate")) return "cache_intermediate";
-  return "other";
+  if (record.candidate?.near_miss) {
+    return { retention_class: "near_miss", retention_basis: "candidate_near_miss" };
+  }
+  if (record.candidateRole === "robust_best" || record.candidateRole === "safe") {
+    return { retention_class: "robust_candidate", retention_basis: "candidate_role" };
+  }
+  if (record.candidateRole === "raw_best" || record.candidateRole === "aggressive") {
+    return { retention_class: "best_candidate", retention_basis: "candidate_role" };
+  }
+  if (record.entry.kind === "artifact" && record.entry.outcome === "improved") {
+    return { retention_class: "final_deliverable", retention_basis: "final_artifact_entry" };
+  }
+  if (record.artifact.retention_class) {
+    return { retention_class: record.artifact.retention_class, retention_basis: "explicit_retention_class" };
+  }
+  if (record.artifact.kind === "report" || record.artifact.kind === "metrics" || record.entry.kind === "verification") {
+    return { retention_class: "evidence_report", retention_basis: "artifact_kind" };
+  }
+  return { retention_class: "other", retention_basis: "unknown" };
 }
 
 function protectionReasonsFor(
