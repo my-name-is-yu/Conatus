@@ -1003,7 +1003,7 @@ describe("TaskLifecycle", async () => {
       const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
 
       expect(result.success).toBe(false);
-      expect(result.stopped_reason).toBe("blocked");
+      expect(result.stopped_reason).toBe("policy_blocked");
       expect(result.diffEvidenceSource).toBe("filesystem_artifact");
       expect(result.filesChanged).toBe(false);
       expect(result.filesChangedPaths).toEqual([]);
