@@ -227,6 +227,7 @@ export async function applyPostExecutionDiffScopeChecks(input: {
       fallbackChangedPaths: input.fallbackChangedPaths,
       baseline: input.baseline,
     });
+    input.result.diffEvidenceSource = diffArtifacts.evidenceSource;
     if (diffArtifacts.available) {
       const changedFiles = diffArtifacts.changedPaths;
       input.result.filesChangedPaths = changedFiles;

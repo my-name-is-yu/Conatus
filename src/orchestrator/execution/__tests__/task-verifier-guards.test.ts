@@ -778,6 +778,59 @@ describe("attemptRevert safety", () => {
     }
   });
 
+  it("treats filesystem artifact diffs as unsafe for git restore guidance", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-kaggle-artifact-"));
+    fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "reports", "metrics.json"), "{\"score\":0.72}\n", "utf-8");
+    const llmClient = createMockLLMClient([]);
+    const logger = {
+      warn: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as Logger;
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient,
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * (d.unit === "hours" ? 3600000 : 60000),
+      revertCwd: workspace,
+      logger,
+    };
+    const task = makeTask({
+      constraints: [`workspace_path:${workspace}`, "run_spec_profile:kaggle"],
+      reversibility: "reversible",
+    });
+
+    try {
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+      const result = await handleFailure(deps, task, {
+        ...makeFailureVerificationResult(),
+        file_diffs: [{
+          path: "reports/metrics.json",
+          patch: "diff --git a/reports/metrics.json b/reports/metrics.json",
+          safe_to_revert: false,
+        }],
+      });
+
+      expect(result.action).toBe("escalate");
+      expect(fs.readFileSync(path.join(workspace, "reports", "metrics.json"), "utf-8")).toBe("{\"score\":0.72}\n");
+      expect(llmClient.callCount).toBe(0);
+      expect(logger.warn).toHaveBeenCalledWith("[task] revert attempted", expect.objectContaining({
+        taskId: task.id,
+        success: false,
+        concretePaths: [],
+        unsafePaths: ["reports/metrics.json"],
+      }));
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Task;
+      expect(persisted.scope_boundary.in_scope).not.toContain("reports/metrics.json");
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("uses goal workspace_path instead of stale daemon revertCwd", async () => {
     const daemonRepo = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-daemon-"));
     const goalRepo = fs.mkdtempSync(path.join(os.tmpdir(), "attempt-revert-goal-"));

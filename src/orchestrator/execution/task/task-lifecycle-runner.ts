@@ -375,6 +375,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
     task: verdictResult.task,
     verificationResult: effectiveVerificationResult,
     action: verdictResult.action,
+    diffEvidenceSource: executionResult.diffEvidenceSource,
     tokensUsed: taskCycleTokens,
   };
 }

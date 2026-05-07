@@ -84,6 +84,8 @@ export interface AgentResult {
   filesChangedPaths?: string[];
   /** Unified diffs captured immediately after execution, when available. */
   fileDiffs?: VerificationFileDiff[];
+  /** Source used to determine changed paths and diffs. */
+  diffEvidenceSource?: "git" | "filesystem_artifact" | "unavailable";
   /** Native agentloop execution metadata when the task ran through the in-process loop. */
   agentLoop?: AgentLoopExecutionInfo;
 }

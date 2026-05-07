@@ -89,6 +89,7 @@ export class ReportingEngine {
         task_id: taskResult?.taskId ?? null,
         task_action: taskResult?.action ?? null,
         task_verification_diffs: taskResult?.verificationDiffs,
+        task_diff_evidence_source: taskResult?.diffEvidenceSource ?? null,
         wait_status: waitStatus ?? null,
         finalization_status: finalizationStatus ?? null,
         execution_mode: executionMode ?? null,

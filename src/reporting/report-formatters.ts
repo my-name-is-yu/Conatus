@@ -36,6 +36,17 @@ export function buildSectionedReportContent(args: {
   );
 }
 
+function formatDiffEvidenceSource(
+  source: ExecutionSummaryParams["taskResult"] extends infer T
+    ? T extends { diffEvidenceSource?: infer S } ? S | undefined : undefined
+    : never
+): string | null {
+  if (source === "git") return "git diff";
+  if (source === "filesystem_artifact") return "filesystem/artifact evidence (git unavailable)";
+  if (source === "unavailable") return "unavailable";
+  return null;
+}
+
 // ─── formatReportForCLI ───
 
 export function formatReportForCLI(report: Report): string {
@@ -162,10 +173,12 @@ export function buildExecutionSummaryContent(
 
   let taskSection = "_No task executed this loop._";
   if (taskResult !== null) {
+    const diffEvidenceSource = formatDiffEvidenceSource(taskResult.diffEvidenceSource);
     taskSection =
       `- **Task ID**: ${taskResult.taskId}\n` +
       `- **Action**: ${taskResult.action}\n` +
-      `- **Dimension**: ${taskResult.dimension}`;
+      `- **Dimension**: ${taskResult.dimension}` +
+      (diffEvidenceSource ? `\n- **Changed-path evidence source**: ${diffEvidenceSource}` : "");
   }
 
   const stallStatus = stallDetected ? "Yes" : "No";

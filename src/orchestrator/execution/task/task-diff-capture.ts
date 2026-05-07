@@ -10,6 +10,7 @@ export type ExecFileSyncFn = (
 
 export interface ExecutionDiffArtifacts {
   available: boolean;
+  evidenceSource: "git" | "filesystem_artifact" | "unavailable";
   changedPaths: string[];
   fileDiffs: VerificationFileDiff[];
 }
@@ -207,12 +208,24 @@ export function captureExecutionDiffArtifacts(
   const fallbackPaths = uniqueNonEmpty(options.fallbackChangedPaths ?? [])
     .filter((filePath) => isSafeRelativePath(cwd, filePath));
   if (!hasGitMetadata(cwd)) {
-    return renderFallbackDiffArtifacts(cwd, fallbackPaths, options.maxFallbackDiffBytes, baselineChangedPaths);
+    return renderFallbackDiffArtifacts(
+      cwd,
+      fallbackPaths,
+      options.maxFallbackDiffBytes,
+      baselineChangedPaths,
+      "filesystem_artifact",
+    );
   }
 
   const snapshot = captureGitChangedPaths(execFileSyncFn, cwd);
   if (!snapshot.available) {
-    return renderFallbackDiffArtifacts(cwd, fallbackPaths, options.maxFallbackDiffBytes, baselineChangedPaths);
+    return renderFallbackDiffArtifacts(
+      cwd,
+      fallbackPaths,
+      options.maxFallbackDiffBytes,
+      baselineChangedPaths,
+      "unavailable",
+    );
   }
 
   const untrackedSet = new Set(uniqueNonEmpty(snapshot.untrackedPaths));
@@ -240,7 +253,7 @@ export function captureExecutionDiffArtifacts(
     }
   }
 
-  return { available: true, changedPaths, fileDiffs };
+  return { available: true, evidenceSource: "git", changedPaths, fileDiffs };
 }
 
 function parseGitDiffByPath(output: string, expectedPaths: string[]): Map<string, string> {
@@ -268,18 +281,20 @@ function renderFallbackDiffArtifacts(
   fallbackPaths: string[],
   maxFallbackDiffBytes = 200_000,
   baselineChangedPaths?: Set<string>,
+  evidenceSource: ExecutionDiffArtifacts["evidenceSource"] = "unavailable",
 ): ExecutionDiffArtifacts {
-  if (fallbackPaths.length === 0) {
-    return { available: false, changedPaths: [], fileDiffs: [] };
-  }
+  const available = evidenceSource === "filesystem_artifact" || fallbackPaths.length > 0;
   return {
-    available: true,
+    available,
+    evidenceSource,
     changedPaths: fallbackPaths,
     fileDiffs: fallbackPaths.flatMap((filePath) =>
       renderCurrentFileDiff(cwd, filePath, maxFallbackDiffBytes)
         .map((diff) => ({
           ...diff,
-          ...(baselineChangedPaths?.has(filePath) ? { safe_to_revert: false } : {}),
+          ...(evidenceSource === "filesystem_artifact" || baselineChangedPaths?.has(filePath)
+            ? { safe_to_revert: false }
+            : {}),
         }))
     ),
   };

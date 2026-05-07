@@ -603,6 +603,7 @@ export class TaskLifecycle {
           agentLoopResult.workspace.executionCwd,
           { fallbackChangedPaths, baseline: diffBaseline },
         );
+        result.diffEvidenceSource = diffArtifacts.evidenceSource;
         if (diffArtifacts.available) {
           capturedChangedPaths = diffArtifacts.changedPaths;
           result.filesChangedPaths = diffArtifacts.changedPaths;

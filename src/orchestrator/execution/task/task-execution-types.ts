@@ -1,5 +1,6 @@
 import { TaskSchema, VerificationResultSchema } from "../../../base/types/task.js";
 import type { Task, VerificationResult } from "../../../base/types/task.js";
+import type { AgentResult } from "../adapter-layer.js";
 import type { CapabilityAcquisitionTask } from "../../../base/types/capability.js";
 
 /**
@@ -12,6 +13,7 @@ export interface TaskCycleResult {
   verificationResult: VerificationResult;
   action: "completed" | "keep" | "discard" | "escalate" | "approval_denied" | "capability_acquiring";
   acquisition_task?: CapabilityAcquisitionTask;
+  diffEvidenceSource?: AgentResult["diffEvidenceSource"];
   /** Total tokens consumed during this task cycle (generation + native execution + verification). */
   tokensUsed?: number;
 }

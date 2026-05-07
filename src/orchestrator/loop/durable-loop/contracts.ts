@@ -28,6 +28,7 @@ import type { Goal } from "../../../base/types/goal.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveContext, DriveScore } from "../../../base/types/drive.js";
 import type { VerificationFileDiff } from "../../../base/types/task.js";
+import type { AgentResult } from "../../execution/adapter-layer.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
 import type { ToolRegistry } from "../../../tools/registry.js";
 import type { CorePhaseRunner } from "../../execution/agent-loop/core-phase-runner.js";
@@ -88,6 +89,7 @@ export interface ExecutionSummaryParams {
     action: string;
     dimension: string;
     verificationDiffs?: VerificationFileDiff[];
+    diffEvidenceSource?: AgentResult["diffEvidenceSource"];
   } | null;
   stallDetected: boolean;
   pivotOccurred: boolean;

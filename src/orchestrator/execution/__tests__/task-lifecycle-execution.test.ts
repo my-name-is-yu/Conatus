@@ -945,12 +945,77 @@ describe("TaskLifecycle", async () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("No files were modified");
+      expect(result.diffEvidenceSource).toBe("filesystem_artifact");
       expect(result.filesChangedPaths).toEqual([]);
       expect(result.agentLoop?.verificationHints).toContain("No files were modified");
       expect(persisted.status).toBe("error");
     });
 
-    it("fails non-git native success when only the model output claims changed files", async () => {
+    it("reports filesystem artifact evidence for a policy-blocked non-git Kaggle workspace without artifacts", async () => {
+      const llm = createMockLLMClient([]);
+      const workspace = path.join(tmpDir, "playground-series-s6e5");
+      fs.mkdirSync(workspace, { recursive: true });
+      const task = makeTask({
+        id: "task-kaggle-policy-blocked-non-git",
+        constraints: [`workspace_path:${workspace}`, "run_spec_profile:kaggle"],
+      });
+      const agentLoopRunner = makeAgentLoopRunner(makeAgentLoopResult("completed", {
+        success: true,
+        output: {
+          status: "blocked",
+          finalAnswer: "policy blocked before training artifacts were created",
+          summary: "policy blocked",
+          filesChanged: [],
+          testsRun: [],
+          completionEvidence: [],
+          verificationHints: [],
+          blockers: ["shell execution was blocked by runtime policy"],
+        },
+        changedFiles: [],
+        commandResults: [{
+          toolName: "shell",
+          command: "python train.py",
+          cwd: workspace,
+          success: false,
+          execution: { status: "not_executed", reason: "policy_blocked", message: "shell execution blocked" },
+          category: "other",
+          evidenceEligible: false,
+          relevantToTask: true,
+          outputSummary: "shell execution blocked",
+          durationMs: 1,
+        }],
+        workspace: {
+          requestedCwd: workspace,
+          executionCwd: workspace,
+          isolated: false,
+          cleanupStatus: "not_requested",
+          dirty: false,
+          disposition: "not_isolated",
+        },
+      }));
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: realExecFileSync,
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe("blocked");
+      expect(result.diffEvidenceSource).toBe("filesystem_artifact");
+      expect(result.filesChanged).toBe(false);
+      expect(result.filesChangedPaths).toEqual([]);
+      expect(result.fileDiffs).toEqual([]);
+      expect(result.error).toContain("shell execution was blocked by runtime policy");
+      expect(fs.existsSync(path.join(workspace, "hgb-balanced-weight-smoke"))).toBe(false);
+      expect(fs.existsSync(path.join(workspace, "metrics.json"))).toBe(false);
+      expect(fs.existsSync(path.join(workspace, "submission.csv"))).toBe(false);
+      expect(persisted.status).toBe("blocked");
+    });
+
+    it("fails non-git native success without treating model-claimed paths as changed evidence", async () => {
       const llm = createMockLLMClient([]);
       const workspace = path.join(tmpDir, "native-claimed-change-non-git");
       fs.mkdirSync(workspace, { recursive: true });
@@ -996,7 +1061,8 @@ describe("TaskLifecycle", async () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("No files were modified");
-      expect(result.filesChangedPaths).toEqual(["claimed.txt"]);
+      expect(result.diffEvidenceSource).toBe("filesystem_artifact");
+      expect(result.filesChangedPaths).toEqual([]);
       expect(result.agentLoop?.verificationHints).toContain("No files were modified");
       expect(persisted.status).toBe("error");
     });
