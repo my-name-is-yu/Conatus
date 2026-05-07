@@ -10,6 +10,7 @@ import { ConcurrencyController } from "../../../../tools/concurrency.js";
 import { ToolExecutor } from "../../../../tools/executor.js";
 import { ToolSearchTool } from "../../../../tools/query/ToolSearchTool/ToolSearchTool.js";
 import { ApplyPatchTool } from "../../../../tools/fs/ApplyPatchTool/ApplyPatchTool.js";
+import { TaskUpdateTool } from "../../../../tools/mutation/TaskUpdateTool/TaskUpdateTool.js";
 import { StateManager } from "../../../../base/state/state-manager.js";
 import { SessionManager } from "../../session-manager.js";
 import { TrustManager } from "../../../../platform/traits/trust-manager.js";
@@ -18,6 +19,7 @@ import { StallDetector } from "../../../../platform/drive/stall-detector.js";
 import { TaskLifecycle } from "../../task/task-lifecycle.js";
 import type { Task } from "../../../../base/types/task.js";
 import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
+import { createMockLLMClient } from "../../../../../tests/helpers/mock-llm.js";
 import { makeGoal } from "../../../../../tests/helpers/fixtures.js";
 import {
   BoundedAgentLoopRunner,
@@ -1670,6 +1672,92 @@ describe("agentloop phase 2", () => {
       verificationHints: ["hint"],
       filesChangedPaths: ["src/example.ts"],
     });
+  });
+
+  it("ignores active task lifecycle-owned task_update on the production task AgentLoop path", async () => {
+    const modelInfo = makeModelInfo();
+    const stateManager = new StateManager(tmpDir);
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      {
+        content: "",
+        toolCalls: [{
+          id: "update-current-task",
+          name: "task_update",
+          input: {
+            goalId: "goal-1",
+            taskId: "task-1",
+            status: "completed",
+            verification_verdict: "pass",
+            verification_evidence: ["self-declared success"],
+          },
+        }],
+        stopReason: "tool_use",
+      },
+      {
+        content: JSON.stringify({
+          status: "done",
+          finalAnswer: "Returned final task result after lifecycle-owned task_update was ignored.",
+          summary: "completed",
+          filesChanged: [],
+          testsRun: [],
+          completionEvidence: ["final JSON returned"],
+          verificationHints: [],
+          blockers: [],
+        }),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+    ]);
+    const toolRegistry = new ToolRegistry();
+    toolRegistry.register(new TaskUpdateTool(stateManager));
+    const router = new ToolRegistryAgentLoopToolRouter(toolRegistry);
+    const executor = new ToolExecutor({
+      registry: toolRegistry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+    const runtime = new ToolExecutorAgentLoopToolRuntime(executor, router);
+    const boundedRunner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+    const taskRunner = new TaskAgentLoopRunner({
+      boundedRunner,
+      modelClient,
+      modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
+      defaultModel: modelInfo.ref,
+      defaultToolPolicy: { allowedTools: ["task_update"] },
+    });
+    const llmClient = createMockLLMClient([]);
+    const lifecycle = new TaskLifecycle(
+      stateManager,
+      llmClient,
+      new SessionManager(stateManager),
+      new TrustManager(stateManager),
+      new StrategyManager(stateManager, llmClient),
+      new StallDetector(stateManager),
+      { agentLoopRunner: taskRunner, execFileSyncFn: () => "" },
+    );
+    const task = makeTask({ id: "task-1", task_category: "observation" });
+    await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+    const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+    expect(result.success).toBe(true);
+    expect(result.stopped_reason).toBe("completed");
+    const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Task;
+    expect(persisted.status).toBe("completed");
+    expect(persisted.verification_verdict).toBeUndefined();
+    const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+      events: Array<{ type: string; stopped_reason: string | null; verification_verdict?: string }>;
+      summary: { latest_event_type: string | null; task_status: string; stopped_reason: string | null; verification_verdict?: string };
+    };
+    expect(ledger.events.map((event) => event.type)).toEqual(["started", "succeeded"]);
+    expect(ledger.events.filter((event) => event.type === "succeeded")).toHaveLength(1);
+    expect(ledger.events.at(-1)).toMatchObject({ type: "succeeded" });
+    expect(ledger.summary).toMatchObject({
+      latest_event_type: "succeeded",
+      task_status: "completed",
+      stopped_reason: null,
+    });
+    expect(ledger.summary.verification_verdict).toBeUndefined();
   });
 
   it("uses the goal workspace_path for native task execution when daemon cwd differs", async () => {

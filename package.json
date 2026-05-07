@@ -47,7 +47,7 @@
   ],
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "build": "npm run clean && tsc -p tsconfig.build.json --incremental false",
+    "build": "npm run clean && tsc -p tsconfig.build.json --incremental false && node scripts/fix-bin-mode.mjs",
     "build:watch": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "check:docs": "node scripts/check-docs.mjs",
     "check:subpackages": "node scripts/check-subpackages.mjs --changed",

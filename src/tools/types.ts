@@ -187,6 +187,8 @@ export interface ToolCallContext {
   cwd: string;
   /** Goal ID for trust/permission lookups */
   goalId: string;
+  /** Owning task ID when a tool runs inside a task-scoped agent loop. */
+  taskId?: string;
   /** Trust balance for the current context */
   trustBalance: number;
   /** Whether the user has pre-approved certain operations */

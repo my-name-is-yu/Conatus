@@ -217,6 +217,17 @@ describe("TaskLifecycle", async () => {
       expect(userMessage).toContain("goal-42");
     });
 
+    it("tells generated check-contract validators to use PulSeed task-start freshness", async () => {
+      const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
+      const lifecycle = createLifecycle(spy);
+
+      await lifecycle.generateTask("goal-42", "roc_auc");
+
+      const userMessage = spy.calls[0]!.messages[0]!.content;
+      expect(userMessage).toContain("PulSeed enforces fresh_after_task_start relative to the task start time");
+      expect(userMessage).toContain("script validators should regenerate missing or schema-invalid artifacts");
+    });
+
     it("builds repository prompt context from goal workspace_path instead of daemon cwd", async () => {
       const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
       const daemonDir = path.join(tmpDir, "daemon-repo");
