@@ -1776,5 +1776,44 @@ describe("TaskLifecycle", async () => {
       expect(update.previous_value).toBe(0.2);
       expect(update.new_value).toBeCloseTo(0.35, 5);
     });
+
+    it("dimension_updates lowers max-threshold values on partial verdict", async () => {
+      const llm = createMockLLMClient([LLM_REVIEW_PARTIAL]);
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({
+        target_dimensions: ["bug_count"],
+        success_criteria: [
+          {
+            description: "Bug count is reduced",
+            verification_method: "Manual review",
+            is_blocking: true,
+          },
+        ],
+      });
+      const result = makeExecutionResult();
+
+      await stateManager.writeRaw("goals/goal-1/goal.json", {
+        id: "goal-1",
+        title: "Reduce Bugs",
+        status: "active",
+        dimensions: [
+          {
+            name: "bug_count",
+            label: "Bug Count",
+            current_value: 10,
+            threshold: { type: "max", value: 5 },
+            last_updated: null,
+          },
+        ],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const verification = await lifecycle.verifyTask(task, result);
+      expect(verification.verdict).toBe("partial");
+      const update = verification.dimension_updates[0]!;
+      expect(update.previous_value).toBe(10);
+      expect(update.new_value).toBeCloseTo(9.25, 5);
+    });
   });
 });
