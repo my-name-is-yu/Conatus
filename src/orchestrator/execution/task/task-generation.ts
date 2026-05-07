@@ -24,17 +24,25 @@ import { isArtifactContractRequired } from "./task-artifact-contract.js";
 
 // ─── Schema for LLM-generated task fields ───
 
+const GeneratedVerificationMethodSchema = z.string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) => !/[\r\n]/.test(value) && !value.includes("<<"),
+    "verification_method must be a single-line command and must not use heredocs or multiline inline scripts"
+  );
+
+const LLMGeneratedCriterionSchema = z.object({
+  description: z.string(),
+  verification_method: GeneratedVerificationMethodSchema,
+  is_blocking: z.boolean().default(true),
+});
+
 export const LLMGeneratedTaskSchema = z.object({
   work_description: z.string(),
   rationale: z.string(),
   approach: z.string(),
-  success_criteria: z.array(
-    z.object({
-      description: z.string(),
-      verification_method: z.string(),
-      is_blocking: z.boolean().default(true),
-    })
-  ),
+  success_criteria: z.array(LLMGeneratedCriterionSchema),
   scope_boundary: z.object({
     in_scope: z.array(z.string()),
     out_of_scope: z.array(z.string()),
@@ -518,13 +526,7 @@ const LLMTaskGroupSchema = z.object({
       rationale: z.string(),
       approach: z.string(),
       target_dimension: z.string(),
-      success_criteria: z.array(
-        z.object({
-          description: z.string(),
-          verification_method: z.string(),
-          is_blocking: z.boolean().default(true),
-        })
-      ),
+      success_criteria: z.array(LLMGeneratedCriterionSchema),
       scope_boundary: z.object({
         in_scope: z.array(z.string()),
         out_of_scope: z.array(z.string()),

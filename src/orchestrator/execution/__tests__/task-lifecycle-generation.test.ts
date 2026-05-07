@@ -106,6 +106,48 @@ const UNKNOWN_REVERSIBILITY_RESPONSE = `\`\`\`json
 }
 \`\`\``;
 
+const HEREDOC_VERIFICATION_RESPONSE = `\`\`\`json
+{
+  "work_description": "Create a Kaggle metrics contract check",
+  "rationale": "Fresh metrics must be verified",
+  "approach": "Write a report and validate it",
+  "success_criteria": [
+    {
+      "description": "Report contains roc_auc",
+      "verification_method": "python - <<'PY'\\nimport json\\nprint(json.load(open('reports/run.json'))['roc_auc'])\\nPY",
+      "is_blocking": true
+    }
+  ],
+  "scope_boundary": {
+    "in_scope": ["reports/run.json"],
+    "out_of_scope": [],
+    "blast_radius": "low"
+  },
+  "constraints": [],
+  "artifact_contract": {
+    "required": true,
+    "required_artifacts": [
+      {
+        "kind": "metrics_json",
+        "path": "reports/run.json",
+        "required_fields": ["roc_auc"],
+        "field_types": { "roc_auc": "number" },
+        "fresh_after_task_start": true
+      },
+      {
+        "kind": "submission_csv",
+        "path": "submissions/run.csv",
+        "required_fields": [],
+        "field_types": {},
+        "fresh_after_task_start": true
+      }
+    ]
+  },
+  "reversibility": "reversible",
+  "estimated_duration": { "value": 1, "unit": "hours" }
+}
+\`\`\``;
+
 // ─── Test Suite ───
 
 function expectTask(task: Task | null): Task {
@@ -674,6 +716,16 @@ describe("TaskLifecycle", async () => {
       expect(task.constraints).toContain("Must not modify production code");
       expect(task.reversibility).toBe("reversible");
       expect(task.estimated_duration).toEqual({ value: 2, unit: "hours" });
+    });
+
+    it("rejects generated multiline heredoc verification methods before task persistence", async () => {
+      const llm = createMockLLMClient([HEREDOC_VERIFICATION_RESPONSE]);
+      const lifecycle = createLifecycle(llm);
+
+      await expect(lifecycle.generateTask("goal-1", "roc_auc")).rejects.toThrow(/verification_method/);
+
+      const taskDir = path.join(tmpDir, "tasks", "goal-1");
+      expect(fs.existsSync(taskDir)).toBe(false);
     });
 
     it("forces artifact contract required for typed Kaggle RunSpec goals", async () => {

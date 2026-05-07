@@ -103,6 +103,8 @@ export class BoundedAgentLoopRunner {
     const commandResults: AgentLoopCommandResult[] = [];
     const toolResultSummaries: AgentLoopToolResultSummary[] = [];
     const initialWorkspaceSnapshot = await this.captureWorkspaceSnapshot(turn.cwd);
+    let finalizationReserveUsed = false;
+    let forceFinalAnswerOnly = false;
     const stop = (
       reason: AgentLoopStopReason,
       startedAt: number,
@@ -174,7 +176,17 @@ export class BoundedAgentLoopRunner {
         return stop("timeout", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (modelTurns >= turn.budget.maxModelTurns) {
-        return stop("max_model_turns", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        if (!finalizationReserveUsed && this.shouldUseFinalizationReserve(turn, messages, toolResultSummaries, finalText)) {
+          finalizationReserveUsed = true;
+          forceFinalAnswerOnly = true;
+          messages.push({
+            role: "user",
+            content: this.buildFinalizationReservePrompt(turn),
+          });
+          await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
+        } else {
+          return stop("max_model_turns", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        }
       }
       if (toolCalls >= turn.budget.maxToolCalls) {
         return stop("max_tool_calls", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
@@ -183,7 +195,7 @@ export class BoundedAgentLoopRunner {
         return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
 
-      const tools = this.deps.toolRouter.modelVisibleTools(turn as AgentLoopTurnContext<unknown>);
+      const tools = forceFinalAnswerOnly ? [] : this.deps.toolRouter.modelVisibleTools(turn as AgentLoopTurnContext<unknown>);
       if (modelTurns === 0) {
         await this.record(turn, {
           type: "turn_context",
@@ -239,6 +251,8 @@ export class BoundedAgentLoopRunner {
       const response = this.protocolToResponse(protocol);
       modelTurns++;
       finalText = response.content;
+      const wasFinalAnswerOnly = forceFinalAnswerOnly;
+      forceFinalAnswerOnly = false;
 
       for (const assistant of protocol.assistant) {
         await this.record(turn, {
@@ -383,6 +397,11 @@ export class BoundedAgentLoopRunner {
         compactions += compacted.compacted ? 1 : 0;
         await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
         continue;
+      }
+
+      if (wasFinalAnswerOnly) {
+        const detail = "Agent loop reached the finalization reserve, but the model attempted another tool call instead of returning final output.";
+        return stop("max_model_turns", startedAt, modelTurns, toolCalls, response.content || detail, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, detail, "max_model_turns");
       }
 
       const toolBatchBudgetRefusal = this.toolBatchBudgetRefusalReason(response.toolCalls, turn, startedAt);
@@ -555,6 +574,31 @@ export class BoundedAgentLoopRunner {
       compactions += compacted.compacted ? 1 : 0;
       await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
     }
+  }
+
+  private shouldUseFinalizationReserve<TOutput>(
+    turn: AgentLoopTurnContext<TOutput>,
+    messages: AgentLoopMessage[],
+    toolResults: readonly AgentLoopToolResultSummary[],
+    finalText: string,
+  ): boolean {
+    if (turn.finalOutputMode === "display_text") return false;
+    if (toolResults.length === 0 && !messages.some((message) => message.role === "tool")) return false;
+    const trimmed = finalText.trim();
+    return trimmed.length === 0 || trimmed.startsWith("Calling ");
+  }
+
+  private buildFinalizationReservePrompt<TOutput>(turn: AgentLoopTurnContext<TOutput>): string {
+    const requiredTools = turn.toolPolicy.requiredTools?.length
+      ? `Required tools already visible for this turn: ${turn.toolPolicy.requiredTools.join(", ")}.`
+      : "";
+    return [
+      "You have reached the tool/model turn budget. Do not call any more tools.",
+      "Return the final output now as JSON matching the required schema.",
+      "Use status=done only if the completed work and verification evidence satisfy the task; otherwise use partial or failed with blockers.",
+      "Include concrete completionEvidence and filesChanged from the work already performed.",
+      requiredTools,
+    ].filter(Boolean).join("\n");
   }
 
   private parseFinal<TOutput>(

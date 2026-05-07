@@ -419,7 +419,59 @@ describe("agentloop phase 1", () => {
     });
   });
 
-	  it("exposes required deferred tools to the model without enabling all deferred tools", () => {
+  it("uses a no-tool finalization reserve instead of stopping on a post-tool max_model_turns", async () => {
+    const cwd = makeTempDir();
+    const modelInfo = makeModelInfo();
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      {
+        content: "",
+        toolCalls: [{ id: "echo-1", name: "echo", input: { value: "evidence" } }],
+        stopReason: "tool_use",
+      },
+      {
+        content: JSON.stringify({ ok: true }),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+    ]);
+    const { router, runtime } = makeToolRuntime();
+    const boundedRunner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    try {
+      const result = await boundedRunner.run({
+        session: createAgentLoopSession(),
+        turnId: "turn-finalize",
+        goalId: "goal-1",
+        taskId: "task-1",
+        cwd,
+        model: modelInfo.ref,
+        modelInfo,
+        messages: [{ role: "user", content: "Use the tool, then finish." }],
+        outputSchema: z.object({ ok: z.boolean() }),
+        budget: withDefaultBudget({ maxModelTurns: 1 }),
+        toolPolicy: {},
+        toolCallContext: {
+          cwd,
+          goalId: "goal-1",
+          trustBalance: 0,
+          preApproved: true,
+          approvalFn: async () => false,
+        },
+      });
+
+      expect(result.stopReason).toBe("completed");
+      expect(result.output).toEqual({ ok: true });
+      expect(modelClient.calls).toHaveLength(2);
+      expect(modelClient.calls[1]?.tools).toEqual([]);
+      expect(modelClient.calls[1]?.messages.some((message) =>
+        message.role === "user" && message.content.includes("Do not call any more tools")
+      )).toBe(true);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes required deferred tools to the model without enabling all deferred tools", () => {
     const registry = new ToolRegistry();
     registry.register(new EchoTool());
     registry.register(new DeferredTool());

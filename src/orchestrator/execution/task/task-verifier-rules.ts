@@ -22,6 +22,9 @@ export async function runMechanicalVerification(
     "sh",
     "bash",
     "node",
+    "python ",
+    "python3 ",
+    ".venv/bin/python ",
     "make",
     "cargo",
     "go ",
@@ -198,7 +201,7 @@ function failClosedMechanicalVerification(
 }
 
 interface CheapLocalCommand {
-  cmd: "test" | "rg" | "grep" | "ls";
+  cmd: "test" | "rg" | "grep" | "ls" | "python" | "python3" | ".venv/bin/python";
   args: string[];
 }
 
@@ -297,7 +300,13 @@ function tokenizeCheapCommandSegment(segment: string): string[] | null {
 }
 
 function isCheapCommandName(value: string | undefined): value is CheapLocalCommand["cmd"] {
-  return value === "test" || value === "rg" || value === "grep" || value === "ls";
+  return value === "test" ||
+    value === "rg" ||
+    value === "grep" ||
+    value === "ls" ||
+    value === "python" ||
+    value === "python3" ||
+    value === ".venv/bin/python";
 }
 
 function areSafeCheapCommandArgs(cmd: CheapLocalCommand["cmd"], args: string[]): boolean {
@@ -318,10 +327,21 @@ function areSafeCheapCommandArgs(cmd: CheapLocalCommand["cmd"], args: string[]):
     const pathOperands = positionalArgs.slice(1);
     return positionalArgs.length >= 2 && pathOperands.every(isWorkspaceRelativeOperand);
   }
+  if (cmd === "python" || cmd === "python3" || cmd === ".venv/bin/python") {
+    const [scriptPath, ...scriptArgs] = args;
+    if (!scriptPath || !scriptPath.endsWith(".py") || !isWorkspaceRelativeOperand(scriptPath)) return false;
+    return scriptArgs.every(isSafePythonScriptArg);
+  }
   const allowedLsFlags = new Set(["-a", "-l", "-la", "-al"]);
   return args.every((arg) =>
     arg.startsWith("-") ? allowedLsFlags.has(arg) : isWorkspaceRelativeOperand(arg)
   );
+}
+
+function isSafePythonScriptArg(value: string): boolean {
+  if (!value || value.includes("\0") || /[\r\n<>`$|&;]/.test(value)) return false;
+  if (value === "-c" || value === "-m" || value === "-") return false;
+  return /^[A-Za-z0-9._=:/,+-]+$/.test(value);
 }
 
 function isWorkspaceRelativeOperand(value: string): boolean {

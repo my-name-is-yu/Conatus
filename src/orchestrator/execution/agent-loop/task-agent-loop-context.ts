@@ -16,6 +16,15 @@ import { isTaskRelevantVerificationCommand } from "./task-agent-loop-verificatio
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 import { verifyTaskArtifactContract } from "../task/task-artifact-contract.js";
 
+function formatArtifactContractSection(task: Task): string {
+  if (!task.artifact_contract) return "";
+  return [
+    "Artifact contract:",
+    JSON.stringify(task.artifact_contract, null, 2),
+    "If this task creates a --check-contract mode or equivalent validator, it must validate the exact required_artifacts, required_fields, and field_types above. The metrics writer must emit those exact keys before status=done.",
+  ].join("\n");
+}
+
 export interface TaskAgentLoopContextInput {
   task: Task;
   artifactGoal?: Pick<Goal, "constraints"> | null;
@@ -64,6 +73,7 @@ export function buildTaskAgentLoopTurnContext(
     `Task: ${input.task.work_description}`,
     `Approach: ${input.task.approach}`,
     `Success criteria:\n${input.task.success_criteria.map((c) => `- ${c.description} (verify: ${c.verification_method})`).join("\n")}`,
+    formatArtifactContractSection(input.task),
     input.workspaceContext ? `Workspace context:\n${input.workspaceContext}` : "",
     input.knowledgeContext ? `Knowledge context:\n${input.knowledgeContext}` : "",
     "Return final output as JSON matching the required schema.",
