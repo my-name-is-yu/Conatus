@@ -6,7 +6,8 @@ import { EventServer } from "../event-server.js";
 import type { PulSeedEvent } from "../../base/types/drive.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { OutboxStore } from "../store/outbox-store.js";
-import { BrowserSessionStore } from "../interactive-automation/index.js";
+import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
+import { GuardrailStore } from "../guardrails/index.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
@@ -835,6 +836,114 @@ describe("snapshot and outbox replay", () => {
         state: "auth_required",
       }),
     ]);
+  });
+
+  it("includes typed runtime automation snapshot while preserving compatibility fields", async () => {
+    const runtimeRoot = path.join(tmpDir, "custom-runtime");
+    await new RuntimeAuthHandoffStore(runtimeRoot).createPending({
+      providerId: "browser-auth",
+      serviceKey: "mail.google.com",
+      workspace: "/tmp",
+      actorKey: "chat-1",
+      browserSessionId: "sess-custom",
+      resumableSessionId: "sess-custom",
+      failureCode: "auth_required",
+      failureMessage: "login required",
+      taskSummary: "Open mail",
+    });
+    await new BrowserSessionStore(runtimeRoot).recordAuthRequired({
+      sessionId: "sess-custom",
+      providerId: "browser-auth",
+      serviceKey: "mail.google.com",
+      workspace: "/tmp",
+      actorKey: "chat-1",
+      failureCode: "auth_required",
+      failureMessage: "login required",
+    });
+    const now = new Date().toISOString();
+    await new GuardrailStore(runtimeRoot).saveBreaker({
+      key: "browser-auth:mail.google.com",
+      provider_id: "browser-auth",
+      service_key: "mail.google.com",
+      state: "open",
+      failure_count: 2,
+      last_failure_code: "rate_limited",
+      last_failure_message: "rate limited",
+      last_failure_at: now,
+      opened_at: now,
+      cooldown_until: "2999-01-01T00:00:00.000Z",
+      updated_at: now,
+    });
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      runtimeRoot,
+    });
+
+    await server.start();
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as {
+      auth_sessions?: unknown[];
+      guardrails?: Record<string, unknown>;
+      runtime_automation?: Record<string, unknown>;
+    };
+    expect(snapshot.auth_sessions).toEqual([
+      expect.objectContaining({ session_id: "sess-custom" }),
+    ]);
+    expect(snapshot.guardrails?.open_breakers).toEqual([
+      expect.objectContaining({ provider_id: "browser-auth", service_key: "mail.google.com" }),
+    ]);
+    expect(snapshot.runtime_automation).toEqual(expect.objectContaining({
+      schema_version: "runtime-automation-snapshot-v1",
+      auth_handoffs: {
+        pending: [
+          expect.objectContaining({
+            provider_id: "browser-auth",
+            service_key: "mail.google.com",
+            state: "pending_operator",
+          }),
+        ],
+        stale: [],
+        recent_terminal: [],
+      },
+      browser_sessions: {
+        authenticated: [],
+        stale: [
+          expect.objectContaining({
+            session_id: "sess-custom",
+            state: "auth_required",
+          }),
+        ],
+      },
+      guardrails: {
+        open_breakers: [
+          expect.objectContaining({
+            provider_id: "browser-auth",
+            service_key: "mail.google.com",
+            state: "open",
+          }),
+        ],
+        paused_breakers: [],
+        half_open_breakers: [],
+      },
+      blocked_work: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "auth_wait",
+          provider_id: "browser-auth",
+          service_key: "mail.google.com",
+        }),
+        expect.objectContaining({
+          kind: "guardrail_open",
+          provider_id: "browser-auth",
+          service_key: "mail.google.com",
+          reason: "guardrail:open",
+        }),
+      ]),
+    }));
   });
 
   it("includes open operator handoffs in daemon snapshot", async () => {

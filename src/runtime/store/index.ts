@@ -51,6 +51,7 @@ export {
   CircuitBreakerRecordSchema,
   BackpressureLeaseSchema,
   BackpressureSnapshotSchema,
+  RuntimeAutomationSnapshotSchema,
   summarizeRuntimeHealthStatus,
   classifyLongRunHealth,
   buildLongRunHealth,
@@ -95,6 +96,7 @@ export type {
   CircuitBreakerRecord,
   BackpressureLease,
   BackpressureSnapshot,
+  RuntimeAutomationSnapshot,
 } from "./runtime-schemas.js";
 
 export {

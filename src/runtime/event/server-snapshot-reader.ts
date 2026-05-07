@@ -1,8 +1,8 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { ApprovalRequiredEvent } from "../approval-broker.js";
-import type { OutboxStore } from "../store/index.js";
-import { BrowserSessionStore } from "../interactive-automation/index.js";
+import type { OutboxStore, RuntimeAutomationSnapshot } from "../store/index.js";
+import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
 import { GuardrailStore } from "../guardrails/index.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { createRuntimeSessionRegistry } from "../session-registry/index.js";
@@ -24,6 +24,7 @@ export interface EventServerSnapshotData {
   last_outbox_seq: number;
   auth_sessions: Array<Record<string, unknown>>;
   guardrails: Record<string, unknown> | null;
+  runtime_automation: RuntimeAutomationSnapshot;
   runtime_sessions: RuntimeSessionRegistrySnapshot | null;
   operator_handoffs: RuntimeOperatorHandoffRecord[];
 }
@@ -40,13 +41,14 @@ export class EventServerSnapshotReader {
     outboxStore?: OutboxStore,
     activeWorkersProvider?: ActiveWorkersProvider
   ): Promise<EventServerSnapshotData> {
-    const [daemon, goals, latestOutbox, activeWorkers, authSessions, guardrails, runtimeSessions, operatorHandoffs] = await Promise.all([
+    const [daemon, goals, latestOutbox, activeWorkers, authSessions, guardrails, runtimeAutomation, runtimeSessions, operatorHandoffs] = await Promise.all([
       this.readDaemonState(),
       this.readGoalSummaries(),
       outboxStore?.loadLatest() ?? Promise.resolve(null),
       activeWorkersProvider?.() ?? Promise.resolve([]),
       this.readPendingAuthSessions(),
       this.readGuardrailSnapshot(),
+      this.readRuntimeAutomationSnapshot(),
       this.readRuntimeSessionSnapshot(),
       this.readOpenOperatorHandoffs(),
     ]);
@@ -59,6 +61,7 @@ export class EventServerSnapshotReader {
       last_outbox_seq: latestOutbox?.seq ?? 0,
       auth_sessions: authSessions,
       guardrails,
+      runtime_automation: runtimeAutomation,
       runtime_sessions: runtimeSessions,
       operator_handoffs: operatorHandoffs,
     };
@@ -103,6 +106,75 @@ export class EventServerSnapshotReader {
       open_breakers: openBreakers,
       backpressure_active: backpressure?.active ?? [],
       backpressure_throttled: backpressure?.throttled ?? [],
+    };
+  }
+
+  private async readRuntimeAutomationSnapshot(): Promise<RuntimeAutomationSnapshot> {
+    const runtimeRoot = this.runtimeRoot();
+    const [authHandoffs, browserSessions, breakers, backpressure] = await Promise.all([
+      new RuntimeAuthHandoffStore(runtimeRoot).list(),
+      new BrowserSessionStore(runtimeRoot).list(),
+      new GuardrailStore(runtimeRoot).listBreakers(),
+      new GuardrailStore(runtimeRoot).loadBackpressureSnapshot(),
+    ]);
+    const openBreakers = breakers.filter((breaker) => breaker.state === "open");
+    const pausedBreakers = breakers.filter((breaker) => breaker.state === "paused");
+    const halfOpenBreakers = breakers.filter((breaker) => breaker.state === "half_open");
+    const pendingAuth = authHandoffs.filter((handoff) =>
+      handoff.state === "requested" || handoff.state === "pending_operator" || handoff.state === "in_progress" || handoff.state === "blocked"
+    );
+    const recentTerminalAuth = authHandoffs.filter((handoff) =>
+      handoff.state === "completed" || handoff.state === "cancelled" || handoff.state === "expired" || handoff.state === "superseded"
+    );
+    const staleBrowserSessions = browserSessions.filter((session) => session.state !== "authenticated");
+    return {
+      schema_version: "runtime-automation-snapshot-v1",
+      generated_at: new Date().toISOString(),
+      auth_handoffs: {
+        pending: pendingAuth,
+        stale: [],
+        recent_terminal: recentTerminalAuth,
+      },
+      browser_sessions: {
+        authenticated: browserSessions.filter((session) => session.state === "authenticated"),
+        stale: staleBrowserSessions,
+      },
+      guardrails: {
+        open_breakers: openBreakers,
+        paused_breakers: pausedBreakers,
+        half_open_breakers: halfOpenBreakers,
+      },
+      backpressure: {
+        active: backpressure?.active ?? [],
+        throttled: backpressure?.throttled ?? [],
+      },
+      blocked_work: [
+        ...pendingAuth.map((handoff) => ({
+          kind: "auth_wait" as const,
+          provider_id: handoff.provider_id,
+          service_key: handoff.service_key,
+          handoff_id: handoff.handoff_id,
+          reason: handoff.failure_message ?? "auth handoff pending",
+          since: handoff.updated_at,
+          retry_after: handoff.expires_at ?? null,
+        })),
+        ...openBreakers.map((breaker) => ({
+          kind: "guardrail_open" as const,
+          provider_id: breaker.provider_id,
+          service_key: breaker.service_key,
+          reason: `guardrail:${breaker.state}`,
+          since: breaker.updated_at,
+          retry_after: breaker.cooldown_until ?? null,
+        })),
+        ...(backpressure?.throttled ?? []).map((entry) => ({
+          kind: "backpressure" as const,
+          provider_id: entry.provider_id,
+          service_key: entry.service_key,
+          reason: entry.reason,
+          since: entry.at,
+          retry_after: null,
+        })),
+      ],
     };
   }
 

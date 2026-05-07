@@ -403,6 +403,46 @@ export const BackpressureSnapshotSchema = z.object({
 });
 export type BackpressureSnapshot = z.infer<typeof BackpressureSnapshotSchema>;
 
+export const RuntimeAutomationSnapshotSchema = z.object({
+  schema_version: z.literal("runtime-automation-snapshot-v1"),
+  generated_at: z.string().datetime(),
+  auth_handoffs: z.object({
+    pending: z.array(RuntimeAuthHandoffRecordSchema),
+    stale: z.array(RuntimeAuthHandoffRecordSchema),
+    recent_terminal: z.array(RuntimeAuthHandoffRecordSchema),
+  }),
+  browser_sessions: z.object({
+    authenticated: z.array(BrowserAutomationSessionRecordSchema),
+    stale: z.array(BrowserAutomationSessionRecordSchema),
+  }),
+  guardrails: z.object({
+    open_breakers: z.array(CircuitBreakerRecordSchema),
+    paused_breakers: z.array(CircuitBreakerRecordSchema),
+    half_open_breakers: z.array(CircuitBreakerRecordSchema),
+  }),
+  backpressure: z.object({
+    active: z.array(BackpressureLeaseSchema),
+    throttled: z.array(z.object({
+      provider_id: z.string(),
+      service_key: z.string(),
+      reason: z.string(),
+      at: z.string().datetime(),
+    })),
+  }),
+  blocked_work: z.array(z.object({
+    kind: z.enum(["auth_wait", "guardrail_open", "backpressure", "provider_unavailable"]),
+    provider_id: z.string(),
+    service_key: z.string(),
+    run_id: z.string().nullable().optional(),
+    goal_id: z.string().nullable().optional(),
+    handoff_id: z.string().nullable().optional(),
+    reason: z.string(),
+    since: z.string().datetime(),
+    retry_after: z.string().datetime().nullable().optional(),
+  })),
+});
+export type RuntimeAutomationSnapshot = z.infer<typeof RuntimeAutomationSnapshotSchema>;
+
 export function summarizeRuntimeHealthStatus(
   components: Record<string, RuntimeHealthStatus>
 ): RuntimeHealthStatus {
