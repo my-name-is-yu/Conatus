@@ -13,6 +13,7 @@ import type { PulSeedEvent } from "../../base/types/drive.js";
 import type { DaemonConfig, DaemonState, ResidentActivity } from "../../base/types/daemon.js";
 import { DaemonConfigSchema } from "../../base/types/daemon.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
+import { loadGlobalConfigSync } from "../../base/config/global-config.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
 import type { MemoryLifecycleManager } from "../../platform/knowledge/memory/memory-lifecycle.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
@@ -39,6 +40,7 @@ import {
   RUNTIME_LEADER_HEARTBEAT_MS,
   RUNTIME_LEADER_LEASE_MS,
 } from "./runner-bootstrap.js";
+import { applyBrowserBackpressurePolicy } from "./browser-backpressure-policy.js";
 import type { ProcessSignalTarget, ProcessShutdownCoordinator } from "./runner-lifecycle.js";
 import {
   runCommandWithHealth as runCommandWithHealthFn,
@@ -393,7 +395,14 @@ export class DaemonRunner {
     goalIds: string[],
     snapshot: GoalCycleScheduleSnapshotEntry[]
   ): Promise<string[]> {
-    return determineActiveGoalsForCycle(this.driveSystem, goalIds, snapshot);
+    const active = await determineActiveGoalsForCycle(this.driveSystem, goalIds, snapshot);
+    const policy = await applyBrowserBackpressurePolicy({
+      runtimeRoot: this.runtimeRoot,
+      goalIds: active,
+      snapshot,
+      providerId: loadGlobalConfigSync().interactive_automation.default_browser_provider,
+    });
+    return policy.activeGoalIds;
   }
 
   private async collectGoalCycleSnapshot(goalIds: string[]): Promise<GoalCycleScheduleSnapshotEntry[]> {

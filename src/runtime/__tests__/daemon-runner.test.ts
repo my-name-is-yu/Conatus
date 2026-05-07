@@ -15,6 +15,7 @@ import { JournalBackedQueue } from "../queue/journal-backed-queue.js";
 import { GoalLeaseManager } from "../goal-lease-manager.js";
 import { createEnvelope } from "../types/envelope.js";
 import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js";
+import { GuardrailStore } from "../guardrails/index.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
@@ -1522,6 +1523,67 @@ describe("DaemonRunner durable runtime", () => {
     expect(getGoalActivationSnapshot).toHaveBeenNthCalledWith(1, "goal-later");
     expect(getGoalActivationSnapshot).toHaveBeenNthCalledWith(2, "goal-soon");
     expect(prioritizeGoals).toHaveBeenCalledTimes(1);
+  });
+
+  it("delays daemon-managed browser goals under shared backpressure and exposes blocked work", async () => {
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    await new GuardrailStore(runtimeRoot).saveBackpressureSnapshot({
+      updated_at: "2026-01-01T00:00:00.000Z",
+      active: [{
+        provider_id: "manus_browser",
+        service_key: "mail.example.com",
+        run_key: "browser-run-1",
+        acquired_at: new Date().toISOString(),
+      }],
+      throttled: [],
+    });
+    const getGoalActivationSnapshot = vi.fn(async (goalId: string): Promise<GoalActivationSnapshot> => ({
+      goalId,
+      shouldActivate: true,
+      schedule: {
+        goal_id: goalId,
+        next_check_at: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+        check_interval_hours: 1,
+        last_triggered_at: null,
+        consecutive_actions: 0,
+        cooldown_until: null,
+        current_interval_hours: 1,
+        last_gap_score: 1,
+        browser_provider_id: goalId === "goal-browser" ? "manus_browser" : null,
+        browser_service_key: goalId === "goal-browser" ? "mail.example.com" : null,
+      } as GoalActivationSnapshot["schedule"],
+    }));
+    const deps = makeDeps(tmpDir, {
+      driveSystem: {
+        getGoalActivationSnapshot,
+        shouldActivate: vi.fn().mockResolvedValue(true),
+        getSchedule: vi.fn().mockResolvedValue(null),
+        prioritizeGoals: vi.fn((ids: string[]) => ids),
+        startWatcher: vi.fn(),
+        stopWatcher: vi.fn(),
+        writeEvent: vi.fn().mockResolvedValue(undefined),
+      } as unknown as DaemonDeps["driveSystem"],
+      config: {
+        runtime_root: "runtime",
+        check_interval_ms: 50,
+      },
+    });
+    const daemon = new DaemonRunner(deps);
+    (daemon as any).runtimeRoot = runtimeRoot;
+
+    const snapshot = await (daemon as any).collectGoalCycleSnapshot(["goal-browser", "goal-normal"]);
+    const activeGoals = await (daemon as any).determineActiveGoals(["goal-browser", "goal-normal"], snapshot);
+
+    expect(activeGoals).toEqual(["goal-normal"]);
+    await expect(new GuardrailStore(runtimeRoot).loadBackpressureSnapshot()).resolves.toEqual(expect.objectContaining({
+      throttled: [
+        expect.objectContaining({
+          provider_id: "manus_browser",
+          service_key: "mail.example.com",
+          reason: expect.stringContaining("goal-browser"),
+        }),
+      ],
+    }));
   });
 
   it("generates cron entries for daemon scheduling", () => {
