@@ -89,6 +89,36 @@ import type { TaskCycleResult } from "./task-execution-types.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { runTaskLifecycleCycle } from "./task-lifecycle-runner.js";
 
+const NATIVE_CODE_TASK_NO_CHANGES_ERROR = "No files were modified";
+
+function nativeTaskRequiresCapturedFileChanges(task: Task): boolean {
+  return task.task_category === "normal" || task.task_category === "capability_acquisition";
+}
+
+function failNativeCodeTaskWithoutFileChanges(input: {
+  task: Task;
+  result: AgentResult;
+  capturedChangedPaths: string[];
+  logger?: Logger;
+}): void {
+  if (!input.result.success || !nativeTaskRequiresCapturedFileChanges(input.task)) return;
+  if (input.capturedChangedPaths.length > 0) return;
+
+  input.logger?.warn(
+    "[TaskLifecycle] Native agent loop reported success but no files were modified",
+    { taskId: input.task.id }
+  );
+  input.result.success = false;
+  input.result.error = NATIVE_CODE_TASK_NO_CHANGES_ERROR;
+  input.result.stopped_reason = "completed";
+  if (input.result.agentLoop) {
+    input.result.agentLoop.verificationHints = [
+      ...(input.result.agentLoop.verificationHints ?? []),
+      NATIVE_CODE_TASK_NO_CHANGES_ERROR,
+    ];
+  }
+}
+
 export interface TaskLifecycleCoreDeps {
   stateManager: StateManager;
   llmClient: ILLMClient;
@@ -561,10 +591,10 @@ export class TaskLifecycle {
         ...(abortSignal ? { abortSignal } : {}),
       });
       result = taskAgentLoopResultToAgentResult(agentLoopResult);
+      let capturedChangedPaths = [...new Set(agentLoopResult.changedFiles)];
       if (agentLoopResult.workspace?.executionCwd) {
         const fallbackChangedPaths = [
           ...new Set([
-            ...(result.filesChangedPaths ?? []),
             ...agentLoopResult.changedFiles,
           ]),
         ];
@@ -574,11 +604,13 @@ export class TaskLifecycle {
           { fallbackChangedPaths, baseline: diffBaseline },
         );
         if (diffArtifacts.available) {
+          capturedChangedPaths = diffArtifacts.changedPaths;
           result.filesChangedPaths = diffArtifacts.changedPaths;
           result.fileDiffs = diffArtifacts.fileDiffs;
           result.filesChanged = diffArtifacts.changedPaths.length > 0;
         }
       }
+      failNativeCodeTaskWithoutFileChanges({ task: runningTask, result, capturedChangedPaths, logger: this.logger });
     } catch (err) {
       result = {
         success: false,
