@@ -157,9 +157,13 @@ describe("kaggle training benchmark", () => {
 
   it("scores a dummy training loop through the Kaggle tools without submit", async () => {
     const originalPulseedHome = process.env["PULSEED_HOME"];
+    const originalWorkspaceRoot = process.env["PULSEED_WORKSPACE_ROOT"];
     const pulseedHome = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-benchmark-"));
-      const manager = new ProcessSessionManager();
+    const workspaceBase = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-benchmark-workspaces-"));
+    const competitionWorkspace = path.join(workspaceBase, "kaggle", "dummy-competition");
+    const manager = new ProcessSessionManager();
     process.env["PULSEED_HOME"] = pulseedHome;
+    process.env["PULSEED_WORKSPACE_ROOT"] = workspaceBase;
     try {
       const startTool = new KaggleExperimentStartTool(manager);
       const reportTool = new KaggleMetricReportTool(manager);
@@ -184,7 +188,7 @@ console.log("benchmark training completed");
 
       await waitFor(async () => {
         const log = await fs.readFile(
-          path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "train.log"),
+          path.join(competitionWorkspace, "experiments", "exp-benchmark-a", "train.log"),
           "utf-8",
         );
         return log.includes("benchmark training completed");
@@ -192,11 +196,11 @@ console.log("benchmark training completed");
       await waitFor(async () => {
         try {
           const report = await fs.readFile(
-            path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "summary.md"),
+            path.join(competitionWorkspace, "experiments", "exp-benchmark-a", "summary.md"),
             "utf-8",
           );
           const nextAction = await fs.readFile(
-            path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "next-action.json"),
+            path.join(competitionWorkspace, "experiments", "exp-benchmark-a", "next-action.json"),
             "utf-8",
           );
           return report.includes("Metric: accuracy=0.82 (maximize)") && nextAction.includes("compare_experiment");
@@ -277,7 +281,7 @@ console.log("benchmark training completed");
         experiment_id: "exp-benchmark-a",
       }, context);
 
-      const secondDir = path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-b");
+      const secondDir = path.join(competitionWorkspace, "experiments", "exp-benchmark-b");
       await fs.mkdir(secondDir, { recursive: true });
       await fs.writeFile(path.join(secondDir, "metrics.json"), `${JSON.stringify(metricsJson("exp-benchmark-b", 0.8))}\n`);
       await fs.writeFile(path.join(secondDir, "train.log"), "benchmark fallback log\n");
@@ -295,11 +299,11 @@ console.log("benchmark training completed");
             logArtifactWritten: ((restartedRead.data as { log?: { text?: string } }).log?.text ?? "").includes("benchmark training completed"),
             metricsParsed: report.success,
             reportArtifactWritten: await fileContains(
-              path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "summary.md"),
+              path.join(competitionWorkspace, "experiments", "exp-benchmark-a", "summary.md"),
               "Metric: accuracy=0.82 (maximize)",
             ),
             nextActionWritten: await fileContains(
-              path.join(pulseedHome, "kaggle-runs", "dummy-competition", "experiments", "exp-benchmark-a", "next-action.json"),
+              path.join(competitionWorkspace, "experiments", "exp-benchmark-a", "next-action.json"),
               "compare_experiment",
             ),
             bestSelectedByDirection: (compared.data as { best_experiment_id?: string }).best_experiment_id === "exp-benchmark-a",
@@ -319,7 +323,13 @@ console.log("benchmark training completed");
       } else {
         process.env["PULSEED_HOME"] = originalPulseedHome;
       }
+      if (originalWorkspaceRoot === undefined) {
+        delete process.env["PULSEED_WORKSPACE_ROOT"];
+      } else {
+        process.env["PULSEED_WORKSPACE_ROOT"] = originalWorkspaceRoot;
+      }
       await fs.rm(pulseedHome, { recursive: true, force: true });
+      await fs.rm(workspaceBase, { recursive: true, force: true });
     }
   }, 10_000);
 });

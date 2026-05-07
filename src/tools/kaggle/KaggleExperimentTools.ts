@@ -21,7 +21,6 @@ import {
   summarizeKaggleValidation,
 } from "./metrics.js";
 import {
-  ensureDirectoryWithinStateRoot,
   getKaggleExperimentDir,
   resolveKaggleWorkspaceInput,
   resolveWorkspaceRelativePath,
@@ -29,6 +28,7 @@ import {
   validateKaggleExperimentId,
   workspaceRelativePath,
 } from "./paths.js";
+import { ensureDirectoryWithinWorkspaceRoot } from "../../base/utils/workspace-root.js";
 import {
   defaultProcessSessionManager,
   type ProcessSessionManager,
@@ -209,7 +209,7 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
   readonly inputSchema = KaggleExperimentStartInputSchema;
 
   description(): string {
-    return "Start a named Kaggle training experiment under the PulSeed state root, teeing process output into a durable train.log artifact.";
+    return "Start a named Kaggle training experiment under the PulSeed workspace root, teeing process output into a durable train.log artifact.";
   }
 
   async call(input: KaggleExperimentStartInput, context: ToolCallContext): Promise<ToolResult> {
@@ -222,7 +222,7 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
         ? validateKaggleExperimentId(input.experiment_id)
         : generateExperimentId();
       const resolved = resolveExperiment(input.workspace, input.competition, experimentId);
-      await ensureDirectoryWithinStateRoot(resolved.experimentDir);
+      await ensureDirectoryWithinWorkspaceRoot(resolved.experimentDir);
       await fs.writeFile(resolved.logPath, "", { flag: "a" });
 
       const metricsPath = input.expected_metrics_path

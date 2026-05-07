@@ -74,7 +74,7 @@ async function writeMetrics(
   score: number,
   overrides: Record<string, unknown> = {},
 ): Promise<void> {
-  const dir = path.join(root, "kaggle-runs", "titanic", "experiments", experimentId);
+  const dir = path.join(root, "kaggle", "titanic", "experiments", experimentId);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "metrics.json"), `${JSON.stringify(metricsJson(experimentId, direction, score, overrides), null, 2)}\n`);
   await fs.writeFile(path.join(dir, "train.log"), "durable log\n");
@@ -91,12 +91,16 @@ async function waitFor(expectation: () => Promise<boolean>): Promise<void> {
 
 describe("Kaggle experiment tools", () => {
   const originalPulseedHome = process.env["PULSEED_HOME"];
+  const originalWorkspaceRoot = process.env["PULSEED_WORKSPACE_ROOT"];
   let pulseedHome: string;
+  let workspaceBase: string;
   let manager: ProcessSessionManager;
 
   beforeEach(async () => {
     pulseedHome = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-experiment-"));
+    workspaceBase = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-workspaces-"));
     process.env["PULSEED_HOME"] = pulseedHome;
+    process.env["PULSEED_WORKSPACE_ROOT"] = workspaceBase;
     manager = new ProcessSessionManager();
   });
 
@@ -107,7 +111,13 @@ describe("Kaggle experiment tools", () => {
     } else {
       process.env["PULSEED_HOME"] = originalPulseedHome;
     }
+    if (originalWorkspaceRoot === undefined) {
+      delete process.env["PULSEED_WORKSPACE_ROOT"];
+    } else {
+      process.env["PULSEED_WORKSPACE_ROOT"] = originalWorkspaceRoot;
+    }
     await fs.rm(pulseedHome, { recursive: true, force: true });
+    await fs.rm(workspaceBase, { recursive: true, force: true });
   });
 
   it("rejects starting long-running experiments without the validation contract foundation", () => {
@@ -184,18 +194,18 @@ console.log("training done");
       validation_checklist: string[];
       validation_contract: { oof: { leak_checked: boolean } };
     };
-    expect(data.artifacts.log.state_relative_path).toBe("kaggle-runs/titanic/experiments/exp-start/train.log");
+    expect(data.artifacts.log.state_relative_path).toBe("workspace:kaggle/titanic/experiments/exp-start/train.log");
     expect(data.validation_checklist).toEqual(expect.arrayContaining(["cv_split_strategy_declared", "oof_predictions_present_and_leak_checked"]));
     expect(data.validation_contract.oof.leak_checked).toBe(true);
 
     await waitFor(async () => {
-      const raw = await fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "train.log"), "utf-8");
+      const raw = await fs.readFile(path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-start", "train.log"), "utf-8");
       return raw.includes("training done");
     });
     await waitFor(async () => {
       try {
         const report = await fs.readFile(
-          path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "summary.md"),
+          path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-start", "summary.md"),
           "utf-8",
         );
         return report.includes("Metric: accuracy=0.8 (maximize)");
@@ -204,7 +214,7 @@ console.log("training done");
       }
     });
     const nextAction = JSON.parse(await fs.readFile(
-      path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "next-action.json"),
+      path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-start", "next-action.json"),
       "utf-8",
     )) as Record<string, unknown>;
     expect(nextAction).toMatchObject({
@@ -231,13 +241,13 @@ console.log("training done");
     expect((read.data as { log: { text: string } }).log.text).toContain("training done");
     expect(read.data).toMatchObject({
       artifacts: {
-        report: { state_relative_path: "kaggle-runs/titanic/experiments/exp-start/summary.md" },
-        next_action: { state_relative_path: "kaggle-runs/titanic/experiments/exp-start/next-action.json" },
+        report: { state_relative_path: "workspace:kaggle/titanic/experiments/exp-start/summary.md" },
+        next_action: { state_relative_path: "workspace:kaggle/titanic/experiments/exp-start/next-action.json" },
       },
     });
-    await expect(fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "config.json"), "utf-8"))
+    await expect(fs.readFile(path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-start", "config.json"), "utf-8"))
       .resolves.toContain(data.process.session_id);
-    await expect(fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-start", "command.json"), "utf-8"))
+    await expect(fs.readFile(path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-start", "command.json"), "utf-8"))
       .resolves.toContain("validation_checklist");
   });
 
@@ -259,7 +269,7 @@ fs.writeFileSync("experiments/exp-restart/metrics.json", JSON.stringify(${JSON.s
     expect(result.success).toBe(true);
 
     await waitFor(async () => {
-      const raw = await fs.readFile(path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-restart", "train.log"), "utf-8");
+      const raw = await fs.readFile(path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-restart", "train.log"), "utf-8");
       return raw.includes("persisted output");
     });
 
@@ -282,7 +292,7 @@ fs.writeFileSync("experiments/exp-restart/metrics.json", JSON.stringify(${JSON.s
   });
 
   it("lists filesystem experiments together with live process sessions", async () => {
-    await writeMetrics(pulseedHome, "exp-files", "maximize", 0.7);
+    await writeMetrics(workspaceBase, "exp-files", "maximize", 0.7);
     const startTool = new KaggleExperimentStartTool(manager);
     const listTool = new KaggleExperimentListTool(manager);
     const result = await startTool.call({
@@ -312,11 +322,11 @@ fs.writeFileSync("experiments/exp-restart/metrics.json", JSON.stringify(${JSON.s
   });
 
   it("lists experiments when the model passes the Kaggle runs root instead of the competition workspace", async () => {
-    await writeMetrics(pulseedHome, "exp-files", "maximize", 0.7);
+    await writeMetrics(workspaceBase, "exp-files", "maximize", 0.7);
     const listTool = new KaggleExperimentListTool(manager);
 
     const listed = await listTool.call({
-      workspace: path.join(pulseedHome, "kaggle-runs"),
+      workspace: path.join(workspaceBase, "kaggle"),
       competition: "titanic",
       include_exited: true,
     }, makeContext(pulseedHome));
@@ -341,7 +351,7 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
       validation_contract: validationContract(),
     }, makeContext(pulseedHome));
     expect(result.success).toBe(true);
-    const heartbeatPath = path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-stop", "heartbeat.txt");
+    const heartbeatPath = path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-stop", "heartbeat.txt");
     await waitFor(async () => {
       try {
         await fs.access(heartbeatPath);
@@ -370,7 +380,7 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
   });
 
   it("reports strict metrics and returns failure details for missing or malformed metrics", async () => {
-    await writeMetrics(pulseedHome, "exp-ok", "maximize", 0.82);
+    await writeMetrics(workspaceBase, "exp-ok", "maximize", 0.82);
     const tool = new KaggleMetricReportTool(manager);
 
     const ok = await tool.call({
@@ -397,10 +407,10 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
     expect(missing.data).toMatchObject({
       status: "failure",
       reason: "missing",
-      artifact: { state_relative_path: "kaggle-runs/titanic/experiments/missing/metrics.json" },
+      artifact: { state_relative_path: "workspace:kaggle/titanic/experiments/missing/metrics.json" },
     });
 
-    const malformedDir = path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "malformed");
+    const malformedDir = path.join(workspaceBase, "kaggle", "titanic", "experiments", "malformed");
     await fs.mkdir(malformedDir, { recursive: true });
     await fs.writeFile(path.join(malformedDir, "metrics.json"), "{\"bad\":true}\n");
     const malformed = await tool.call({
@@ -412,12 +422,12 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
     expect(malformed.data).toMatchObject({
       status: "failure",
       reason: "malformed",
-      artifact: { state_relative_path: "kaggle-runs/titanic/experiments/malformed/metrics.json" },
+      artifact: { state_relative_path: "workspace:kaggle/titanic/experiments/malformed/metrics.json" },
     });
   });
 
   it("reports loose real-run metrics with caller fallback context", async () => {
-    const dir = path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "exp-loose");
+    const dir = path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-loose");
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, "metrics.json"), `${JSON.stringify({
       metric_name: "balanced_accuracy",
@@ -446,11 +456,11 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
   });
 
   it("compares maximize and minimize experiments and marks bad metrics inconclusive", async () => {
-    await writeMetrics(pulseedHome, "max-a", "maximize", 0.7);
-    await writeMetrics(pulseedHome, "max-b", "maximize", 0.8);
-    await writeMetrics(pulseedHome, "min-a", "minimize", 0.3);
-    await writeMetrics(pulseedHome, "min-b", "minimize", 0.2);
-    const badDir = path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "bad");
+    await writeMetrics(workspaceBase, "max-a", "maximize", 0.7);
+    await writeMetrics(workspaceBase, "max-b", "maximize", 0.8);
+    await writeMetrics(workspaceBase, "min-a", "minimize", 0.3);
+    await writeMetrics(workspaceBase, "min-b", "minimize", 0.2);
+    const badDir = path.join(workspaceBase, "kaggle", "titanic", "experiments", "bad");
     await fs.mkdir(badDir, { recursive: true });
     await fs.writeFile(path.join(badDir, "metrics.json"), "not json");
 
@@ -496,7 +506,7 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
   });
 
   it("does not recommend raw CV top-1 as the safe candidate when validation risk is high", async () => {
-    await writeMetrics(pulseedHome, "raw-oof-top", "maximize", 0.835, {
+    await writeMetrics(workspaceBase, "raw-oof-top", "maximize", 0.835, {
       cv_std: 0.04,
       validation: {
         competition_metric: { name: "accuracy", direction: "maximize", source: "competition_rules" },
@@ -511,7 +521,7 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
         public_leaderboard: { score: 0.76, submission_id: "raw-oof-top-public", observed_at: "2026-04-25T00:00:00.000Z" },
       },
     });
-    await writeMetrics(pulseedHome, "stable-safe", "maximize", 0.821, {
+    await writeMetrics(workspaceBase, "stable-safe", "maximize", 0.821, {
       cv_std: 0.006,
       validation: {
         competition_metric: { name: "accuracy", direction: "maximize", source: "competition_rules" },

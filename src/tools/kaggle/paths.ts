@@ -1,6 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
+import {
+  ensureDirectoryWithinWorkspaceRoot,
+  getPulseedWorkspaceRootPath,
+  isPathInsidePulSeedStateRoot,
+  workspaceRootRelativePath,
+} from "../../base/utils/workspace-root.js";
 
 export const KAGGLE_RUNS_DIR = "kaggle-runs";
 export const KAGGLE_WORKSPACE_DIRS = ["data", "notebooks", "src", "experiments", "submissions"] as const;
@@ -25,7 +31,7 @@ export function validateKaggleExperimentId(experimentId: string): string {
 }
 
 export function getKaggleRunsRoot(): string {
-  return path.resolve(getPulseedDirPath(), KAGGLE_RUNS_DIR);
+  return path.resolve(getPulseedWorkspaceRootPath(), "kaggle");
 }
 
 export function getKaggleWorkspaceRoot(competition: string): string {
@@ -36,10 +42,10 @@ export function getKaggleWorkspaceRoot(competition: string): string {
 export function stateRelativePath(absolutePath: string): string {
   const stateRoot = path.resolve(getPulseedDirPath());
   const relativePath = path.relative(stateRoot, path.resolve(absolutePath));
-  if (relativePath === "" || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("path must stay within the PulSeed state root");
+  if (relativePath !== "" && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+    return relativePath.split(path.sep).join("/");
   }
-  return relativePath.split(path.sep).join("/");
+  return `workspace:${workspaceRootRelativePath(absolutePath)}`;
 }
 
 export function workspaceRelativePath(workspaceRoot: string, absolutePath: string): string {
@@ -77,7 +83,7 @@ export function resolveKaggleWorkspaceInput(workspace: string, competition: stri
   } else if (requested === competition) {
     resolved = expected;
   } else if (requested === path.join(KAGGLE_RUNS_DIR, competition)) {
-    resolved = path.resolve(getPulseedDirPath(), requested);
+    throw new Error("workspace must use the PulSeed workspace root outside the protected state root; import legacy .pulseed/kaggle-runs workspaces with source_workspace");
   } else {
     resolved = path.resolve(runsRoot, requested);
   }
@@ -85,7 +91,10 @@ export function resolveKaggleWorkspaceInput(workspace: string, competition: stri
   if (resolved !== expected) {
     throw new Error(`workspace must resolve to ${stateRelativePath(expected)}`);
   }
-  assertWithin(path.resolve(getPulseedDirPath()), resolved, "workspace");
+  if (isPathInsidePulSeedStateRoot(resolved)) {
+    throw new Error("workspace must be outside the protected PulSeed state root");
+  }
+  assertWithin(path.resolve(getPulseedWorkspaceRootPath()), resolved, "workspace");
   return resolved;
 }
 
@@ -145,11 +154,11 @@ export async function ensureDirectoryWithinStateRoot(dirPath: string): Promise<v
 }
 
 export async function ensureKaggleWorkspaceDirectories(workspaceRoot: string): Promise<Record<KaggleWorkspaceDir, string>> {
-  await ensureDirectoryWithinStateRoot(workspaceRoot);
+  await ensureDirectoryWithinWorkspaceRoot(workspaceRoot);
   const directories = {} as Record<KaggleWorkspaceDir, string>;
   for (const dirname of KAGGLE_WORKSPACE_DIRS) {
     const fullPath = path.join(workspaceRoot, dirname);
-    await ensureDirectoryWithinStateRoot(fullPath);
+    await ensureDirectoryWithinWorkspaceRoot(fullPath);
     directories[dirname] = fullPath;
   }
   return directories;

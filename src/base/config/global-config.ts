@@ -6,11 +6,12 @@ import fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { getPulseedDirPath } from "../utils/paths.js";
+import { getDefaultPulseedWorkspaceRootPath, getPulseedDirPath } from "../utils/paths.js";
 
 const GlobalConfigSchema = z.object({
   daemon_mode: z.boolean().default(false),
   no_flicker: z.boolean().default(true),
+  workspace_root: z.string().min(1).default(getDefaultPulseedWorkspaceRootPath()),
   interactive_automation: z.object({
     enabled: z.boolean().default(false),
     default_desktop_provider: z.string().default("codex_app"),
@@ -31,6 +32,7 @@ export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 const DEFAULT_CONFIG: GlobalConfig = {
   daemon_mode: false,
   no_flicker: true,
+  workspace_root: getDefaultPulseedWorkspaceRootPath(),
   interactive_automation: {
     enabled: false,
     default_desktop_provider: "codex_app",

@@ -11,12 +11,12 @@ import type {
 } from "../types.js";
 import { KaggleMetricDirectionSchema, metricThresholdHintForDirection } from "./metrics.js";
 import {
-  ensureDirectoryWithinStateRoot,
   ensureKaggleWorkspaceDirectories,
   getKaggleWorkspaceRoot,
   resolveKaggleWorkspaceInput,
   stateRelativePath,
 } from "./paths.js";
+import { ensureDirectoryWithinWorkspaceRoot } from "../../base/utils/workspace-root.js";
 
 export const KaggleWorkspacePrepareInputSchema = z.object({
   workspace: z.string().min(1, "workspace is required"),
@@ -101,9 +101,9 @@ export class KaggleWorkspacePrepareTool implements ITool<KaggleWorkspacePrepareI
 
   description(_context?: ToolDescriptionContext): string {
     return [
-      "Prepare a local Kaggle training workspace under PulSeed state.",
+      "Prepare a local Kaggle training workspace under the PulSeed-managed workspace root.",
       "Creates data, notebooks, src, experiments, and submissions directories, writes workspace metadata, and returns artifact and wait-condition path hints.",
-      "Can copy an existing Kaggle workspace into the canonical ~/.pulseed/kaggle-runs/<competition> path using source_workspace.",
+      "Can copy an existing Kaggle workspace into the canonical PulSeed workspace root using source_workspace.",
       "This tool does not call Kaggle APIs or read credentials.",
     ].join(" ");
   }
@@ -213,7 +213,7 @@ export class KaggleWorkspacePrepareTool implements ITool<KaggleWorkspacePrepareI
     return {
       status: "needs_approval",
       reason: input.source_workspace
-        ? `Copy Kaggle workspace into PulSeed state and write metadata for ${input.competition}`
+        ? `Copy Kaggle workspace into the PulSeed workspace root and write metadata for ${input.competition}`
         : `Create Kaggle workspace directories and metadata for ${input.competition}`,
     };
   }
@@ -295,7 +295,7 @@ async function importSourceWorkspace(
   }
   assertNotNestedImport(realSource, destinationWorkspace);
   await assertTreeHasNoSymlinks(sourceWorkspace);
-  await ensureDirectoryWithinStateRoot(path.dirname(destinationWorkspace));
+  await ensureDirectoryWithinWorkspaceRoot(path.dirname(destinationWorkspace));
 
   await assertDestinationLeafIsSafe(destinationWorkspace);
   const destinationHasEntries = await directoryHasEntries(destinationWorkspace);

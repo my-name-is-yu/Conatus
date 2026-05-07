@@ -30,6 +30,7 @@ describe("loadGlobalConfig", () => {
       await expect(loadGlobalConfig()).resolves.toMatchObject({
         daemon_mode: false,
         no_flicker: true,
+        workspace_root: expect.stringContaining("PulSeedWorkspaces"),
         interactive_automation: {
           enabled: false,
           default_desktop_provider: "codex_app",

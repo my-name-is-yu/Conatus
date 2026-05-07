@@ -11,12 +11,12 @@ import type {
   ToolResult,
 } from "../types.js";
 import {
-  ensureDirectoryWithinStateRoot,
   resolveKaggleWorkspaceInput,
   resolveWorkspaceRelativePath,
   stateRelativePath,
   workspaceRelativePath,
 } from "./paths.js";
+import { ensureDirectoryWithinWorkspaceRoot } from "../../base/utils/workspace-root.js";
 import { KaggleMetricsSchema, parseKaggleMetricsCompatible, type KaggleMetrics } from "./metrics.js";
 
 const DEFAULT_MAX_OUTPUT_CHARS = 20_000;
@@ -204,7 +204,7 @@ export class KaggleSubmissionPrepareTool implements ITool<KaggleSubmissionPrepar
         throw new Error("metrics_path competition must match competition");
       }
       const submissionsDir = path.join(workspaceRoot, "submissions");
-      await ensureDirectoryWithinStateRoot(submissionsDir);
+      await ensureDirectoryWithinWorkspaceRoot(submissionsDir);
 
       const submissionId = input.submission_id ?? generateSubmissionId("submission");
       const filename = input.output_filename ?? `${submissionId}${path.extname(sourcePath) || ".csv"}`;
@@ -445,7 +445,7 @@ export class KaggleLeaderboardSnapshotTool extends KaggleSubmissionToolBase<Kagg
     try {
       const workspaceRoot = await resolveSafeWorkspaceRoot(input.workspace, input.competition);
       const leaderboardDir = path.join(workspaceRoot, "submissions", "leaderboard");
-      await ensureDirectoryWithinStateRoot(leaderboardDir);
+      await ensureDirectoryWithinWorkspaceRoot(leaderboardDir);
       const snapshotId = input.snapshot_id ?? generateSubmissionId("leaderboard");
       const snapshotPath = path.join(leaderboardDir, `${snapshotId}.json`);
       await assertSafeOutputLeaf(snapshotPath, "leaderboard snapshot");
@@ -526,7 +526,7 @@ async function requirePreparedSubmissionMetadata(
   competition: string,
 ): Promise<{ metadataPath: string; metadata: z.infer<typeof PreparedSubmissionMetadataSchema> }> {
   const submissionsDir = path.join(workspaceRoot, "submissions");
-  await ensureDirectoryWithinStateRoot(submissionsDir);
+  await ensureDirectoryWithinWorkspaceRoot(submissionsDir);
   const realSubmissionsDir = await realpathOrNull(submissionsDir);
   if (!realSubmissionsDir) {
     throw new Error("file must be a prepared submission under submissions/");
@@ -627,7 +627,7 @@ async function assertSafeOutputLeaf(outputPath: string, label: string): Promise<
 
 async function resolveSafeWorkspaceRoot(workspace: string, competition: string): Promise<string> {
   const workspaceRoot = resolveKaggleWorkspaceInput(workspace, competition);
-  await ensureDirectoryWithinStateRoot(workspaceRoot);
+  await ensureDirectoryWithinWorkspaceRoot(workspaceRoot);
   return workspaceRoot;
 }
 
