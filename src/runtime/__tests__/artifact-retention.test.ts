@@ -170,6 +170,57 @@ describe("artifact retention planning", () => {
     }));
   });
 
+  it("does not infer destructive cleanup class from artifact label or path substrings", () => {
+    const summary = summarizeArtifactRetention([
+      entry({
+        id: "substring-only-artifacts",
+        kind: "artifact",
+        artifacts: [
+          { label: "smoke-cache", state_relative_path: "runs/smoke/cache.bin", kind: "other", size_bytes: 500 },
+          { label: "tmp-intermediate", state_relative_path: "tmp/intermediate/output.bin", kind: "other", size_bytes: 250 },
+        ],
+      }),
+    ]);
+
+    expect(summary.cleanup_plan.actions).toContainEqual(expect.objectContaining({
+      label: "smoke-cache",
+      retention_class: "other",
+      retention_basis: "unknown",
+      cleanup_action: "review",
+      destructive: false,
+      approval_required: false,
+    }));
+    expect(summary.cleanup_plan.actions).toContainEqual(expect.objectContaining({
+      label: "tmp-intermediate",
+      retention_class: "other",
+      retention_basis: "unknown",
+      cleanup_action: "review",
+      destructive: false,
+      approval_required: false,
+    }));
+  });
+
+  it("uses explicit typed cleanup classes regardless of neutral artifact names", () => {
+    const summary = summarizeArtifactRetention([
+      entry({
+        id: "typed-cleanup-artifact",
+        kind: "artifact",
+        artifacts: [
+          { label: "run-output", state_relative_path: "runs/a/output.bin", kind: "other", retention_class: "cache_intermediate" },
+        ],
+      }),
+    ]);
+
+    expect(summary.cleanup_plan.actions).toContainEqual(expect.objectContaining({
+      label: "run-output",
+      retention_class: "cache_intermediate",
+      retention_basis: "explicit_retention_class",
+      cleanup_action: "delete_candidate",
+      destructive: true,
+      approval_required: true,
+    }));
+  });
+
   it("uses manifest protection in the runtime evidence summary path", async () => {
     const runtimeRoot = makeTempDir("pulseed-retention-runtime-");
     try {
@@ -342,6 +393,38 @@ describe("artifact retention planning", () => {
       expect(summary.artifact_retention.cleanup_plan.actions).toContainEqual(expect.objectContaining({
         label: "safe-scope-report",
         retention_class: "reproducibility_critical",
+      }));
+    } finally {
+      await fsp.rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps substring-only artifacts non-destructive in the runtime evidence summary path", async () => {
+    const runtimeRoot = makeTempDir("pulseed-retention-runtime-substrings-");
+    try {
+      const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+      await ledger.append({
+        id: "substring-only-artifact",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: "goal-retention-substrings" },
+        artifacts: [{
+          label: "smoke-cache-output",
+          state_relative_path: "tmp/smoke/cache-output.bin",
+          kind: "other",
+        }],
+        summary: "Artifact with cleanup-looking words in protocol path.",
+      });
+
+      const summary = await ledger.summarizeGoal("goal-retention-substrings");
+
+      expect(summary.artifact_retention.cleanup_plan.actions).toContainEqual(expect.objectContaining({
+        label: "smoke-cache-output",
+        retention_class: "other",
+        retention_basis: "unknown",
+        cleanup_action: "review",
+        destructive: false,
+        approval_required: false,
       }));
     } finally {
       await fsp.rm(runtimeRoot, { recursive: true, force: true });
