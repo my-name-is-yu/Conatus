@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.5] - 2026-05-07
+
+### Added
+- Added durable runtime guardrails for browser-auth handoffs, auth/browser guardrail design, scoped browser session resolution, daemon browser-backpressure scheduling, automation snapshots, and runtime-control automation operations (#1235, #1244, #1246, #1247, #1248, #1252)
+- Added companion-autonomy design contracts for the core autonomy spine, relationship memory surface, attention metabolism, and runtime-control-plane direction (#1271)
+
+### Changed
+- Routed Kaggle work through managed workspace roots and explicit RunSpec workspace-write policy so durable loop runs can separate goal workspaces from generated task workspaces (#1236, #1242)
+- Tightened packaged artifact verification by checking executable bin mode during release validation (#1326)
+- Bumped the package version to `0.6.5`
+
+### Fixed
+- Fixed durable loop and AgentLoop completion behavior around policy-blocked task failures, non-git workspace evidence, multiline shell steering, shell-policy handoff, profiled timeout budgets, artifact completion salvage, task artifact finalization, and Kaggle S6E5 goal contracts (#1237, #1241, #1243, #1268, #1267, #1269, #1270, #1326)
+- Fixed runtime and daemon status semantics so stopped or historical daemon snapshots are reported clearly, health approval blockers stay scoped to active goals, and provider credential readiness aligns with doctor checks (#1239, #1257, #1258, #1259)
+- Fixed fresh Kaggle metric acceptance and policy-blocked evidence expectations so verification uses current artifacts instead of stale or mismatched evidence (#1245, #1266)
+
 ## [0.6.4] - 2026-05-07
 
 ### Added
