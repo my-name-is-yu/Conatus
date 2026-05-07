@@ -4,10 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import type { ToolCallContext } from "../../types.js";
 import { KaggleWorkspacePrepareTool } from "../KaggleWorkspacePrepareTool.js";
+import { ApplyPatchTool } from "../../fs/ApplyPatchTool/ApplyPatchTool.js";
+import { defaultExecutionPolicy } from "../../../orchestrator/execution/agent-loop/execution-policy.js";
 
-function makeContext(): ToolCallContext {
+function makeContext(cwd = "/tmp"): ToolCallContext {
   return {
-    cwd: "/tmp",
+    cwd,
     goalId: "test-goal",
     trustBalance: 50,
     preApproved: false,
@@ -17,13 +19,17 @@ function makeContext(): ToolCallContext {
 
 describe("KaggleWorkspacePrepareTool", () => {
   const originalPulseedHome = process.env["PULSEED_HOME"];
+  const originalWorkspaceRoot = process.env["PULSEED_WORKSPACE_ROOT"];
   let pulseedHome: string;
+  let workspaceRoot: string;
   let tmpDirs: string[];
 
   beforeEach(async () => {
     pulseedHome = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-workspace-"));
-    tmpDirs = [pulseedHome];
+    workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-workspaces-"));
+    tmpDirs = [pulseedHome, workspaceRoot];
     process.env["PULSEED_HOME"] = pulseedHome;
+    process.env["PULSEED_WORKSPACE_ROOT"] = workspaceRoot;
   });
 
   afterEach(async () => {
@@ -32,10 +38,15 @@ describe("KaggleWorkspacePrepareTool", () => {
     } else {
       process.env["PULSEED_HOME"] = originalPulseedHome;
     }
+    if (originalWorkspaceRoot === undefined) {
+      delete process.env["PULSEED_WORKSPACE_ROOT"];
+    } else {
+      process.env["PULSEED_WORKSPACE_ROOT"] = originalWorkspaceRoot;
+    }
     await Promise.all(tmpDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
   });
 
-  it("creates the standard workspace directories and metadata under PulSeed state", async () => {
+  it("creates the standard workspace directories and metadata under the PulSeed workspace root", async () => {
     const tool = new KaggleWorkspacePrepareTool();
     const result = await tool.call({
       workspace: "titanic",
@@ -59,9 +70,9 @@ describe("KaggleWorkspacePrepareTool", () => {
       };
       metric_threshold_guidance: { metric: string; operator: string; metrics_artifact_state_relative_path: string };
     };
-    expect(data.workspace.path).toBe(path.join(pulseedHome, "kaggle-runs", "titanic"));
-    expect(data.workspace.state_relative_path).toBe("kaggle-runs/titanic");
-    expect(data.metadata.state_relative_path).toBe("kaggle-runs/titanic/workspace.json");
+    expect(data.workspace.path).toBe(path.join(workspaceRoot, "kaggle", "titanic"));
+    expect(data.workspace.state_relative_path).toBe("workspace:kaggle/titanic");
+    expect(data.metadata.state_relative_path).toBe("workspace:kaggle/titanic/workspace.json");
     expect(data.directories.map((dir) => dir.name).sort()).toEqual([
       "data",
       "experiments",
@@ -70,7 +81,7 @@ describe("KaggleWorkspacePrepareTool", () => {
       "submissions",
     ]);
     for (const dirname of ["data", "notebooks", "src", "experiments", "submissions"]) {
-      const stat = await fs.stat(path.join(pulseedHome, "kaggle-runs", "titanic", dirname));
+      const stat = await fs.stat(path.join(workspaceRoot, "kaggle", "titanic", dirname));
       expect(stat.isDirectory()).toBe(true);
     }
 
@@ -82,16 +93,16 @@ describe("KaggleWorkspacePrepareTool", () => {
       submission_format_hint: "PassengerId,Survived",
       metrics_schema_version: "kaggle-metrics-v1",
     });
-    expect(data.artifacts.metrics_template.state_relative_path).toBe("kaggle-runs/titanic/experiments/metrics.json");
-    expect(data.artifacts.train_log.state_relative_path).toBe("kaggle-runs/titanic/experiments/train.log");
-    expect(data.wait_condition_hints.file_exists.path).toBe("kaggle-runs/titanic/experiments/metrics.json");
+    expect(data.artifacts.metrics_template.state_relative_path).toBe("workspace:kaggle/titanic/experiments/metrics.json");
+    expect(data.artifacts.train_log.state_relative_path).toBe("workspace:kaggle/titanic/experiments/train.log");
+    expect(data.wait_condition_hints.file_exists.path).toBe("workspace:kaggle/titanic/experiments/metrics.json");
     expect(data.wait_condition_hints.file_exists.absolute_path).toBe(
-      path.join(pulseedHome, "kaggle-runs", "titanic", "experiments", "metrics.json"),
+      path.join(workspaceRoot, "kaggle", "titanic", "experiments", "metrics.json"),
     );
     expect(data.metric_threshold_guidance).toMatchObject({
       metric: "accuracy",
       operator: "gte",
-      metrics_artifact_state_relative_path: "kaggle-runs/titanic/experiments/metrics.json",
+      metrics_artifact_state_relative_path: "workspace:kaggle/titanic/experiments/metrics.json",
     });
   });
 
@@ -107,10 +118,10 @@ describe("KaggleWorkspacePrepareTool", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("workspace must resolve");
-    await expect(fs.stat(path.join(pulseedHome, "titanic"))).rejects.toThrow();
+    await expect(fs.stat(path.join(workspaceRoot, "titanic"))).rejects.toThrow();
   });
 
-  it("accepts a state-relative kaggle-runs workspace path for the same competition", async () => {
+  it("rejects legacy state-relative kaggle-runs workspace paths", async () => {
     const tool = new KaggleWorkspacePrepareTool();
     const result = await tool.call({
       workspace: "kaggle-runs/titanic",
@@ -120,12 +131,11 @@ describe("KaggleWorkspacePrepareTool", () => {
       overwrite_existing: false,
     }, makeContext());
 
-    expect(result.success).toBe(true);
-    const data = result.data as { workspace: { state_relative_path: string } };
-    expect(data.workspace.state_relative_path).toBe("kaggle-runs/titanic");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("workspace must use the PulSeed workspace root");
   });
 
-  it("accepts the Kaggle runs root when competition identifies the workspace", async () => {
+  it("accepts the Kaggle workspace root when competition identifies the workspace", async () => {
     const tool = new KaggleWorkspacePrepareTool();
     const stateRelative = await tool.call({
       workspace: "kaggle-runs",
@@ -135,7 +145,7 @@ describe("KaggleWorkspacePrepareTool", () => {
       overwrite_existing: false,
     }, makeContext());
     const absolute = await tool.call({
-      workspace: path.join(pulseedHome, "kaggle-runs"),
+      workspace: path.join(workspaceRoot, "kaggle"),
       competition: "titanic",
       metric_name: "rmse",
       metric_direction: "minimize",
@@ -144,11 +154,11 @@ describe("KaggleWorkspacePrepareTool", () => {
 
     expect(stateRelative.success).toBe(true);
     expect(absolute.success).toBe(true);
-    expect((stateRelative.data as { workspace: { state_relative_path: string } }).workspace.state_relative_path).toBe("kaggle-runs/titanic");
-    expect((absolute.data as { workspace: { state_relative_path: string } }).workspace.state_relative_path).toBe("kaggle-runs/titanic");
+    expect((stateRelative.data as { workspace: { state_relative_path: string } }).workspace.state_relative_path).toBe("workspace:kaggle/titanic");
+    expect((absolute.data as { workspace: { state_relative_path: string } }).workspace.state_relative_path).toBe("workspace:kaggle/titanic");
   });
 
-  it("imports an existing real Kaggle workspace into the canonical PulSeed state root", async () => {
+  it("imports an existing real Kaggle workspace into the canonical PulSeed workspace root", async () => {
     const tool = new KaggleWorkspacePrepareTool();
     const source = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-existing-kaggle-"));
     tmpDirs.push(source);
@@ -170,8 +180,8 @@ describe("KaggleWorkspacePrepareTool", () => {
       workspace: { path: string; state_relative_path: string };
       imported_workspace: { source_path: string; copied: boolean; overwritten: boolean; entry_count: number };
     };
-    expect(data.workspace.path).toBe(path.join(pulseedHome, "kaggle-runs", "playground-series-s6e4"));
-    expect(data.workspace.state_relative_path).toBe("kaggle-runs/playground-series-s6e4");
+    expect(data.workspace.path).toBe(path.join(workspaceRoot, "kaggle", "playground-series-s6e4"));
+    expect(data.workspace.state_relative_path).toBe("workspace:kaggle/playground-series-s6e4");
     expect(data.imported_workspace).toMatchObject({
       source_path: source,
       copied: true,
@@ -179,13 +189,59 @@ describe("KaggleWorkspacePrepareTool", () => {
     });
     expect(data.imported_workspace.entry_count).toBeGreaterThan(0);
     await expect(fs.readFile(
-      path.join(pulseedHome, "kaggle-runs", "playground-series-s6e4", "data", "raw", "train.csv"),
+      path.join(workspaceRoot, "kaggle", "playground-series-s6e4", "data", "raw", "train.csv"),
       "utf-8",
     )).resolves.toContain("target,x");
     await expect(fs.readFile(
-      path.join(pulseedHome, "kaggle-runs", "playground-series-s6e4", "scripts", "train.py"),
+      path.join(workspaceRoot, "kaggle", "playground-series-s6e4", "scripts", "train.py"),
       "utf-8",
     )).resolves.toContain("print('train')");
+  });
+
+  it("lets AgentLoop apply_patch edit managed workspace files while protected .pulseed remains blocked", async () => {
+    const prepareTool = new KaggleWorkspacePrepareTool();
+    const prepared = await prepareTool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      metric_name: "accuracy",
+      metric_direction: "maximize",
+      overwrite_existing: false,
+    }, makeContext());
+    expect(prepared.success).toBe(true);
+    const workspacePath = (prepared.data as { workspace: { path: string } }).workspace.path;
+
+    const patchTool = new ApplyPatchTool();
+    const policy = {
+      ...defaultExecutionPolicy(workspacePath),
+      protectedPaths: [pulseedHome],
+    };
+    const context: ToolCallContext = {
+      ...makeContext(workspacePath),
+      executionPolicy: policy,
+    };
+
+    const workspacePatch = [
+      "*** Begin Patch",
+      "*** Add File: notes.md",
+      "+workspace editable",
+      "*** End Patch",
+      "",
+    ].join("\n");
+    const workspaceResult = await patchTool.call({ patch: workspacePatch, checkOnly: false }, context);
+    expect(workspaceResult.success).toBe(true);
+    await expect(fs.readFile(path.join(workspacePath, "notes.md"), "utf-8")).resolves.toBe("workspace editable\n");
+
+    const protectedPatch = [
+      "*** Begin Patch",
+      `*** Add File: ${path.join(pulseedHome, "runtime-state.txt")}`,
+      "+blocked",
+      "*** End Patch",
+      "",
+    ].join("\n");
+    const protectedResult = await patchTool.call({ patch: protectedPatch, checkOnly: false }, context);
+    expect(protectedResult.success).toBe(false);
+    expect(protectedResult.execution).toMatchObject({ status: "not_executed", reason: "policy_blocked" });
+    await expect(fs.stat(path.join(pulseedHome, "runtime-state.txt"))).rejects.toThrow();
   });
 
   it("rejects absolute workspace paths outside the fixed competition root", async () => {
@@ -208,8 +264,8 @@ describe("KaggleWorkspacePrepareTool", () => {
     const tool = new KaggleWorkspacePrepareTool();
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-symlink-target-"));
     tmpDirs.push(outside);
-    await fs.mkdir(path.join(pulseedHome, "kaggle-runs"), { recursive: true });
-    await fs.symlink(outside, path.join(pulseedHome, "kaggle-runs", "titanic"), "dir");
+    await fs.mkdir(path.join(workspaceRoot, "kaggle"), { recursive: true });
+    await fs.symlink(outside, path.join(workspaceRoot, "kaggle", "titanic"), "dir");
 
     const result = await tool.call({
       workspace: "titanic",
@@ -224,13 +280,13 @@ describe("KaggleWorkspacePrepareTool", () => {
     await expect(fs.stat(path.join(outside, "workspace.json"))).rejects.toThrow();
   });
 
-  it("rejects symlinks that point to another location inside the PulSeed state root", async () => {
+  it("rejects symlinks that point to another location inside the PulSeed workspace root", async () => {
     const tool = new KaggleWorkspacePrepareTool();
-    await fs.mkdir(path.join(pulseedHome, "other-state-subtree"), { recursive: true });
-    await fs.mkdir(path.join(pulseedHome, "kaggle-runs"), { recursive: true });
+    await fs.mkdir(path.join(workspaceRoot, "other-workspace-subtree"), { recursive: true });
+    await fs.mkdir(path.join(workspaceRoot, "kaggle"), { recursive: true });
     await fs.symlink(
-      path.join(pulseedHome, "other-state-subtree"),
-      path.join(pulseedHome, "kaggle-runs", "titanic"),
+      path.join(workspaceRoot, "other-workspace-subtree"),
+      path.join(workspaceRoot, "kaggle", "titanic"),
       "dir",
     );
 
@@ -244,7 +300,7 @@ describe("KaggleWorkspacePrepareTool", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("must not be a symlink");
-    await expect(fs.stat(path.join(pulseedHome, "other-state-subtree", "workspace.json"))).rejects.toThrow();
+    await expect(fs.stat(path.join(workspaceRoot, "other-workspace-subtree", "workspace.json"))).rejects.toThrow();
   });
 
 });

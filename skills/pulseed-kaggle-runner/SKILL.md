@@ -22,7 +22,7 @@ Use this skill when a task involves Kaggle-style model training, validation, exp
 
 ## Artifact Contract
 
-Read `references/experiment-contract.md` before starting a new workspace. Keep workspace paths under `~/.pulseed/kaggle-runs/<competition>` so wait and observe phases can resolve artifact paths after restart.
+Read `references/experiment-contract.md` before starting a new workspace. Keep workspace paths under the PulSeed-managed workspace root, by default `~/PulSeedWorkspaces/kaggle/<competition>`, so wait and observe phases can resolve artifact paths after restart while `~/.pulseed` stays protected runtime state.
 
 ## Workflow
 

@@ -65,15 +65,19 @@ function metricsJson(experimentId: string) {
 
 describe("Kaggle submission tools", () => {
   const originalPulseedHome = process.env["PULSEED_HOME"];
+  const originalWorkspaceRoot = process.env["PULSEED_WORKSPACE_ROOT"];
   let pulseedHome: string;
+  let workspaceBase: string;
   let workspaceRoot: string;
   let tmpDirs: string[];
 
   beforeEach(async () => {
     pulseedHome = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-submission-"));
-    tmpDirs = [pulseedHome];
+    workspaceBase = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-workspaces-"));
+    tmpDirs = [pulseedHome, workspaceBase];
     process.env["PULSEED_HOME"] = pulseedHome;
-    workspaceRoot = path.join(pulseedHome, "kaggle-runs", "titanic");
+    process.env["PULSEED_WORKSPACE_ROOT"] = workspaceBase;
+    workspaceRoot = path.join(workspaceBase, "kaggle", "titanic");
     await fs.mkdir(path.join(workspaceRoot, "experiments", "exp-a"), { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "experiments", "exp-a", "submission.csv"), "PassengerId,Survived\n1,0\n");
     await fs.writeFile(
@@ -87,6 +91,11 @@ describe("Kaggle submission tools", () => {
       delete process.env["PULSEED_HOME"];
     } else {
       process.env["PULSEED_HOME"] = originalPulseedHome;
+    }
+    if (originalWorkspaceRoot === undefined) {
+      delete process.env["PULSEED_WORKSPACE_ROOT"];
+    } else {
+      process.env["PULSEED_WORKSPACE_ROOT"] = originalWorkspaceRoot;
     }
     await Promise.all(tmpDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
   });
@@ -117,7 +126,7 @@ describe("Kaggle submission tools", () => {
     expect(data.portfolio_policy).toContain("validation-adjusted candidates");
     expect(data.file).toMatchObject({
       workspace_relative_path: "submissions/exp-a-public.csv",
-      state_relative_path: "kaggle-runs/titanic/submissions/exp-a-public.csv",
+      state_relative_path: "workspace:kaggle/titanic/submissions/exp-a-public.csv",
     });
     expect(data.submit_hint).toEqual({
       tool: "kaggle_submit",
@@ -453,7 +462,7 @@ describe("Kaggle submission tools", () => {
     const runner = new RecordingRunner({ exitCode: 0, stdout: "date,description,status\n", stderr: "" });
     const tool = new KaggleListSubmissionsTool(runner);
     const result = await tool.call({
-      workspace: path.join(pulseedHome, "kaggle-runs"),
+      workspace: path.join(workspaceBase, "kaggle"),
       competition: "titanic",
       timeoutMs: 10_000,
     }, makeContext(pulseedHome));
@@ -482,7 +491,7 @@ describe("Kaggle submission tools", () => {
     };
     expect(data.snapshot).toMatchObject({
       workspace_relative_path: "submissions/leaderboard/public-1.json",
-      state_relative_path: "kaggle-runs/titanic/submissions/leaderboard/public-1.json",
+      state_relative_path: "workspace:kaggle/titanic/submissions/leaderboard/public-1.json",
     });
     expect(runner.calls).toEqual([{
       command: "kaggle",

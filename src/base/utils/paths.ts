@@ -14,6 +14,14 @@ export function getPulseedDirPath(): string {
   return process.env["PULSEED_HOME"] ?? path.join(os.homedir(), ".pulseed");
 }
 
+/**
+ * Returns the default PulSeed-managed mutable workspace root.
+ * PULSEED_WORKSPACE_ROOT overrides the default ~/PulSeedWorkspaces location.
+ */
+export function getDefaultPulseedWorkspaceRootPath(): string {
+  return process.env["PULSEED_WORKSPACE_ROOT"] ?? path.join(os.homedir(), "PulSeedWorkspaces");
+}
+
 export function getGoalsDir(base?: string): string {
   return path.join(base ?? getPulseedDirPath(), "goals");
 }

@@ -3,7 +3,7 @@
 Workspace root:
 
 ```text
-~/.pulseed/kaggle-runs/<competition>/
+~/PulSeedWorkspaces/kaggle/<competition>/
   data/
   notebooks/
   src/
@@ -52,5 +52,4 @@ Minimum `metrics.json`:
 }
 ```
 
-Wait and observe paths should use state-root relative paths such as `kaggle-runs/<competition>/experiments/<experiment_id>/metrics.json`.
-
+Wait and observe paths should use the returned absolute artifact paths or workspace-scoped references such as `workspace:kaggle/<competition>/experiments/<experiment_id>/metrics.json`. Runtime metadata and normalized artifacts may still be written under `~/.pulseed`, but mutable Kaggle workspace files should not live there.
