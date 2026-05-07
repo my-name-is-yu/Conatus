@@ -508,6 +508,38 @@ describe("ArtifactMetricDataSourceAdapter", () => {
     });
   });
 
+  it("accepts fresh canonical Kaggle metrics without lifecycle flags for completed current progress", async () => {
+    writeJson(path.join(workspace, "experiments", "hgb_cv_auc_fast", "metrics.json"), {
+      roc_auc: 0.9078005508190139,
+    });
+    const adapter = new ArtifactMetricDataSourceAdapter({
+      id: "fresh-kaggle-artifacts",
+      name: "Fresh Kaggle artifacts",
+      type: "artifact_metric",
+      connection: {
+        path: workspace,
+        current_progress_policy: "completed_fresh_only",
+        dimension_metrics: { roc_auc: ["roc_auc"] },
+        require_metric_match: true,
+      },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    });
+
+    const result = await adapter.query({ dimension_name: "roc_auc", timeout_ms: 10000 });
+
+    expect(result.value).toBe(0.9078005508190139);
+    expect(result.raw).toMatchObject({
+      selected: {
+        relativePath: "experiments/hgb_cv_auc_fast/metrics.json",
+        key: "roc_auc",
+        keyPath: "roc_auc",
+        freshnessStatus: "fresh",
+      },
+      ineligible_candidates: [],
+    });
+  });
+
   it("surfaces conflicting metric candidates instead of treating one as uncontested truth", async () => {
     writeJson(path.join(workspace, "artifacts", "a", "metrics.json"), { score: 0.4 });
     writeJson(path.join(workspace, "artifacts", "b", "metrics.json"), { score: 0.6 });
