@@ -304,7 +304,6 @@ export async function setTaskOutcomeTokens(
 
 function inferMutationEvent(task: Task): TaskOutcomeEventType | null {
   if (task.status === "running") return "started";
-  if (task.execution_output?.includes("[STOPPED]")) return "abandoned";
   if (task.verification_verdict === "pass") return "succeeded";
   if (task.status === "error" || task.status === "timed_out" || task.status === "blocked" || task.verification_verdict === "fail") return "failed";
   return null;
@@ -317,6 +316,9 @@ export async function recordTaskOutcomeMutation(
   const existing = await readLedgerRecord(stateManager, task.goal_id, task.id);
   const inferredType = inferMutationEvent(task);
   const latestType = existing?.events.at(-1)?.type ?? null;
+  if (latestType === "abandoned" || latestType === "succeeded") {
+    return syncTaskOutcomeSummary(stateManager, task);
+  }
 
   if (inferredType !== null && latestType !== inferredType) {
     return appendTaskOutcomeEvent(stateManager, {

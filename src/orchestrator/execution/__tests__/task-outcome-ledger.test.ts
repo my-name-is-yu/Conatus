@@ -4,6 +4,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import type { Task } from "../../../base/types/task.js";
 import {
   appendTaskOutcomeEvent,
+  recordTaskOutcomeMutation,
   summarizeTaskOutcomeLedgers,
 } from "../task/task-outcome-ledger.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -119,6 +120,47 @@ describe("task outcome ledger", () => {
       error: 0,
       unknown: 1,
       other: 0,
+    });
+  });
+
+  it("does not infer abandoned outcomes from freeform execution output markers", async () => {
+    const task = makeTask({
+      id: "freeform-marker-task",
+      status: "error",
+      execution_output: "Provider printed [STOPPED], but no typed abandonment event was recorded.",
+    });
+
+    const ledger = await recordTaskOutcomeMutation(stateManager, task);
+
+    expect(ledger.events.map((event) => event.type)).toEqual(["failed"]);
+    expect(ledger.summary).toMatchObject({
+      latest_event_type: "failed",
+      task_status: "error",
+      abandoned_at: null,
+    });
+  });
+
+  it("preserves explicit abandoned outcomes from the typed ledger event path", async () => {
+    const task = makeTask({
+      id: "explicit-abandoned-task",
+      status: "timed_out",
+      execution_output: "No special freeform marker is required.",
+    });
+
+    await appendTaskOutcomeEvent(stateManager, {
+      task,
+      type: "abandoned",
+      stoppedReason: "timeout",
+      reason: "typed verifier outcome discarded dirty isolated workspace",
+    });
+
+    const ledger = await recordTaskOutcomeMutation(stateManager, task);
+
+    expect(ledger.events.map((event) => event.type)).toEqual(["abandoned"]);
+    expect(ledger.summary).toMatchObject({
+      latest_event_type: "abandoned",
+      task_status: "timed_out",
+      stopped_reason: "timeout",
     });
   });
 });

@@ -9,6 +9,7 @@ import type {
 } from "../../types.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import { TaskSchema } from "../../../base/types/task.js";
+import { appendTaskOutcomeEvent } from "../../../orchestrator/execution/task/task-outcome-ledger.js";
 import { upsertTaskHistory } from "../task-history-utils.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
@@ -79,6 +80,13 @@ export class TaskStopTool implements ITool<TaskStopInput, unknown> {
       });
 
       await this.stateManager.writeRaw(`tasks/${input.goalId}/${input.taskId}.json`, updatedTask);
+      await appendTaskOutcomeEvent(this.stateManager, {
+        task: updatedTask,
+        type: "abandoned",
+        action: "stop",
+        reason: input.reason,
+        stoppedReason: "cancelled",
+      });
       await upsertTaskHistory(this.stateManager, updatedTask);
 
       return {

@@ -99,6 +99,20 @@ describe("TaskStopTool", () => {
     expect(persisted.status).toBe("error");
     expect((persisted.execution_output as string)).toContain("Supervisor cancelled it");
     expect(typeof persisted.completed_at).toBe("string");
+
+    const ledger = await fakeReadRaw(tmpDir, "tasks/goal-1/ledger/task-1.json") as Record<string, unknown>;
+    const events = ledger.events as Array<Record<string, unknown>>;
+    expect(events.map((event) => event.type)).toEqual(["abandoned"]);
+    expect(events[0]).toMatchObject({
+      action: "stop",
+      reason: "Supervisor cancelled it",
+      stopped_reason: "cancelled",
+    });
+    expect(ledger.summary).toMatchObject({
+      latest_event_type: "abandoned",
+      task_status: "error",
+      stopped_reason: "cancelled",
+    });
   });
 
   it("updates task-history.json", async () => {
