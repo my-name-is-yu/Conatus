@@ -127,12 +127,16 @@ function formatEvidenceTimestamp(timestamp: number | undefined): string {
     : `${new Date(timestamp).toISOString()} (${formatRelativeTimestamp(timestamp)})`;
 }
 
-export function formatLongRunHealthLines(health: RuntimeLongRunHealth): string[] {
+export function formatLongRunHealthLines(
+  health: RuntimeLongRunHealth,
+  opts: { historical?: boolean } = {},
+): string[] {
   const signals = health.signals;
+  const childActivityLabel = opts.historical ? "Historical child activity:" : "Child activity:";
   const lines = [
     `  Summary:        ${LONG_RUN_SUMMARY_LABELS[health.summary]} (${formatRelativeTimestamp(health.checked_at)})`,
     `  Process:        ${signals.process.status}${signals.process.pid ? ` pid=${signals.process.pid}` : ""}; evidence=${formatEvidenceTimestamp(signals.process.observed_at ?? signals.process.checked_at)}`,
-    `  Child activity: ${signals.child_activity.status}${signals.child_activity.active_count !== undefined ? ` count=${signals.child_activity.active_count}` : ""}; evidence=${formatEvidenceTimestamp(signals.child_activity.observed_at ?? signals.child_activity.checked_at)}`,
+    `  ${childActivityLabel.padEnd(15)} ${signals.child_activity.status}${signals.child_activity.active_count !== undefined ? ` count=${signals.child_activity.active_count}` : ""}; evidence=${formatEvidenceTimestamp(signals.child_activity.observed_at ?? signals.child_activity.checked_at)}${opts.historical ? " (stale snapshot)" : ""}`,
     `  Log freshness:  ${signals.log_freshness.status}; evidence=${formatEvidenceTimestamp(signals.log_freshness.observed_at)}`,
     `  Artifact fresh: ${signals.artifact_freshness.status}; evidence=${formatEvidenceTimestamp(signals.artifact_freshness.observed_at)}`,
     `  Metric fresh:   ${signals.metric_freshness.status}; evidence=${formatEvidenceTimestamp(signals.metric_freshness.observed_at)}`,

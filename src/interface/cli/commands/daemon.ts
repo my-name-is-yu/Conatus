@@ -12,6 +12,7 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { Logger } from "../../../runtime/logger.js";
 import { DaemonRunner } from "../../../runtime/daemon/runner.js";
+import { readShutdownMarkerFile } from "../../../runtime/daemon/persistence.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
 import { EventServer } from "../../../runtime/event/server.js";
 import {
@@ -539,6 +540,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     && (storedRuntimeHealth?.kpi !== undefined || storedRuntimeHealth?.long_running !== undefined);
   const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot).summarize();
   const supervisorState = await readSupervisorState(runtimeRoot);
+  const shutdownMarker = await readShutdownMarkerFile(baseDir);
   const taskKpis = await summarizeTaskOutcomeLedgers(baseDir);
   const safePauseGoals = Object.values(data.safe_pause_goals ?? {});
   const hasPauseRequested = safePauseGoals.some((pause) => pause.state === "pause_requested");
@@ -567,6 +569,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     "\u2500".repeat(21),
     `Status:          ${status} (PID: ${resolvedRuntimePid})`,
   ];
+  const liveRuntimeStopped = status === "stopped" || status === "crashed";
 
   if (watchdogPid && watchdogPid !== resolvedRuntimePid) {
     lines.push(`Watchdog PID:    ${watchdogPid}${watchdogAlive ? "" : " (missing)"}`);
@@ -578,14 +581,18 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     }
     lines.push(`Started:         ${data.started_at}`);
   }
+  if (liveRuntimeStopped) {
+    if (shutdownMarker?.timestamp) {
+      lines.push(`Stopped:         ${shutdownMarker.timestamp} (${formatRelativeTime(shutdownMarker.timestamp)})`);
+    }
+    lines.push("Live runtime:    stopped; snapshot fields below are historical until the daemon restarts");
+  }
 
   lines.push("");
   lines.push(`Loops:           ${data.loop_count} cycles completed`);
 
-  const activeWorkers =
-    resolvedRuntimeAlive
-      ? (supervisorState?.workers ?? []).filter((worker) => worker.goalId !== null)
-      : [];
+  const snapshotWorkers = (supervisorState?.workers ?? []).filter((worker) => worker.goalId !== null);
+  const activeWorkers = resolvedRuntimeAlive ? snapshotWorkers : [];
   if (activeWorkers.length > 0) {
     lines.push(`In flight:       ${activeWorkers.length} worker${activeWorkers.length === 1 ? "" : "s"} active`);
     for (const worker of activeWorkers) {
@@ -595,12 +602,30 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
       lines.push(`  Worker ${worker.workerId}: ${worker.goalId} (${started}${progress})`);
     }
   }
+  if (liveRuntimeStopped && snapshotWorkers.length > 0) {
+    const observedAt = supervisorState?.updatedAt
+      ? ` observed ${formatRelativeTimestamp(supervisorState.updatedAt)}`
+      : "";
+    lines.push(
+      `Historical in-flight: ${snapshotWorkers.length} stale worker${snapshotWorkers.length === 1 ? "" : "s"} from stopped snapshot${observedAt}`
+    );
+    for (const worker of snapshotWorkers) {
+      const started = worker.startedAt > 0 ? formatRelativeTimestamp(worker.startedAt) : "unknown start";
+      const progress =
+        worker.iterations > 0 ? `, ${worker.iterations} iteration${worker.iterations === 1 ? "" : "s"}` : "";
+      lines.push(`  Stale worker ${worker.workerId}: ${worker.goalId} (${started}${progress})`);
+    }
+  }
 
   if (data.last_loop_at) {
     lines.push(`Last cycle:      ${formatRelativeTime(data.last_loop_at)}`);
   }
 
-  lines.push(`Active goals:    ${data.active_goals.join(", ") || "(none)"}`);
+  lines.push(
+    liveRuntimeStopped
+      ? `Historical active goals: ${data.active_goals.join(", ") || "(none)"}`
+      : `Active goals:    ${data.active_goals.join(", ") || "(none)"}`
+  );
   const waitingGoals = data.waiting_goals ?? [];
   if (
     waitingGoals.length > 0
@@ -610,7 +635,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     || data.approval_pending_count
   ) {
     lines.push("");
-    lines.push("Wait status:");
+    lines.push(liveRuntimeStopped ? "Historical wait status:" : "Wait status:");
     lines.push(`  Waiting goals:  ${waitingGoals.length}`);
     if (data.next_observe_at) {
       lines.push(`  Next observe:   ${formatRelativeTime(data.next_observe_at)}`);
@@ -715,13 +740,17 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     if (runtimeHealthReconciled) {
       lines.push(`  Snapshot note:  ${STALE_RUNTIME_HEALTH_REASON}.`);
     }
-    lines.push(...formatLongRunHealthLines(runtimeHealth.long_running));
+    lines.push(...formatLongRunHealthLines(runtimeHealth.long_running, { historical: liveRuntimeStopped }));
   }
 
   if (taskKpis.total_tasks > 0) {
     lines.push("");
     lines.push("Task KPIs:");
-    lines.push(`  In-flight:       ${taskKpis.inflight_tasks}/${taskKpis.total_tasks}`);
+    lines.push(
+      liveRuntimeStopped
+        ? `  Historical in-flight: ${taskKpis.inflight_tasks}/${taskKpis.total_tasks} (stale snapshot)`
+        : `  In-flight:       ${taskKpis.inflight_tasks}/${taskKpis.total_tasks}`
+    );
     lines.push(
       `  Success rate:    ${taskKpis.succeeded}/${taskKpis.terminal_tasks} (${formatPercent(taskKpis.success_rate)})`
     );

@@ -83,6 +83,8 @@ describe("cmdDaemonStatus", () => {
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).toContain("stopped (PID: 999999999)");
+    expect(output).toContain("Live runtime:    stopped; snapshot fields below are historical until the daemon restarts");
+    expect(output).toContain("Historical active goals: goal-a, goal-b");
     expect(output).toContain("goal-a");
     expect(output).toContain("goal-b");
     expect(output).toContain("5 cycles completed");
@@ -334,7 +336,7 @@ describe("cmdDaemonStatus", () => {
           checked_at: now - 60_000,
           signals: {
             process: { status: "alive", checked_at: now - 60_000, observed_at: now - 60_000, pid: stalePid },
-            child_activity: { status: "idle", checked_at: now - 60_000, observed_at: now - 60_000 },
+            child_activity: { status: "active", checked_at: now - 60_000, observed_at: now - 60_000, active_count: 2 },
             log_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
             artifact_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
             metric_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
@@ -373,6 +375,16 @@ describe("cmdDaemonStatus", () => {
         last_error: null,
       })
     );
+    fs.writeFileSync(
+      path.join(tmpDir, "shutdown-state.json"),
+      JSON.stringify({
+        goal_ids: ["goal-stale"],
+        loop_index: 4,
+        timestamp: new Date(now - 10_000).toISOString(),
+        reason: "stop",
+        state: "clean_shutdown",
+      })
+    );
     const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
       info: {
         pid: stalePid,
@@ -396,11 +408,15 @@ describe("cmdDaemonStatus", () => {
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).toContain(`stopped (PID: ${stalePid})`);
+    expect(output).toContain(`Stopped:         ${new Date(now - 10_000).toISOString()}`);
+    expect(output).toContain("Live runtime:    stopped; snapshot fields below are historical until the daemon restarts");
     expect(output).toContain("Snapshot note:  live PID inspection reports runtime stopped");
     expect(output).toContain("Process alive:   failed");
     expect(output).toContain("KPI snapshot:    process=down accept=up execute=up (failed)");
     expect(output).toContain("Summary:        dead but resumable");
     expect(output).toContain(`Process:        dead pid=${stalePid}`);
+    expect(output).toContain("Historical child activity: active count=2; evidence=");
+    expect(output).toContain("(stale snapshot)");
     expect(output).not.toContain("Process alive:   ok");
     expect(output).not.toContain(`Process:        alive pid=${stalePid}`);
   });
@@ -457,9 +473,10 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Worker worker-1: goal-live");
   });
 
-  it("ignores stale in-flight worker state when the runtime is stopped", async () => {
+  it("labels stale in-flight worker state as historical when the runtime is stopped", async () => {
     const now = Date.now();
     fs.mkdirSync(path.join(tmpDir, "runtime"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "tasks", "goal-stale", "ledger"), { recursive: true });
     fs.writeFileSync(
       path.join(tmpDir, "runtime", "supervisor-state.json"),
       JSON.stringify({
@@ -489,11 +506,32 @@ describe("cmdDaemonStatus", () => {
         last_error: null,
       })
     );
+    fs.writeFileSync(
+      path.join(tmpDir, "tasks", "goal-stale", "ledger", "task-stale.json"),
+      JSON.stringify({
+        task_id: "task-stale",
+        goal_id: "goal-stale",
+        events: [
+          { type: "acked", ts: new Date(now - 30_000).toISOString() },
+          { type: "started", ts: new Date(now - 25_000).toISOString() },
+        ],
+        summary: {
+          latest_event_type: "started",
+          latencies: {},
+        },
+      })
+    );
 
     await cmdDaemonStatus([]);
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).not.toContain("In flight:");
+    expect(output).toContain("Live runtime:    stopped; snapshot fields below are historical until the daemon restarts");
+    expect(output).toContain("Historical active goals: goal-stale");
+    expect(output).toContain("Historical in-flight: 1 stale worker from stopped snapshot");
+    expect(output).toContain("Stale worker worker-stale: goal-stale");
+    expect(output).toContain("Task KPIs:");
+    expect(output).toContain("Historical in-flight: 1/1 (stale snapshot)");
     expect(output).not.toContain("Worker worker-stale");
   });
 
@@ -749,7 +787,7 @@ describe("cmdDaemonStatus", () => {
     await cmdDaemonStatus([]);
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
-    expect(output).toContain("Active goals:    (none)");
+    expect(output).toContain("Historical active goals: (none)");
   });
 
   it("shows header and separator", async () => {
