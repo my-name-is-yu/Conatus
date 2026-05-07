@@ -542,6 +542,52 @@ describe("TaskLifecycle", async () => {
       expect(storedTask.verification_evidence).toEqual(["Some progress made", "Partially done"]);
     });
 
+    it("partial verdict does not apply worsened max-threshold updates without intended direction", async () => {
+      const llm = createMockLLMClient([]);
+      const lifecycle = createLifecycle(llm);
+      const task = makeTask({
+        primary_dimension: "bug_count",
+        target_dimensions: ["bug_count"],
+        intended_direction: undefined,
+      });
+      const vr = makeVerificationResult({
+        verdict: "partial",
+        evidence: [
+          { layer: "independent_review", description: "Some progress made", confidence: 0.6 },
+          { layer: "self_report", description: "Partially done", confidence: 0.3 },
+        ],
+        dimension_updates: [
+          { dimension_name: "bug_count", previous_value: 10, new_value: 12, confidence: 0.6 },
+        ],
+      });
+
+      await stateManager.writeRaw("goals/goal-1/goal.json", {
+        id: "goal-1",
+        title: "Reduce Bugs",
+        status: "active",
+        dimensions: [
+          {
+            name: "bug_count",
+            label: "Bug Count",
+            current_value: 10,
+            threshold: { type: "max", value: 5 },
+            last_updated: null,
+          },
+        ],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.handleVerdict(task, vr);
+      expect(result.action).toBe("keep");
+
+      const goal = await stateManager.readRaw("goals/goal-1/goal.json") as Record<string, unknown>;
+      const dims = goal.dimensions as Array<Record<string, unknown>>;
+      const bugCountDim = dims.find((d) => d.name === "bug_count");
+      expect(bugCountDim!.current_value).toBe(10);
+    });
+
     it("fail verdict does NOT modify goal dimension current_value", async () => {
       const llm = createMockLLMClient([]);
       const lifecycle = createLifecycle(llm);

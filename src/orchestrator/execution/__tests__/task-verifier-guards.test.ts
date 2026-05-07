@@ -1211,12 +1211,9 @@ describe("Root Cause C: dimension_updates scaling", () => {
     expect(update!.new_value).toBeCloseTo(3.0, 5);
   });
 
-  it("max threshold: delta is scaled by threshold.value — pass verdict adds 0.2 * value", async () => {
+  it("max threshold: delta is scaled by threshold.value and applied toward lower values", async () => {
     const { verifyTask } = await import("../task/task-verifier.js");
     // threshold value=10, current_value=8 → pass delta = 0.2 * 10 = 2.0 → new_value = 6.0
-    // For max-type (reduce bug count), delta is subtracted implicitly by being negative direction
-    // but the scaling logic just multiplies by value: 0.2 * 10 = 2.0 → new_value = 8 + 2.0 = 10
-    // (direction check handled separately; scaling correctness is the concern here)
     await stateManager.writeRaw("goals/goal-1/goal.json", {
       id: "goal-1", title: "Test", status: "active",
       dimensions: [{ name: "count", label: "count", current_value: 8, threshold: { type: "max", value: 10 }, last_updated: null }],
@@ -1242,8 +1239,7 @@ describe("Root Cause C: dimension_updates scaling", () => {
 
     const update = result.dimension_updates.find((u) => u.dimension_name === "count");
     expect(update).toBeDefined();
-    // Scaled delta: 0.2 * 10 = 2.0, so new_value = 8 + 2.0 = 10.0
-    expect(update!.new_value).toBeCloseTo(10.0, 5);
+    expect(update!.new_value).toBeCloseTo(6.0, 5);
   });
 
   it("range threshold: delta is scaled by (high - low)", async () => {

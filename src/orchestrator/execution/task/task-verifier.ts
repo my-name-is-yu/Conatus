@@ -80,6 +80,46 @@ function statusAfterIncompleteVerification(task: Task): Task["status"] {
   return "error";
 }
 
+function getDimensionThresholdType(dim: Record<string, unknown> | undefined): string | undefined {
+  return dim && typeof dim.threshold === "object" && dim.threshold !== null
+    ? (dim.threshold as Record<string, unknown>).type as string | undefined
+    : undefined;
+}
+
+function applyThresholdProgressDelta(prevVal: number | null, scaledDelta: number, thresholdType: string | undefined): number {
+  const directionalDelta = thresholdType === "max" ? -scaledDelta : scaledDelta;
+  return prevVal !== null ? prevVal + directionalDelta : directionalDelta;
+}
+
+function isDimensionUpdateDirectionAllowed(input: {
+  intendedDirection: Task["intended_direction"];
+  dim: Record<string, unknown>;
+  previousValue: number;
+  newValue: number;
+  logger?: VerifierDeps["logger"];
+}): boolean {
+  const thresholdType = getDimensionThresholdType(input.dim);
+  if (thresholdType === "min" && input.newValue < input.previousValue) {
+    input.logger?.warn?.(
+      `[handleVerdict] Skipping dimension update for ${String(input.dim.name)}: update moves away from min threshold`
+    );
+    return false;
+  }
+  if (thresholdType === "max" && input.newValue > input.previousValue) {
+    input.logger?.warn?.(
+      `[handleVerdict] Skipping dimension update for ${String(input.dim.name)}: update moves away from max threshold`
+    );
+    return false;
+  }
+  return checkDimensionDirection(
+    input.intendedDirection,
+    input.previousValue,
+    input.newValue,
+    input.logger,
+    String(input.dim.name),
+  );
+}
+
 function isolatedWorkspaceHandoff(
   context: VerdictHandlingContext,
 ): NonNullable<VerdictHandlingContext["agentLoopWorkspace"]> | null {
@@ -545,8 +585,8 @@ export async function verifyTask(
               scaledDelta = progressDelta * (threshold.high - threshold.low);
             }
           }
-          const newVal =
-            prevVal !== null ? prevVal + scaledDelta : scaledDelta;
+          const thresholdType = threshold?.type as string | undefined;
+          const newVal = applyThresholdProgressDelta(prevVal, scaledDelta, thresholdType);
           return {
             dimension_name: dimName,
             previous_value: prevVal,
@@ -729,7 +769,13 @@ export async function handleVerdict(
             );
             if (update !== undefined && typeof update.new_value === "number") {
               const prev = typeof dim.current_value === "number" ? dim.current_value : 0;
-              if (!checkDimensionDirection(task.intended_direction, prev, update.new_value, deps.logger, String(dim.name))) {
+              if (!isDimensionUpdateDirectionAllowed({
+                intendedDirection: task.intended_direction,
+                dim,
+                previousValue: prev,
+                newValue: update.new_value,
+                logger: deps.logger,
+              })) {
                 continue;
               }
               dim.current_value = clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
@@ -773,7 +819,13 @@ export async function handleVerdict(
               );
               if (update !== undefined && typeof update.new_value === "number") {
                 const prev = typeof dim.current_value === "number" ? dim.current_value : 0;
-                if (!checkDimensionDirection(task.intended_direction, prev, update.new_value, deps.logger, String(dim.name))) {
+                if (!isDimensionUpdateDirectionAllowed({
+                  intendedDirection: task.intended_direction,
+                  dim,
+                  previousValue: prev,
+                  newValue: update.new_value,
+                  logger: deps.logger,
+                })) {
                   continue;
                 }
                 dim.current_value = clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
