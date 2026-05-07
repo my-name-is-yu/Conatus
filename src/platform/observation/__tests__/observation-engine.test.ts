@@ -1053,6 +1053,75 @@ describe("observeFromDataSource", () => {
     });
   });
 
+  it("lets fresh canonical Kaggle artifact evidence override prior no-evidence reset before LLM jump suppression", async () => {
+    const goalWorkspace = path.join(tmpDir, "fresh-reset-kaggle-workspace");
+    const goalCreatedAt = new Date(Date.now() - 60_000);
+    writeJsonFile(path.join(goalWorkspace, "experiments", "hgb_cv_auc_fast", "metrics.json"), {
+      roc_auc: 0.9078005508190139,
+    });
+    const llmClient = makeMockLLMClient(0.9078005508190139);
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      async () => "workspace context exists",
+    );
+    const goal = makeGoal({
+      id: "goal-fresh-reset-kaggle-roc-auc",
+      created_at: goalCreatedAt.toISOString(),
+      constraints: [`workspace_path:${goalWorkspace}`, "artifact_contract:required"],
+      dimensions: [
+        {
+          name: "roc_auc",
+          label: "ROC AUC",
+          current_value: 0,
+          threshold: { type: "min", value: 0.95 },
+          confidence: 0.3,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [{
+            timestamp: new Date(goalCreatedAt.getTime() + 1_000).toISOString(),
+            value: 0,
+            confidence: 0.1,
+            source_observation_id: "obs-prior-no-evidence-reset",
+          }],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+          last_observed_layer: "independent_review",
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engine.observe("goal-fresh-reset-kaggle-roc-auc", []);
+
+    const updated = await stateManager.loadGoal("goal-fresh-reset-kaggle-roc-auc");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.9078005508190139);
+    expect(updated?.dimensions[0]?.last_observed_layer).toBe("mechanical");
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    const log = await stateManager.loadObservationLog("goal-fresh-reset-kaggle-roc-auc");
+    expect(log?.entries[0]).toMatchObject({
+      layer: "mechanical",
+      extracted_value: 0.9078005508190139,
+      raw_result: {
+        selected: {
+          relativePath: "experiments/hgb_cv_auc_fast/metrics.json",
+          key: "roc_auc",
+          keyPath: "roc_auc",
+          freshnessStatus: "fresh",
+          currentRun: true,
+        },
+        freshness: {
+          scope: "goal",
+          scope_id: "goal-fresh-reset-kaggle-roc-auc",
+          current_progress_status: "eligible",
+        },
+      },
+    });
+  });
+
   it("observes builtin-supported artifact metrics from the goal workspace over daemon datasource", async () => {
     const daemonWorkspace = path.join(tmpDir, "daemon-workspace");
     const goalWorkspace = path.join(tmpDir, "builtin-metric-workspace");
