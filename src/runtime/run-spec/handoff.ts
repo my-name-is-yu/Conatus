@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { GoalSchema, type Goal } from "../../base/types/goal.js";
+import { getPulseedDirPath } from "../../base/utils/paths.js";
+import { validateProtectedPath } from "../../tools/fs/FileValidationTool/protected-path-policy.js";
 import { BackgroundRunLedger, type BackgroundRunCreateInput } from "../store/background-run-store.js";
 import type { RuntimeReplyTarget } from "../session-registry/types.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../daemon/runtime-root.js";
@@ -477,6 +480,13 @@ export function validateRunSpecStartSafety(spec: RunSpec): string | null {
     ].join("\n");
   }
 
+  if (spec.profile === "kaggle") {
+    const workspacePolicyBlock = validateKaggleWorkspaceWritePolicy(spec.workspace.path);
+    if (workspacePolicyBlock) {
+      return workspacePolicyBlock;
+    }
+  }
+
   const blockedPolicies = [
     spec.approval_policy.submit === "disallowed" ? "submit" : null,
     spec.approval_policy.publish === "disallowed" ? "publish" : null,
@@ -494,6 +504,28 @@ export function validateRunSpecStartSafety(spec: RunSpec): string | null {
   }
 
   return null;
+}
+
+function validateKaggleWorkspaceWritePolicy(workspacePath: string): string | null {
+  const stateRoot = path.resolve(getPulseedDirPath());
+  const workspaceRoot = path.resolve(workspacePath);
+  const stateRelativeWorkspace = path.relative(stateRoot, workspaceRoot);
+  const isUnderProtectedStateRoot = workspaceRoot === stateRoot
+    || (!stateRelativeWorkspace.startsWith("..") && !path.isAbsolute(stateRelativeWorkspace));
+  const probePath = path.join(workspaceRoot, ".pulseed-write-policy-probe");
+  const validation = validateProtectedPath(probePath, {
+    cwd: workspaceRoot,
+    workspaceRoot,
+    protectedPaths: [stateRoot],
+  });
+  if (validation.valid && !isUnderProtectedStateRoot) return null;
+  return [
+    "RunSpec confirmed but not started: Kaggle workspace is blocked by the AgentLoop write policy.",
+    `Workspace: ${workspaceRoot}`,
+    `Protected runtime state root: ${stateRoot}`,
+    `Policy reason: ${validation.error ?? "workspace is not writable by policy"}`,
+    "Move the Kaggle workspace under the PulSeed-managed workspace root, for example ~/PulSeedWorkspaces/kaggle/<competition>, then approve again.",
+  ].join("\n");
 }
 
 function goalDimensionFromRunSpec(spec: RunSpec, now: string): Goal["dimensions"][number] {
