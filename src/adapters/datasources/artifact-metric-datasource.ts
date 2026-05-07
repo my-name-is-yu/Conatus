@@ -293,7 +293,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
           },
         };
       }
-      throw new Error(`No artifact metric found for dimension "${params.dimension_name}" using keys [${keys.join(", ")}]`);
+      throw new Error(noMetricFoundMessage(params.dimension_name, keys, observations));
     }
     return {
       value: match?.value ?? 0,
@@ -666,9 +666,31 @@ function currentProgressIneligibleReason(
       ? null
       : `artifact lifecycle is ${lifecycle.state}`;
   }
+  if (lifecycle.state === "unknown" && isCanonicalKaggleMetricArtifact(candidate)) {
+    return null;
+  }
   return lifecycle.state === "completed"
     ? null
     : `artifact lifecycle is ${lifecycle.state}`;
+}
+
+function isCanonicalKaggleMetricArtifact(candidate: MetricCandidate): boolean {
+  const parts = candidate.relativePath.split("/");
+  return parts.length === 3 && parts[0] === "experiments" && parts[2] === "metrics.json";
+}
+
+function noMetricFoundMessage(
+  dimensionName: string,
+  keys: string[],
+  observations: MetricObservation[],
+): string {
+  const base = `No artifact metric found for dimension "${dimensionName}" using keys [${keys.join(", ")}]`;
+  const rejected = ineligibleRaw(observations).slice(0, 5);
+  if (rejected.length === 0) return base;
+  const details = rejected
+    .map((candidate) => `${candidate.path}: ${candidate.reason}`)
+    .join("; ");
+  return `${base}; rejected candidates: ${details}`;
 }
 
 function addNumber(metrics: MetricExtraction[], key: string, keyPath: string, value: unknown, confidence: number): void {

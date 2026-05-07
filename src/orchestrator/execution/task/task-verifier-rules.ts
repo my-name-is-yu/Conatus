@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as fs from "node:fs";
 import type { Task } from "../../../base/types/task.js";
 import type { VerificationResult } from "../../../base/types/task.js";
 import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
@@ -449,6 +450,16 @@ async function resolveRevertCwd(deps: VerifierDeps, task: Task): Promise<string 
   }) ?? null;
 }
 
+function hasGitMetadata(cwd: string): boolean {
+  let current = path.resolve(cwd);
+  while (true) {
+    if (fs.existsSync(path.join(current, ".git"))) return true;
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
 function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -482,6 +493,32 @@ export async function attemptRevert(
   const unsafePaths = [
     ...new Set((opts.unsafePaths ?? []).map((filePath) => filePath.trim()).filter(Boolean)),
   ];
+  const revertCwd = await resolveRevertCwd(deps, task);
+  if (!revertCwd) {
+    deps.logger?.warn?.("[attemptRevert] skipping raw git restore because no workspace_path/revertCwd was configured");
+    return {
+      success: false,
+      concretePaths: filesToRestore,
+      reason: "missing_explicit_workspace",
+    };
+  }
+
+  if (!hasGitMetadata(revertCwd)) {
+    deps.logger?.warn?.("[attemptRevert] skipping git restore because workspace is not a git repository");
+    const pathSummary = [...filesToRestore, ...unsafePaths].join(", ");
+    return {
+      success: false,
+      concretePaths: filesToRestore,
+      unsafePaths,
+      reason: unsafePaths.length > 0
+        ? `git restore is unavailable because workspace is not a git repository; unsafe task changes share pre-existing dirty paths: ${unsafePaths.join(", ")}`
+        : filesToRestore.length > 0
+        ? `git restore is unavailable because workspace is not a git repository; changed filesystem paths require operator review: ${pathSummary}`
+        : "git restore is unavailable because workspace is not a git repository; no concrete changed paths were captured",
+      method: "git_unavailable",
+    };
+  }
+
   if (filesToRestore.length === 0) {
     if (unsafePaths.length > 0) {
       deps.logger?.warn?.("[attemptRevert] skipping raw git restore because task changes share pre-existing dirty paths");
@@ -497,16 +534,6 @@ export async function attemptRevert(
       success: false,
       concretePaths: [],
       reason: "no_concrete_changed_paths",
-    };
-  }
-
-  const revertCwd = await resolveRevertCwd(deps, task);
-  if (!revertCwd) {
-    deps.logger?.warn?.("[attemptRevert] skipping raw git restore because no workspace_path/revertCwd was configured");
-    return {
-      success: false,
-      concretePaths: filesToRestore,
-      reason: "missing_explicit_workspace",
     };
   }
 

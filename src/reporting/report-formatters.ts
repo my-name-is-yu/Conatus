@@ -174,11 +174,25 @@ export function buildExecutionSummaryContent(
   let taskSection = "_No task executed this loop._";
   if (taskResult !== null) {
     const diffEvidenceSource = formatDiffEvidenceSource(taskResult.diffEvidenceSource);
+    const changedPaths = taskResult.verificationDiffs
+      ?.map((diff) => diff.path)
+      .filter((path, index, all) => path.length > 0 && all.indexOf(path) === index)
+      ?? [];
+    const unsafePaths = taskResult.verificationDiffs
+      ?.filter((diff) => diff.safe_to_revert === false)
+      .map((diff) => diff.path)
+      .filter((path, index, all) => path.length > 0 && all.indexOf(path) === index)
+      ?? [];
     taskSection =
       `- **Task ID**: ${taskResult.taskId}\n` +
       `- **Action**: ${taskResult.action}\n` +
       `- **Dimension**: ${taskResult.dimension}` +
-      (diffEvidenceSource ? `\n- **Changed-path evidence source**: ${diffEvidenceSource}` : "");
+      (diffEvidenceSource ? `\n- **Changed-path evidence source**: ${diffEvidenceSource}` : "") +
+      (changedPaths.length > 0 ? `\n- **Changed filesystem paths**: ${changedPaths.join(", ")}` : "") +
+      (unsafePaths.length > 0 ? `\n- **Safety handoff**: git restore was not used for overlapping dirty path(s): ${unsafePaths.join(", ")}` : "") +
+      (taskResult.artifactContractStatus?.applicable
+        ? `\n- **Artifact-contract status**: ${taskResult.artifactContractStatus.passed ? "passed" : "failed"} — ${taskResult.artifactContractStatus.description}`
+        : "");
   }
 
   const stallStatus = stallDetected ? "Yes" : "No";

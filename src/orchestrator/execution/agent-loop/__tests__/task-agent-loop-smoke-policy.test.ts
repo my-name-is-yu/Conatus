@@ -10,6 +10,7 @@ import { ApplyPatchTool } from "../../../../tools/fs/ApplyPatchTool/ApplyPatchTo
 import { ToolPermissionManager } from "../../../../tools/permission.js";
 import { ToolRegistry } from "../../../../tools/registry.js";
 import { ShellCommandTool } from "../../../../tools/system/ShellCommandTool/ShellCommandTool.js";
+import { ShellTool } from "../../../../tools/system/ShellTool/ShellTool.js";
 import {
   BoundedAgentLoopRunner,
   StaticAgentLoopModelRegistry,
@@ -371,7 +372,7 @@ describe("TaskAgentLoopRunner non-interactive smoke command policy", () => {
     const firstRequest = modelClient.calls[0]!;
     const systemPrompt = firstRequest.messages.find((message) => message.role === "system")?.content ?? "";
     const shellDescription = firstRequest.tools.find((tool) => tool.function.name === "shell_command")?.function.description ?? "";
-    expect(systemPrompt).toContain("Do not use shell_command for file edits");
+    expect(systemPrompt).toContain("Do not use shell or shell_command for file edits");
     expect(systemPrompt).toContain("multiline shell write patterns");
     expect(shellDescription).toContain("Do not use for file edits");
     expect(shellDescription).toContain("heredocs");
@@ -379,6 +380,70 @@ describe("TaskAgentLoopRunner non-interactive smoke command policy", () => {
     expect(result.commandResults.some((entry) => entry.command.includes("\n"))).toBe(false);
     expect(result.commandResults.some((entry) => entry.command.includes("<<"))).toBe(false);
     expect(fs.readFileSync(path.join(workspace, "README.md"), "utf-8")).toBe("fixture edited with typed patch tool\n");
+  });
+
+  it("gives the same multiline rewrite guidance when the shell surface is visible", async () => {
+    const workspace = makeGitWorkspace();
+    const modelInfo = makeModelInfo();
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      {
+        content: "",
+        toolCalls: [{
+          id: "edit-1",
+          name: "apply_patch",
+          input: {
+            patch: [
+              "*** Begin Patch",
+              "*** Update File: README.md",
+              "@@",
+              "-fixture",
+              "+fixture edited through typed tool with shell visible",
+              "*** End Patch",
+            ].join("\n"),
+          },
+        }],
+        stopReason: "tool_use",
+      },
+      {
+        content: JSON.stringify({
+          status: "done",
+          finalAnswer: "implemented edit",
+          summary: "README updated with apply_patch",
+          filesChanged: ["README.md"],
+          testsRun: [],
+          completionEvidence: ["README.md updated"],
+          verificationHints: [],
+          blockers: [],
+        }),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+    ]);
+    const runner = makeRunner({
+      workspace,
+      modelInfo,
+      modelClient,
+      includeShellTool: true,
+      defaultExecutionPolicy: withExecutionPolicyOverrides(defaultExecutionPolicy(workspace), {
+        approvalPolicy: "never",
+      }),
+    });
+
+    const result = await runner.runTask({ task: makeTask(), cwd: workspace });
+
+    const firstRequest = modelClient.calls[0]!;
+    const systemPrompt = firstRequest.messages.find((message) => message.role === "system")?.content ?? "";
+    const shellDescription = firstRequest.tools.find((tool) => tool.function.name === "shell")?.function.description ?? "";
+    const shellCommandDescription = firstRequest.tools.find((tool) => tool.function.name === "shell_command")?.function.description ?? "";
+    expect(firstRequest.tools.map((tool) => tool.function.name)).toEqual(expect.arrayContaining(["shell", "shell_command", "apply_patch"]));
+    expect(systemPrompt).toContain("Do not use shell or shell_command for file edits");
+    expect(systemPrompt).toContain("heredocs");
+    expect(shellDescription).toContain("Do not use for file edits");
+    expect(shellDescription).toContain("heredocs");
+    expect(shellCommandDescription).toContain("Do not use for file edits");
+    expect(result.toolResults?.map((entry) => entry.toolName)).toEqual(["apply_patch"]);
+    expect(result.commandResults.some((entry) => entry.command.includes("\n"))).toBe(false);
+    expect(result.commandResults.some((entry) => entry.command.includes("<<"))).toBe(false);
   });
 
   it("does not keep isolated workspaces when a later typed tool recovers after denial", async () => {
@@ -496,10 +561,12 @@ function makeRunner(input: {
   defaultBudget?: Partial<AgentLoopBudget>;
   defaultWorktreePolicy?: AgentLoopWorktreePolicy;
   denyShellCommand?: (command: string) => boolean;
+  includeShellTool?: boolean;
 }): TaskAgentLoopRunner {
   const registry = new ToolRegistry();
   registry.register(new ApplyPatchTool());
   registry.register(new ShellCommandTool());
+  if (input.includeShellTool) registry.register(new ShellTool());
   const router = new ToolRegistryAgentLoopToolRouter(registry);
   const executor = new ToolExecutor({
     registry,
@@ -529,7 +596,7 @@ function makeRunner(input: {
     modelClient: input.modelClient,
     modelRegistry: new StaticAgentLoopModelRegistry([input.modelInfo]),
     defaultModel: input.modelInfo.ref,
-    defaultToolPolicy: { allowedTools: ["shell_command", "apply_patch"] },
+    defaultToolPolicy: { allowedTools: input.includeShellTool ? ["shell", "shell_command", "apply_patch"] : ["shell_command", "apply_patch"] },
     defaultBudget: {
       maxModelTurns: 4,
       maxToolCalls: 4,
