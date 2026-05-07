@@ -1,4 +1,5 @@
 import type { Envelope } from "../types/envelope.js";
+import type { GatewayChannelDisplayContract } from "./channel-display-policy.js";
 
 export interface ReplyChannel {
   send(data: unknown): void;
@@ -47,4 +48,7 @@ export interface ChannelAdapter {
 
   /** Optional platform typing/presence feedback while a chat turn is active */
   readonly typingIndicator?: TypingIndicatorCapability;
+
+  /** Optional non-TUI chat display capabilities and policy defaults */
+  readonly displayContract?: GatewayChannelDisplayContract;
 }

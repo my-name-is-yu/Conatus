@@ -7,6 +7,7 @@ import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
+import { WHATSAPP_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 interface WhatsAppWebhookPayload {
@@ -64,6 +65,7 @@ export class WhatsAppGatewayNotifier implements INotifier {
 
 export class WhatsAppGatewayAdapter implements ChannelAdapter {
   readonly name = "whatsapp";
+  readonly displayContract = WHATSAPP_GATEWAY_DISPLAY_CONTRACT;
   readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
     "whatsapp cloud adapter has no native typing endpoint in the current contract"
   );

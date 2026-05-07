@@ -17,6 +17,29 @@ export type {
   TypingIndicatorStatus,
 } from "./channel-adapter.js";
 export {
+  createGatewayDisplayPolicy,
+  resolveGatewayChannelDisplayContract,
+  DISCORD_GATEWAY_DISPLAY_CONTRACT,
+  EDITABLE_GATEWAY_DISPLAY_CAPABILITIES,
+  LIMITED_GATEWAY_DISPLAY_CAPABILITIES,
+  SIGNAL_GATEWAY_DISPLAY_CONTRACT,
+  SLACK_GATEWAY_DISPLAY_CONTRACT,
+  TELEGRAM_GATEWAY_DISPLAY_CONTRACT,
+  WEBHOOK_GATEWAY_DISPLAY_CONTRACT,
+  WHATSAPP_GATEWAY_DISPLAY_CONTRACT,
+} from "./channel-display-policy.js";
+export type {
+  GatewayChannelDisplayContract,
+  GatewayDisplayCapabilities,
+  GatewayDisplayPolicy,
+  GatewayDisplaySurface,
+  GatewayFinalSurfaceMode,
+  GatewayProgressCleanupPolicy,
+  GatewayProgressSurfaceMode,
+  GatewayToolProgressMode,
+  ResolvedGatewayChannelDisplayContract,
+} from "./channel-display-policy.js";
+export {
   createRefreshingTypingIndicator,
   createUnsupportedTypingIndicator,
   withTypingIndicator,
