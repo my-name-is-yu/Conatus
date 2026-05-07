@@ -379,7 +379,9 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     ?? (guardrailStore ? new RuntimeBackpressureController(guardrailStore) : undefined);
   if (interactiveAutomationRegistry) {
     tools.push(
-      new BrowserGetStateTool(interactiveAutomationRegistry, interactiveAutomationPolicy),
+      new BrowserGetStateTool(interactiveAutomationRegistry, interactiveAutomationPolicy, {
+        browserSessionStore,
+      }),
       new BrowserRunWorkflowTool(interactiveAutomationRegistry, interactiveAutomationPolicy, {
         browserSessionStore,
         authHandoffStore,

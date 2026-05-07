@@ -3,6 +3,7 @@ export * from "./registry.js";
 export * from "./default-registry.js";
 export * from "./failure-classifier.js";
 export * from "./browser-session-store.js";
+export * from "./browser-session-resolver.js";
 export * from "./runtime-auth-handoff-store.js";
 export * from "./providers/noop.js";
 export * from "./providers/codex-app.js";

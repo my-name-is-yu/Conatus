@@ -21,6 +21,7 @@ import {
 } from "../../../runtime/guardrails/index.js";
 import {
   BrowserRunWorkflowTool,
+  BrowserGetStateTool,
   DesktopClickTool,
   DesktopGetAppStateTool,
   DesktopListAppsTool,
@@ -608,6 +609,272 @@ describe("interactive automation tools", () => {
       expect(runBrowserWorkflow).not.toHaveBeenCalledWith(expect.objectContaining({
         sessionId: "sess-expired",
       }));
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects explicit stale browser_run_workflow sessions before calling the provider", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-workflow-stale-"));
+    try {
+      const store = new BrowserSessionStore(tmpRuntime);
+      await store.recordAuthRequired({
+        sessionId: "sess-workflow-stale",
+        providerId: "browser-workflow-stale",
+        serviceKey: "app.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-workflow-stale",
+        failureCode: "auth_required",
+        failureMessage: "login required",
+      });
+      const runBrowserWorkflow = vi.fn();
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-workflow-stale" },
+      });
+      registry.register({
+        id: "browser-workflow-stale",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-workflow-stale",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow,
+      });
+      const tool = new BrowserRunWorkflowTool(registry, undefined, { browserSessionStore: store });
+
+      const result = await tool.call(
+        {
+          task: "Resume app",
+          startUrl: "https://app.example.com/home",
+          sessionId: "sess-workflow-stale",
+        },
+        makeContext({ conversationSessionId: "chat-workflow-stale" }),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.data).toEqual(expect.objectContaining({
+        status: "browser_session_not_executed",
+        code: "browser_session_stale",
+        sessionId: "sess-workflow-stale",
+      }));
+      expect(runBrowserWorkflow).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("uses explicit serviceKey for browser_run_workflow scoped resume without startUrl", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-workflow-service-key-"));
+    try {
+      const handoffStore = new RuntimeAuthHandoffStore(tmpRuntime);
+      await handoffStore.createPending({
+        providerId: "browser-workflow-service",
+        serviceKey: "service.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-workflow-service",
+        browserSessionId: "sess-service",
+        resumableSessionId: "sess-service",
+        taskSummary: "Resume app",
+      });
+      await new BrowserSessionStore(tmpRuntime).recordAuthenticated({
+        sessionId: "sess-service",
+        providerId: "browser-workflow-service",
+        serviceKey: "service.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-workflow-service",
+      });
+      const runBrowserWorkflow = vi.fn().mockResolvedValue({
+        success: true,
+        summary: "workflow done",
+        sessionId: "sess-service",
+      });
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-workflow-service" },
+      });
+      registry.register({
+        id: "browser-workflow-service",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-workflow-service",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow,
+      });
+      const tool = new BrowserRunWorkflowTool(registry, undefined, {
+        browserSessionStore: new BrowserSessionStore(tmpRuntime),
+        authHandoffStore: handoffStore,
+      });
+
+      const result = await tool.call(
+        {
+          task: "Resume app",
+          serviceKey: "service.example.com",
+          sessionId: "sess-service",
+        },
+        makeContext({ conversationSessionId: "chat-workflow-service" }),
+      );
+
+      expect(result.success).toBe(true);
+      await expect(handoffStore.listActive()).resolves.toEqual([]);
+      await expect(handoffStore.list()).resolves.toEqual([
+        expect.objectContaining({
+          service_key: "service.example.com",
+          state: "completed",
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses the latest authenticated browser session for browser_get_state when service scope is explicit", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-state-reuse-"));
+    try {
+      const store = new BrowserSessionStore(tmpRuntime);
+      await store.recordAuthenticated({
+        sessionId: "sess-state",
+        providerId: "browser-state-reuse",
+        serviceKey: "state.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-state",
+      });
+      const getBrowserState = vi.fn().mockResolvedValue({
+        success: true,
+        summary: "state read",
+        sessionId: "sess-state",
+      });
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-state-reuse" },
+      });
+      registry.register({
+        id: "browser-state-reuse",
+        family: "browser",
+        capabilities: ["browser_control"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-state-reuse",
+          family: "browser",
+          capabilities: ["browser_control"],
+          available: true,
+        }),
+        getBrowserState,
+      });
+      const tool = new BrowserGetStateTool(registry, undefined, { browserSessionStore: store });
+
+      await expect(
+        tool.call(
+          { startUrl: "https://state.example.com/home" },
+          makeContext({ conversationSessionId: "chat-state" }),
+        ),
+      ).resolves.toMatchObject({
+        success: true,
+        data: { result: { sessionId: "sess-state" } },
+      });
+      expect(getBrowserState).toHaveBeenCalledWith({ sessionId: "sess-state" });
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for browser_get_state without session id or explicit service scope", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-state-no-scope-"));
+    try {
+      const getBrowserState = vi.fn();
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-state-no-scope" },
+      });
+      registry.register({
+        id: "browser-state-no-scope",
+        family: "browser",
+        capabilities: ["browser_control"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-state-no-scope",
+          family: "browser",
+          capabilities: ["browser_control"],
+          available: true,
+        }),
+        getBrowserState,
+      });
+      const tool = new BrowserGetStateTool(registry, undefined, {
+        browserSessionStore: new BrowserSessionStore(tmpRuntime),
+      });
+
+      const result = await tool.call({}, makeContext({ conversationSessionId: "chat-state" }));
+
+      expect(result.success).toBe(false);
+      expect(result.data).toEqual(expect.objectContaining({
+        status: "browser_session_not_executed",
+        code: "browser_session_scope_required",
+      }));
+      expect(getBrowserState).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects explicit stale browser_get_state sessions without falling back to latest", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-state-stale-"));
+    try {
+      const store = new BrowserSessionStore(tmpRuntime);
+      await store.recordAuthenticated({
+        sessionId: "sess-fresh-state",
+        providerId: "browser-state-stale",
+        serviceKey: "state.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-state",
+      });
+      await store.recordAuthRequired({
+        sessionId: "sess-stale-state",
+        providerId: "browser-state-stale",
+        serviceKey: "state.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-state",
+        failureCode: "auth_required",
+        failureMessage: "login required",
+      });
+      const getBrowserState = vi.fn();
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-state-stale" },
+      });
+      registry.register({
+        id: "browser-state-stale",
+        family: "browser",
+        capabilities: ["browser_control"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-state-stale",
+          family: "browser",
+          capabilities: ["browser_control"],
+          available: true,
+        }),
+        getBrowserState,
+      });
+      const tool = new BrowserGetStateTool(registry, undefined, { browserSessionStore: store });
+
+      const result = await tool.call(
+        {
+          sessionId: "sess-stale-state",
+          startUrl: "https://state.example.com/home",
+        },
+        makeContext({ conversationSessionId: "chat-state" }),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.data).toEqual(expect.objectContaining({
+        status: "browser_session_not_executed",
+        code: "browser_session_stale",
+        sessionId: "sess-stale-state",
+      }));
+      expect(getBrowserState).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tmpRuntime, { recursive: true, force: true });
     }
