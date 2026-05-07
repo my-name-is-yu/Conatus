@@ -46,6 +46,7 @@ export async function generateLoopReport(
             action: iterationResult.taskResult.action,
             dimension: iterationResult.taskResult.task.primary_dimension,
             verificationDiffs: iterationResult.taskResult.verificationResult.file_diffs,
+            diffEvidenceSource: iterationResult.taskResult.diffEvidenceSource,
           }
         : null;
     const waitStatus = buildWaitStatus(iterationResult);

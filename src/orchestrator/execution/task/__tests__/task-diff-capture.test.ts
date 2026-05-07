@@ -320,14 +320,37 @@ describe("captureExecutionDiffArtifacts", () => {
       });
 
       expect(result.available).toBe(true);
+      expect(result.evidenceSource).toBe("filesystem_artifact");
       expect(result.changedPaths).toEqual(["reports/hgb.json"]);
       expect(result.fileDiffs).toEqual([
         expect.objectContaining({
           path: "reports/hgb.json",
           patch: expect.stringContaining("+{\"score\":0.95}"),
+          safe_to_revert: false,
         }),
       ]);
       expect(execFileSyncFn).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("reports filesystem artifact evidence with no changed paths in a non-git workspace", () => {
+    const workspace = makeTempDir();
+    try {
+      const execFileSyncFn = vi.fn(() => {
+        throw new Error("git should not be probed for non-git workspace evidence");
+      });
+
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace, {
+        fallbackChangedPaths: [],
+      });
+
+      expect(execFileSyncFn).not.toHaveBeenCalled();
+      expect(result.available).toBe(true);
+      expect(result.evidenceSource).toBe("filesystem_artifact");
+      expect(result.changedPaths).toEqual([]);
+      expect(result.fileDiffs).toEqual([]);
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
     }

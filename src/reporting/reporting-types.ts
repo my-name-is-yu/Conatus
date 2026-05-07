@@ -1,4 +1,5 @@
 import type { VerificationFileDiff } from "../base/types/task.js";
+import type { AgentResult } from "../orchestrator/execution/adapter-layer.js";
 import type { DeadlineFinalizationStatus } from "../platform/time/deadline-finalization.js";
 import type { ExecutionModeState } from "../platform/time/execution-mode.js";
 
@@ -23,6 +24,7 @@ export type ExecutionSummaryParams = {
     action: string;
     dimension: string;
     verificationDiffs?: VerificationFileDiff[];
+    diffEvidenceSource?: AgentResult["diffEvidenceSource"];
   } | null;
   stallDetected: boolean;
   pivotOccurred: boolean;

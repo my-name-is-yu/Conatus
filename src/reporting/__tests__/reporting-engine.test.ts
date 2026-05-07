@@ -161,6 +161,22 @@ describe("generateExecutionSummary", () => {
     expect(report.content).not.toContain("```diff");
   });
 
+  it("surfaces filesystem artifact evidence when git is unavailable", () => {
+    const report = engine.generateExecutionSummary(makeBaseParams({
+      taskResult: {
+        taskId: "task-kaggle",
+        action: "keep",
+        dimension: "score",
+        verificationDiffs: [],
+        diffEvidenceSource: "filesystem_artifact",
+      },
+    }));
+
+    expect(report.metadata?.task_diff_evidence_source).toBe("filesystem_artifact");
+    expect(report.content).toContain("Changed-path evidence source");
+    expect(report.content).toContain("filesystem/artifact evidence (git unavailable)");
+  });
+
   it("shows 'No task executed' when taskResult is null", () => {
     const report = engine.generateExecutionSummary(makeBaseParams({ taskResult: null }));
     expect(report.content).toContain("No task executed");

@@ -25,6 +25,7 @@ export const ReportSchema = z.object({
       task_id: z.string().nullable().optional(),
       task_action: z.string().nullable().optional(),
       task_verification_diffs: z.array(VerificationFileDiffSchema).optional(),
+      task_diff_evidence_source: z.enum(["git", "filesystem_artifact", "unavailable"]).nullable().optional(),
       wait_status: z.object({
         strategyId: z.string().optional(),
         status: z.string(),

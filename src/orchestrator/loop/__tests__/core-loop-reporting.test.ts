@@ -375,6 +375,32 @@ describe("CoreLoop", async () => {
       );
     });
 
+    it("passes task diff evidence source into execution summaries", async () => {
+      const reportingEngine = {
+        generateExecutionSummary: vi.fn().mockReturnValue({ type: "execution_summary" }),
+        saveReport: vi.fn(),
+      };
+
+      await generateLoopReport(
+        "goal-1",
+        0,
+        makeEmptyIterationResult("goal-1", 0, {
+          taskResult: makeTaskCycleResult({ diffEvidenceSource: "filesystem_artifact" }),
+        }),
+        makeGoal(),
+        reportingEngine,
+        undefined
+      );
+
+      expect(reportingEngine.generateExecutionSummary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskResult: expect.objectContaining({
+            diffEvidenceSource: "filesystem_artifact",
+          }),
+        })
+      );
+    });
+
     it("calls reportingEngine.generateExecutionSummary", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal({
