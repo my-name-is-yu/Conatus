@@ -1497,12 +1497,36 @@ describe("agentloop phase 2", () => {
 
   it("runs TaskLifecycle execution through TaskAgentLoopRunner and owns task status updates", async () => {
     const modelInfo = makeModelInfo();
+    fs.mkdirSync(path.join(tmpDir, ".git"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "src"), { recursive: true });
     const registry = new StaticAgentLoopModelRegistry([modelInfo]);
     let llmCallCount = 0;
     const llmClient: ILLMClient = {
       async sendMessage(_messages: LLMMessage[], _options?: LLMRequestOptions): Promise<LLMResponse> {
         llmCallCount++;
         if (llmCallCount === 1) {
+          return {
+            content: "",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "tool_use",
+            tool_calls: [{
+              id: "patch-1",
+              function: {
+                name: "apply_patch",
+                arguments: JSON.stringify({
+                  cwd: tmpDir,
+                  patch: [
+                    "*** Begin Patch",
+                    "*** Add File: src/example.ts",
+                    "+export const example = true;",
+                    "*** End Patch",
+                  ].join("\n"),
+                }),
+              },
+            }],
+          };
+        }
+        if (llmCallCount === 2) {
           return {
             content: "",
             usage: { input_tokens: 1, output_tokens: 1 },
@@ -1529,7 +1553,7 @@ describe("agentloop phase 2", () => {
     };
     const modelClient = new ILLMClientAgentLoopModelClient(llmClient, registry);
     const toolRegistry = new ToolRegistry();
-    toolRegistry.register(new EchoTool());
+    toolRegistry.register(new ApplyPatchTool());
     toolRegistry.register(new VerifyTool());
     const router = new ToolRegistryAgentLoopToolRouter(toolRegistry);
     const executor = new ToolExecutor({
@@ -1544,7 +1568,7 @@ describe("agentloop phase 2", () => {
       modelClient,
       modelRegistry: registry,
       defaultModel: modelInfo.ref,
-      defaultToolPolicy: { allowedTools: ["echo", "verify"] },
+      defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
     });
 
     const stateManager = new StateManager(tmpDir);
@@ -1558,9 +1582,23 @@ describe("agentloop phase 2", () => {
       trustManager,
       strategyManager,
       new StallDetector(stateManager),
-      { agentLoopRunner: taskRunner, execFileSyncFn: () => "" },
+      {
+        agentLoopRunner: taskRunner,
+        execFileSyncFn: (_cmd, args) => {
+          if (args[0] === "diff" && args[1] === "--name-only") {
+            return fs.existsSync(path.join(tmpDir, "src/example.ts")) ? "src/example.ts\n" : "";
+          }
+          if (args[0] === "diff" && args[1] === "--cached") return "";
+          if (args[0] === "ls-files") return "";
+          if (args[0] === "diff" && args.includes("src/example.ts")) {
+            return "diff --git a/src/example.ts b/src/example.ts\n@@ -0,0 +1 @@\n+export const example = true;\n";
+          }
+          return "";
+        },
+      },
     );
     const task = makeTask({
+      constraints: [`workspace_path:${tmpDir}`],
       success_criteria: [{ description: "example exists", verification_method: "test -f src/example.ts", is_blocking: true }],
     });
     await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
@@ -1588,8 +1626,26 @@ describe("agentloop phase 2", () => {
     try {
       fs.mkdirSync(goalWorkspace, { recursive: true });
       fs.mkdirSync(path.join(goalWorkspace, ".git"), { recursive: true });
+      fs.mkdirSync(path.join(goalWorkspace, "src"), { recursive: true });
       const modelInfo = makeModelInfo();
       const modelClient = new ScriptedModelClient(modelInfo, [
+        {
+          content: "",
+          toolCalls: [{
+            id: "patch-1",
+            name: "apply_patch",
+            input: {
+              cwd: goalWorkspace,
+              patch: [
+                "*** Begin Patch",
+                "*** Add File: src/example.ts",
+                "+export const example = true;",
+                "*** End Patch",
+              ].join("\n"),
+            },
+          }],
+          stopReason: "tool_use",
+        },
         {
           content: "",
           toolCalls: [{ id: "call-1", name: "verify", input: { command: "test -d ." } }],
@@ -1602,7 +1658,7 @@ describe("agentloop phase 2", () => {
         },
       ]);
       const registry = new ToolRegistry();
-      registry.register(new EchoTool());
+      registry.register(new ApplyPatchTool());
       registry.register(new VerifyTool());
       const router = new ToolRegistryAgentLoopToolRouter(registry);
       const executor = new ToolExecutor({
@@ -1617,7 +1673,7 @@ describe("agentloop phase 2", () => {
         modelClient,
         modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
         defaultModel: modelInfo.ref,
-        defaultToolPolicy: { allowedTools: ["echo", "verify"] },
+        defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
         cwd: daemonDir,
       });
       const diffCwds: string[] = [];
@@ -1647,7 +1703,15 @@ describe("agentloop phase 2", () => {
           agentLoopRunner: taskRunner,
           execFileSyncFn: (_cmd, args, opts) => {
             diffCwds.push(opts.cwd);
-            return args[0] === "diff" || args[0] === "ls-files" ? "" : "";
+            if (args[0] === "diff" && args[1] === "--name-only") {
+              return fs.existsSync(path.join(goalWorkspace, "src/example.ts")) ? "src/example.ts\n" : "";
+            }
+            if (args[0] === "diff" && args[1] === "--cached") return "";
+            if (args[0] === "ls-files") return "";
+            if (args[0] === "diff" && args.includes("src/example.ts")) {
+              return "diff --git a/src/example.ts b/src/example.ts\n@@ -0,0 +1 @@\n+export const example = true;\n";
+            }
+            return "";
           },
         },
       );

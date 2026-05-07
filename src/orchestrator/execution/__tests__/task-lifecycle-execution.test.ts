@@ -844,6 +844,163 @@ describe("TaskLifecycle", async () => {
       expect(fs.readFileSync(path.join(repo, "preexisting.txt"), "utf-8")).toBe("dirty before task\n");
     });
 
+    it("fails native normal-task success when git diff capture finds no file changes", async () => {
+      const llm = createMockLLMClient([]);
+      const repo = makeDirtyGitRepo("native-no-change-repo");
+      const task = makeTask({
+        id: "task-native-no-change-git",
+        constraints: [`workspace_path:${repo}`],
+      });
+      const agentLoopRunner = {
+        runTask: vi.fn().mockImplementation(async (input: { cwd?: string }) => {
+          expect(input.cwd).toBe(repo);
+          return makeAgentLoopResult("completed", {
+            output: {
+              status: "done",
+              finalAnswer: "claimed done",
+              summary: "claimed done",
+              filesChanged: [],
+              testsRun: [],
+              completionEvidence: ["claimed implementation"],
+              verificationHints: [],
+              blockers: [],
+            },
+            changedFiles: [],
+            workspace: {
+              requestedCwd: repo,
+              executionCwd: repo,
+              isolated: false,
+              cleanupStatus: "not_requested",
+              dirty: false,
+              disposition: "not_isolated",
+            },
+          });
+        }),
+      } as unknown as TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: realExecFileSync,
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("No files were modified");
+      expect(result.filesChanged).toBe(false);
+      expect(result.filesChangedPaths).toEqual([]);
+      expect(result.agentLoop?.verificationHints).toContain("No files were modified");
+      expect(persisted.status).toBe("error");
+      expect(ledger.events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(ledger.events.at(-1)!.reason).toBe("No files were modified");
+    });
+
+    it("fails native normal-task success in non-git workspaces when no changed files are captured", async () => {
+      const llm = createMockLLMClient([]);
+      const workspace = path.join(tmpDir, "native-no-change-non-git");
+      fs.mkdirSync(workspace, { recursive: true });
+      const task = makeTask({
+        id: "task-native-no-change-non-git",
+        constraints: [`workspace_path:${workspace}`],
+      });
+      const agentLoopRunner = {
+        runTask: vi.fn().mockImplementation(async (input: { cwd?: string }) => {
+          expect(input.cwd).toBe(workspace);
+          return makeAgentLoopResult("completed", {
+            output: {
+              status: "done",
+              finalAnswer: "claimed done",
+              summary: "claimed done",
+              filesChanged: [],
+              testsRun: [],
+              completionEvidence: ["claimed implementation"],
+              verificationHints: [],
+              blockers: [],
+            },
+            changedFiles: [],
+            workspace: {
+              requestedCwd: workspace,
+              executionCwd: workspace,
+              isolated: false,
+              cleanupStatus: "not_requested",
+              dirty: false,
+              disposition: "not_isolated",
+            },
+          });
+        }),
+      } as unknown as TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: realExecFileSync,
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("No files were modified");
+      expect(result.filesChangedPaths).toEqual([]);
+      expect(result.agentLoop?.verificationHints).toContain("No files were modified");
+      expect(persisted.status).toBe("error");
+    });
+
+    it("fails non-git native success when only the model output claims changed files", async () => {
+      const llm = createMockLLMClient([]);
+      const workspace = path.join(tmpDir, "native-claimed-change-non-git");
+      fs.mkdirSync(workspace, { recursive: true });
+      fs.writeFileSync(path.join(workspace, "claimed.txt"), "unchanged\n", "utf-8");
+      const task = makeTask({
+        id: "task-native-claimed-change-non-git",
+        constraints: [`workspace_path:${workspace}`],
+      });
+      const agentLoopRunner = {
+        runTask: vi.fn().mockImplementation(async (input: { cwd?: string }) => {
+          expect(input.cwd).toBe(workspace);
+          return makeAgentLoopResult("completed", {
+            output: {
+              status: "done",
+              finalAnswer: "claimed done",
+              summary: "claimed done",
+              filesChanged: ["claimed.txt"],
+              testsRun: [],
+              completionEvidence: ["claimed implementation"],
+              verificationHints: [],
+              blockers: [],
+            },
+            changedFiles: [],
+            workspace: {
+              requestedCwd: workspace,
+              executionCwd: workspace,
+              isolated: false,
+              cleanupStatus: "not_requested",
+              dirty: false,
+              disposition: "not_isolated",
+            },
+          });
+        }),
+      } as unknown as TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: realExecFileSync,
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("No files were modified");
+      expect(result.filesChangedPaths).toEqual(["claimed.txt"]);
+      expect(result.agentLoop?.verificationHints).toContain("No files were modified");
+      expect(persisted.status).toBe("error");
+    });
+
     it.each([
       {
         stopReason: "timeout" as const,
