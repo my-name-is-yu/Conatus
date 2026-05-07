@@ -362,6 +362,7 @@ Requirements:
 - For Kaggle/profile experiment tasks that claim score or submission progress, set artifact_contract.required=true and include fresh metrics_json and submission_csv outputs. Source-file or marker checks are only supporting evidence for those tasks; the artifact contract is the completion evidence.
 - In artifact_contract metrics_json entries, use required_fields for field presence and field_types for fields that must have a concrete JSON type such as {"roc_auc":"number"}.
 - For generated experiment scripts with a --check-contract mode, the script's metrics writer and --check-contract validator must emit and validate the exact artifact_contract.required_fields and field_types. Do not invent alias fields in artifact_contract unless the script is required to write those exact keys.
+- Do not make --check-contract reject otherwise valid artifacts only because they predate the --check-contract process. PulSeed enforces fresh_after_task_start relative to the task start time; script validators should regenerate missing or schema-invalid artifacts, then validate the exact schema.
 - verification_method must be a single line. Do not generate heredocs, here-strings, or multiline inline Python/Node/Ruby/Perl checks.
 
 Return JSON only (inside markdown code block):

@@ -598,7 +598,8 @@ export async function generateTaskGroup(
     `Use subtask array index (as string) for dependency/ownership keys. Ensure at least 2 subtasks.`,
     `Set risk_profile.external_action from each subtask's intended side effects. Use action_kind "none" only when the subtask stays local; use "unknown" with approval_required true when uncertain.`,
     `Always include artifact_contract. Use artifact_contract.required=false and an empty required_artifacts array when generated artifacts are not completion evidence.`,
-    `For Kaggle/profile experiment subtasks that claim score or submission progress, set artifact_contract.required=true and include required_artifacts entries for fresh metrics_json and submission_csv outputs. Use required_fields for field presence and field_types for fields that must have a specific JSON type such as {"roc_auc":"number"}.`
+    `For Kaggle/profile experiment subtasks that claim score or submission progress, set artifact_contract.required=true and include required_artifacts entries for fresh metrics_json and submission_csv outputs. Use required_fields for field presence and field_types for fields that must have a specific JSON type such as {"roc_auc":"number"}.`,
+    `Do not make --check-contract reject otherwise valid artifacts only because they predate the --check-contract process. PulSeed enforces fresh_after_task_start relative to the task start time; script validators should regenerate missing or schema-invalid artifacts, then validate the exact schema.`
   );
 
   const prompt = promptParts.join("\n");

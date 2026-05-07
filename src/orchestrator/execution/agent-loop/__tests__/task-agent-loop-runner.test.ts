@@ -238,5 +238,6 @@ describe("TaskAgentLoopRunner", () => {
     expect(userMessage).toContain("\"field_types\"");
     expect(userMessage).toContain(".venv/bin/python src/experiments/train_sequence_hazard_auc.py --check-contract");
     expect(userMessage).toContain("must validate the exact required_artifacts, required_fields, and field_types above");
+    expect(userMessage).toContain("PulSeed enforces fresh_after_task_start relative to the task start time");
   });
 });

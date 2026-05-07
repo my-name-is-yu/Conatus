@@ -50,6 +50,7 @@ function formatArtifactContractSection(task: Task): string {
     "Artifact contract:",
     JSON.stringify(task.artifact_contract, null, 2),
     "If this task creates a --check-contract mode or equivalent validator, it must validate the exact required_artifacts, required_fields, and field_types above. The metrics writer must emit those exact keys before status=done.",
+    "Do not make --check-contract reject otherwise valid artifacts only because they predate the --check-contract process. PulSeed enforces fresh_after_task_start relative to the task start time.",
   ].join("\n");
 }
 
