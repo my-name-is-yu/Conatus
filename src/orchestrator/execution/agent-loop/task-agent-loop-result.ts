@@ -3,20 +3,70 @@ import * as path from "node:path";
 import type { AgentResult } from "../adapter-layer.js";
 import type { AgentLoopResult, AgentLoopWorkspaceInfo } from "./agent-loop-result.js";
 
-export const TaskAgentLoopOutputSchema = z.object({
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeStatus(value: unknown): unknown {
+  return value === "completed" ? "done" : value;
+}
+
+function normalizeStringArray(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((item) => {
+    if (typeof item === "string") return item;
+    if (item === null || item === undefined) return "";
+    if (isRecord(item)) {
+      const parts = [
+        typeof item.type === "string" ? item.type : "",
+        typeof item.command === "string" ? item.command : "",
+        typeof item.status === "string" ? item.status : "",
+        typeof item.summary === "string" ? item.summary : "",
+        typeof item.output === "string" ? item.output : "",
+      ].filter((part) => part.trim().length > 0);
+      if (parts.length > 0) return parts.join("; ");
+    }
+    try {
+      return JSON.stringify(item);
+    } catch {
+      return String(item);
+    }
+  }).filter((item) => item.trim().length > 0);
+}
+
+function normalizeTaskAgentLoopOutput(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+
+  const normalized: Record<string, unknown> = { ...value };
+  normalized.status = normalizeStatus(normalized.status);
+  normalized.finalAnswer ??= normalized.final_answer ?? normalized.summary;
+  normalized.filesChanged ??= normalized.files_changed ?? normalized.changed_files;
+  normalized.testsRun ??= normalized.tests_run;
+  normalized.completionEvidence ??= normalized.completion_evidence;
+  normalized.verificationHints ??= normalized.verification_hints;
+  normalized.completionEvidence = normalizeStringArray(normalized.completionEvidence);
+  normalized.verificationHints = normalizeStringArray(normalized.verificationHints);
+  normalized.blockers = normalizeStringArray(normalized.blockers);
+  normalized.filesChanged = normalizeStringArray(normalized.filesChanged);
+  return normalized;
+}
+
+const StringArraySchema = z.preprocess(normalizeStringArray, z.array(z.string())).default([]);
+
+export const TaskAgentLoopOutputSchema = z.preprocess(normalizeTaskAgentLoopOutput, z.object({
   status: z.enum(["done", "blocked", "partial", "failed"]),
   finalAnswer: z.string(),
   summary: z.string().default(""),
-  filesChanged: z.array(z.string()).default([]),
+  filesChanged: StringArraySchema,
   testsRun: z.array(z.object({
     command: z.string(),
     passed: z.boolean(),
     outputSummary: z.string(),
   })).default([]),
-  completionEvidence: z.array(z.string()).default([]),
-  verificationHints: z.array(z.string()).default([]),
-  blockers: z.array(z.string()).default([]),
-});
+  completionEvidence: StringArraySchema,
+  verificationHints: StringArraySchema,
+  blockers: StringArraySchema,
+}));
 
 export type TaskAgentLoopOutput = z.infer<typeof TaskAgentLoopOutputSchema>;
 

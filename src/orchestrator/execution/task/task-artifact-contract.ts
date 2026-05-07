@@ -169,21 +169,45 @@ function verifyMetricsJson(
   }
 
   const data = parsed as Record<string, unknown>;
-  const missingFields = requirement.required_fields.filter((field) => typeof data[field] !== "number");
+  const missingFields = requirement.required_fields.filter((field) => !(field in data));
   if (missingFields.length > 0) {
     return {
       passed: false,
-      description: `${requirement.path} missing numeric metric field(s): ${missingFields.join(", ")}`,
+      description: `${requirement.path} missing required field(s): ${missingFields.join(", ")}`,
     };
   }
-  if (requirement.required_fields.length === 0 && !Object.values(data).some((value) => typeof value === "number")) {
+  const typeFailures = Object.entries(requirement.field_types ?? {})
+    .filter(([field, expected]) => !artifactFieldMatchesType(data[field], expected))
+    .map(([field, expected]) => `${field} expected ${expected}`);
+  if (typeFailures.length > 0) {
+    return {
+      passed: false,
+      description: `${requirement.path} field type mismatch(es): ${typeFailures.join(", ")}`,
+    };
+  }
+  if (!Object.values(data).some((value) => typeof value === "number")) {
     return { passed: false, description: `${requirement.path} does not contain any numeric metric fields` };
   }
 
+  const typedFields = Object.keys(requirement.field_types ?? {});
   return {
     passed: true,
-    description: `${requirement.path} metrics JSON contains ${requirement.required_fields.length > 0 ? requirement.required_fields.join(", ") : "numeric metrics"}`,
+    description: `${requirement.path} metrics JSON contains ${requirement.required_fields.length > 0 ? requirement.required_fields.join(", ") : "required fields"}${typedFields.length > 0 ? ` with typed fields ${typedFields.join(", ")}` : ""}`,
   };
+}
+
+function artifactFieldMatchesType(value: unknown, expected: "number" | "string" | "array" | "object" | "boolean"): boolean {
+  switch (expected) {
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "string":
+    case "boolean":
+      return typeof value === expected;
+  }
 }
 
 function verifySubmissionCsv(
