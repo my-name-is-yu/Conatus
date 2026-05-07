@@ -1,5 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
 import { SignalGatewayAdapter, type SignalGatewayConfig } from "../signal-gateway-adapter.js";
+
+vi.mock("../chat-session-dispatch.js", () => ({
+  dispatchGatewayChatInput: vi.fn().mockResolvedValue("Signal reply"),
+}));
+
+beforeEach(() => {
+  vi.mocked(dispatchGatewayChatInput).mockReset();
+  vi.mocked(dispatchGatewayChatInput).mockResolvedValue("Signal reply");
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function makeConfig(): SignalGatewayConfig {
   return {
@@ -46,4 +60,48 @@ describe("SignalGatewayAdapter", () => {
     expect(normalized?.messageId).not.toContain(token);
     expect(normalized?.messageId).toContain("+10000000002:123456:");
   });
+
+  it("uses limited display fallback without progress fanout and delivers final once", async () => {
+    const sentBodies: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("/receive/")) {
+        return okResponse({
+          messages: [{
+            id: "signal-1",
+            sender: "+10000000002",
+            message: "hello",
+            timestamp: 123,
+          }],
+        });
+      }
+      const body = JSON.parse(String(init?.body ?? "{}")) as { message?: string };
+      sentBodies.push(body.message ?? "");
+      return okResponse({});
+    }));
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({ ...eventBase, type: "activity", kind: "tool", message: "Running noisy tool" });
+      await input.onEvent?.({ ...eventBase, type: "assistant_delta", delta: "Hel", text: "Hel" });
+      await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Hello", persisted: true });
+      return "fallback should not send";
+    });
+    const adapter = new SignalGatewayAdapter(makeConfig());
+
+    await (adapter as unknown as { pollOnce(): Promise<void> }).pollOnce();
+
+    expect(sentBodies).toEqual(["Hello"]);
+  });
 });
+
+const eventBase = {
+  runId: "run-1",
+  turnId: "turn-1",
+  createdAt: "2026-05-07T00:00:00.000Z",
+};
+
+function okResponse(payload: unknown): Response {
+  return {
+    ok: true,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  } as Response;
+}
