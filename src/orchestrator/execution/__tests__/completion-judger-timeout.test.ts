@@ -178,6 +178,64 @@ describe("completion_judger timeout + retry", () => {
     expect(desc).toMatch(/timeout|failed/i);
   }, 2_000 /* 2 second wall-clock limit to confirm no hang */);
 
+  it("skips completion judging for timed-out AgentLoop tasks without mechanical salvage evidence", async () => {
+    const failingLLM = makeFailingLLMClient(1);
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const deps = makeDeps(failingLLM, {
+      logger: logger as never,
+      completionJudgerConfig: { timeoutMs: 30_000, maxRetries: 2, retryBackoffMs: 1_000 },
+    });
+    const task = {
+      ...makeTask(),
+      artifact_contract: {
+        required: true,
+        required_artifacts: [{
+          kind: "metrics_json" as const,
+          path: "experiments/hgb_cv_auc_fast/metrics.json",
+          required_fields: ["roc_auc"],
+          fresh_after_task_start: true,
+        }],
+      },
+    };
+    const result = await verifyTask(deps, task, {
+      ...makeExecutionResult(),
+      success: false,
+      output: "timeout",
+      error: "wall clock timeout",
+      stopped_reason: "timeout",
+      agentLoop: {
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        stopReason: "timeout",
+        modelTurns: 2,
+        toolCalls: 3,
+        compactions: 0,
+        generatedEstimateMs: 45 * 60_000,
+        activeBudgetMs: 50 * 60_000,
+      },
+    });
+
+    expect(failingLLM.callCount).toBe(0);
+    expect(result.verdict).toBe("fail");
+    const reviewEvidence = result.evidence.find((e) => e.layer === "independent_review");
+    expect(reviewEvidence?.description).toContain("completion judging skipped");
+    expect(reviewEvidence?.description).toContain("generated estimate: 2700000ms");
+    expect(reviewEvidence?.description).toContain("active budget: 3000000ms");
+    expect(result.artifact_contract_status).toMatchObject({
+      applicable: true,
+      passed: false,
+    });
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping completion judging"),
+      expect.objectContaining({ taskId: task.id })
+    );
+  }, 2_000);
+
   // ─────────────────────────────────────
   // Retry count
   // ─────────────────────────────────────

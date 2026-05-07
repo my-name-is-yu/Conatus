@@ -9,6 +9,7 @@ import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { StallDetector } from "../../../platform/drive/stall-detector.js";
 import { TaskLifecycle } from "../task/task-lifecycle.js";
+import { GoalSchema } from "../../goal/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
 import type { AgentLoopStopReason } from "../agent-loop/agent-loop-budget.js";
 import type { AgentLoopResult } from "../agent-loop/agent-loop-result.js";
@@ -1109,6 +1110,58 @@ describe("TaskLifecycle", async () => {
       expect(ledger.summary.task_status).toBe(expectedTaskStatus);
       expect(ledger.summary.latest_event_type).toBe("failed");
       expect(ledger.summary.stopped_reason).toBe(stopReason);
+    });
+
+    it("aligns profiled Kaggle native AgentLoop budget with generated task estimate and reports both on timeout", async () => {
+      const llm = createMockLLMClient([]);
+      const task = makeTask({
+        id: "task-kaggle-budget",
+        constraints: [],
+        estimated_duration: { value: 45, unit: "minutes" },
+      });
+      await stateManager.saveGoal(GoalSchema.parse({
+        id: task.goal_id,
+        parent_id: null,
+        node_type: "goal",
+        title: "Kaggle benchmark",
+        description: "Run profiled Kaggle work",
+        status: "active",
+        dimensions: [],
+        gap_aggregation: "max",
+        dimension_mapping: null,
+        constraints: ["run_spec_profile:kaggle"],
+        children_ids: [],
+        target_date: null,
+        origin: "manual",
+        pace_snapshot: null,
+        deadline: null,
+        finalization_policy: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
+      const agentLoopRunner = {
+        runTask: vi.fn().mockImplementation(async (input: { budget?: { maxWallClockMs?: number } }) => {
+          expect(input.budget?.maxWallClockMs).toBe(50 * 60_000);
+          return makeAgentLoopResult("timeout", {
+            activeBudgetMs: input.budget?.maxWallClockMs,
+            generatedEstimateMs: 45 * 60_000,
+            finalText: "timeout",
+          });
+        }),
+      } as unknown as TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: () => "",
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      expect(result.stopped_reason).toBe("timeout");
+      expect(result.agentLoop?.generatedEstimateMs).toBe(45 * 60_000);
+      expect(result.agentLoop?.activeBudgetMs).toBe(50 * 60_000);
+      expect(result.error).toContain("generated estimate 2700000ms");
+      expect(result.error).toContain("active AgentLoop budget 3000000ms");
     });
 
     it("records policy-blocked native tool non-execution as blocked instead of timed out", async () => {

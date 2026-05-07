@@ -57,6 +57,8 @@ export interface AgentLoopExecutionInfo {
   sandboxMode?: string;
   approvalPolicy?: string;
   networkAccess?: boolean;
+  activeBudgetMs?: number;
+  generatedEstimateMs?: number;
 }
 
 export interface AgentResult {

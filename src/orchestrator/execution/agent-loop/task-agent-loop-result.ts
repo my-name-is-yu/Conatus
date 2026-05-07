@@ -216,6 +216,8 @@ export function taskAgentLoopResultToAgentResult(
             networkAccess: result.executionPolicy.networkAccess,
           }
         : {}),
+      ...(typeof result.activeBudgetMs === "number" ? { activeBudgetMs: result.activeBudgetMs } : {}),
+      ...(typeof result.generatedEstimateMs === "number" ? { generatedEstimateMs: result.generatedEstimateMs } : {}),
     },
   };
 }
