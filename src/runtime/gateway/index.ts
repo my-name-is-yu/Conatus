@@ -28,6 +28,12 @@ export {
   WEBHOOK_GATEWAY_DISPLAY_CONTRACT,
   WHATSAPP_GATEWAY_DISPLAY_CONTRACT,
 } from "./channel-display-policy.js";
+export { NonTuiDisplayProjector, createNonTuiDisplayProjector } from "./non-tui-display-projector.js";
+export type {
+  NonTuiDisplayMessageRef,
+  NonTuiDisplayProjectorOptions,
+  NonTuiDisplayTransport,
+} from "./non-tui-display-projector.js";
 export type {
   GatewayChannelDisplayContract,
   GatewayDisplayCapabilities,
