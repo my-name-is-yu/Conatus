@@ -157,6 +157,7 @@ export interface RuntimeTaskOutcomeDetails {
   };
   failure_reasons?: {
     timeout: number;
+    policy_blocked?: number;
     cancelled: number;
     error: number;
     unknown: number;
@@ -169,14 +170,16 @@ export function formatTaskFailureReasonCounts(
   failureReasons: RuntimeTaskOutcomeDetails["failure_reasons"] | undefined
 ): string | null {
   if (!failureReasons) return null;
+  const policyBlocked = failureReasons.policy_blocked ?? 0;
   const total =
     failureReasons.timeout +
+    policyBlocked +
     failureReasons.cancelled +
     failureReasons.error +
     failureReasons.unknown +
     failureReasons.other;
   if (total === 0) return null;
-  return `timeout=${failureReasons.timeout}, cancelled=${failureReasons.cancelled}, error=${failureReasons.error}, unknown=${failureReasons.unknown}, other=${failureReasons.other}`;
+  return `timeout=${failureReasons.timeout}, policy_blocked=${policyBlocked}, cancelled=${failureReasons.cancelled}, error=${failureReasons.error}, unknown=${failureReasons.unknown}, other=${failureReasons.other}`;
 }
 
 export function formatTaskOutcomeLine(taskOutcome: RuntimeTaskOutcomeDetails): string {

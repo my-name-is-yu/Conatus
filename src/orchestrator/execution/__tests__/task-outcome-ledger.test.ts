@@ -86,6 +86,7 @@ describe("task outcome ledger", () => {
     expect(aggregate.abandoned).toBe(1);
     expect(aggregate.failure_stopped_reasons).toEqual({
       timeout: 2,
+      policy_blocked: 0,
       cancelled: 1,
       error: 1,
       unknown: 0,
@@ -116,6 +117,7 @@ describe("task outcome ledger", () => {
     expect(ledger.summary.stopped_reason).toBeNull();
     expect(aggregate.failure_stopped_reasons).toEqual({
       timeout: 0,
+      policy_blocked: 0,
       cancelled: 0,
       error: 0,
       unknown: 1,

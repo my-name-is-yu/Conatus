@@ -627,7 +627,7 @@ export class TaskLifecycle {
       result.success ? "completed" as const :
       result.stopped_reason === "timeout" ? "timed_out" as const :
       result.stopped_reason === "cancelled" ? "cancelled" as const :
-      result.stopped_reason === "blocked" ? "blocked" as const :
+      result.stopped_reason === "blocked" || result.stopped_reason === "policy_blocked" ? "blocked" as const :
       "error" as const;
     await this.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, {
       ...runningTask,

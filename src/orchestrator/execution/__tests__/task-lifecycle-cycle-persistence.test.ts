@@ -561,6 +561,7 @@ describe("TaskLifecycle — persistence", () => {
     const aggregate = await summarizeTaskOutcomeLedgers(tmpDir);
     expect(aggregate.failure_stopped_reasons).toEqual({
       timeout: 1,
+      policy_blocked: 0,
       cancelled: 0,
       error: 0,
       unknown: 0,

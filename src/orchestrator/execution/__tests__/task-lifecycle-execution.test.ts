@@ -1044,5 +1044,56 @@ describe("TaskLifecycle", async () => {
       expect(ledger.summary.latest_event_type).toBe("failed");
       expect(ledger.summary.stopped_reason).toBe(stopReason);
     });
+
+    it("records policy-blocked native tool non-execution as blocked instead of timed out", async () => {
+      const llm = createMockLLMClient([]);
+      const policyBlockedResult = makeAgentLoopResult("completed", {
+        success: false,
+        output: null,
+        finalText: "policy-blocked tool call",
+        toolCalls: 1,
+        commandResults: [{
+          toolName: "shell_command",
+          command: "python - <<'PY'\nprint('rewrite')\nPY",
+          cwd: tmpDir,
+          success: false,
+          execution: {
+            status: "not_executed",
+            reason: "policy_blocked",
+            message: "Shell command contains unsupported multiline syntax",
+          },
+          category: "other",
+          evidenceEligible: false,
+          outputSummary: "blocked by shell policy",
+          durationMs: 1,
+        }],
+      });
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner: makeAgentLoopRunner(policyBlockedResult),
+        execFileSyncFn: () => "",
+      });
+      const task = makeTask();
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+      const failedEvent = ledger.events.at(-1)!;
+
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe("policy_blocked");
+      expect(persisted.status).toBe("blocked");
+      expect(persisted.timeout_at).toBeNull();
+      expect(persisted.stopped_at).toEqual(expect.any(String));
+      expect(ledger.events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(failedEvent.stopped_reason).toBe("policy_blocked");
+      expect(ledger.summary.task_status).toBe("blocked");
+      expect(ledger.summary.latest_event_type).toBe("failed");
+      expect(ledger.summary.stopped_reason).toBe("policy_blocked");
+    });
   });
 });

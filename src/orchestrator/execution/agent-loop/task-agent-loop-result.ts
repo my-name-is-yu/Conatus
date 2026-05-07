@@ -128,10 +128,18 @@ export function collectTaskAgentLoopNotExecutedBlockers(
   return [...new Set([...commandBlockers, ...toolBlockers])];
 }
 
+function collectTaskAgentLoopPolicyBlockedBlockers(
+  result: AgentLoopResult<TaskAgentLoopOutput>,
+): string[] {
+  return collectTaskAgentLoopNotExecutedBlockers(result)
+    .filter((blocker) => blocker.includes("(policy_blocked)"));
+}
+
 export function taskAgentLoopResultToAgentResult(
   result: AgentLoopResult<TaskAgentLoopOutput>,
 ): AgentResult {
   const notExecutedBlockers = collectTaskAgentLoopNotExecutedBlockers(result);
+  const policyBlockedBlockers = collectTaskAgentLoopPolicyBlockedBlockers(result);
   const workspaceHandoffBlockers = requiresIsolatedWorkspaceHandoff(result.workspace)
     ? [formatIsolatedWorkspaceHandoffBlocker(result.workspace!)]
     : [];
@@ -147,6 +155,7 @@ export function taskAgentLoopResultToAgentResult(
   );
   const filesChangedPaths = collectAgentLoopChangedPaths(result);
   const blockerOutput = blockers.join("; ");
+  const policyBlocked = policyBlockedBlockers.length > 0;
   const fallbackOutput = done
     ? result.output?.finalAnswer ?? result.finalText ?? result.stopReason
     : blockerOutput || result.output?.finalAnswer || result.finalText || result.stopReason;
@@ -160,6 +169,7 @@ export function taskAgentLoopResultToAgentResult(
     stopped_reason:
       result.stopReason === "timeout" ? "timeout" :
       result.stopReason === "cancelled" ? "cancelled" :
+      policyBlocked ? "policy_blocked" :
       blocked ? "blocked" :
       done ? "completed" : "error",
     filesChanged: filesChangedPaths.length > 0 || Boolean(result.filesChanged),
