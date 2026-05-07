@@ -90,9 +90,8 @@ interface ArtifactLifecycle {
   success: boolean | null;
 }
 
-interface MetricObservationSnapshot {
+interface MetricCandidateSnapshot {
   candidates: MetricCandidate[];
-  observations: MetricObservation[];
 }
 
 const BUILTIN_SOURCE_ID = "ds_builtin_workspace_artifacts";
@@ -163,7 +162,7 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
   readonly sourceId: string;
   readonly sourceType: DataSourceType = "artifact_metric";
   readonly config: DataSourceConfig;
-  private observationPassCache: Map<string, MetricObservationSnapshot> | null = null;
+  private observationPassCache: Map<string, MetricCandidateSnapshot> | null = null;
 
   constructor(config: DataSourceConfig) {
     this.config = config;
@@ -234,9 +233,9 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
     }
 
     const keys = resolveMetricKeys(params.dimension_name, expression, this.config);
-    const snapshot = await this.readMetricObservationsForPass(root, options);
-    const observations = snapshot.observations;
+    const snapshot = await this.discoverMetricCandidatesForPass(root, options);
     const candidates = selectCandidatesForKeys(snapshot.candidates, keys, options);
+    const observations = await readMetricObservations(candidates, options);
     const evidenceCandidates = buildEvidenceCandidates(observations, keys, aggregation === "min" ? "min" : "max");
 
     if (aggregation === "count") {
@@ -353,14 +352,13 @@ export class ArtifactMetricDataSourceAdapter implements IDataSourceAdapter {
     };
   }
 
-  private async readMetricObservationsForPass(root: string, options: ScanOptions): Promise<MetricObservationSnapshot> {
+  private async discoverMetricCandidatesForPass(root: string, options: ScanOptions): Promise<MetricCandidateSnapshot> {
     const cacheKey = scanCacheKey(root, options);
     const cached = this.observationPassCache?.get(cacheKey);
     if (cached) return cached;
 
     const candidates = await discoverMetricCandidates(root, options, []);
-    const observations = await readMetricObservations(candidates, options);
-    const snapshot = { candidates, observations };
+    const snapshot = { candidates };
     this.observationPassCache?.set(cacheKey, snapshot);
     return snapshot;
   }
