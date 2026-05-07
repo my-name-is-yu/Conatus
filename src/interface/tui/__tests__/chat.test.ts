@@ -268,6 +268,33 @@ describe("chat viewport", () => {
     expect(visibleText).not.toContain("pulseedgatewaysetup");
     expect(visibleText).not.toContain("pulseeddaemonstart");
   });
+
+  it("reuses rendered rows for unchanged messages across viewport builds", () => {
+    const messages = [
+      {
+        id: "m1",
+        role: "pulseed" as const,
+        text: [
+          "## Cached result",
+          "",
+          "Run `pulseed daemon start` after setup.",
+        ].join("\n"),
+        timestamp: new Date(),
+      },
+    ];
+
+    const first = buildChatViewport(messages, 60, 20, 0);
+    const second = buildChatViewport(messages, 60, 20, 0);
+    const changed = buildChatViewport([
+      {
+        ...messages[0],
+        text: `${messages[0].text}\n\nThen inspect the dashboard.`,
+      },
+    ], 60, 20, 0);
+
+    expect(second.rows[0]).toBe(first.rows[0]);
+    expect(changed.rows[0]).not.toBe(first.rows[0]);
+  });
 });
 
 describe("composer sizing", () => {
