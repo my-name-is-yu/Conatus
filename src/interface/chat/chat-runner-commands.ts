@@ -418,6 +418,9 @@ export class ChatRunnerCommandHandler {
   }
 
   private async formatGuardrailStatus(snapshot?: DaemonSnapshot | null): Promise<string | null> {
+    const automation = snapshot?.runtime_automation && typeof snapshot.runtime_automation === "object"
+      ? snapshot.runtime_automation as Record<string, unknown>
+      : null;
     const remoteAuthSessions = Array.isArray(snapshot?.auth_sessions) ? snapshot.auth_sessions : null;
     const remoteGuardrails = snapshot?.guardrails && typeof snapshot.guardrails === "object"
       ? snapshot.guardrails
@@ -425,11 +428,20 @@ export class ChatRunnerCommandHandler {
     const remoteOperatorHandoffs = Array.isArray(snapshot?.operator_handoffs)
       ? snapshot.operator_handoffs
       : null;
-    const pendingAuth = remoteAuthSessions ?? await this.loadPendingAuthSessionsFromRuntime();
+    const typedAuthHandoffs = this.extractPendingAuthFromAutomation(automation);
+    const pendingAuth = typedAuthHandoffs.length > 0
+      ? typedAuthHandoffs
+      : remoteAuthSessions ?? await this.loadPendingAuthSessionsFromRuntime();
     const operatorHandoffs = remoteOperatorHandoffs ?? await this.loadOpenOperatorHandoffsFromRuntime();
-    const { openBreakers, backpressureActiveCount } = remoteGuardrails
+    const automationSummary = this.extractAutomationSummaryFromSnapshot(automation);
+    const fallbackSummary = remoteGuardrails
       ? this.extractGuardrailSummaryFromSnapshot(remoteGuardrails)
       : await this.loadGuardrailsFromRuntime();
+    const openBreakers = automationSummary.openBreakers.length > 0 ? automationSummary.openBreakers : fallbackSummary.openBreakers;
+    const backpressureActiveCount = automationSummary.backpressureActiveCount > 0
+      ? automationSummary.backpressureActiveCount
+      : fallbackSummary.backpressureActiveCount;
+    const blockedWork = automationSummary.blockedWork.length > 0 ? automationSummary.blockedWork : fallbackSummary.blockedWork;
     const lines: string[] = [];
     if (operatorHandoffs.length > 0) {
       lines.push("Operator handoffs pending:");
@@ -444,7 +456,7 @@ export class ChatRunnerCommandHandler {
       lines.push("Auth handoffs pending:");
       for (const session of pendingAuth.slice(0, 5)) {
         const record = session as Record<string, unknown>;
-        lines.push(`- ${String(record["service_key"] ?? "unknown")} via ${String(record["provider_id"] ?? "unknown")} [${String(record["state"] ?? "unknown")}] session ${String(record["session_id"] ?? "unknown")}`);
+        lines.push(`- ${String(record["service_key"] ?? "unknown")} via ${String(record["provider_id"] ?? "unknown")} [${String(record["state"] ?? "unknown")}] handoff ${String(record["handoff_id"] ?? record["session_id"] ?? "unknown")}`);
       }
     }
     if (openBreakers.length > 0) {
@@ -458,6 +470,14 @@ export class ChatRunnerCommandHandler {
     if (backpressureActiveCount > 0) {
       if (lines.length > 0) lines.push("");
       lines.push(`Backpressure active: ${backpressureActiveCount} browser workflow(s) in flight`);
+    }
+    if (blockedWork.length > 0) {
+      if (lines.length > 0) lines.push("");
+      lines.push("Blocked automation work:");
+      for (const blocked of blockedWork.slice(0, 5)) {
+        const record = blocked as Record<string, unknown>;
+        lines.push(`- ${String(record["provider_id"] ?? "unknown")}/${String(record["service_key"] ?? "unknown")}: ${String(record["reason"] ?? "blocked")}`);
+      }
     }
     return lines.length > 0 ? lines.join("\n") : null;
   }
@@ -475,6 +495,7 @@ export class ChatRunnerCommandHandler {
   private async loadGuardrailsFromRuntime(): Promise<{
     openBreakers: Array<Record<string, unknown>>;
     backpressureActiveCount: number;
+    blockedWork: Array<Record<string, unknown>>;
   }> {
     const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
     const [breakers, backpressure] = await Promise.all([
@@ -486,12 +507,14 @@ export class ChatRunnerCommandHandler {
         breaker.state === "open" || breaker.state === "paused" || breaker.state === "half_open"
       ) as Array<Record<string, unknown>>,
       backpressureActiveCount: backpressure?.active.length ?? 0,
+      blockedWork: [],
     };
   }
 
   private extractGuardrailSummaryFromSnapshot(guardrails: Record<string, unknown>): {
     openBreakers: Array<Record<string, unknown>>;
     backpressureActiveCount: number;
+    blockedWork: Array<Record<string, unknown>>;
   } {
     const openBreakers = Array.isArray(guardrails["open_breakers"])
       ? guardrails["open_breakers"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
@@ -499,7 +522,45 @@ export class ChatRunnerCommandHandler {
     const backpressureActiveCount = Array.isArray(guardrails["backpressure_active"])
       ? guardrails["backpressure_active"].length
       : 0;
-    return { openBreakers, backpressureActiveCount };
+    return { openBreakers, backpressureActiveCount, blockedWork: [] };
+  }
+
+  private extractPendingAuthFromAutomation(automation: Record<string, unknown> | null): Array<Record<string, unknown>> {
+    if (!automation) return [];
+    const authHandoffs = automation["auth_handoffs"];
+    if (!authHandoffs || typeof authHandoffs !== "object") return [];
+    const record = authHandoffs as Record<string, unknown>;
+    return Array.isArray(record["pending"])
+      ? record["pending"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      : [];
+  }
+
+  private extractAutomationSummaryFromSnapshot(automation: Record<string, unknown> | null): {
+    openBreakers: Array<Record<string, unknown>>;
+    backpressureActiveCount: number;
+    blockedWork: Array<Record<string, unknown>>;
+  } {
+    if (!automation) return { openBreakers: [], backpressureActiveCount: 0, blockedWork: [] };
+    const guardrails = automation["guardrails"];
+    const guardrailRecord = guardrails && typeof guardrails === "object" ? guardrails as Record<string, unknown> : {};
+    const backpressure = automation["backpressure"];
+    const backpressureRecord = backpressure && typeof backpressure === "object" ? backpressure as Record<string, unknown> : {};
+    return {
+      openBreakers: Array.isArray(guardrailRecord["open_breakers"])
+        ? guardrailRecord["open_breakers"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+        : Array.isArray(guardrailRecord["paused_breakers"]) || Array.isArray(guardrailRecord["half_open_breakers"])
+        ? [
+          ...(Array.isArray(guardrailRecord["paused_breakers"]) ? guardrailRecord["paused_breakers"] : []),
+          ...(Array.isArray(guardrailRecord["half_open_breakers"]) ? guardrailRecord["half_open_breakers"] : []),
+        ].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+        : [],
+      backpressureActiveCount: Array.isArray(backpressureRecord["active"])
+        ? backpressureRecord["active"].length
+        : 0,
+      blockedWork: Array.isArray(automation["blocked_work"])
+        ? automation["blocked_work"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+        : [],
+    };
   }
 
   private async handleGoals(start: number): Promise<ChatRunResult> {

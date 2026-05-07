@@ -2083,6 +2083,78 @@ describe("ChatRunner", () => {
       }
     });
 
+    it("/status renders automation state from typed daemon snapshot before compatibility projections", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runtime-automation-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.saveGoal(makeGoal("goal-a"));
+        const daemonClient = {
+          getSnapshot: vi.fn().mockResolvedValue({
+            daemon: null,
+            goals: [],
+            approvals: [],
+            active_workers: [],
+            last_outbox_seq: 0,
+            auth_sessions: [],
+            guardrails: null,
+            runtime_automation: {
+              schema_version: "runtime-automation-snapshot-v1",
+              generated_at: "2026-05-07T00:00:00.000Z",
+              auth_handoffs: {
+                pending: [{
+                  handoff_id: "handoff-mail",
+                  provider_id: "browser-auth",
+                  service_key: "mail.google.com",
+                  workspace: "/repo",
+                  actor_key: "chat-a",
+                  state: "pending_operator",
+                }],
+                stale: [],
+                recent_terminal: [],
+              },
+              browser_sessions: { authenticated: [], stale: [] },
+              guardrails: {
+                open_breakers: [{
+                  provider_id: "browser-auth",
+                  service_key: "mail.google.com",
+                  state: "open",
+                  failure_count: 2,
+                }],
+              },
+              backpressure: {
+                active: [{ provider_id: "browser-auth", service_key: "mail.google.com", run_key: "run-1" }],
+                throttled: [],
+              },
+              blocked_work: [{
+                kind: "guardrail_open",
+                provider_id: "browser-auth",
+                service_key: "mail.google.com",
+                reason: "guardrail:open",
+                since: "2026-05-07T00:00:00.000Z",
+              }],
+            },
+          }),
+        };
+        const adapter = makeMockAdapter();
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter, daemonClient: daemonClient as never }));
+
+        const status = await runner.execute("/status", "/repo");
+
+        expect(status.success).toBe(true);
+        expect(status.output).toContain("Auth handoffs pending:");
+        expect(status.output).toContain("handoff-mail");
+        expect(status.output).toContain("Guardrails:");
+        expect(status.output).toContain("breaker browser-auth/mail.google.com: open");
+        expect(status.output).toContain("Backpressure active: 1 browser workflow(s) in flight");
+        expect(status.output).toContain("Blocked automation work:");
+        expect(status.output).toContain("browser-auth/mail.google.com: guardrail:open");
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("/status <goal-id> reads archived goals without calling adapter", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-archived-status-"));
       try {

@@ -4,6 +4,7 @@ import type { ApprovalBroker, ApprovalRequiredEvent } from "../approval-broker.j
 import type { OutboxStore } from "../store/index.js";
 import type { RuntimeSessionRegistrySnapshot } from "../session-registry/types.js";
 import type { RuntimeOperatorHandoffRecord } from "../store/operator-handoff-store.js";
+import type { RuntimeAutomationSnapshot } from "../store/index.js";
 
 export interface EventServerConfig {
   host?: string;
@@ -26,6 +27,7 @@ export interface EventServerSnapshot {
   last_outbox_seq: number;
   auth_sessions?: unknown[];
   guardrails?: Record<string, unknown> | null;
+  runtime_automation?: RuntimeAutomationSnapshot;
   runtime_sessions?: RuntimeSessionRegistrySnapshot | null;
   operator_handoffs?: RuntimeOperatorHandoffRecord[];
 }

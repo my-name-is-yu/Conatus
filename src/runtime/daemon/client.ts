@@ -33,6 +33,7 @@ export interface DaemonSnapshot {
   last_outbox_seq: number;
   auth_sessions?: unknown[];
   guardrails?: Record<string, unknown> | null;
+  runtime_automation?: unknown;
   runtime_sessions?: unknown;
   operator_handoffs?: unknown[];
 }
