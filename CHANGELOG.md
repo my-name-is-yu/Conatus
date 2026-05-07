@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.4] - 2026-05-07
+
+### Added
+- Added Codex-like typed interaction and tool-routing contracts across user input ingress, turn steering, chat context, model request building, command grammar boundaries, structured response routing, typed tool observations, host execution decisions, runtime run tools, and workspace tool policies (#1121, #1122, #1123, #1124, #1125, #1128, #1129, #1138, #1139, #1141, #1143)
+- Added replayable chat rollout journal and structured compaction continuity records so long-running chat state can be preserved and resumed through typed records (#1142, #1156)
+- Added non-TUI display gateway contracts, projectors, editable adapters, fallback handling, and normalized chat output for gateway-facing interactions (#1152, #1208, #1214, #1217, #1219)
+
+### Changed
+- Replaced additional semantic shortcuts with typed contracts for permission dialogue state, tool activity categories, verification evidence metadata, agent-loop failure reasons, wait/metric fields, chat context query planning, artifact-retention cleanup decisions, and stopped task outcomes (#1140, #1159, #1186, #1193, #1195, #1198, #1213, #1221)
+- Bumped the package version to `0.6.4`
+
+### Fixed
+- Fixed runtime and task workspace routing so mechanical verification, adapter execution, task prompts, absolute run paths, goal-workspace measurement, scope manifest summaries, and native task file-change checks use the intended workspace evidence instead of ambient process state (#1154, #1155, #1194, #1196, #1210, #1212, #1220)
+- Fixed Kaggle and artifact verification paths so completion requires fresh artifacts, stale metric evidence is rejected, max-threshold direction is applied correctly, artifact metric scans are cached, batch diff reads are captured, and artifact metric freshness is scoped correctly (#1172, #1175, #1176, #1215, #1216, #1218)
+- Fixed AgentLoop and runtime completion semantics for tool budget exhaustion, verification failure persistence, dirty worktree completion gating, non-git diff/revert evidence, stale running task recovery, resident startup interruptions, resident stop aborts, noninteractive smoke command policy, and ledger stop reasons (#1157, #1158, #1160, #1161, #1168, #1169, #1170, #1173, #1174, #1197)
+- Fixed TUI and shell-policy regressions by routing TUI shell execution through typed policy and caching chat viewport rows (#1171, #1209)
+- Fixed fuzzy evidence target labels so runtime evidence does not match stale or freeform labels as authoritative targets (#1126)
+
 ## [0.6.3] - 2026-05-06
 
 ### Added
