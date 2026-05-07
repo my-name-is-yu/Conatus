@@ -264,6 +264,90 @@ describe("artifact retention planning", () => {
     }
   });
 
+  it("includes run-prefixed manifests in goal summaries when they share the goal scope", async () => {
+    const runtimeRoot = makeTempDir("pulseed-retention-runtime-run-goal-manifest-");
+    try {
+      await fsp.mkdir(path.join(runtimeRoot, "runs/final"), { recursive: true });
+      await fsp.writeFile(path.join(runtimeRoot, "runs/final/report.md"), "# Final report\n", "utf8");
+      const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+      await ledger.append({
+        id: "run-report",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: "goal-retention-run", run_id: "run-retention" },
+        artifacts: [{
+          label: "run-final-report",
+          state_relative_path: "runs/final/report.md",
+          kind: "report",
+          retention_class: "low_value_smoke",
+        }],
+        summary: "Run report artifact.",
+      });
+      await new RuntimeReproducibilityManifestStore(runtimeRoot).createOrUpdateForCandidate({
+        goalId: "goal-retention-run",
+        runId: "run-retention",
+        deliverableArtifact: {
+          label: "run-final-report",
+          kind: "report",
+          state_relative_path: "runs/final/report.md",
+          source: "runtime_evidence_ledger",
+        },
+        codeState: { commit: "abc123", dirty: false },
+      });
+
+      const summary = await ledger.summarizeGoal("goal-retention-run");
+
+      expect(summary.artifact_retention.cleanup_plan.actions).toContainEqual(expect.objectContaining({
+        label: "run-final-report",
+        retention_class: "reproducibility_critical",
+      }));
+    } finally {
+      await fsp.rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("matches generated manifest filenames for non-safe scope ids", async () => {
+    const runtimeRoot = makeTempDir("pulseed-retention-runtime-safe-scope-");
+    try {
+      await fsp.mkdir(path.join(runtimeRoot, "runs/final"), { recursive: true });
+      await fsp.writeFile(path.join(runtimeRoot, "runs/final/report.md"), "# Final report\n", "utf8");
+      const goalId = "goal retention/日本語";
+      const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+      await ledger.append({
+        id: "safe-scope-report",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: goalId },
+        artifacts: [{
+          label: "safe-scope-report",
+          state_relative_path: "runs/final/report.md",
+          kind: "report",
+          retention_class: "low_value_smoke",
+        }],
+        summary: "Report artifact.",
+      });
+      await new RuntimeReproducibilityManifestStore(runtimeRoot).createOrUpdateForCandidate({
+        goalId,
+        deliverableArtifact: {
+          label: "safe-scope-report",
+          kind: "report",
+          state_relative_path: "runs/final/report.md",
+          source: "runtime_evidence_ledger",
+        },
+        codeState: { commit: "abc123", dirty: false },
+      });
+
+      const summary = await ledger.summarizeGoal(goalId);
+
+      expect(summary.artifact_retention.cleanup_plan.actions).toContainEqual(expect.objectContaining({
+        label: "safe-scope-report",
+        retention_class: "reproducibility_critical",
+      }));
+    } finally {
+      await fsp.rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not crash on manifest JSON that relies on defaults or contains invalid artifact refs", async () => {
     const runtimeRoot = makeTempDir("pulseed-retention-runtime-defaults-");
     try {
