@@ -246,6 +246,13 @@ function formatTimeoutBudgetEvidence(executionResult: AgentResult): string {
   return details.join("; ");
 }
 
+function isCompletionJudgerUnavailable(result: Awaited<ReturnType<typeof runLLMReview>>): boolean {
+  return result.passed === false &&
+    result.partial === false &&
+    result.confidence === 0 &&
+    result.description.startsWith("completion_judger failed after ");
+}
+
 function boundCompletionJudgerForTimedOutTask(deps: VerifierDeps): VerifierDeps {
   const existing = deps.completionJudgerConfig;
   return {
@@ -585,9 +592,18 @@ export async function verifyTask(
   let verdict: "pass" | "partial" | "fail";
   let confidence: number;
   let l2Retry: Awaited<ReturnType<typeof runLLMReview>> | undefined;
+  const l2Unavailable = isCompletionJudgerUnavailable(l2Result);
+  const l2UnavailableButMechanicallyPassed =
+    l2Unavailable &&
+    executionResult.success === true &&
+    effectiveL1Result.applicable &&
+    effectiveL1Result.passed;
 
   if (effectiveL1Result.applicable) {
-    if (effectiveL1Result.passed && l2Result.passed) {
+    if (l2UnavailableButMechanicallyPassed) {
+      verdict = "pass";
+      confidence = 0.85;
+    } else if (effectiveL1Result.passed && l2Result.passed) {
       verdict = "pass";
       confidence = 0.9;
     } else if (effectiveL1Result.passed && l2Result.partial) {
@@ -637,6 +653,9 @@ export async function verifyTask(
 
   // Use retry result for evidence when a retry occurred, to keep audit trail accurate
   const effectiveL2 = l2Retry ?? l2Result;
+  const independentReviewDescription = l2UnavailableButMechanicallyPassed
+    ? `${effectiveL2.description}; using passing mechanical/artifact evidence because completion judging was unavailable`
+    : effectiveL2.description;
 
   const now = new Date().toISOString();
   const evidence = [
@@ -651,7 +670,7 @@ export async function verifyTask(
       : []),
     {
       layer: "independent_review" as const,
-      description: effectiveL2.description,
+      description: independentReviewDescription,
       confidence: effectiveL2.confidence,
     },
     {

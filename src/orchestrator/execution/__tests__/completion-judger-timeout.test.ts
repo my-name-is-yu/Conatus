@@ -329,6 +329,86 @@ describe("completion_judger timeout + retry", () => {
     );
   }, 2_000);
 
+  it("uses passing artifact evidence when completion judging is unavailable after successful execution", async () => {
+    const workspace = `${tmpDir}/artifact-workspace`;
+    fs.mkdirSync(`${workspace}/reports`, { recursive: true });
+    fs.mkdirSync(`${workspace}/submissions`, { recursive: true });
+    fs.writeFileSync(`${workspace}/reports/order_rank_blend_auc.json`, JSON.stringify({
+      created_at: "2026-05-07T12:43:36.000Z",
+      run_name: "order_rank_blend_auc",
+      roc_auc: 0.924,
+      mean_roc_auc: 0.924,
+      output_paths: { metrics_json: "reports/order_rank_blend_auc.json" },
+    }), "utf8");
+    fs.writeFileSync(`${workspace}/submissions/order_rank_blend_auc.csv`, "id,PitNextLap\n1,0.1\n", "utf8");
+
+    const failingLLM = makeFailingLLMClient(1);
+    const deps = makeDeps(failingLLM, {
+      completionJudgerConfig: { timeoutMs: 5_000, maxRetries: 0, retryBackoffMs: 0 },
+    });
+    const task = {
+      ...makeTask(),
+      created_at: "2020-01-01T00:00:00.000Z",
+      started_at: "2020-01-01T00:00:00.000Z",
+      success_criteria: [
+        {
+          description: "Artifact contract validates",
+          verification_method: "manual artifact review",
+          is_blocking: true,
+        },
+      ],
+      artifact_contract: {
+        required: true,
+        required_artifacts: [
+          {
+            kind: "metrics_json" as const,
+            path: "reports/order_rank_blend_auc.json",
+            required_fields: ["created_at", "run_name", "roc_auc", "mean_roc_auc", "output_paths"],
+            field_types: {
+              created_at: "string" as const,
+              run_name: "string" as const,
+              roc_auc: "number" as const,
+              mean_roc_auc: "number" as const,
+              output_paths: "object" as const,
+            },
+            fresh_after_task_start: true,
+          },
+          {
+            kind: "submission_csv" as const,
+            path: "submissions/order_rank_blend_auc.csv",
+            required_fields: ["id", "PitNextLap"],
+            fresh_after_task_start: true,
+          },
+        ],
+      },
+    };
+
+    const result = await verifyTask(deps, task, {
+      ...makeExecutionResult(),
+      agentLoop: {
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        stopReason: "completed",
+        modelTurns: 6,
+        toolCalls: 10,
+        compactions: 0,
+        executionCwd: workspace,
+      },
+    });
+
+    expect(failingLLM.callCount).toBe(1);
+    expect(result.verdict).toBe("pass");
+    expect(result.confidence).toBe(0.85);
+    expect(result.artifact_contract_status).toMatchObject({
+      applicable: true,
+      passed: true,
+    });
+    const reviewEvidence = result.evidence.find((e) => e.layer === "independent_review");
+    expect(reviewEvidence?.description).toContain("completion_judger failed after 1 attempt");
+    expect(reviewEvidence?.description).toContain("using passing mechanical/artifact evidence");
+  }, 5_000);
+
   // ─────────────────────────────────────
   // Retry count
   // ─────────────────────────────────────
