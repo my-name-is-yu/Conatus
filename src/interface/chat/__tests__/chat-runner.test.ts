@@ -4580,6 +4580,48 @@ describe("ChatRunner", () => {
       expect(daemonClient.startGoal).not.toHaveBeenCalled();
     });
 
+    it("blocks Kaggle RunSpecs whose workspace is protected by the AgentLoop write policy before daemon start", async () => {
+      const originalPulseedHome = process.env["PULSEED_HOME"];
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-kaggle-policy-"));
+      process.env["PULSEED_HOME"] = baseDir;
+      try {
+        const protectedWorkspace = path.join(baseDir, "kaggle-runs", "titanic");
+        const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+        const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
+        const runner = new ChatRunner(makeDeps({
+          stateManager,
+          daemonClient: daemonClient as never,
+          llmClient: createMockLLMClient([
+            freeformRouteDecision("run_spec"),
+            runSpecDraftDecision({
+              workspace: {
+                path: protectedWorkspace,
+                source: "user",
+                confidence: "high",
+              },
+            }),
+            runSpecConfirmationDecision("approve"),
+          ]),
+        }));
+
+        await runner.execute("Kaggle score 0.98を超えるまで長期で回して", protectedWorkspace);
+        const result = await runner.execute("approve", protectedWorkspace);
+
+        expect(result.success).toBe(false);
+        expect(result.output).toContain("Kaggle workspace is blocked by the AgentLoop write policy");
+        expect(result.output).toContain("Protected runtime state root");
+        expect(result.output).toContain("PulSeedWorkspaces/kaggle");
+        expect(daemonClient.startGoal).not.toHaveBeenCalled();
+      } finally {
+        if (originalPulseedHome === undefined) {
+          delete process.env["PULSEED_HOME"];
+        } else {
+          process.env["PULSEED_HOME"] = originalPulseedHome;
+        }
+        fs.rmSync(baseDir, { recursive: true, force: true });
+      }
+    });
+
     it("cancels a pending RunSpec without starting a background run", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-cancel-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
