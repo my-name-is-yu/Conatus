@@ -17,6 +17,7 @@ export function buildAgentLoopBaseInstructions(options?: {
     "Keep going until the request is completely resolved before ending the turn.",
     "Only finish when you are confident the task itself is solved. Do not decide goal completion, global priority, stall, or replan.",
     "Use available tools to inspect, edit, and verify. Prefer apply_patch for patch edits instead of shell-based file rewrites.",
+    "Do not use shell_command for file edits, heredocs, here-strings, inline Python/Node/Ruby/Perl rewrites, or other multiline shell write patterns; use apply_patch or another typed file edit tool instead.",
     "Start with targeted inspection first; avoid repo-wide glob or grep sweeps unless the task truly needs broad discovery.",
     "Keep changes scoped to the requested task. Avoid unrelated edits and avoid fixing unrelated failures.",
     "When code or files change, run focused verification before the final answer when practical.",
