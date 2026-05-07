@@ -41,6 +41,33 @@ export const TaskUpdateInputSchema = z.object({
 });
 export type TaskUpdateInput = z.infer<typeof TaskUpdateInputSchema>;
 
+const LIFECYCLE_OWNED_SELF_UPDATE_FIELDS = new Set([
+  "status",
+  "started_at",
+  "completed_at",
+  "timeout_at",
+  "heartbeat_at",
+  "consecutive_failure_count",
+  "verification_verdict",
+  "verification_evidence",
+  "verificationVerdict",
+  "verificationEvidence",
+]);
+
+function lifecycleOwnedSelfUpdateFields(
+  input: TaskUpdateInput,
+  context: ToolCallContext,
+): string[] {
+  if (!context.taskId || context.taskId !== input.taskId || context.goalId !== input.goalId) {
+    return [];
+  }
+  return Object.keys(input).filter((key) => LIFECYCLE_OWNED_SELF_UPDATE_FIELDS.has(key));
+}
+
+function lifecycleOwnedSelfUpdateReason(fields: readonly string[]): string {
+  return `Task lifecycle owns the active task's ${fields.join(", ")} field(s) while the task agent loop is running; return final JSON instead.`;
+}
+
 export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
   readonly metadata: ToolMetadata = {
     name: "task_update",
@@ -63,16 +90,36 @@ export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
     return DESCRIPTION;
   }
 
-  async call(input: TaskUpdateInput, _context: ToolCallContext): Promise<ToolResult> {
+  async call(input: TaskUpdateInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      const raw = await this.stateManager.readRaw(`tasks/${input.goalId}/${input.taskId}.json`);
+      const ignoredFields = lifecycleOwnedSelfUpdateFields(input, context);
+      const effectiveInput: TaskUpdateInput = { ...input };
+      for (const field of ignoredFields) {
+        delete (effectiveInput as Record<string, unknown>)[field];
+      }
+      if (ignoredFields.length > 0 && Object.keys(effectiveInput).every((key) => key === "goalId" || key === "taskId")) {
+        const reason = lifecycleOwnedSelfUpdateReason(ignoredFields);
+        return {
+          success: true,
+          data: {
+            taskId: input.taskId,
+            goalId: input.goalId,
+            ignoredFields,
+            reason,
+          },
+          summary: `TaskUpdateTool ignored active task lifecycle fields: ${ignoredFields.join(", ")}`,
+          durationMs: Date.now() - startTime,
+        };
+      }
+
+      const raw = await this.stateManager.readRaw(`tasks/${effectiveInput.goalId}/${effectiveInput.taskId}.json`);
       if (raw == null) {
         return {
           success: false,
           data: null,
-          summary: `Task not found: ${input.taskId} for goal ${input.goalId}`,
-          error: `Task not found: ${input.taskId} for goal ${input.goalId}`,
+          summary: `Task not found: ${effectiveInput.taskId} for goal ${effectiveInput.goalId}`,
+          error: `Task not found: ${effectiveInput.taskId} for goal ${effectiveInput.goalId}`,
           durationMs: Date.now() - startTime,
         };
       }
@@ -82,14 +129,14 @@ export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
         return {
           success: false,
           data: null,
-          summary: `Task parse failed: ${input.taskId}`,
+          summary: `Task parse failed: ${effectiveInput.taskId}`,
           error: parsed.error.message,
           durationMs: Date.now() - startTime,
         };
       }
 
       const updates = Object.fromEntries(
-        Object.entries(input).filter(([key, value]) => key !== "goalId" && key !== "taskId" && value !== undefined)
+        Object.entries(effectiveInput).filter(([key, value]) => key !== "goalId" && key !== "taskId" && value !== undefined)
       );
 
       if (updates["verificationVerdict"] !== undefined) {
@@ -152,7 +199,9 @@ export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(input: TaskUpdateInput, context: ToolCallContext): Promise<PermissionCheckResult> {
+    void input;
+    void context;
     return { status: "allowed" };
   }
 

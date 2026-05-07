@@ -44,6 +44,21 @@ export interface TaskAgentLoopAssembly {
   contextBlocks: AgentLoopContextBlock[];
 }
 
+function formatArtifactContractSection(task: Task): string {
+  if (!task.artifact_contract) return "";
+  return [
+    "Artifact contract:",
+    JSON.stringify(task.artifact_contract, null, 2),
+    "If this task creates a --check-contract mode or equivalent validator, it must validate the exact required_artifacts, required_fields, and field_types above. The metrics writer must emit those exact keys before status=done.",
+  ].join("\n");
+}
+
+function formatSuccessCriteria(task: Task): string {
+  return task.success_criteria
+    .map((criterion) => `- ${criterion.description} (verify: ${criterion.verification_method})`)
+    .join("\n");
+}
+
 function sectionToBlock(section: GroundingSection): AgentLoopContextBlock {
   const source = section.sources[0]?.path ?? section.sources[0]?.label ?? section.key;
   const id = section.key === "soil_knowledge" ? "soil-prefetch" : section.key;
@@ -94,6 +109,7 @@ export class AgentLoopContextAssembler {
       input.task.work_description,
       input.task.approach,
       ...input.task.success_criteria.map((criterion) => criterion.description),
+      formatArtifactContractSection(input.task),
       input.workspaceContext ?? "",
       input.knowledgeContext ?? "",
     ].join("\n");
@@ -124,7 +140,8 @@ export class AgentLoopContextAssembler {
     const userPrompt = [
       `Task: ${input.task.work_description}`,
       `Approach: ${input.task.approach}`,
-      `Success criteria:\n${input.task.success_criteria.map((c) => `- ${c.description}`).join("\n")}`,
+      `Success criteria:\n${formatSuccessCriteria(input.task)}`,
+      formatArtifactContractSection(input.task),
       "Code search policy: for repository inspection, bugfixes, feature work, and verification failures, prefer code_search -> code_read_context -> code_search_repair before falling back to raw grep/read. Keep initial prompt context small; read concrete ranges through tools.",
       blocks.length > 0
         ? `Context:\n${blocks.map((block) => `[${block.source}]\n${block.content}`).join("\n\n")}`

@@ -24,6 +24,34 @@ function makeTask(): Task {
   } as unknown as Task;
 }
 
+function makeArtifactTask(): Task {
+  return {
+    ...makeTask(),
+    artifact_contract: {
+      required: true,
+      required_artifacts: [
+        {
+          kind: "metrics_json",
+          path: "reports/sequence_hazard_auc.json",
+          required_fields: ["mean_roc_auc", "sequence_hazard_features"],
+          field_types: {
+            mean_roc_auc: "number",
+            sequence_hazard_features: "array",
+          },
+          fresh_after_task_start: true,
+        },
+      ],
+    },
+    success_criteria: [
+      {
+        description: "script validates the task artifact contract",
+        verification_method: ".venv/bin/python src/experiments/train_sequence_hazard_auc.py --check-contract",
+        is_blocking: true,
+      },
+    ],
+  } as unknown as Task;
+}
+
 describe("TaskAgentLoopRunner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -142,5 +170,73 @@ describe("TaskAgentLoopRunner", () => {
     const userMessage = turn.messages.find((message: { role: string }) => message.role === "user")?.content;
     expect(userMessage).toContain("Soil prefetch failed; continuing without Soil context");
     expect(userMessage).toContain("OpenAI embedding request failed: 401 Unauthorized");
+  });
+
+  it("passes exact artifact contract and verification command into the assembled task prompt", async () => {
+    const cwd = process.cwd();
+    finalize.mockResolvedValue({
+      requestedCwd: cwd,
+      executionCwd: cwd,
+      isolated: false,
+      cleanupStatus: "not_requested",
+    });
+    prepareTaskAgentLoopWorkspace.mockResolvedValue({
+      requestedCwd: cwd,
+      executionCwd: cwd,
+      isolated: false,
+      finalize,
+    });
+    const boundedRunner = {
+      run: vi.fn().mockResolvedValue({
+        success: true,
+        output: {
+          status: "done",
+          finalAnswer: "finished",
+          summary: "summary",
+          filesChanged: [],
+          testsRun: [],
+          completionEvidence: ["bounded runner reached"],
+          verificationHints: [],
+          blockers: [],
+        },
+        finalText: "finished",
+        stopReason: "completed",
+        elapsedMs: 1,
+        modelTurns: 1,
+        toolCalls: 0,
+        compactions: 0,
+        changedFiles: [],
+        commandResults: [],
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+      }),
+    } as unknown as BoundedAgentLoopRunner;
+    const modelInfo = {
+      ref: { providerId: "test", modelId: "model" },
+      displayName: "test/model",
+      capabilities: {},
+    };
+    const runner = new TaskAgentLoopRunner({
+      boundedRunner,
+      modelClient: {
+        getModelInfo: vi.fn().mockResolvedValue(modelInfo),
+      } as unknown as AgentLoopModelClient,
+      modelRegistry: {
+        defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
+      } as unknown as AgentLoopModelRegistry,
+      contextAssembler: new AgentLoopContextAssembler(),
+    });
+
+    await runner.runTask({ task: makeArtifactTask(), cwd });
+
+    const turn = (boundedRunner.run as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const userMessage = turn.messages.find((message: { role: string }) => message.role === "user")?.content;
+    expect(userMessage).toContain("Artifact contract:");
+    expect(userMessage).toContain("\"mean_roc_auc\"");
+    expect(userMessage).toContain("\"sequence_hazard_features\"");
+    expect(userMessage).toContain("\"field_types\"");
+    expect(userMessage).toContain(".venv/bin/python src/experiments/train_sequence_hazard_auc.py --check-contract");
+    expect(userMessage).toContain("must validate the exact required_artifacts, required_fields, and field_types above");
   });
 });

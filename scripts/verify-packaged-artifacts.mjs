@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
@@ -8,6 +9,9 @@ const requiredFiles = [
   "dist/index.d.ts",
   "README.md",
   "LICENSE",
+];
+const requiredExecutableFiles = [
+  "dist/interface/cli/cli-runner.js",
 ];
 
 const packResult = spawnSync("npm", ["pack", "--json", "--dry-run"], {
@@ -55,6 +59,17 @@ const missingFiles = requiredFiles.filter((filePath) => !files.includes(filePath
 
 if (missingFiles.length > 0) {
   fail(`Packaged artifact is missing required files:\n- ${missingFiles.join("\n- ")}`);
+}
+
+for (const filePath of requiredExecutableFiles) {
+  try {
+    const mode = statSync(filePath).mode;
+    if ((mode & 0o111) === 0) {
+      fail(`Packaged executable is not executable: ${filePath}`);
+    }
+  } catch (error) {
+    fail(`Could not inspect executable mode for ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 console.log("Packaged artifact verification passed.");

@@ -126,6 +126,7 @@ export class ResponseItemToolRouter {
     const start = Date.now();
     const context: ToolCallContext = {
       ...turn.toolCallContext,
+      ...(turn.taskId ? { taskId: turn.taskId } : {}),
       callId: item.id,
       sessionId: turn.session.sessionId,
       abortSignal: turn.abortSignal,

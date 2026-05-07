@@ -134,6 +134,34 @@ describe("TaskUpdateTool", () => {
     expect(persisted.verification_evidence).toEqual(["tests passed"]);
   });
 
+  it("ignores current task lifecycle-owned status and verdict updates in task agent loop context", async () => {
+    const tasksDir = path.join(tmpDir, "tasks", "goal-1");
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.writeFileSync(path.join(tasksDir, "task-1.json"), JSON.stringify(makeTaskJson("task-1", "goal-1")));
+    const context = { ...makeContext(), taskId: "task-1" };
+    const input = {
+      goalId: "goal-1",
+      taskId: "task-1",
+      status: "completed" as const,
+      verification_verdict: "pass" as const,
+    };
+
+    const permission = await tool.checkPermissions(input, context);
+    expect(permission).toMatchObject({ status: "allowed" });
+
+    const result = await tool.call(input, context);
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      goalId: "goal-1",
+      taskId: "task-1",
+      ignoredFields: ["status", "verification_verdict"],
+    });
+    expect(stateManager.writeRaw).not.toHaveBeenCalled();
+    const persisted = await fakeReadRaw(tmpDir, "tasks/goal-1/task-1.json") as Record<string, unknown>;
+    expect(persisted.status).toBe("pending");
+    expect(persisted.verification_verdict).toBeUndefined();
+  });
+
   it("appends task history on first transition to terminal state", async () => {
     const tasksDir = path.join(tmpDir, "tasks", "goal-1");
     fs.mkdirSync(tasksDir, { recursive: true });
