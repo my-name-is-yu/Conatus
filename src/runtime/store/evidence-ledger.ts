@@ -3,6 +3,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import {
   createRuntimeStorePaths,
+  encodeRuntimePathSegment,
   ensureRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
@@ -574,6 +575,7 @@ async function readReproducibilityManifests(
   const manifests: RuntimeEvidenceReproducibilityManifest[] = [];
   for (const fileName of fileNames) {
     if (!fileName.endsWith(".json")) continue;
+    if (!reproducibilityManifestFileMayMatchScope(fileName, scope)) continue;
     try {
       const parsed = JSON.parse(await fsp.readFile(path.join(paths.reproducibilityManifestsDir, fileName), "utf8")) as Partial<RuntimeEvidenceReproducibilityManifest>;
       if (parsed.schema_version !== "runtime-reproducibility-manifest-v1") continue;
@@ -588,6 +590,30 @@ async function readReproducibilityManifests(
     }
   }
   return manifests;
+}
+
+function reproducibilityManifestFileMayMatchScope(
+  fileName: string,
+  scope: RuntimeEvidenceSummary["scope"]
+): boolean {
+  const basename = fileName.slice(0, -".json".length);
+  let manifestId: string;
+  try {
+    manifestId = decodeURIComponent(basename);
+  } catch {
+    return true;
+  }
+
+  if (scope.run_id && manifestId.startsWith("run:")) {
+    return basename.startsWith(`${encodeRuntimePathSegment(`run:${scope.run_id}:`)}`);
+  }
+  if (scope.goal_id && manifestId.startsWith("goal:")) {
+    return basename.startsWith(`${encodeRuntimePathSegment(`goal:${scope.goal_id}:`)}`);
+  }
+  if (manifestId.startsWith("run:") || manifestId.startsWith("goal:")) {
+    return false;
+  }
+  return true;
 }
 
 function isManifestArtifactRef(value: unknown): value is RuntimeEvidenceReproducibilityManifest["artifacts"][number] {
