@@ -7,7 +7,9 @@ import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { SIGNAL_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
+import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
+import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
 export interface SignalGatewayConfig {
   bridge_url: string;
@@ -136,6 +138,21 @@ export class SignalGatewayAdapter implements ChannelAdapter {
         },
         channelContext
       );
+      const projector = new NonTuiDisplayProjector({
+        display: {
+          capabilities: SIGNAL_GATEWAY_DISPLAY_CONTRACT.capabilities,
+          policy: {
+            progressSurface: "off",
+            finalSurface: "chunked",
+            cleanupPolicy: "none",
+            toolProgress: "off",
+            showReasoning: false,
+            progressMaxItems: 0,
+            progressMaxChars: 0,
+          },
+        },
+        transport: new SignalDisplayTransport(this.client, normalized.senderId),
+      });
       const reply = await withTypingIndicator(
         this.typingIndicator,
         {
@@ -153,6 +170,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
           sender_id: normalized.senderId,
           message_id: normalized.messageId,
           goal_id: route.goalId,
+          onEvent: (event) => projector.handle(event as unknown as ChatEvent),
           metadata: {
             ...route.metadata,
             ...normalized.metadata,
@@ -163,10 +181,14 @@ export class SignalGatewayAdapter implements ChannelAdapter {
         })
       );
 
-      if (reply !== null) {
-        await this.client.sendTextMessage({
-          recipient: normalized.senderId,
-          body: reply,
+      if (reply !== null && !projector.renderedAssistantOutput) {
+        await projector.handle({
+          type: "assistant_final",
+          runId: "fallback",
+          turnId: "fallback",
+          createdAt: new Date().toISOString(),
+          text: reply,
+          persisted: false,
         });
       }
     }
@@ -202,6 +224,31 @@ export class SignalGatewayAdapter implements ChannelAdapter {
       },
     };
   }
+}
+
+class SignalDisplayTransport implements NonTuiDisplayTransport {
+  private nextId = 0;
+
+  constructor(
+    private readonly client: SignalBridgeClient,
+    private readonly recipientId: string,
+  ) {}
+
+  async sendProgress(text: string): Promise<NonTuiDisplayMessageRef> {
+    return this.sendFinal(text);
+  }
+
+  async editProgress(): Promise<void> {}
+
+  async deleteProgress(): Promise<void> {}
+
+  async sendFinal(text: string): Promise<NonTuiDisplayMessageRef> {
+    await this.client.sendTextMessage({ recipient: this.recipientId, body: text });
+    this.nextId += 1;
+    return { id: `signal-${this.nextId}` };
+  }
+
+  async editFinal(): Promise<void> {}
 }
 
 class SignalBridgeClient {

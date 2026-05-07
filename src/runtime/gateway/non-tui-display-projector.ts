@@ -88,14 +88,14 @@ export class NonTuiDisplayProjector {
         );
         return;
       case "assistant_delta":
-        await this.updateFinal(event.text);
+        await this.updateFinal(event.text, false);
         return;
       case "assistant_final":
         this.sawFinalSignal = true;
-        await this.updateFinal(event.text);
+        await this.updateFinal(event.text, true);
         return;
       case "lifecycle_error":
-        await this.updateFinal(formatGatewayLifecycleFailureMessage(event.error, event.partialText, event.recovery));
+        await this.updateFinal(formatGatewayLifecycleFailureMessage(event.error, event.partialText, event.recovery), true);
         return;
       case "lifecycle_end":
         if (event.status === "completed") {
@@ -137,7 +137,7 @@ export class NonTuiDisplayProjector {
     return rendered.slice(0, this.policy.progressMaxChars - 1).trimEnd();
   }
 
-  private async updateFinal(text: string): Promise<void> {
+  private async updateFinal(text: string, complete: boolean): Promise<void> {
     const nextText = text || this.finalText;
     if (!nextText || nextText === this.lastFinalText) return;
     this.finalText = nextText;
@@ -151,6 +151,8 @@ export class NonTuiDisplayProjector {
       this.lastFinalText = nextText;
       return;
     }
+
+    if (!complete) return;
 
     if (this.policy.finalSurface === "send_once") {
       if (this.finalRef === null) {

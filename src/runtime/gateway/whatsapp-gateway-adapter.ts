@@ -8,7 +8,9 @@ import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./
 import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { WHATSAPP_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
+import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
+import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
 interface WhatsAppWebhookPayload {
   entry?: Array<{
@@ -193,6 +195,21 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
       },
       channelContext
     );
+    const projector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: WHATSAPP_GATEWAY_DISPLAY_CONTRACT.capabilities,
+        policy: {
+          progressSurface: "off",
+          finalSurface: "chunked",
+          cleanupPolicy: "none",
+          toolProgress: "off",
+          showReasoning: false,
+          progressMaxItems: 0,
+          progressMaxChars: 0,
+        },
+      },
+      transport: new WhatsAppDisplayTransport(this.client, senderId),
+    });
     const reply = await withTypingIndicator(
       this.typingIndicator,
       {
@@ -213,6 +230,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
         sender_id: senderId,
         message_id: message.id,
         goal_id: route.goalId,
+        onEvent: (event) => projector.handle(event as unknown as ChatEvent),
         metadata: {
           ...route.metadata,
           message_type: message.type,
@@ -224,10 +242,16 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
       })
     );
 
-    await this.client.sendTextMessage({
-      to: senderId,
-      body: reply ?? "Received.",
-    });
+    if (!projector.renderedAssistantOutput) {
+      await projector.handle({
+        type: "assistant_final",
+        runId: "fallback",
+        turnId: "fallback",
+        createdAt: new Date().toISOString(),
+        text: reply ?? "Received.",
+        persisted: false,
+      });
+    }
   }
 
   private extractMessages(payload: WhatsAppWebhookPayload): Array<{
@@ -281,6 +305,31 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(payload));
   }
+}
+
+class WhatsAppDisplayTransport implements NonTuiDisplayTransport {
+  private nextId = 0;
+
+  constructor(
+    private readonly client: WhatsAppCloudClient,
+    private readonly recipientId: string,
+  ) {}
+
+  async sendProgress(text: string): Promise<NonTuiDisplayMessageRef> {
+    return this.sendFinal(text);
+  }
+
+  async editProgress(): Promise<void> {}
+
+  async deleteProgress(): Promise<void> {}
+
+  async sendFinal(text: string): Promise<NonTuiDisplayMessageRef> {
+    await this.client.sendTextMessage({ to: this.recipientId, body: text });
+    this.nextId += 1;
+    return { id: `whatsapp-${this.nextId}` };
+  }
+
+  async editFinal(): Promise<void> {}
 }
 
 class WhatsAppCloudClient {
