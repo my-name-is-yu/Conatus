@@ -118,29 +118,77 @@ describe("checkApiKey", () => {
     cleanupTempDir(tmpDir);
   });
 
-  it("fails when no API key is present", () => {
-    const result = checkApiKey(tmpDir);
+  it("passes when the configured adapter manages runtime auth without an API key", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "provider.json"),
+      JSON.stringify({ provider: "openai", model: "gpt-5.5", adapter: "openai_codex_cli" })
+    );
+    const result = await checkApiKey(tmpDir);
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("adapter-managed runtime auth");
+    expect(result.detail).toContain("codex auth login");
+  });
+
+  it("fails Claude Code CLI readiness when the provider runtime still requires an Anthropic API key", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "provider.json"),
+      JSON.stringify({ provider: "anthropic", model: "claude-sonnet-4-6", adapter: "claude_code_cli" })
+    );
+    const result = await checkApiKey(tmpDir);
     expect(result.status).toBe("fail");
-    expect(result.detail).toContain("not set");
+    expect(result.detail).toContain("API key required");
+    expect(result.detail).toContain("pulseed provider show");
   });
 
-  it("passes when ANTHROPIC_API_KEY is set", () => {
+  it("passes when the configured provider requires no runtime API key", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "provider.json"),
+      JSON.stringify({ provider: "ollama", model: "qwen3:4b", adapter: "agent_loop" })
+    );
+    const result = await checkApiKey(tmpDir);
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("does not require an API key");
+    expect(result.detail).toContain("no runtime API key is required");
+  });
+
+  it("fails when provider config requires an API key and none is resolved", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "provider.json"),
+      JSON.stringify({ provider: "openai", model: "gpt-5.5", adapter: "openai_api" })
+    );
+    const result = await checkApiKey(tmpDir);
+    expect(result.status).toBe("fail");
+    expect(result.detail).toContain("API key required");
+    expect(result.detail).toContain("pulseed provider show");
+  });
+
+  it("passes when ANTHROPIC_API_KEY is set", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "provider.json"),
+      JSON.stringify({ provider: "anthropic", model: "claude-sonnet-4-6", adapter: "claude_api" })
+    );
     process.env["ANTHROPIC_API_KEY"] = "sk-ant-test";
-    const result = checkApiKey(tmpDir);
+    const result = await checkApiKey(tmpDir);
     expect(result.status).toBe("pass");
-    expect(result.detail).toContain("ANTHROPIC_API_KEY");
+    expect(result.detail).toContain("same sources as `pulseed provider show`");
+    expect(result.detail).toContain("anthropic/claude_api");
   });
 
-  it("passes when OPENAI_API_KEY is set", () => {
+  it("passes when OPENAI_API_KEY is set", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "provider.json"),
+      JSON.stringify({ provider: "openai", model: "gpt-5.5", adapter: "openai_api" })
+    );
     process.env["OPENAI_API_KEY"] = "sk-openai-test";
-    const result = checkApiKey(tmpDir);
+    const result = await checkApiKey(tmpDir);
     expect(result.status).toBe("pass");
-    expect(result.detail).toContain("OPENAI_API_KEY");
+    expect(result.detail).toContain("same sources as `pulseed provider show`");
+    expect(result.detail).toContain("openai/openai_api");
   });
 
-  it("passes when api_key is in provider.json", () => {
+  it("passes when api_key is in provider.json", async () => {
     fs.writeFileSync(path.join(tmpDir, "provider.json"), JSON.stringify({ api_key: "sk-from-file" }));
-    const result = checkApiKey(tmpDir);
+    const result = await checkApiKey(tmpDir);
     expect(result.status).toBe("pass");
     expect(result.detail).toContain("provider.json");
   });

@@ -7,7 +7,7 @@ import { getPulseedDirPath, getLogsDir, getGoalsDir, getPluginsDir } from "../..
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { getCliRunnerBuildPath } from "../../../base/utils/pulseed-meta.js";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
-import { isJwtExpired, resolveOpenAIApiKey } from "../../../base/llm/provider-config.js";
+import { isJwtExpired, loadProviderConfig, resolveOpenAIApiKey, validateProviderConfig } from "../../../base/llm/provider-config.js";
 import { DaemonConfigSchema } from "../../../base/types/daemon.js";
 import { PluginManifestSchema } from "../../../base/types/plugin.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
@@ -158,42 +158,59 @@ export function checkProviderConfig(baseDir?: string): CheckResult {
   }
 }
 
-export function checkApiKey(baseDir?: string): CheckResult {
-  // Check environment variables first
-  const anthropicKey = process.env["ANTHROPIC_API_KEY"];
-  const openaiKey = process.env["OPENAI_API_KEY"];
+function adapterCredentialGuidance(adapter: string): string | null {
+  if (adapter === "openai_codex_cli") {
+    return "doctor cannot safely inspect Codex CLI runtime auth here; run `pulseed provider show` to confirm a masked resolved key, or run `codex auth login` and rerun `pulseed doctor`";
+  }
+  return null;
+}
 
-  if (anthropicKey || openaiKey) {
-    const which = anthropicKey ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-    return { name: "API key", status: "pass", detail: `${which} found in environment` };
+export async function checkApiKey(baseDir?: string): Promise<CheckResult> {
+  let config;
+  try {
+    config = await loadProviderConfig({ baseDir, saveMigration: false });
+  } catch {
+    return {
+      name: "API key",
+      status: "fail",
+      detail: "provider credentials could not be resolved; run `pulseed provider show` to inspect provider config",
+    };
   }
 
-  // Check provider.json
-  const dir = baseDir ?? getPulseedDirPath();
-  const configPath = path.join(dir, "provider.json");
+  const adapterGuidance = adapterCredentialGuidance(config.adapter);
 
-  if (fs.existsSync(configPath)) {
-    try {
-      const content = fs.readFileSync(configPath, "utf-8");
-      const parsed = JSON.parse(content) as unknown;
-      if (
-        parsed !== null &&
-        typeof parsed === "object" &&
-        "api_key" in parsed &&
-        typeof (parsed as Record<string, unknown>)["api_key"] === "string" &&
-        (parsed as Record<string, string>)["api_key"].length > 0
-      ) {
-        return { name: "API key", status: "pass", detail: "api_key found in provider.json" };
-      }
-    } catch {
-      // ignore parse errors — already checked in checkProviderConfig
-    }
+  if (config.api_key) {
+    const sourceDetail = adapterGuidance
+      ? "provider config resolved adapter-managed runtime auth credentials from the same source-of-truth as `pulseed provider show`, including provider.json or adapter auth fallback when available"
+      : "provider config resolved credentials from the same sources as `pulseed provider show` (env, .env, provider.json)";
+    return {
+      name: "API key",
+      status: "pass",
+      detail: `${sourceDetail} for ${config.provider}/${config.adapter}; displayed keys are masked${adapterGuidance ? `; ${adapterGuidance}` : ""}`,
+    };
+  }
+
+  if (adapterGuidance) {
+    return {
+      name: "API key",
+      status: "pass",
+      detail: `${config.provider}/${config.adapter} uses adapter-managed runtime auth instead of a provider API key; ${adapterGuidance}`,
+    };
+  }
+
+  const validation = validateProviderConfig(config);
+  if (validation.valid) {
+    return {
+      name: "API key",
+      status: "pass",
+      detail: `${config.provider}/${config.adapter} does not require an API key in provider config; no runtime API key is required for this provider configuration; inspect resolved config with \`pulseed provider show\``,
+    };
   }
 
   return {
     name: "API key",
     status: "fail",
-    detail: "ANTHROPIC_API_KEY / OPENAI_API_KEY not set (checked env + provider.json)",
+    detail: `${validation.errors.join(" ")} Checked the same provider config sources as \`pulseed provider show\`.`,
   };
 }
 
@@ -693,7 +710,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     checkNodeVersion(),
     checkPulseedDir(baseDir),
     checkProviderConfig(baseDir),
-    checkApiKey(baseDir),
+    await checkApiKey(baseDir),
     await checkEmbeddingAuth(baseDir),
     checkStateDirectoryPermissions(baseDir),
     checkProviderConfigPermissions(baseDir),
