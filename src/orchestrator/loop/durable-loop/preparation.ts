@@ -7,6 +7,7 @@ import type { ToolExecutor } from "../../../tools/executor.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveScore } from "../../../base/types/drive.js";
+import { extractWorkspacePathConstraint, resolveWorkspacePath } from "../../../base/utils/workspace-path.js";
 import {
   buildDriveContext,
   type CoreLoopDeps,
@@ -159,6 +160,11 @@ export async function buildLoopToolContext(
   };
 }
 
+function resolveGoalMeasurementCwd(goal: Goal, fallbackCwd = process.cwd()): string {
+  const workspacePath = extractWorkspacePathConstraint(goal.constraints);
+  return workspacePath ? resolveWorkspacePath(workspacePath, fallbackCwd) : fallbackCwd;
+}
+
 // ─── Phase 2 ───
 
 /** Run observation engine, reload goal after observation.
@@ -232,12 +238,13 @@ export async function calculateGapOrComplete(
     // Refresh stale dimensions via tool measurement before gap calculation
     if (ctx.toolExecutor && goal.dimensions) {
       const { needsDirectMeasurement, measureDirectly } = await import("../../../platform/drive/gap-calculator-tools.js");
+      const measurementCwd = resolveGoalMeasurementCwd(goal);
       let anyRefreshed = false;
       for (const dim of goal.dimensions) {
         if (needsDirectMeasurement(dim)) {
           try {
             const refreshed = await measureDirectly(dim, ctx.toolExecutor, {
-              cwd: process.cwd(),
+              cwd: measurementCwd,
               goalId,
               trustBalance: 0,
               preApproved: true,
