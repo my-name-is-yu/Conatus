@@ -476,6 +476,7 @@ describe("cmdDaemonStatus", () => {
   it("labels stale in-flight worker state as historical when the runtime is stopped", async () => {
     const now = Date.now();
     fs.mkdirSync(path.join(tmpDir, "runtime"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
     fs.mkdirSync(path.join(tmpDir, "tasks", "goal-stale", "ledger"), { recursive: true });
     fs.writeFileSync(
       path.join(tmpDir, "runtime", "supervisor-state.json"),
@@ -494,16 +495,68 @@ describe("cmdDaemonStatus", () => {
       })
     );
     fs.writeFileSync(
+      path.join(tmpDir, "runtime", "health", "daemon.json"),
+      JSON.stringify({
+        status: "ok",
+        leader: true,
+        checked_at: now - 15_000,
+        kpi: {
+          process_alive: { status: "ok", checked_at: now - 15_000, last_ok_at: now - 15_000 },
+          command_acceptance: { status: "ok", checked_at: now - 15_000, last_ok_at: now - 15_000 },
+          task_execution: { status: "ok", checked_at: now - 15_000, last_ok_at: now - 15_000 },
+        },
+        long_running: {
+          summary: "alive_but_waiting",
+          checked_at: now - 15_000,
+          signals: {
+            process: { status: "alive", checked_at: now - 15_000, observed_at: now - 15_000, pid: 999999999 },
+            child_activity: { status: "active", checked_at: now - 15_000, observed_at: now - 15_000, active_count: 3 },
+            log_freshness: { status: "fresh", checked_at: now - 15_000, observed_at: now - 15_000 },
+            artifact_freshness: { status: "fresh", checked_at: now - 15_000, observed_at: now - 15_000 },
+            metric_freshness: { status: "fresh", checked_at: now - 15_000, observed_at: now - 15_000 },
+            metric_progress: { status: "plateau", checked_at: now - 15_000, observed_at: now - 15_000 },
+            blocker: { status: "none", checked_at: now - 15_000, observed_at: now - 15_000 },
+            resumable: true,
+          },
+        },
+        details: { pid: 999999999 },
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "runtime", "health", "components.json"),
+      JSON.stringify({
+        checked_at: now - 15_000,
+        components: {
+          gateway: "ok",
+          queue: "ok",
+          leases: "ok",
+          approval: "ok",
+          outbox: "ok",
+          supervisor: "ok",
+        },
+      })
+    );
+    fs.writeFileSync(
       path.join(tmpDir, "daemon-state.json"),
       JSON.stringify({
         pid: 999999999,
         started_at: new Date(now - 60_000).toISOString(),
-        last_loop_at: null,
+        last_loop_at: new Date(now - 15_000).toISOString(),
         loop_count: 0,
         active_goals: ["goal-stale"],
         status: "stopped",
         crash_count: 0,
         last_error: null,
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "shutdown-state.json"),
+      JSON.stringify({
+        goal_ids: ["goal-stale"],
+        loop_index: 0,
+        timestamp: new Date(now - 5_000).toISOString(),
+        reason: "stop",
+        state: "clean_shutdown",
       })
     );
     fs.writeFileSync(
@@ -529,7 +582,12 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Live runtime:    stopped; snapshot fields below are historical until the daemon restarts");
     expect(output).toContain("Historical active goals: goal-stale");
     expect(output).toContain("Historical in-flight: 1 stale worker from stopped snapshot");
+    expect(output).toContain("last observed");
+    expect(output).toContain(`stopped ${new Date(now - 5_000).toISOString()}`);
+    expect(output).toContain("checked");
     expect(output).toContain("Stale worker worker-stale: goal-stale");
+    expect(output).toContain("Historical child activity: active count=3; evidence=");
+    expect(output).toContain("(stale snapshot)");
     expect(output).toContain("Task KPIs:");
     expect(output).toContain("Historical in-flight: 1/1 (stale snapshot)");
     expect(output).not.toContain("Worker worker-stale");
